@@ -27,6 +27,8 @@ Usage
 
 from __future__ import annotations
 
+import os
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,20 @@ from dfma.models.part import (
 from assembly_graph.liaison_matrix import LiaisonMatrix
 from .base    import ImportResult, ImportError, PartPose
 from .mappings import map_process_from_geometry
+
+
+# ── debug log (writes to step_debug.log next to the script) ──────────────────
+
+_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "step_debug.log")
+
+def _dbg(msg: str) -> None:
+    """Append a debug line to step_debug.log (flushed immediately)."""
+    try:
+        with open(_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+            f.flush()
+    except Exception:
+        pass
 
 
 # ── pythonOCC availability guard ──────────────────────────────────────────────
@@ -110,6 +126,9 @@ def import_step(
     infer_contacts  : if True, infer contacts from bounding-box proximity
     contact_gap_mm  : clearance threshold for proximity-based contact inference
     """
+    _dbg("=" * 60)
+    _dbg(f"import_step called: path={path}")
+
     if not _OCC_AVAILABLE:
         raise ImportError(
             "pythonOCC is required for STEP import.\n"
@@ -124,16 +143,24 @@ def import_step(
     warnings: list[str] = []
 
     # ── read STEP file ────────────────────────────────────────────────────────
+    _dbg("Creating STEPControl_Reader...")
     reader = STEPControl_Reader()
+    _dbg("Calling ReadFile...")
     status = reader.ReadFile(str(p))
+    _dbg(f"ReadFile status={status}")
     if status != 1:   # 1 = IFSelect_RetDone
         raise ImportError(f"STEPControl_Reader failed (status={status}) for '{path}'")
 
+    _dbg("Calling TransferRoots...")
     reader.TransferRoots()
+    _dbg("Calling OneShape...")
     compound = reader.OneShape()
+    _dbg(f"OneShape returned: {type(compound)}")
 
     # ── extract part names from STEP model (best-effort) ──────────────────────
+    _dbg("Extracting part names...")
     step_names = _extract_step_names(reader)
+    _dbg(f"Found {len(step_names)} names")
 
     # ── iterate over all solid bodies ─────────────────────────────────────────
     assembly = Assembly(id="ROOT", name=p.stem)
@@ -142,18 +169,24 @@ def import_step(
     bboxes: dict[str, tuple]    = {}
     counter = 0
 
+    _dbg("Starting TopExp_Explorer over solids...")
     explorer = TopExp_Explorer(compound, TopAbs_SOLID)
     while explorer.More():
         counter += 1
         part_id = f"P{counter:04d}"
-        solid   = explorer.Current()
+        _dbg(f"  Solid #{counter}: getting Current()...")
+        solid = explorer.Current()
+        _dbg(f"  Solid #{counter}: type={type(solid)}")
 
-        # Name from STEP entities or fallback
         name = step_names.get(counter - 1, "") or f"Part_{counter}"
 
-        # Bounding box
+        _dbg(f"  Solid #{counter}: computing bbox...")
         bbox_mm = _compute_bbox_mm(solid)
-        geom    = _bbox_to_geometry(solid, bbox_mm, density_map or {})
+        _dbg(f"  Solid #{counter}: bbox={bbox_mm}")
+
+        _dbg(f"  Solid #{counter}: computing geometry...")
+        geom = _bbox_to_geometry(solid, bbox_mm, density_map or {})
+        _dbg(f"  Solid #{counter}: L={geom.length} W={geom.width} H={geom.height} mass={geom.mass_grams}g")
 
         proc = map_process_from_geometry(
             Material.UNKNOWN,
@@ -173,7 +206,10 @@ def import_step(
         bboxes[part_id] = bbox_mm
         poses[part_id]  = PartPose(part_id=part_id)
 
+        _dbg(f"  Solid #{counter}: calling Next()...")
         explorer.Next()
+
+    _dbg(f"Explorer done. Total solids: {counter}")
 
     if counter == 0:
         raise ImportError(f"No solid bodies found in '{path}'")
@@ -181,13 +217,16 @@ def import_step(
     warnings.append(f"Loaded {counter} solid body/bodies from STEP file.")
 
     # ── build liaison matrix ──────────────────────────────────────────────────
+    _dbg("Building liaison matrix...")
     part_ids = [pt.id for pt in assembly.parts]
     liaison  = LiaisonMatrix(part_ids)
 
     if infer_contacts:
+        _dbg("Inferring contacts from AABB...")
         _infer_contacts_from_aabb(poses, bboxes, liaison, contact_gap_mm, warnings)
 
-    return ImportResult(
+    _dbg("Building ImportResult...")
+    result = ImportResult(
         assembly=assembly,
         liaison=liaison,
         poses=poses,
@@ -195,6 +234,8 @@ def import_step(
         warnings=warnings,
         source="step",
     )
+    _dbg("import_step COMPLETE — returning successfully")
+    return result
 
 
 # ── name extraction from STEP model entities ──────────────────────────────────

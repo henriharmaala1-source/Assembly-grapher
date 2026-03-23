@@ -141,16 +141,38 @@ class LoadTab(ttk.Frame):
 
         try:
             from assembly_graph.importers import load_assembly
+            from assembly_graph.importers.step_importer import _dbg
+            _dbg("load_tab: calling load_assembly...")
             result = load_assembly(path)
+            _dbg(f"load_tab: load_assembly returned OK, {len(result.assembly.parts)} parts")
         except Exception as exc:
+            import traceback
+            try:
+                from assembly_graph.importers.step_importer import _dbg
+                _dbg(f"load_tab: EXCEPTION: {exc}\n{traceback.format_exc()}")
+            except Exception:
+                pass
             messagebox.showerror("Load Error", str(exc))
             return
 
+        try:
+            from assembly_graph.importers.step_importer import _dbg
+            _dbg("load_tab: calling _populate...")
+        except Exception:
+            pass
         self._populate(result.assembly, result.warnings)
-        # Don't call bus.publish("assembly_loaded") here; let _populate do it
-        # so _on_external_load (below) doesn't double-populate.
         self._assembly = result.assembly
+        try:
+            from assembly_graph.importers.step_importer import _dbg
+            _dbg("load_tab: publishing assembly_loaded...")
+        except Exception:
+            pass
         self.bus.publish("assembly_loaded", result.assembly)
+        try:
+            from assembly_graph.importers.step_importer import _dbg
+            _dbg("load_tab: DONE — assembly loaded successfully")
+        except Exception:
+            pass
 
     def _load_demo(self) -> None:
         try:

@@ -127,11 +127,13 @@ class LoadTab(ttk.Frame):
             try:
                 from OCC.Core.STEPCAFControl import STEPCAFControl_Reader  # noqa: F401
             except ImportError as occ_err:
+                import sys
                 messagebox.showwarning(
                     "pythonOCC not installed",
                     "Opening STEP files requires pythonOCC.\n\n"
                     "Install it with conda:\n"
                     "  conda install -c conda-forge pythonocc-core\n\n"
+                    f"Running Python: {sys.executable}\n\n"
                     f"Error detail: {occ_err}\n\n"
                     "JSON BOM files (.json) work without any extra packages.",
                 )

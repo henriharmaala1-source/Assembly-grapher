@@ -12,6 +12,7 @@ All panels communicate via an EventBus (publish/subscribe); the App class
 owns the business logic handlers (run_dfma, run_screw, gen_sequence, export).
 """
 
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -158,45 +159,59 @@ class App(tk.Tk):
         if self._assembly is None:
             self._set_status("No assembly loaded — cannot generate sequence.")
             return
-        try:
-            self._set_status("Generating assembly sequence…")
-            self.update_idletasks()
+        if getattr(self, "_seq_running", False):
+            return   # already running
 
-            # Prefer the graph_demo planner (pre-configured liaison matrix)
-            # for the demo assembly; fall back to a generic planner otherwise.
+        self._seq_running = True
+        self._set_status("Generating assembly sequence…  (please wait)")
+        self.update_idletasks()
+
+        assembly = self._assembly   # capture for thread
+
+        def _run() -> None:
             try:
-                from graph_demo import build_planner
-                planner = build_planner()
-            except Exception:
-                from assembly_graph import AssemblyPlanner
-                planner = AssemblyPlanner.from_assembly(
-                    self._assembly,
-                    base_part_id=self._assembly.all_parts()[0].id,
+                try:
+                    from graph_demo import build_planner
+                    planner = build_planner()
+                except Exception:
+                    from assembly_graph import AssemblyPlanner
+                    planner = AssemblyPlanner.from_assembly(
+                        assembly,
+                        base_part_id=assembly.all_parts()[0].id,
+                    )
+
+                sa_iter = 0 if isinstance(algo, str) and (
+                    "greedy" in algo.lower() or "kahn" in algo.lower()
+                ) else 2000
+
+                plan = planner.plan(sa_iterations=sa_iter)
+                seq  = (plan.greedy_sequence if isinstance(algo, str)
+                        and "greedy" in algo.lower() else plan.optimized_sequence)
+
+                payload = {
+                    "steps":        plan.optimized_steps(),
+                    "cost_summary": seq.summary(),
+                }
+                status = (
+                    f"Sequence generated — {len(plan.optimized_steps())} parts  |  "
+                    f"{len(plan.subassemblies)} subassembly group(s)  |  "
+                    f"cost = {plan.optimized_sequence.total_cost:.2f}"
                 )
 
-            sa_iter = 0 if isinstance(algo, str) and (
-                "greedy" in algo.lower() or "kahn" in algo.lower()
-            ) else 2000
+                def _done() -> None:
+                    self._plan = plan
+                    self.bus.publish("plan_ready",     plan)
+                    self.bus.publish("sequence_ready", payload)
+                    self._set_status(status)
+                    self._seq_running = False
 
-            plan = planner.plan(sa_iterations=sa_iter)
-            self._plan = plan
-            self.bus.publish("plan_ready", plan)
+                self.after(0, _done)
 
-            seq = (plan.greedy_sequence if isinstance(algo, str)
-                   and "greedy" in algo.lower() else plan.optimized_sequence)
+            except Exception as exc:
+                self.after(0, lambda: self._set_status(f"Sequence error: {exc}"))
+                self.after(0, lambda: setattr(self, "_seq_running", False))
 
-            self.bus.publish("sequence_ready", {
-                "steps":        plan.optimized_steps(),
-                "cost_summary": seq.summary(),
-            })
-
-            self._set_status(
-                f"Sequence generated — {len(plan.optimized_steps())} parts  |  "
-                f"{len(plan.subassemblies)} subassembly group(s)  |  "
-                f"cost = {plan.optimized_sequence.total_cost:.2f}"
-            )
-        except Exception as exc:
-            self._set_status(f"Sequence error: {exc}")
+        threading.Thread(target=_run, daemon=True).start()
 
     def _handle_run_resources(self, _data) -> None:
         self._publish_resources(self._fasteners)

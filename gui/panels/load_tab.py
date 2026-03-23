@@ -121,6 +121,19 @@ class LoadTab(ttk.Frame):
             self._load_path(path)
 
     def _load_path(self, path: str) -> None:
+        # Friendly pre-check for STEP files when pythonOCC is absent
+        if path.lower().endswith((".step", ".stp")):
+            from assembly_graph.importers.collision import _OCC_AVAILABLE
+            if not _OCC_AVAILABLE:
+                messagebox.showwarning(
+                    "pythonOCC not installed",
+                    "Opening STEP files requires pythonOCC.\n\n"
+                    "Install it with conda:\n"
+                    "  conda install -c conda-forge pythonocc-core\n\n"
+                    "JSON BOM files (.json) work without any extra packages.",
+                )
+                return
+
         try:
             from assembly_graph.importers import load_assembly
             result = load_assembly(path)

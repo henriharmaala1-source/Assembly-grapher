@@ -60,19 +60,13 @@ _OCC_ERROR     = ""
 try:
     from OCC.Core.STEPCAFControl import STEPCAFControl_Reader
     from OCC.Core.TDocStd        import TDocStd_Document
-    from OCC.Core.XCAFDoc        import XCAFDoc_DocumentTool, XCAFDoc_Location
-    from OCC.Core.TDF            import TDF_LabelSequence, TDF_Label
+    from OCC.Core.XCAFDoc        import XCAFDoc_DocumentTool
+    from OCC.Core.TDF            import TDF_LabelSequence
     from OCC.Core.TDataStd       import TDataStd_Name
     from OCC.Core.BRepBndLib     import brepbndlib
     from OCC.Core.Bnd            import Bnd_Box
     from OCC.Core.BRepGProp      import brepgprop
     from OCC.Core.GProp          import GProp_GProps
-    from OCC.Core.TopLoc         import TopLoc_Location
-    from OCC.Core.gp             import gp_Trsf, gp_Mat, gp_XYZ
-    from OCC.Core.BRep           import BRep_Builder
-    from OCC.Core.TopoDS         import TopoDS_Compound
-    from OCC.Core.BRepAlgoAPI    import BRepAlgoAPI_Common
-    from OCC.Core.BRepCheck      import BRepCheck_Analyzer
     _OCC_AVAILABLE = True
 except ImportError as _e:
     _OCC_ERROR = str(_e)
@@ -186,13 +180,13 @@ def import_step(
     )
 
     if root_label is not None:
-        assembly = ctx.label_to_node(root_label, identity_trsf())
+        assembly = ctx.label_to_node(root_label)
     else:
         # Multiple roots: build synthetic parent
         assembly = Assembly(id="ROOT", name=p.stem)
         for i in range(1, roots.Size() + 1):
             lbl = roots.Value(i)
-            node = ctx.label_to_node(lbl, identity_trsf())
+            node = ctx.label_to_node(lbl)
             if isinstance(node, Assembly):
                 assembly.subassemblies.append(node)
             else:
@@ -236,12 +230,8 @@ class _ParseContext:
         self._id_counter += 1
         return f"{prefix}{self._id_counter:04d}"
 
-    def label_to_node(
-        self,
-        label: Any,
-        parent_trsf: Any,
-    ) -> "Assembly | Part":
-        st = self.shape_tool
+    def label_to_node(self, label: Any) -> "Assembly | Part":
+        st   = self.shape_tool
         name = _label_name(label)
 
         if st.IsAssembly(label):
@@ -250,15 +240,12 @@ class _ParseContext:
             st.GetComponents(label, components, False)
             for i in range(1, components.Size() + 1):
                 comp_lbl = components.Value(i)
-                # Get the referred definition and this instance's transform
-                ref_lbl  = TDF_Label()
-                ok = st.GetReferredShape(comp_lbl, ref_lbl)
-                loc = _label_location(comp_lbl, st)
-                child_trsf = _compose_trsf(parent_trsf, loc)
-                child_node = self.label_to_node(
-                    ref_lbl if ok else comp_lbl,
-                    child_trsf,
-                )
+                # pythonOCC returns output-params as a tuple: (bool, TDF_Label)
+                try:
+                    ok, ref_lbl = st.GetReferredShape(comp_lbl)
+                except (TypeError, ValueError):
+                    ok, ref_lbl = False, comp_lbl
+                child_node = self.label_to_node(ref_lbl if ok else comp_lbl)
                 if isinstance(child_node, Assembly):
                     asm.subassemblies.append(child_node)
                 else:
@@ -267,10 +254,13 @@ class _ParseContext:
         else:
             # Leaf = part
             part_id = self.next_id("P")
-            shape   = st.GetShape(label)
+            try:
+                shape = st.GetShape(label)
+            except Exception:
+                shape = None
 
-            bbox_mm = _compute_bbox_mm(shape)
-            geom    = _bbox_to_geometry(shape, bbox_mm, self.density_map)
+            bbox_mm  = _compute_bbox_mm(shape) if shape else (0,0,0,0,0,0)
+            geom     = _bbox_to_geometry(shape, bbox_mm, self.density_map)
             mat_enum = Material.UNKNOWN
             proc     = map_process_from_geometry(
                 mat_enum,
@@ -283,13 +273,10 @@ class _ParseContext:
             part = Part(id=part_id, name=name or part_id,
                         geometry=geom, material=mat_enum, process=proc)
 
-            # Store shape for later collision checks
-            self.shapes[part_id] = shape
+            if shape is not None:
+                self.shapes[part_id] = shape
             self.bboxes[part_id] = bbox_mm
-
-            # Compute world-space pose from accumulated transform
-            pos, rot = _trsf_to_pose(parent_trsf)
-            self.poses[part_id] = PartPose(part_id=part_id, position=pos, rotation=rot)
+            self.poses[part_id]  = PartPose(part_id=part_id)  # identity pose
 
             return part
 
@@ -319,14 +306,14 @@ def _bbox_to_geometry(
     height = max(zmx - zmn, 0.0)
 
     # Approximate volume from B-rep (more accurate than bbox)
-    props = GProp_GProps()
-    try:
-        brepgprop.VolumeProperties(shape, props)
-        # OCCT VolumeProperties returns mm³ for AP214 (mm-based)
-        volume_mm3 = abs(props.Mass())
-    except Exception:
-        # Fall back to bounding-box volume if B-rep props fail
-        volume_mm3 = length * width * height * 0.5   # rough solid fill ratio
+    volume_mm3 = length * width * height * 0.5   # default: rough solid fill ratio
+    if shape is not None:
+        try:
+            props = GProp_GProps()
+            brepgprop.VolumeProperties(shape, props)
+            volume_mm3 = abs(props.Mass())
+        except Exception:
+            pass
 
     density = _lookup_density("", density_map)   # default density
     mass_g  = volume_mm3 * density
@@ -343,54 +330,6 @@ def _bbox_to_geometry(
         mass_grams=round(mass_g, 3),
         tolerance=0.1,
     )
-
-
-# ── transform helpers ─────────────────────────────────────────────────────────
-
-def identity_trsf():
-    t = gp_Trsf()
-    # gp_Trsf() default is identity
-    return t
-
-
-def _label_location(comp_label, shape_tool) -> Any:
-    """Get the TopLoc_Location of a component label."""
-    loc_attr = XCAFDoc_Location()
-    if comp_label.FindAttribute(XCAFDoc_Location.GetID_s(), loc_attr):
-        return loc_attr.Get()
-    return TopLoc_Location()
-
-
-def _compose_trsf(parent: Any, loc: Any) -> Any:
-    """Compose parent transform with the local component location."""
-    return parent * loc.IsIdentity and parent or \
-           _multiply_trsf(parent, loc.IsIdentity and gp_Trsf() or loc.IsIdentity)
-
-
-def _multiply_trsf(a: Any, b: Any) -> Any:
-    result = gp_Trsf()
-    result.Multiply(a)
-    return result
-
-
-def _trsf_to_pose(trsf) -> tuple[
-    tuple[float,float,float],
-    tuple[tuple[float,float,float],...],
-]:
-    """Extract position (mm) and 3×3 rotation matrix from a gp_Trsf."""
-    try:
-        tx = trsf.TranslationPart()
-        pos = (tx.X(), tx.Y(), tx.Z())
-        M = trsf.VectorialPart()
-        rot = (
-            (M.Value(1,1), M.Value(1,2), M.Value(1,3)),
-            (M.Value(2,1), M.Value(2,2), M.Value(2,3)),
-            (M.Value(3,1), M.Value(3,2), M.Value(3,3)),
-        )
-    except Exception:
-        pos = (0.0, 0.0, 0.0)
-        rot = ((1,0,0),(0,1,0),(0,0,1))
-    return pos, rot
 
 
 def _label_name(label) -> str:

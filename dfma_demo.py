@@ -11,15 +11,24 @@ Example: Pneumatic Valve Assembly
     6. Mounting Screw x4  (fastener, steel)
     7. Retaining Clip     (sheet metal — could be eliminated)
 
+  Fasteners (DFS checks):
+    F001  M4 Socket-Cap (end cap, tight axial clearance)
+    F002  M6 Hex Bolt   (body mount, loose clearance hole)
+    F003  M5 Countersunk (cover plate, missing countersink)
+    F004  M4 Socket-Cap (tight bolt pitch, neighbour too close)
+    F005  M3 Socket-Cap (screw too short for grip + engagement)
+    F006  M8 Hex Bolt   (post-assembly obstruction by cable bracket)
+
 Run with:
     python dfma_demo.py
     python dfma_demo.py --verbose
 """
 
 import argparse
-from dfma.models.part    import Part, Assembly, Geometry, ManufacturingProcess, Material
-from dfma.models.warning import Severity
-from dfma.analyzer       import analyze
+from dfma.models.part     import Part, Assembly, Geometry, ManufacturingProcess, Material
+from dfma.models.fastener import FastenerSpec, DriveType, HeadStyle
+from dfma.models.warning  import Severity
+from dfma.analyzer        import analyze
 
 
 # ── Build the example assembly ──────────────────────────────────────────────
@@ -147,6 +156,100 @@ def build_pneumatic_valve() -> Assembly:
     return assembly
 
 
+# ── Build fastener specs for DFS checks ────────────────────────────────────
+
+def build_fasteners() -> list[FastenerSpec]:
+    return [
+        # F001 — End-cap M4 socket cap: axial clearance too tight (housing rib above)
+        FastenerSpec(
+            id="F001", name="M4 End-Cap Socket Screw",
+            nominal_diameter_mm=4.0, total_length_mm=16.0,
+            head_diameter_mm=7.0,    head_height_mm=4.0,
+            thread_pitch_mm=0.7,
+            drive_type=DriveType.SOCKET_CAP, head_style=HeadStyle.SOCKET_CAP,
+            hole_diameter_mm=4.3,
+            grip_thickness_mm=8.0,   thread_engagement_mm=6.0,
+            axial_clearance_above_head_mm=5.0,   # ← 5 mm < 8 mm min → DFS-001 ERROR
+            radial_clearance_mm=4.0,             # ← fine for socket cap (min 3)
+            insertion_path_length_mm=30.0,
+        ),
+
+        # F002 — Body-mount M6 hex bolt: clearance hole too loose
+        FastenerSpec(
+            id="F002", name="M6 Body-Mount Hex Bolt",
+            nominal_diameter_mm=6.0, total_length_mm=25.0,
+            head_diameter_mm=10.0,   head_height_mm=4.0,
+            thread_pitch_mm=1.0,
+            drive_type=DriveType.HEX_BOLT, head_style=HeadStyle.HEX,
+            hole_diameter_mm=9.0,            # ← 9.0 / 6.0 = 1.5× → too loose → DFS-006
+            grip_thickness_mm=15.0,  thread_engagement_mm=9.0,
+            axial_clearance_above_head_mm=20.0,
+            radial_clearance_mm=8.0,
+            insertion_path_length_mm=45.0,
+        ),
+
+        # F003 — Cover-plate M5 countersunk: countersink missing in assembly
+        FastenerSpec(
+            id="F003", name="M5 Cover-Plate CSK Screw",
+            nominal_diameter_mm=5.0, total_length_mm=20.0,
+            head_diameter_mm=9.5,    head_height_mm=3.0,
+            thread_pitch_mm=0.8,
+            drive_type=DriveType.TORX, head_style=HeadStyle.COUNTERSUNK,
+            hole_diameter_mm=5.2,
+            countersink_diameter_mm=0.0,     # ← no countersink defined → DFS-007 ERROR
+            grip_thickness_mm=10.0,  thread_engagement_mm=8.0,
+            axial_clearance_above_head_mm=12.0,
+            radial_clearance_mm=3.0,
+            insertion_path_length_mm=35.0,
+        ),
+
+        # F004 — Bolt-circle M4 socket cap: adjacent screw too close (tight pitch)
+        FastenerSpec(
+            id="F004", name="M4 Bolt-Circle Socket Screw",
+            nominal_diameter_mm=4.0, total_length_mm=12.0,
+            head_diameter_mm=7.0,    head_height_mm=4.0,
+            thread_pitch_mm=0.7,
+            drive_type=DriveType.SOCKET_CAP, head_style=HeadStyle.SOCKET_CAP,
+            hole_diameter_mm=4.3,
+            grip_thickness_mm=6.0,   thread_engagement_mm=6.0,
+            axial_clearance_above_head_mm=15.0,
+            radial_clearance_mm=5.0,
+            insertion_path_length_mm=25.0,
+            lateral_obstruction_mm=2.5,      # ← centre-to-obstruction 6.0 mm < min 10.5 → DFS-008
+        ),
+
+        # F005 — M3 screw too short for grip + engagement
+        FastenerSpec(
+            id="F005", name="M3 Sensor-Bracket Screw",
+            nominal_diameter_mm=3.0, total_length_mm=8.0,
+            head_diameter_mm=5.5,    head_height_mm=3.0,
+            thread_pitch_mm=0.5,
+            drive_type=DriveType.SOCKET_CAP, head_style=HeadStyle.SOCKET_CAP,
+            hole_diameter_mm=3.2,
+            grip_thickness_mm=6.0,   thread_engagement_mm=4.5,  # 6+4.5=10.5 > 8 → DFS-010
+            axial_clearance_above_head_mm=10.0,
+            radial_clearance_mm=4.0,
+            insertion_path_length_mm=20.0,
+        ),
+
+        # F006 — M8 hex bolt: cable bracket fitted after blocks removal
+        FastenerSpec(
+            id="F006", name="M8 Main-Body Hex Bolt",
+            nominal_diameter_mm=8.0, total_length_mm=35.0,
+            head_diameter_mm=13.0,   head_height_mm=5.5,
+            thread_pitch_mm=1.25,
+            drive_type=DriveType.HEX_BOLT, head_style=HeadStyle.HEX,
+            hole_diameter_mm=8.4,
+            grip_thickness_mm=20.0,  thread_engagement_mm=12.0,
+            axial_clearance_above_head_mm=18.0,
+            radial_clearance_mm=7.0,
+            insertion_path_length_mm=50.0,
+            removal_path_length_mm=15.0,          # ← cable bracket installed after → DFS-004
+            parts_assembled_after=["Cable Bracket", "Conduit Clip"],
+        ),
+    ]
+
+
 # ── Report renderer ──────────────────────────────────────────────────────────
 
 SEVERITY_COLOUR = {
@@ -208,8 +311,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    assembly = build_pneumatic_valve()
-    result   = analyze(assembly)
+    assembly  = build_pneumatic_valve()
+    fasteners = build_fasteners()
+    result    = analyze(assembly, fasteners=fasteners)
     print_report(result, verbose=args.verbose)
 
 

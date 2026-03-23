@@ -32,6 +32,11 @@ def main() -> None:
         app.bus.publish("fasteners_loaded", fasteners)
         app.bus.publish("warnings_updated", result)
 
+        # Resource calculator
+        from dfma.rules.resource_calculator import calculate_resources
+        resources = calculate_resources(fasteners)
+        app.bus.publish("resources_updated", resources)
+
         # Run the full assembly planner and pre-populate graph + sequence tabs
         try:
             from graph_demo import build_planner

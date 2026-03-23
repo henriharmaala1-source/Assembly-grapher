@@ -71,6 +71,7 @@ from .panels.assembly_tree  import AssemblyTreePanel
 from .panels.graph_tab      import GraphTab
 from .panels.sequence_tab   import SequenceTab
 from .panels.bom_tab        import BOMTab
+from .panels.resources_tab  import ResourcesTab
 from .panels.warning_panel  import WarningPanel
 from .event_bus             import EventBus
 
@@ -155,10 +156,12 @@ class App(tk.Tk):
         self.graph_tab    = GraphTab(self.notebook, self.bus)
         self.sequence_tab = SequenceTab(self.notebook, self.bus)
         self.bom_tab      = BOMTab(self.notebook, self.bus)
+        self.resources_tab = ResourcesTab(self.notebook, self.bus)
 
         self.notebook.add(self.graph_tab,    text="Assembly Graph")
         self.notebook.add(self.sequence_tab, text="Sequence")
         self.notebook.add(self.bom_tab,      text="BOM")
+        self.notebook.add(self.resources_tab, text="Resources")
 
         # ── RIGHT ────────────────────────────────────────────────────────────
         right_frame = ttk.Frame(centre_right, width=300)
@@ -229,6 +232,7 @@ class App(tk.Tk):
         self.bus.subscribe("run_dfma",         self._handle_run_dfma)
         self.bus.subscribe("run_screw",        self._handle_run_screw)
         self.bus.subscribe("gen_sequence",     self._handle_gen_sequence)
+        self.bus.subscribe("run_resources",    self._handle_run_resources)
 
     def _handle_assembly_loaded(self, assembly) -> None:
         """Store assembly object (may be a path string from file dialog or Assembly)."""
@@ -238,6 +242,7 @@ class App(tk.Tk):
     def _handle_fasteners_loaded(self, fasteners) -> None:
         if isinstance(fasteners, list):
             self._fasteners = fasteners
+            self._publish_resources(fasteners)
 
     def _handle_run_dfma(self, _data) -> None:
         if self._assembly is None:
@@ -327,6 +332,19 @@ class App(tk.Tk):
             )
         except Exception as exc:
             self._set_status(f"Sequence error: {exc}")
+
+    def _handle_run_resources(self, _data) -> None:
+        self._publish_resources(self._fasteners)
+
+    def _publish_resources(self, fasteners: list) -> None:
+        if not fasteners:
+            return
+        try:
+            from dfma.rules.resource_calculator import calculate_resources
+            resources = calculate_resources(fasteners)
+            self.bus.publish("resources_updated", resources)
+        except Exception as exc:
+            self._set_status(f"Resource calc error: {exc}")
 
 
 def run() -> None:

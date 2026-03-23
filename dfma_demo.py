@@ -39,6 +39,7 @@ from dfma.models.part     import Part, Assembly, Geometry, ManufacturingProcess,
 from dfma.models.fastener import FastenerSpec, DriveType, HeadStyle
 from dfma.models.warning  import Severity
 from dfma.analyzer        import analyze
+from dfma.rules.resource_calculator import calculate_resources
 
 
 # ── Build the example assembly ──────────────────────────────────────────────
@@ -341,12 +342,20 @@ def main() -> None:
         "--verbose", "-v", action="store_true",
         help="Show corrective suggestions for each warning"
     )
+    parser.add_argument(
+        "--resources", "-r", action="store_true",
+        help="Show assembly tool & torque resource report"
+    )
     args = parser.parse_args()
 
     assembly  = build_pneumatic_valve()
     fasteners = build_fasteners()
     result    = analyze(assembly, fasteners=fasteners)
     print_report(result, verbose=args.verbose)
+
+    if args.resources:
+        resources = calculate_resources(fasteners)
+        print(resources.report())
 
 
 if __name__ == "__main__":

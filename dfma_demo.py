@@ -11,13 +11,23 @@ Example: Pneumatic Valve Assembly
     6. Mounting Screw x4  (fastener, steel)
     7. Retaining Clip     (sheet metal — could be eliminated)
 
-  Fasteners (DFS checks):
-    F001  M4 Socket-Cap (end cap, tight axial clearance)
-    F002  M6 Hex Bolt   (body mount, loose clearance hole)
-    F003  M5 Countersunk (cover plate, missing countersink)
-    F004  M4 Socket-Cap (tight bolt pitch, neighbour too close)
-    F005  M3 Socket-Cap (screw too short for grip + engagement)
-    F006  M8 Hex Bolt   (post-assembly obstruction by cable bracket)
+  Fasteners (DFS + FVS checks):
+    F001  M4 Socket-Cap (end cap, tight axial clearance)          → DFS-001
+    F002  M6 Hex Bolt   (body mount, loose clearance hole)        → DFS-006
+    F003  M5 Countersunk (cover plate, missing countersink)       → DFS-007
+    F004  M4 Socket-Cap (tight bolt pitch, neighbour too close)   → DFS-008
+    F005  M3 Socket-Cap (screw too short for grip + engagement)   → DFS-010
+    F006  M8 Hex Bolt   (post-assembly obstruction by cable)      → DFS-004
+    F007  M4 fine-pitch Socket-Cap (end-cap, same dia diff pitch) → FVS-003
+
+  Fastener zones (FVS checks):
+    SA_VALVE_BODY  F002 M6·hex + F003 M5·torx + F004 M4·socket + F006 M8·hex
+                   → 4 diameters  → FVS-001 ERROR
+                   → 3 drive types → FVS-002 ERROR
+                   → ratio 4/4=1.0 → FVS-004 ERROR
+    SA_END_CAP     F001 M4·socket(0.7p) + F005 M3·socket + F007 M4·socket(0.5p)
+                   → 2 diameters, 1 drive type (clean)
+                   → M4 has two pitches → FVS-003 WARNING
 
 Run with:
     python dfma_demo.py
@@ -165,13 +175,14 @@ def build_fasteners() -> list[FastenerSpec]:
             id="F001", name="M4 End-Cap Socket Screw",
             nominal_diameter_mm=4.0, total_length_mm=16.0,
             head_diameter_mm=7.0,    head_height_mm=4.0,
-            thread_pitch_mm=0.7,
+            thread_pitch_mm=0.7,                 # coarse M4
             drive_type=DriveType.SOCKET_CAP, head_style=HeadStyle.SOCKET_CAP,
             hole_diameter_mm=4.3,
             grip_thickness_mm=8.0,   thread_engagement_mm=6.0,
             axial_clearance_above_head_mm=5.0,   # ← 5 mm < 8 mm min → DFS-001 ERROR
-            radial_clearance_mm=4.0,             # ← fine for socket cap (min 3)
+            radial_clearance_mm=4.0,
             insertion_path_length_mm=30.0,
+            subassembly_id="SA_END_CAP",
         ),
 
         # F002 — Body-mount M6 hex bolt: clearance hole too loose
@@ -186,6 +197,7 @@ def build_fasteners() -> list[FastenerSpec]:
             axial_clearance_above_head_mm=20.0,
             radial_clearance_mm=8.0,
             insertion_path_length_mm=45.0,
+            subassembly_id="SA_VALVE_BODY",
         ),
 
         # F003 — Cover-plate M5 countersunk: countersink missing in assembly
@@ -201,6 +213,7 @@ def build_fasteners() -> list[FastenerSpec]:
             axial_clearance_above_head_mm=12.0,
             radial_clearance_mm=3.0,
             insertion_path_length_mm=35.0,
+            subassembly_id="SA_VALVE_BODY",
         ),
 
         # F004 — Bolt-circle M4 socket cap: adjacent screw too close (tight pitch)
@@ -216,6 +229,7 @@ def build_fasteners() -> list[FastenerSpec]:
             radial_clearance_mm=5.0,
             insertion_path_length_mm=25.0,
             lateral_obstruction_mm=2.5,      # ← centre-to-obstruction 6.0 mm < min 10.5 → DFS-008
+            subassembly_id="SA_VALVE_BODY",
         ),
 
         # F005 — M3 screw too short for grip + engagement
@@ -230,6 +244,7 @@ def build_fasteners() -> list[FastenerSpec]:
             axial_clearance_above_head_mm=10.0,
             radial_clearance_mm=4.0,
             insertion_path_length_mm=20.0,
+            subassembly_id="SA_END_CAP",
         ),
 
         # F006 — M8 hex bolt: cable bracket fitted after blocks removal
@@ -246,6 +261,23 @@ def build_fasteners() -> list[FastenerSpec]:
             insertion_path_length_mm=50.0,
             removal_path_length_mm=15.0,          # ← cable bracket installed after → DFS-004
             parts_assembled_after=["Cable Bracket", "Conduit Clip"],
+            subassembly_id="SA_VALVE_BODY",
+        ),
+
+        # F007 — M4 fine-pitch socket cap: same diameter as F001 but different pitch
+        # Demonstrates FVS-003 (mixed thread pitch within SA_END_CAP zone)
+        FastenerSpec(
+            id="F007", name="M4 Fine-Pitch End-Cap Screw",
+            nominal_diameter_mm=4.0, total_length_mm=16.0,
+            head_diameter_mm=7.0,    head_height_mm=4.0,
+            thread_pitch_mm=0.5,                 # ← fine pitch M4 (F001 uses 0.7 coarse)
+            drive_type=DriveType.SOCKET_CAP, head_style=HeadStyle.SOCKET_CAP,
+            hole_diameter_mm=4.3,
+            grip_thickness_mm=8.0,   thread_engagement_mm=6.0,
+            axial_clearance_above_head_mm=14.0,
+            radial_clearance_mm=4.0,
+            insertion_path_length_mm=30.0,
+            subassembly_id="SA_END_CAP",         # ← same zone as F001 → FVS-003 WARNING
         ),
     ]
 

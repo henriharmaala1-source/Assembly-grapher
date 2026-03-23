@@ -143,6 +143,12 @@ class FastenerSpec:
     # Used to detect bolt-pitch too tight for a socket or wrench to swing.
     # 0 = no adjacent fasteners / no lateral constraint known.
 
+    subassembly_id: str = ""
+    # Logical zone / subassembly this fastener belongs to.
+    # Fasteners with the same non-empty subassembly_id are analysed together
+    # by the fastener-variety checker (FVS rules) to detect size/tool-type
+    # proliferation within one area of the assembly.
+
     @property
     def effective_removal_path(self) -> float:
         return self.removal_path_length_mm if self.removal_path_length_mm > 0 \

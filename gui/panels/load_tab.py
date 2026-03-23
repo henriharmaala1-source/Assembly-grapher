@@ -125,7 +125,7 @@ class LoadTab(ttk.Frame):
         # so that installing pythonOCC after startup is picked up.
         if path.lower().endswith((".step", ".stp")):
             try:
-                from OCC.Core.STEPCAFControl import STEPCAFControl_Reader  # noqa: F401
+                from OCC.Core.STEPControl import STEPControl_Reader  # noqa: F401
             except ImportError as occ_err:
                 import sys
                 messagebox.showwarning(

@@ -121,15 +121,18 @@ class LoadTab(ttk.Frame):
             self._load_path(path)
 
     def _load_path(self, path: str) -> None:
-        # Friendly pre-check for STEP files when pythonOCC is absent
+        # For STEP files, do a live import check (not a cached flag)
+        # so that installing pythonOCC after startup is picked up.
         if path.lower().endswith((".step", ".stp")):
-            from assembly_graph.importers.collision import _OCC_AVAILABLE
-            if not _OCC_AVAILABLE:
+            try:
+                from OCC.Core.STEPCAFControl import STEPCAFControl_Reader  # noqa: F401
+            except ImportError as occ_err:
                 messagebox.showwarning(
                     "pythonOCC not installed",
                     "Opening STEP files requires pythonOCC.\n\n"
                     "Install it with conda:\n"
                     "  conda install -c conda-forge pythonocc-core\n\n"
+                    f"Error detail: {occ_err}\n\n"
                     "JSON BOM files (.json) work without any extra packages.",
                 )
                 return

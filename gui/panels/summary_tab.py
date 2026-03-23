@@ -241,7 +241,7 @@ class _MetricCard(ttk.LabelFrame):
         if highlight_color:
             self._text.configure(foreground=highlight_color)
         else:
-            self._text.configure(foreground="")
+            self._text.configure(foreground="black")
         self._text.configure(state=tk.DISABLED)
 
     def get_lines(self) -> list[str]:

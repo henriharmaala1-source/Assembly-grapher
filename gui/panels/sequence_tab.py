@@ -1,23 +1,27 @@
 """
 SequenceTab — CENTRE tab 2: Assembly Sequence.
 
-Displays the topological assembly order as a numbered step list.
+Displays the optimized assembly order as a numbered step list.
 Each step shows:
   - Step number
   - Part name
+  - Insertion direction
+  - Tools required
+  - Subassembly group
   - Estimated assembly time (from geometry scorer)
   - Cumulative time
 
-A "Generate" button triggers topological sort of the assembly graph
-(Kahn's algorithm on the liaison/dependency graph).
+A "Generate Sequence" button triggers AssemblyPlanner.plan() via the
+"gen_sequence" EventBus event.
 
 EventBus events consumed:
   "assembly_loaded"  → enable Generate button
-  "sequence_ready"   → populate the step list  (payload: list of Part)
+  "sequence_ready"   → populate the step list
+                       (payload: list of step dicts from plan.optimized_steps())
   "part_selected"    → highlight the corresponding row
 
 EventBus events published:
-  "gen_sequence"     → when user clicks Generate
+  "gen_sequence"     → when user clicks Generate (carries algo_var string)
   "part_selected"    → when user clicks a row
 """
 
@@ -41,32 +45,40 @@ class SequenceTab(ttk.Frame):
 
         ttk.Button(
             toolbar, text="Generate Sequence",
-            command=lambda: self.bus.publish("gen_sequence", None),
+            command=lambda: self.bus.publish("gen_sequence", self._algo_var.get()),
         ).pack(side=tk.LEFT)
 
         ttk.Label(toolbar, text="Algorithm:").pack(side=tk.LEFT, padx=(12, 2))
-        self._algo_var = tk.StringVar(value="Topological (Kahn)")
+        self._algo_var = tk.StringVar(value="Optimized (Simulated Annealing)")
         ttk.Combobox(
-            toolbar, textvariable=self._algo_var, width=22, state="readonly",
-            values=["Topological (Kahn)", "Min. Assembly Directions",
-                    "Greedy (Min Tool Changes)", "Genetic Algorithm (future)"],
+            toolbar, textvariable=self._algo_var, width=28, state="readonly",
+            values=[
+                "Optimized (Simulated Annealing)",
+                "Greedy (Min Cost)",
+                "Topological (Kahn)",
+            ],
         ).pack(side=tk.LEFT)
 
         # ── step list ────────────────────────────────────────────────────────
-        cols = ("step", "part", "process", "time_s", "cumul_s")
+        cols = ("step", "part", "direction", "tools", "subasm", "time_s", "cumul_s")
         self.table = ttk.Treeview(
             self, columns=cols, show="headings", selectmode="browse"
         )
-        self.table.heading("step",    text="#")
-        self.table.heading("part",    text="Part")
-        self.table.heading("process", text="Process")
-        self.table.heading("time_s",  text="Time (s)")
-        self.table.heading("cumul_s", text="Cumul (s)")
-        self.table.column("step",    width=35,  stretch=False, anchor=tk.CENTER)
-        self.table.column("part",    width=170, stretch=True)
-        self.table.column("process", width=110, stretch=False)
-        self.table.column("time_s",  width=65,  stretch=False, anchor=tk.E)
-        self.table.column("cumul_s", width=65,  stretch=False, anchor=tk.E)
+        self.table.heading("step",      text="#")
+        self.table.heading("part",      text="Part")
+        self.table.heading("direction", text="Dir")
+        self.table.heading("tools",     text="Tools")
+        self.table.heading("subasm",    text="Subassembly")
+        self.table.heading("time_s",    text="Time (s)")
+        self.table.heading("cumul_s",   text="Cumul (s)")
+
+        self.table.column("step",      width=32,  stretch=False, anchor=tk.CENTER)
+        self.table.column("part",      width=150, stretch=True)
+        self.table.column("direction", width=42,  stretch=False, anchor=tk.CENTER)
+        self.table.column("tools",     width=120, stretch=False)
+        self.table.column("subasm",    width=70,  stretch=False)
+        self.table.column("time_s",    width=60,  stretch=False, anchor=tk.E)
+        self.table.column("cumul_s",   width=65,  stretch=False, anchor=tk.E)
 
         sb = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.table.yview)
         self.table.configure(yscrollcommand=sb.set)
@@ -85,15 +97,27 @@ class SequenceTab(ttk.Frame):
 
     # ── event handlers ───────────────────────────────────────────────────────
 
-    def _on_sequence_ready(self, steps) -> None:
+    def _on_sequence_ready(self, payload) -> None:
         """
         Populate the step table.
-        steps: list of dicts with keys: part_id, part_name, process, time_s
+
+        payload can be:
+          - list of step dicts (keys: part_id, part_name, direction, tools,
+                                      subassembly_id, time_s)
+          - dict {"steps": [...], "cost_summary": "..."}  (from gen_sequence)
         """
+        if isinstance(payload, dict) and "steps" in payload:
+            steps   = payload["steps"]
+            summary = payload.get("cost_summary", "")
+        else:
+            steps   = payload or []
+            summary = ""
+
         self.table.delete(*self.table.get_children())
         if not steps:
             self._summary_var.set("Empty sequence.")
             return
+
         cumul = 0.0
         for i, step in enumerate(steps, start=1):
             t = step.get("time_s", 0.0)
@@ -101,12 +125,19 @@ class SequenceTab(ttk.Frame):
             self.table.insert(
                 "", "end",
                 iid=step["part_id"],
-                values=(i, step["part_name"], step.get("process", "—"),
-                        f"{t:.1f}", f"{cumul:.1f}"),
+                values=(
+                    i,
+                    step.get("part_name", step["part_id"]),
+                    step.get("direction", "—"),
+                    step.get("tools",     "—"),
+                    step.get("subassembly_id", "—"),
+                    f"{t:.1f}",
+                    f"{cumul:.1f}",
+                ),
             )
-        self._summary_var.set(
-            f"{len(steps)} steps  |  Total estimated time: {cumul:.1f} s"
-        )
+
+        base = f"{len(steps)} steps  |  Total: {cumul:.1f} s"
+        self._summary_var.set(f"{base}  |  {summary}" if summary else base)
 
     def _on_part_selected(self, part_id: str) -> None:
         try:

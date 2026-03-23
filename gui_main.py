@@ -7,7 +7,6 @@ Usage:
 """
 
 import argparse
-import sys
 
 
 def main() -> None:
@@ -33,18 +32,34 @@ def main() -> None:
         app.bus.publish("fasteners_loaded", fasteners)
         app.bus.publish("warnings_updated", result)
 
-        # Pre-populate a simple topological sequence for the demo
-        from dfma.rules.geometry_scorer import estimate_total_time
-        steps = [
-            {
-                "part_id":   p.id,
-                "part_name": p.name,
-                "process":   p.process.value,
-                "time_s":    estimate_total_time(p.geometry) * p.quantity,
-            }
-            for p in assembly.all_parts()
-        ]
-        app.bus.publish("sequence_ready", steps)
+        # Run the full assembly planner and pre-populate graph + sequence tabs
+        try:
+            from graph_demo import build_planner
+            planner = build_planner()
+            plan    = planner.plan(sa_iterations=2000)
+            app._plan = plan
+
+            app.bus.publish("plan_ready",     plan)
+            app.bus.publish("sequence_ready", {
+                "steps":        plan.optimized_steps(),
+                "cost_summary": plan.optimized_sequence.summary(),
+            })
+        except Exception as exc:
+            # Fallback: simple BOM-order sequence without full planning
+            from dfma.rules.geometry_scorer import estimate_total_time
+            steps = [
+                {
+                    "part_id":        p.id,
+                    "part_name":      p.name,
+                    "direction":      "—",
+                    "tools":          "—",
+                    "subassembly_id": "—",
+                    "time_s":         estimate_total_time(p.geometry) * p.quantity,
+                }
+                for p in assembly.all_parts()
+            ]
+            app.bus.publish("sequence_ready", steps)
+            print(f"[gui_main] Planner fallback: {exc}")
 
         # Set status bar
         e = len(result.errors())

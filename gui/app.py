@@ -85,10 +85,14 @@ class App(tk.Tk):
         self.minsize(960, 600)
 
         self.bus = EventBus()
+        self._assembly  = None   # most recently loaded Assembly object
+        self._fasteners = []     # most recently loaded fastener list
+        self._plan      = None   # most recently computed AssemblyPlan
 
         self._build_menu()
         self._build_layout()
         self._build_status_bar()
+        self._setup_handlers()
 
     # ── menu ────────────────────────────────────────────────────────────────
 
@@ -212,9 +216,117 @@ class App(tk.Tk):
 
     def _run_dfma(self)      -> None: self.bus.publish("run_dfma",     None)
     def _run_screw(self)     -> None: self.bus.publish("run_screw",    None)
-    def _gen_sequence(self)  -> None: self.bus.publish("gen_sequence", None)
+    def _gen_sequence(self)  -> None: self.bus.publish("gen_sequence", "Optimized (Simulated Annealing)")
     def _fit_graph(self)     -> None: self.bus.publish("fit_graph",    None)
     def _reset_layout(self)  -> None: self.bus.publish("reset_layout", None)
+
+    # ── internal event handlers ───────────────────────────────────────────────
+
+    def _setup_handlers(self) -> None:
+        """Subscribe to events that require cross-panel coordination."""
+        self.bus.subscribe("assembly_loaded",  self._handle_assembly_loaded)
+        self.bus.subscribe("fasteners_loaded", self._handle_fasteners_loaded)
+        self.bus.subscribe("run_dfma",         self._handle_run_dfma)
+        self.bus.subscribe("run_screw",        self._handle_run_screw)
+        self.bus.subscribe("gen_sequence",     self._handle_gen_sequence)
+
+    def _handle_assembly_loaded(self, assembly) -> None:
+        """Store assembly object (may be a path string from file dialog or Assembly)."""
+        if hasattr(assembly, "all_parts"):
+            self._assembly = assembly
+
+    def _handle_fasteners_loaded(self, fasteners) -> None:
+        if isinstance(fasteners, list):
+            self._fasteners = fasteners
+
+    def _handle_run_dfma(self, _data) -> None:
+        if self._assembly is None:
+            return
+        try:
+            from dfma.analyzer import analyze
+            result = analyze(self._assembly, fasteners=self._fasteners or None)
+            self.bus.publish("warnings_updated", result)
+            e = len(result.errors())
+            w = len(result.warnings_only())
+            i = len(result.infos())
+            self._set_status(
+                f"DFMA complete — {e} error(s), {w} warning(s), {i} info(s) | "
+                f"DFA Index: {result.dfa_index:.1%}"
+            )
+        except Exception as exc:
+            self._set_status(f"DFMA error: {exc}")
+
+    def _handle_run_screw(self, _data) -> None:
+        if not self._fasteners:
+            self._set_status("No fasteners loaded — run 'Open Fasteners' first.")
+            return
+        try:
+            from dfma.rules.screw_rules import check_fasteners
+            warnings = check_fasteners(self._fasteners)
+            # Merge into current warnings if assembly was already analysed
+            self._set_status(f"Screw check: {len(warnings)} issue(s) found.")
+        except Exception as exc:
+            self._set_status(f"Screw check error: {exc}")
+
+    def _handle_gen_sequence(self, algo: str) -> None:
+        """
+        Run assembly planning and publish plan_ready + sequence_ready.
+        Uses graph_demo.build_planner() when the loaded assembly is the
+        pneumatic valve demo; falls back to a generic planner otherwise.
+        """
+        if self._assembly is None:
+            self._set_status("No assembly loaded — cannot generate sequence.")
+            return
+        try:
+            self._set_status("Generating sequence…")
+            self.update_idletasks()
+
+            # Build planner
+            # Try the graph_demo builder first (demo assembly)
+            try:
+                from graph_demo import build_planner
+                planner = build_planner()
+            except Exception:
+                from assembly_graph import AssemblyPlanner
+                planner = AssemblyPlanner.from_assembly(
+                    self._assembly, base_part_id=self._assembly.all_parts()[0].id
+                )
+
+            # Choose SA iterations by algo selector
+            sa_iter = 2000
+            if isinstance(algo, str) and "kahn" in algo.lower():
+                sa_iter = 0
+            elif isinstance(algo, str) and "greedy" in algo.lower():
+                sa_iter = 0
+
+            plan = planner.plan(sa_iterations=sa_iter)
+            self._plan = plan
+
+            # Publish plan for graph tab
+            self.bus.publish("plan_ready", plan)
+
+            # Choose sequence to display
+            if isinstance(algo, str) and "greedy" in algo.lower():
+                seq_result = plan.greedy_sequence
+            elif isinstance(algo, str) and "kahn" in algo.lower():
+                seq_result = plan.top_sequences[0] if plan.top_sequences else plan.greedy_sequence
+            else:
+                seq_result = plan.optimized_sequence
+
+            steps = plan.optimized_steps()
+
+            self.bus.publish("sequence_ready", {
+                "steps":        steps,
+                "cost_summary": seq_result.summary(),
+            })
+
+            self._set_status(
+                f"Sequence generated — {len(steps)} parts | "
+                f"{len(plan.subassemblies)} subassembly group(s) | "
+                f"cost={plan.optimized_sequence.total_cost:.2f}"
+            )
+        except Exception as exc:
+            self._set_status(f"Sequence error: {exc}")
 
 
 def run() -> None:

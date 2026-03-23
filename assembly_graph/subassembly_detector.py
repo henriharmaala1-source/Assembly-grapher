@@ -39,7 +39,13 @@ Each detected subassembly is scored on:
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
-import networkx as nx
+try:
+    import networkx as nx
+except ImportError:
+    raise ImportError(
+        "networkx is required.\n"
+        "Install it with:  pip install networkx"
+    ) from None
 
 from .liaison_matrix import LiaisonMatrix
 

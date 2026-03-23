@@ -60,8 +60,8 @@ class DfmaTab(ttk.Frame):
         pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         pane.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
 
-        self.bom_panel     = BOMTab(pane, bus)
-        self.warning_panel = WarningPanel(pane, bus)
+        self.bom_panel     = BOMTab(pane, self.bus)
+        self.warning_panel = WarningPanel(pane, self.bus)
 
         pane.add(self.bom_panel,     weight=3)
         pane.add(self.warning_panel, weight=2)

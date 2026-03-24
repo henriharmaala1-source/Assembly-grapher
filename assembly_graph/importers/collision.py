@@ -41,6 +41,11 @@ Public API
 
 from __future__ import annotations
 
+# ── arm faulthandler BEFORE any OCC imports ───────────────────────────────────
+from assembly_graph.importers._debug import dbg  # noqa: E402
+
+dbg("collision.py: top-level import starting")
+
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -51,13 +56,18 @@ from .base              import ImportResult, PartPose, CollisionPair
 # Optional pythonOCC
 _OCC_AVAILABLE = False
 try:
+    dbg("collision.py: importing OCC.Core.BRepAlgoAPI...")
     from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
+    dbg("collision.py: importing OCC.Core.BRepGProp...")
     from OCC.Core.BRepGProp   import brepgprop
+    dbg("collision.py: importing OCC.Core.GProp...")
     from OCC.Core.GProp       import GProp_GProps
+    dbg("collision.py: importing OCC.Core.BRepCheck...")
     from OCC.Core.BRepCheck   import BRepCheck_Analyzer
     _OCC_AVAILABLE = True
-except ImportError:
-    pass
+    dbg("collision.py: all OCC imports OK")
+except ImportError as _ce:
+    dbg(f"collision.py: OCC ImportError — {_ce}")
 
 
 # ── report container ──────────────────────────────────────────────────────────

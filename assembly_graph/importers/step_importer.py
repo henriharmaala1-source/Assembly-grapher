@@ -27,8 +27,13 @@ Usage
 
 from __future__ import annotations
 
-import os
-import traceback
+# ── arm faulthandler BEFORE any OCC imports ───────────────────────────────────
+# Must be the very first import so that a segfault during OCC initialisation
+# still produces a traceback in step_debug.log.fault.
+from assembly_graph.importers._debug import dbg  # noqa: E402
+
+dbg("step_importer.py: top-level import starting")
+
 from pathlib import Path
 from typing import Any
 
@@ -40,20 +45,7 @@ from assembly_graph.liaison_matrix import LiaisonMatrix
 from .base    import ImportResult, ImportError, PartPose
 from .mappings import map_process_from_geometry
 
-
-# ── debug log (writes to step_debug.log next to the script) ──────────────────
-
-_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "step_debug.log")
-
-def _dbg(msg: str) -> None:
-    """Append a debug line to step_debug.log (flushed immediately)."""
-    try:
-        with open(_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(msg + "\n")
-            f.flush()
-    except Exception:
-        pass
-
+dbg("step_importer.py: non-OCC imports OK — importing OCC now...")
 
 # ── pythonOCC availability guard ──────────────────────────────────────────────
 
@@ -61,16 +53,33 @@ _OCC_AVAILABLE = False
 _OCC_ERROR     = ""
 
 try:
+    dbg("  importing OCC.Core.STEPControl...")
     from OCC.Core.STEPControl import STEPControl_Reader
+    dbg("  importing OCC.Core.TopExp...")
     from OCC.Core.TopExp       import TopExp_Explorer
+    dbg("  importing OCC.Core.TopAbs...")
     from OCC.Core.TopAbs       import TopAbs_SOLID
+    dbg("  importing OCC.Core.BRepBndLib...")
     from OCC.Core.BRepBndLib   import brepbndlib
+    dbg("  importing OCC.Core.Bnd...")
     from OCC.Core.Bnd          import Bnd_Box
+    dbg("  importing OCC.Core.BRepGProp...")
     from OCC.Core.BRepGProp    import brepgprop
+    dbg("  importing OCC.Core.GProp...")
     from OCC.Core.GProp        import GProp_GProps
+    dbg("  importing OCC.Core.BRepCheck...")
+    from OCC.Core.BRepCheck    import BRepCheck_Analyzer
+    dbg("  importing OCC.Core.TopoDS...")
+    from OCC.Core.TopoDS       import TopoDS_Shape
     _OCC_AVAILABLE = True
+    dbg("step_importer.py: all OCC imports OK")
 except ImportError as _e:
     _OCC_ERROR = str(_e)
+    dbg(f"step_importer.py: OCC ImportError — {_e}")
+
+# Keep the old _dbg name as an alias so load_tab.py can still do
+#   from assembly_graph.importers.step_importer import _dbg
+_dbg = dbg
 
 
 # ── default density table (g/mm³) ─────────────────────────────────────────────
@@ -126,8 +135,8 @@ def import_step(
     infer_contacts  : if True, infer contacts from bounding-box proximity
     contact_gap_mm  : clearance threshold for proximity-based contact inference
     """
-    _dbg("=" * 60)
-    _dbg(f"import_step called: path={path}")
+    dbg("=" * 60)
+    dbg(f"import_step called: path={path}")
 
     if not _OCC_AVAILABLE:
         raise ImportError(
@@ -140,27 +149,31 @@ def import_step(
     if not p.exists():
         raise ImportError(f"File not found: {path}")
 
+    dbg(f"  file size: {p.stat().st_size} bytes")
     warnings: list[str] = []
 
     # ── read STEP file ────────────────────────────────────────────────────────
-    _dbg("Creating STEPControl_Reader...")
+    dbg("Creating STEPControl_Reader...")
     reader = STEPControl_Reader()
-    _dbg("Calling ReadFile...")
+    dbg("Calling ReadFile...")
     status = reader.ReadFile(str(p))
-    _dbg(f"ReadFile status={status}")
+    dbg(f"ReadFile returned status={status}")
     if status != 1:   # 1 = IFSelect_RetDone
         raise ImportError(f"STEPControl_Reader failed (status={status}) for '{path}'")
 
-    _dbg("Calling TransferRoots...")
+    dbg("Calling TransferRoots...")
     reader.TransferRoots()
-    _dbg("Calling OneShape...")
+    dbg("Calling OneShape...")
     compound = reader.OneShape()
-    _dbg(f"OneShape returned: {type(compound)}")
+    dbg(f"OneShape returned: {type(compound).__name__}  IsNull={compound.IsNull()}")
+
+    if compound.IsNull():
+        raise ImportError(f"STEP file produced an empty compound shape: '{path}'")
 
     # ── extract part names from STEP model (best-effort) ──────────────────────
-    _dbg("Extracting part names...")
+    dbg("Extracting part names (best-effort)...")
     step_names = _extract_step_names(reader)
-    _dbg(f"Found {len(step_names)} names")
+    dbg(f"  extracted {len(step_names)} name(s): {list(step_names.values())[:5]}")
 
     # ── iterate over all solid bodies ─────────────────────────────────────────
     assembly = Assembly(id="ROOT", name=p.stem)
@@ -169,24 +182,30 @@ def import_step(
     bboxes: dict[str, tuple]    = {}
     counter = 0
 
-    _dbg("Starting TopExp_Explorer over solids...")
+    dbg("Starting TopExp_Explorer over SOLID shapes...")
     explorer = TopExp_Explorer(compound, TopAbs_SOLID)
     while explorer.More():
         counter += 1
         part_id = f"P{counter:04d}"
-        _dbg(f"  Solid #{counter}: getting Current()...")
+        dbg(f"  [{counter}] calling Current()...")
         solid = explorer.Current()
-        _dbg(f"  Solid #{counter}: type={type(solid)}")
+        dbg(f"  [{counter}] Current() OK  type={type(solid).__name__}  IsNull={solid.IsNull()}")
+
+        if solid.IsNull():
+            dbg(f"  [{counter}] SKIPPING — null shape")
+            explorer.Next()
+            continue
 
         name = step_names.get(counter - 1, "") or f"Part_{counter}"
+        dbg(f"  [{counter}] name={name!r}")
 
-        _dbg(f"  Solid #{counter}: computing bbox...")
-        bbox_mm = _compute_bbox_mm(solid)
-        _dbg(f"  Solid #{counter}: bbox={bbox_mm}")
+        dbg(f"  [{counter}] computing bbox...")
+        bbox_mm = _compute_bbox_mm(solid, counter)
+        dbg(f"  [{counter}] bbox={bbox_mm}")
 
-        _dbg(f"  Solid #{counter}: computing geometry...")
-        geom = _bbox_to_geometry(solid, bbox_mm, density_map or {})
-        _dbg(f"  Solid #{counter}: L={geom.length} W={geom.width} H={geom.height} mass={geom.mass_grams}g")
+        dbg(f"  [{counter}] computing geometry / volume...")
+        geom = _bbox_to_geometry(solid, bbox_mm, density_map or {}, counter)
+        dbg(f"  [{counter}] L={geom.length} W={geom.width} H={geom.height} mass={geom.mass_grams}g")
 
         proc = map_process_from_geometry(
             Material.UNKNOWN,
@@ -206,10 +225,11 @@ def import_step(
         bboxes[part_id] = bbox_mm
         poses[part_id]  = PartPose(part_id=part_id)
 
-        _dbg(f"  Solid #{counter}: calling Next()...")
+        dbg(f"  [{counter}] calling Next()...")
         explorer.Next()
+        dbg(f"  [{counter}] Next() OK")
 
-    _dbg(f"Explorer done. Total solids: {counter}")
+    dbg(f"Explorer loop done. counter={counter}")
 
     if counter == 0:
         raise ImportError(f"No solid bodies found in '{path}'")
@@ -217,15 +237,15 @@ def import_step(
     warnings.append(f"Loaded {counter} solid body/bodies from STEP file.")
 
     # ── build liaison matrix ──────────────────────────────────────────────────
-    _dbg("Building liaison matrix...")
+    dbg("Building LiaisonMatrix...")
     part_ids = [pt.id for pt in assembly.parts]
     liaison  = LiaisonMatrix(part_ids)
 
     if infer_contacts:
-        _dbg("Inferring contacts from AABB...")
+        dbg("Inferring contacts from AABB proximity...")
         _infer_contacts_from_aabb(poses, bboxes, liaison, contact_gap_mm, warnings)
 
-    _dbg("Building ImportResult...")
+    dbg("Building ImportResult...")
     result = ImportResult(
         assembly=assembly,
         liaison=liaison,
@@ -234,7 +254,7 @@ def import_step(
         warnings=warnings,
         source="step",
     )
-    _dbg("import_step COMPLETE — returning successfully")
+    dbg("import_step COMPLETE — returning successfully")
     return result
 
 
@@ -244,48 +264,86 @@ def _extract_step_names(reader: Any) -> dict[int, str]:
     """
     Best-effort extraction of part/product names from STEP model entities.
     Returns {solid_index: name} mapping.
+
+    Known crash vector: entity.DynamicType() can return a null handle in
+    pythonOCC.  We guard every access and bail out on any error.
     """
     names: dict[int, str] = {}
     try:
         model = reader.StepModel()
         if model is None:
+            dbg("  _extract_step_names: StepModel() returned None")
             return names
-        product_idx = 0
+
         nb = model.NbEntities()
+        dbg(f"  _extract_step_names: NbEntities={nb}")
+
+        product_idx = 0
         for i in range(1, nb + 1):
-            entity = model.Value(i)
-            etype  = entity.DynamicType().Name()
-            if "PRODUCT_DEFINITION_SHAPE" in etype or "PRODUCT_DEFINITION" in etype:
-                try:
-                    # Try to get name from the entity
-                    name_str = str(entity)
-                    # Extract quoted name if present
-                    if "'" in name_str:
-                        parts = name_str.split("'")
-                        if len(parts) >= 2 and parts[1].strip():
-                            names[product_idx] = parts[1].strip()
-                            product_idx += 1
-                            continue
-                    product_idx += 1
-                except Exception:
-                    product_idx += 1
-    except Exception:
-        pass
+            try:
+                entity = model.Value(i)
+                if entity is None:
+                    continue
+
+                # Guard against null DynamicType handle — this is the most
+                # common segfault source in pythonOCC STEP traversal.
+                dt = entity.DynamicType()
+                if dt is None:
+                    continue
+                etype = dt.Name()
+                if etype is None:
+                    continue
+
+                if "PRODUCT_DEFINITION_SHAPE" not in etype and "PRODUCT_DEFINITION" not in etype:
+                    continue
+
+                # Try to extract a human-readable name from the entity string
+                name_str = str(entity)
+                if "'" in name_str:
+                    parts_list = name_str.split("'")
+                    if len(parts_list) >= 2 and parts_list[1].strip():
+                        names[product_idx] = parts_list[1].strip()
+                product_idx += 1
+
+            except Exception as exc:
+                dbg(f"  _extract_step_names: entity {i} error: {exc}")
+                continue
+
+    except Exception as exc:
+        dbg(f"  _extract_step_names: outer error: {exc}")
+
     return names
 
 
 # ── geometry helpers ──────────────────────────────────────────────────────────
 
-def _compute_bbox_mm(shape: Any) -> tuple[float, float, float, float, float, float]:
+def _is_shape_valid(shape: Any) -> bool:
+    """
+    Quick validity check via BRepCheck_Analyzer.
+    Returns True if the shape passes — False means skip expensive operations.
+    Errors are treated as invalid (False).
+    """
+    try:
+        analyzer = BRepCheck_Analyzer(shape)
+        return bool(analyzer.IsValid())
+    except Exception as exc:
+        dbg(f"    BRepCheck_Analyzer error: {exc}")
+        return False
+
+
+def _compute_bbox_mm(shape: Any, idx: int = 0) -> tuple[float, float, float, float, float, float]:
     """Return (xmin,ymin,zmin,xmax,ymax,zmax) in mm from a TopoDS_Shape."""
     try:
         box = Bnd_Box()
+        dbg(f"    [{idx}] brepbndlib.Add...")
         brepbndlib.Add(shape, box)
+        dbg(f"    [{idx}] brepbndlib.Add OK  IsVoid={box.IsVoid()}")
         if box.IsVoid():
             return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         xmn, ymn, zmn, xmx, ymx, zmx = box.Get()
         return (xmn, ymn, zmn, xmx, ymx, zmx)
-    except Exception:
+    except Exception as exc:
+        dbg(f"    [{idx}] _compute_bbox_mm error: {exc}")
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
@@ -293,20 +351,31 @@ def _bbox_to_geometry(
     shape: Any,
     bbox_mm: tuple,
     density_map: dict[str, float],
+    idx: int = 0,
 ) -> Geometry:
     xmn, ymn, zmn, xmx, ymx, zmx = bbox_mm
     length = max(xmx - xmn, 0.0)
     width  = max(ymx - ymn, 0.0)
     height = max(zmx - zmn, 0.0)
 
-    volume_mm3 = length * width * height * 0.5
+    # Use BRepGProp for accurate volume only when the shape passes validity.
+    # VolumeProperties segfaults on open shells / non-manifold solids.
+    volume_mm3 = length * width * height * 0.5  # conservative default
     if shape is not None:
-        try:
-            props = GProp_GProps()
-            brepgprop.VolumeProperties(shape, props)
-            volume_mm3 = abs(props.Mass())
-        except Exception:
-            pass
+        dbg(f"    [{idx}] checking shape validity before VolumeProperties...")
+        valid = _is_shape_valid(shape)
+        dbg(f"    [{idx}] shape valid={valid}")
+        if valid:
+            try:
+                dbg(f"    [{idx}] brepgprop.VolumeProperties...")
+                props = GProp_GProps()
+                brepgprop.VolumeProperties(shape, props)
+                volume_mm3 = abs(props.Mass())
+                dbg(f"    [{idx}] VolumeProperties OK  vol={volume_mm3:.3f} mm³")
+            except Exception as exc:
+                dbg(f"    [{idx}] VolumeProperties error: {exc}")
+        else:
+            dbg(f"    [{idx}] skipping VolumeProperties on invalid shape")
 
     density = _lookup_density("", density_map)
     mass_g  = volume_mm3 * density
@@ -343,10 +412,7 @@ def _infer_contacts_from_aabb(
             if liaison.has_contact(a, b):
                 continue
 
-            ab = bboxes[a]
-            bb = bboxes[b]
-
-            if _aabb_overlap(ab, bb, gap_mm):
+            if _aabb_overlap(bboxes[a], bboxes[b], gap_mm):
                 try:
                     liaison.add_contact(a, b, contact_type="face", strength="rigid")
                     added += 1

@@ -21,6 +21,14 @@ EventBus events consumed:
   "assembly_loaded"   → refresh BOM preview (for pre-loaded demo from gui_main)
 """
 
+# Arm faulthandler as early as possible so any OCC segfault writes a traceback.
+# This import has no side-effects beyond opening the fault log file.
+try:
+    from assembly_graph.importers._debug import dbg as _step_dbg
+    _step_dbg("load_tab.py: module imported")
+except Exception:
+    pass
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -123,11 +131,22 @@ class LoadTab(ttk.Frame):
     def _load_path(self, path: str) -> None:
         # For STEP files, do a live import check (not a cached flag)
         # so that installing pythonOCC after startup is picked up.
+        try:
+            from assembly_graph.importers._debug import dbg as _dbg
+        except Exception:
+            def _dbg(msg: str) -> None:  # type: ignore[misc]
+                pass
+
+        _dbg(f"load_tab._load_path: path={path}")
+
         if path.lower().endswith((".step", ".stp")):
+            _dbg("load_tab: checking OCC availability...")
             try:
                 from OCC.Core.STEPControl import STEPControl_Reader  # noqa: F401
+                _dbg("load_tab: OCC available")
             except ImportError as occ_err:
                 import sys
+                _dbg(f"load_tab: OCC not available — {occ_err}")
                 messagebox.showwarning(
                     "pythonOCC not installed",
                     "Opening STEP files requires pythonOCC.\n\n"
@@ -141,38 +160,21 @@ class LoadTab(ttk.Frame):
 
         try:
             from assembly_graph.importers import load_assembly
-            from assembly_graph.importers.step_importer import _dbg
             _dbg("load_tab: calling load_assembly...")
             result = load_assembly(path)
-            _dbg(f"load_tab: load_assembly returned OK, {len(result.assembly.parts)} parts")
+            _dbg(f"load_tab: load_assembly OK — {len(result.assembly.parts)} parts")
         except Exception as exc:
             import traceback
-            try:
-                from assembly_graph.importers.step_importer import _dbg
-                _dbg(f"load_tab: EXCEPTION: {exc}\n{traceback.format_exc()}")
-            except Exception:
-                pass
+            _dbg(f"load_tab: EXCEPTION in load_assembly:\n{traceback.format_exc()}")
             messagebox.showerror("Load Error", str(exc))
             return
 
-        try:
-            from assembly_graph.importers.step_importer import _dbg
-            _dbg("load_tab: calling _populate...")
-        except Exception:
-            pass
+        _dbg("load_tab: calling _populate...")
         self._populate(result.assembly, result.warnings)
         self._assembly = result.assembly
-        try:
-            from assembly_graph.importers.step_importer import _dbg
-            _dbg("load_tab: publishing assembly_loaded...")
-        except Exception:
-            pass
+        _dbg("load_tab: publishing assembly_loaded...")
         self.bus.publish("assembly_loaded", result.assembly)
-        try:
-            from assembly_graph.importers.step_importer import _dbg
-            _dbg("load_tab: DONE — assembly loaded successfully")
-        except Exception:
-            pass
+        _dbg("load_tab: _load_path DONE")
 
     def _load_demo(self) -> None:
         try:

@@ -140,21 +140,33 @@ class LoadTab(ttk.Frame):
         _dbg(f"load_tab._load_path: path={path}")
 
         if path.lower().endswith((".step", ".stp")):
-            _dbg("load_tab: checking OCC availability...")
+            _dbg("load_tab: checking OCC/OCP availability...")
+            _occ_ok = False
             try:
-                from OCC.Core.STEPControl import STEPControl_Reader  # noqa: F401
-                _dbg("load_tab: OCC available")
-            except ImportError as occ_err:
+                from OCP.STEPControl import STEPControl_Reader  # noqa: F401
+                _occ_ok = True
+                _dbg("load_tab: OCP backend available")
+            except ImportError:
+                pass
+            if not _occ_ok:
+                try:
+                    from OCC.Core.STEPControl import STEPControl_Reader  # noqa: F401
+                    _occ_ok = True
+                    _dbg("load_tab: OCC backend available")
+                except ImportError:
+                    pass
+            if not _occ_ok:
                 import sys
-                _dbg(f"load_tab: OCC not available — {occ_err}")
+                _dbg("load_tab: no OCC/OCP backend — showing warning")
                 messagebox.showwarning(
-                    "pythonOCC not installed",
-                    "Opening STEP files requires pythonOCC.\n\n"
-                    "Install it with conda:\n"
+                    "OCC backend not installed",
+                    "Opening STEP files requires an OCC backend.\n\n"
+                    "Recommended (pip):\n"
+                    "  pip install cadquery\n\n"
+                    "Alternative (conda):\n"
                     "  conda install -c conda-forge pythonocc-core\n\n"
                     f"Running Python: {sys.executable}\n\n"
-                    f"Error detail: {occ_err}\n\n"
-                    "JSON BOM files (.json) work without any extra packages.",
+                    "JSON BOM files (.json) work without extra packages.",
                 )
                 return
 

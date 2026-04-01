@@ -53,21 +53,39 @@ from typing import Any
 from dfma.models.part   import Assembly, Part, Geometry
 from .base              import ImportResult, PartPose, CollisionPair
 
-# Optional pythonOCC
-_OCC_AVAILABLE = False
+# Optional OCC — try OCP (cadquery-ocp) first, then pythonocc-core
+_OCC_AVAILABLE  = False
+_brep_vol_fn: Any = None  # set below
+
 try:
-    dbg("collision.py: importing OCC.Core.BRepAlgoAPI...")
-    from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
-    dbg("collision.py: importing OCC.Core.BRepGProp...")
-    from OCC.Core.BRepGProp   import brepgprop
-    dbg("collision.py: importing OCC.Core.GProp...")
-    from OCC.Core.GProp       import GProp_GProps
-    dbg("collision.py: importing OCC.Core.BRepCheck...")
-    from OCC.Core.BRepCheck   import BRepCheck_Analyzer
+    dbg("collision.py: trying OCP backend...")
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    from OCP.BRepGProp   import BRepGProp   as _BRepGProp
+    from OCP.GProp       import GProp_GProps
+    from OCP.BRepCheck   import BRepCheck_Analyzer
+
+    def _brep_vol_fn(shape: Any, props: Any) -> None:
+        _BRepGProp.VolumeProperties_s(shape, props)
+
     _OCC_AVAILABLE = True
-    dbg("collision.py: all OCC imports OK")
-except ImportError as _ce:
-    dbg(f"collision.py: OCC ImportError — {_ce}")
+    dbg("collision.py: OCP backend OK")
+
+except ImportError as _ocp_err:
+    dbg(f"collision.py: OCP not available ({_ocp_err}), trying OCC...")
+    try:
+        from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common   # type: ignore[no-redef]
+        from OCC.Core.BRepGProp   import brepgprop as _brepgprop
+        from OCC.Core.GProp       import GProp_GProps          # type: ignore[no-redef]
+        from OCC.Core.BRepCheck   import BRepCheck_Analyzer    # type: ignore[no-redef]
+
+        def _brep_vol_fn(shape: Any, props: Any) -> None:
+            _brepgprop.VolumeProperties(shape, props)
+
+        _OCC_AVAILABLE = True
+        dbg("collision.py: OCC backend OK")
+
+    except ImportError as _occ_err:
+        dbg(f"collision.py: no OCC backend available — {_occ_err}")
 
 
 # ── report container ──────────────────────────────────────────────────────────
@@ -422,7 +440,7 @@ def _brep_interference_volume(shape_a, shape_b) -> float:
         if not analyzer.IsValid():
             return 0.0
         props = GProp_GProps()
-        brepgprop.VolumeProperties(result_shape, props)
+        _brep_vol_fn(result_shape, props)  # type: ignore[misc]
         return abs(props.Mass())   # mm³ (AP214 units)
     except Exception:
         return 0.0

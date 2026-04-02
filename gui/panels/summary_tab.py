@@ -35,10 +35,11 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..event_bus import EventBus
+from ..theme import C, style_text_widget
 
 
 _SEV_ICON  = {"ERROR": "●", "WARNING": "▲", "INFO": "ℹ"}
-_SEV_COLOR = {"ERROR": "#cc0000", "WARNING": "#cc7700", "INFO": "#0055cc"}
+_SEV_COLOR = {"ERROR": C.SEV_ERROR, "WARNING": C.SEV_WARNING, "INFO": C.SEV_INFO}
 
 
 class SummaryTab(ttk.Frame):
@@ -98,9 +99,9 @@ class SummaryTab(ttk.Frame):
         self._issues.column("part", width=65,  stretch=False)
         self._issues.column("msg",  width=500, stretch=True)
 
-        self._issues.tag_configure("ERROR",   foreground="#cc0000")
-        self._issues.tag_configure("WARNING", foreground="#cc7700")
-        self._issues.tag_configure("INFO",    foreground="#0055cc")
+        self._issues.tag_configure("ERROR",   foreground=C.SEV_ERROR)
+        self._issues.tag_configure("WARNING", foreground=C.SEV_WARNING)
+        self._issues.tag_configure("INFO",    foreground=C.SEV_INFO)
 
         sb = ttk.Scrollbar(issues_lf, orient=tk.VERTICAL,
                            command=self._issues.yview)
@@ -145,8 +146,8 @@ class SummaryTab(ttk.Frame):
         n_err  = len(result.errors())
         n_warn = len(result.warnings_only())
         n_info = len(result.infos())
-        color  = ("#cc0000" if n_err else
-                  "#cc7700" if n_warn else "#006622")
+        color  = (C.SEV_ERROR if n_err else
+                  C.SEV_WARNING if n_warn else C.SEV_OK)
         self._dfa_card.set_lines([
             f"DFA Index:     {result.dfa_index:.1%}",
             f"Assembly time: {result.total_assembly_time_s:.1f} s",
@@ -225,10 +226,10 @@ class _MetricCard(ttk.LabelFrame):
         self._lines: list[str] = []
         self._highlight: str | None = None
         self._text = tk.Text(
-            self, height=8, state=tk.DISABLED, relief=tk.FLAT,
-            bg=self.winfo_toplevel().cget("bg") if hasattr(self, "winfo_toplevel") else "#f0f0f0",
+            self, height=8, state=tk.DISABLED,
             font=("Courier", 9), wrap=tk.NONE,
         )
+        style_text_widget(self._text)
         self._text.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
     def set_lines(self, lines: list[str],
@@ -241,7 +242,7 @@ class _MetricCard(ttk.LabelFrame):
         if highlight_color:
             self._text.configure(foreground=highlight_color)
         else:
-            self._text.configure(foreground="black")
+            self._text.configure(foreground=C.TEXT)
         self._text.configure(state=tk.DISABLED)
 
     def get_lines(self) -> list[str]:

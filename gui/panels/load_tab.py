@@ -33,6 +33,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from ..event_bus import EventBus
+from .. import theme
 
 
 class LoadTab(ttk.Frame):
@@ -65,13 +66,14 @@ class LoadTab(ttk.Frame):
 
         ttk.Button(
             bar, text="Run Full Analysis  →",
+            style="Accent.TButton",
             command=self._run_all,
         ).pack(side=tk.RIGHT, padx=3)
 
         # ── assembly info bar ─────────────────────────────────────────────────
         self._info_var = tk.StringVar(value="No assembly loaded — open a file or load the demo.")
         ttk.Label(
-            self, textvariable=self._info_var, foreground="#444",
+            self, textvariable=self._info_var, style="Muted.TLabel",
         ).pack(anchor=tk.W, padx=10, pady=(0, 4))
 
         # ── BOM preview table ─────────────────────────────────────────────────
@@ -101,9 +103,9 @@ class LoadTab(ttk.Frame):
 
         self._warn_text = tk.Text(
             warn_frame, height=4, state=tk.DISABLED,
-            bg="#fffbe6", relief=tk.FLAT, font=("Courier", 8),
-            wrap=tk.WORD,
+            font=("Courier", 8), wrap=tk.WORD,
         )
+        theme.style_text_widget(self._warn_text)
         self._warn_text.pack(fill=tk.X, padx=4, pady=4)
 
     def _subscribe(self) -> None:

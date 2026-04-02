@@ -431,23 +431,41 @@ check("ignore_pairs: 1 skipped pair counted",
 # TEST 11 — BRep collision (skip if pythonOCC unavailable)
 # ──────────────────────────────────────────────────────────────────────────────
 
-section("TEST 11 — BRep collision (pythonOCC required)")
+section("TEST 11 — BRep collision (OCC/OCP required)")
 
 from assembly_graph.importers.collision import _OCC_AVAILABLE as _OCC_OK
 
+def _make_box_shape(dx, dy, dz):
+    """Return a TopoDS_Shape box using whichever OCC backend is available."""
+    try:
+        from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+        from OCP.gp          import gp_Pnt
+        return BRepPrimAPI_MakeBox(gp_Pnt(0,0,0), gp_Pnt(dx,dy,dz)).Shape()
+    except ImportError:
+        from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
+        from OCC.Core.gp          import gp_Pnt
+        return BRepPrimAPI_MakeBox(gp_Pnt(0,0,0), gp_Pnt(dx,dy,dz)).Shape()
+
+def _translate_shape(shape, tx, ty, tz):
+    """Translate a TopoDS_Shape using whichever OCC backend is available."""
+    try:
+        from OCP.gp              import gp_Vec, gp_Trsf
+        from OCP.BRepBuilderAPI  import BRepBuilderAPI_Transform
+        trsf = gp_Trsf(); trsf.SetTranslation(gp_Vec(tx, ty, tz))
+        return BRepBuilderAPI_Transform(shape, trsf, True).Shape()
+    except ImportError:
+        from OCC.Core.gp              import gp_Vec, gp_Trsf
+        from OCC.Core.BRepBuilderAPI  import BRepBuilderAPI_Transform
+        trsf = gp_Trsf(); trsf.SetTranslation(gp_Vec(tx, ty, tz))
+        return BRepBuilderAPI_Transform(shape, trsf, True).Shape()
+
 try:
     if not _OCC_OK:
-        raise ImportError("pythonOCC not installed")
-    from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
-    from OCC.Core.gp          import gp_Pnt, gp_Vec, gp_Trsf
-    from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
+        raise ImportError("no OCC/OCP backend installed")
 
     # Build two 10×10×10 boxes; shift second by (8,0,0) → 2mm overlap
-    box_a = BRepPrimAPI_MakeBox(gp_Pnt(-5,-5,-5), gp_Pnt(5,5,5)).Shape()
-    trsf  = gp_Trsf(); trsf.SetTranslation(gp_Vec(8,0,0))
-    box_b = BRepBuilderAPI_Transform(
-        BRepPrimAPI_MakeBox(gp_Pnt(-5,-5,-5), gp_Pnt(5,5,5)).Shape(),
-        trsf, True).Shape()
+    box_a = _make_box_shape(10, 10, 10)
+    box_b = _translate_shape(_make_box_shape(10, 10, 10), 8, 0, 0)
 
     # Build a result with shapes
     r_brep = _make_result([p1, p2], {
@@ -466,10 +484,7 @@ try:
           f"{report_brep.collisions[0].overlap_volume_mm3 if report_brep.collisions else 'N/A'}")
 
     # Clearly separated boxes
-    trsf2  = gp_Trsf(); trsf2.SetTranslation(gp_Vec(100,0,0))
-    box_c  = BRepBuilderAPI_Transform(
-        BRepPrimAPI_MakeBox(gp_Pnt(-5,-5,-5), gp_Pnt(5,5,5)).Shape(),
-        trsf2, True).Shape()
+    box_c = _translate_shape(_make_box_shape(10, 10, 10), 100, 0, 0)
     r_sep2 = _make_result([p1, p2], {
         "P1": PartPose("P1", position=(0,   0, 0)),
         "P2": PartPose("P2", position=(100, 0, 0)),
@@ -481,7 +496,7 @@ try:
           len(rep_sep2.collisions) == 0, "")
 
 except ImportError:
-    skip("BRep collision tests", "pythonOCC not installed")
+    skip("BRep collision tests", "no OCC/OCP backend")
 except Exception as exc:   # pragma: no cover
     check(f"BRep tests: unexpected exception: {exc}", False)
     import traceback; traceback.print_exc()
@@ -528,25 +543,28 @@ except Exception as exc:
 # TEST 13 — STEP import (skip if pythonOCC unavailable)
 # ──────────────────────────────────────────────────────────────────────────────
 
-section("TEST 13 — STEP importer (pythonOCC required)")
+section("TEST 13 — STEP importer (OCC/OCP required)")
 
 try:
     if not _OCC_OK:
-        raise ImportError("pythonOCC not installed")
-    from OCC.Core.BRepPrimAPI    import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
-    from OCC.Core.STEPControl    import STEPControl_Writer, STEPControl_AsIs
-    from OCC.Core.Interface_Static import Interface_Static
-    from OCC.Core.gp             import gp_Pnt
+        raise ImportError("no OCC/OCP backend installed")
 
-    # Write a tiny STEP file: one box part at the root
-    writer = STEPControl_Writer()
-    Interface_Static.SetCVal("write.step.schema", "AP214IS")
-    box_shape = BRepPrimAPI_MakeBox(gp_Pnt(0,0,0), gp_Pnt(100,50,20)).Shape()
-    writer.Transfer(box_shape, STEPControl_AsIs)
-
+    # Use cadquery (OCP) or OCC to write a 100×50×20 box STEP file
     with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as f:
         step_tmp = f.name
-    writer.Write(step_tmp)
+    try:
+        import cadquery as cq
+        cq.exporters.export(cq.Workplane("XY").box(100, 50, 20), step_tmp)
+    except ImportError:
+        from OCC.Core.BRepPrimAPI     import BRepPrimAPI_MakeBox
+        from OCC.Core.STEPControl     import STEPControl_Writer, STEPControl_AsIs
+        from OCC.Core.Interface_Static import Interface_Static
+        from OCC.Core.gp              import gp_Pnt
+        writer = STEPControl_Writer()
+        Interface_Static.SetCVal("write.step.schema", "AP214IS")
+        box_shape = BRepPrimAPI_MakeBox(gp_Pnt(0,0,0), gp_Pnt(100,50,20)).Shape()
+        writer.Transfer(box_shape, STEPControl_AsIs)
+        writer.Write(step_tmp)
 
     from assembly_graph.importers.step_importer import import_step
     step_result = import_step(step_tmp, infer_contacts=False)
@@ -575,7 +593,7 @@ try:
           f"got {part.geometry.length:.1f}×{part.geometry.width:.1f}×{part.geometry.height:.1f}")
 
 except ImportError:
-    skip("STEP importer tests", "pythonOCC not installed")
+    skip("STEP importer tests", "no OCC/OCP backend")
 except Exception as exc:   # pragma: no cover
     check(f"STEP tests: unexpected exception: {exc}", False)
     import traceback; traceback.print_exc()

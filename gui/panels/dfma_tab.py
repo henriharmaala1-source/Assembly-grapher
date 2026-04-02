@@ -53,7 +53,7 @@ class DfmaTab(ttk.Frame):
             side=tk.LEFT, padx=10, fill=tk.Y)
 
         self._score_var = tk.StringVar(value="Run DFMA to see results.")
-        ttk.Label(bar, textvariable=self._score_var, foreground="#444"
+        ttk.Label(bar, textvariable=self._score_var, style="Muted.TLabel"
                   ).pack(side=tk.LEFT)
 
         # ── horizontal pane: BOM left │ Warnings right ────────────────────────

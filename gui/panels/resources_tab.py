@@ -20,6 +20,7 @@ from tkinter import ttk, filedialog
 import csv
 
 from ..event_bus import EventBus
+from ..theme import C
 
 
 class ResourcesTab(ttk.Frame):
@@ -69,12 +70,12 @@ class ResourcesTab(ttk.Frame):
         self._tool_tree.pack(fill=tk.BOTH, expand=True)
 
         # colour bands per tool type
-        self._tool_tree.tag_configure("hex_key",      background="#e8f8f0")
-        self._tool_tree.tag_configure("socket",       background="#e8eef8")
-        self._tool_tree.tag_configure("torx_bit",     background="#f8f0e8")
-        self._tool_tree.tag_configure("phillips_bit", background="#f8e8e8")
-        self._tool_tree.tag_configure("pozi_bit",     background="#f5e8f8")
-        self._tool_tree.tag_configure("slotted_bit",  background="#f8f8e8")
+        self._tool_tree.tag_configure("hex_key",      background=C.ROW_HEX)
+        self._tool_tree.tag_configure("socket",       background=C.ROW_SOCKET)
+        self._tool_tree.tag_configure("torx_bit",     background=C.ROW_TORX)
+        self._tool_tree.tag_configure("phillips_bit", background=C.ROW_PHILIPS)
+        self._tool_tree.tag_configure("pozi_bit",     background=C.ROW_POZI)
+        self._tool_tree.tag_configure("slotted_bit",  background=C.ROW_SLOTTED)
 
         # ── zone breakdown table ─────────────────────────────────────────────
         bot = ttk.LabelFrame(pane, text="Tool Kit per Zone")
@@ -98,9 +99,9 @@ class ResourcesTab(ttk.Frame):
         zsb.pack(side=tk.RIGHT, fill=tk.Y)
         self._zone_tree.pack(fill=tk.BOTH, expand=True)
 
-        self._zone_tree.tag_configure("clean",   foreground="#006622")
-        self._zone_tree.tag_configure("oneswap", foreground="#996600")
-        self._zone_tree.tag_configure("many",    foreground="#cc0000")
+        self._zone_tree.tag_configure("clean",   foreground=C.SEV_OK)
+        self._zone_tree.tag_configure("oneswap", foreground=C.SEV_WARNING)
+        self._zone_tree.tag_configure("many",    foreground=C.SEV_ERROR)
 
     def _subscribe(self) -> None:
         self.bus.subscribe("resources_updated", self._on_resources_updated)

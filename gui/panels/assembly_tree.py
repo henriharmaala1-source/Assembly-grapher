@@ -20,6 +20,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..event_bus import EventBus
+from ..theme import C
 
 
 class AssemblyTreePanel(ttk.Frame):
@@ -132,9 +133,9 @@ class AssemblyTreePanel(ttk.Frame):
                 worst[pid] = sev
 
         severity_tag = {"ERROR": "error", "WARNING": "warning", "INFO": "info"}
-        self.tree.tag_configure("error",   foreground="red")
-        self.tree.tag_configure("warning", foreground="orange")
-        self.tree.tag_configure("info",    foreground="blue")
+        self.tree.tag_configure("error",   foreground=C.SEV_ERROR)
+        self.tree.tag_configure("warning", foreground=C.SEV_WARNING)
+        self.tree.tag_configure("info",    foreground=C.SEV_INFO)
 
         for pid, sev in worst.items():
             tag = severity_tag.get(sev, "")

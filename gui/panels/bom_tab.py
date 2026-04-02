@@ -16,6 +16,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..event_bus import EventBus
+from ..theme import C
 
 
 COLS = ("item", "part_no", "name", "qty", "process", "material", "dfa", "dfm")
@@ -58,10 +59,10 @@ class BOMTab(ttk.Frame):
         self.table.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
         self.table.bind("<<TreeviewSelect>>", self._on_select)
 
-        # colour tags
-        self.table.tag_configure("error",   background="#ffe0e0")
-        self.table.tag_configure("warning", background="#fff8d6")
-        self.table.tag_configure("info",    background="#e8f4ff")
+        # severity row tints
+        self.table.tag_configure("error",   background=C.ROW_ERROR)
+        self.table.tag_configure("warning", background=C.ROW_WARNING)
+        self.table.tag_configure("info",    background=C.ROW_INFO)
 
     def _subscribe(self) -> None:
         self.bus.subscribe("assembly_loaded",  self._on_assembly_loaded)

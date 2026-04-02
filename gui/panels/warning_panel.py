@@ -18,10 +18,11 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..event_bus import EventBus
+from ..theme import C, style_text_widget
 
 
 SEVERITY_ICON  = {"ERROR": "●", "WARNING": "▲", "INFO": "ℹ"}
-SEVERITY_COLOR = {"ERROR": "#cc0000", "WARNING": "#cc7700", "INFO": "#0055cc"}
+SEVERITY_COLOR = {"ERROR": C.SEV_ERROR, "WARNING": C.SEV_WARNING, "INFO": C.SEV_INFO}
 
 
 class WarningPanel(ttk.Frame):
@@ -62,10 +63,10 @@ class WarningPanel(ttk.Frame):
         self.wtree.column("part",     width=60,  stretch=False)
         self.wtree.column("msg",      width=200, stretch=True)
 
-        # colour tags
-        self.wtree.tag_configure("ERROR",   foreground="#cc0000")
-        self.wtree.tag_configure("WARNING", foreground="#cc7700")
-        self.wtree.tag_configure("INFO",    foreground="#0055cc")
+        # severity text colours
+        self.wtree.tag_configure("ERROR",   foreground=C.SEV_ERROR)
+        self.wtree.tag_configure("WARNING", foreground=C.SEV_WARNING)
+        self.wtree.tag_configure("INFO",    foreground=C.SEV_INFO)
 
         sb = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.wtree.yview)
         self.wtree.configure(yscrollcommand=sb.set)
@@ -83,8 +84,9 @@ class WarningPanel(ttk.Frame):
 
         self._detail_text = tk.Text(
             detail_frame, height=8, wrap=tk.WORD, state=tk.DISABLED,
-            bg="#f5f5f5", relief=tk.FLAT, font=("Courier", 8),
+            font=("Courier", 8),
         )
+        style_text_widget(self._detail_text)
         self._detail_text.pack(fill=tk.BOTH, expand=True)
 
         # ── export button ────────────────────────────────────────────────────

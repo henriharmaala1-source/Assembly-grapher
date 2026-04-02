@@ -21,6 +21,7 @@ from .panels.dfma_tab       import DfmaTab
 from .panels.sequencing_tab import SequencingTab
 from .panels.summary_tab    import SummaryTab
 from .event_bus             import EventBus
+from . import theme
 
 
 class App(tk.Tk):
@@ -31,6 +32,9 @@ class App(tk.Tk):
         self.title("Assembly Grapher — DFMA & Sequence Planner")
         self.geometry("1280x800")
         self.minsize(960, 600)
+
+        # Apply dark theme before building any widgets
+        theme.apply(self)
 
         self.bus = EventBus()
         self._assembly  = None
@@ -91,11 +95,11 @@ class App(tk.Tk):
     # ── status bar ────────────────────────────────────────────────────────────
 
     def _build_status_bar(self) -> None:
-        bar = ttk.Frame(self, relief=tk.SUNKEN)
+        bar = ttk.Frame(self, style="Status.TFrame")
         bar.pack(side=tk.BOTTOM, fill=tk.X)
         self._status_var = tk.StringVar(value="Ready — open an assembly to begin.")
-        ttk.Label(bar, textvariable=self._status_var, anchor=tk.W).pack(
-            side=tk.LEFT, padx=6)
+        ttk.Label(bar, textvariable=self._status_var, anchor=tk.W,
+                  style="Status.TLabel").pack(side=tk.LEFT)
 
     def _set_status(self, msg: str) -> None:
         self._status_var.set(msg)

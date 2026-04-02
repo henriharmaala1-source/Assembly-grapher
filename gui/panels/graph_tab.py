@@ -307,7 +307,7 @@ class GraphTab(ttk.Frame):
             )
             lbl = c.create_text(
                 x, y, text=node["label"],
-                font=LABEL_FONT, fill="#000000",
+                font=LABEL_FONT, fill="#11111b",
                 tags=("label", f"label_{pid}"),
             )
             node["canvas_ids"] = [oval, lbl]

@@ -247,7 +247,17 @@ def import_step(
         ))
         shapes[part_id] = solid
         bboxes[part_id] = bbox_mm
-        poses[part_id]  = PartPose(part_id=part_id)
+        # Store bbox centre as world-space position so AABB collision
+        # checking works correctly on multi-body STEP assemblies.
+        xmn, ymn, zmn, xmx, ymx, zmx = bbox_mm
+        poses[part_id] = PartPose(
+            part_id=part_id,
+            position=(
+                (xmn + xmx) / 2.0,
+                (ymn + ymx) / 2.0,
+                (zmn + zmx) / 2.0,
+            ),
+        )
 
         dbg(f"  [{counter}] Next()...")
         explorer.Next()

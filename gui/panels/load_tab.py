@@ -70,6 +70,11 @@ class LoadTab(ttk.Frame):
             command=self._run_all,
         ).pack(side=tk.RIGHT, padx=3)
 
+        ttk.Button(
+            bar, text="View 3D…",
+            command=lambda: self.bus.publish("open_3d_viewer", None),
+        ).pack(side=tk.RIGHT, padx=3)
+
         # ── assembly info bar ─────────────────────────────────────────────────
         self._info_var = tk.StringVar(value="No assembly loaded — open a file or load the demo.")
         ttk.Label(

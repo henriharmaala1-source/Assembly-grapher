@@ -37,8 +37,9 @@ class App(tk.Tk):
         theme.apply(self)
 
         self.bus = EventBus()
-        self._assembly  = None
-        self._liaison   = None   # LiaisonMatrix from the last import
+        self._assembly      = None
+        self._liaison       = None   # LiaisonMatrix from the last import
+        self._import_result = None   # full ImportResult (has .shapes for 3D viewer)
         self._fasteners: list = []
         self._plan      = None
         self._result    = None   # most recent AnalysisResult
@@ -73,6 +74,8 @@ class App(tk.Tk):
                                       "gen_sequence", "Optimized (Simulated Annealing)"))
         analysis_menu.add_separator()
         analysis_menu.add_command(label="Run All",     command=self._run_all)
+        analysis_menu.add_separator()
+        analysis_menu.add_command(label="View 3D…",   command=self._open_3d_viewer)
         menubar.add_cascade(label="Analysis", menu=analysis_menu)
 
         self.config(menu=menubar)
@@ -115,17 +118,20 @@ class App(tk.Tk):
         self.bus.subscribe("gen_sequence",     self._handle_gen_sequence)
         self.bus.subscribe("run_resources",    self._handle_run_resources)
         self.bus.subscribe("export_report",    lambda _: self._export_report())
+        self.bus.subscribe("open_3d_viewer",   lambda _: self._open_3d_viewer())
 
     # ── business logic handlers ───────────────────────────────────────────────
 
     def _handle_assembly_loaded(self, payload) -> None:
         # Accepts either a bare Assembly or an ImportResult (has .assembly + .liaison)
         if hasattr(payload, "assembly"):
-            self._assembly = payload.assembly
-            self._liaison  = payload.liaison
+            self._assembly      = payload.assembly
+            self._liaison       = payload.liaison
+            self._import_result = payload          # keep full result for 3D viewer
         elif hasattr(payload, "all_parts"):
-            self._assembly = payload
-            self._liaison  = None
+            self._assembly      = payload
+            self._liaison       = None
+            self._import_result = None
 
     def _handle_fasteners_loaded(self, fasteners) -> None:
         if isinstance(fasteners, list):
@@ -239,6 +245,13 @@ class App(tk.Tk):
                 self.after(0, lambda: setattr(self, "_seq_running", False))
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def _open_3d_viewer(self) -> None:
+        if self._import_result is None:
+            self._set_status("Load a STEP file first — JSON BOM has no 3D geometry.")
+            return
+        from .panels.viewer_3d import open_viewer
+        open_viewer(self._import_result, dfma_result=self._result, title="Assembly 3D View")
 
     def _handle_run_resources(self, _data) -> None:
         self._publish_resources(self._fasteners)

@@ -130,23 +130,39 @@ class App(tk.Tk):
         if self._assembly is None:
             self._set_status("No assembly loaded — open a file first.")
             return
-        try:
-            self._set_status("Running DFMA analysis…")
-            self.update_idletasks()
-            from dfma.analyzer import analyze
-            result = analyze(self._assembly,
-                             fasteners=self._fasteners or None)
-            self._result = result
-            self.bus.publish("warnings_updated", result)
-            e = len(result.errors())
-            w = len(result.warnings_only())
-            i = len(result.infos())
-            self._set_status(
-                f"DFMA complete — {e} error(s), {w} warning(s), {i} info(s)  |  "
-                f"DFA Index: {result.dfa_index:.1%}"
-            )
-        except Exception as exc:
-            self._set_status(f"DFMA error: {exc}")
+        if getattr(self, "_dfma_running", False):
+            return
+        self._dfma_running = True
+        self._set_status("Running DFMA analysis…  (please wait)")
+        self.update_idletasks()
+
+        assembly  = self._assembly
+        fasteners = self._fasteners or None
+
+        def _run() -> None:
+            try:
+                from dfma.analyzer import analyze
+                result = analyze(assembly, fasteners=fasteners)
+
+                def _done() -> None:
+                    self._result = result
+                    self.bus.publish("warnings_updated", result)
+                    e = len(result.errors())
+                    w = len(result.warnings_only())
+                    i = len(result.infos())
+                    self._set_status(
+                        f"DFMA complete — {e} error(s), {w} warning(s), {i} info(s)  |  "
+                        f"DFA Index: {result.dfa_index:.1%}"
+                    )
+                    self._dfma_running = False
+
+                self.after(0, _done)
+            except Exception as exc:
+                self.after(0, lambda: self._set_status(f"DFMA error: {exc}"))
+                self.after(0, lambda: setattr(self, "_dfma_running", False))
+
+        import threading
+        threading.Thread(target=_run, daemon=True).start()
 
     def _handle_run_screw(self, _data) -> None:
         if not self._fasteners:

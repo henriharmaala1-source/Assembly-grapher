@@ -38,6 +38,7 @@ class App(tk.Tk):
 
         self.bus = EventBus()
         self._assembly  = None
+        self._liaison   = None   # LiaisonMatrix from the last import
         self._fasteners: list = []
         self._plan      = None
         self._result    = None   # most recent AnalysisResult
@@ -117,9 +118,14 @@ class App(tk.Tk):
 
     # ── business logic handlers ───────────────────────────────────────────────
 
-    def _handle_assembly_loaded(self, assembly) -> None:
-        if hasattr(assembly, "all_parts"):
-            self._assembly = assembly
+    def _handle_assembly_loaded(self, payload) -> None:
+        # Accepts either a bare Assembly or an ImportResult (has .assembly + .liaison)
+        if hasattr(payload, "assembly"):
+            self._assembly = payload.assembly
+            self._liaison  = payload.liaison
+        elif hasattr(payload, "all_parts"):
+            self._assembly = payload
+            self._liaison  = None
 
     def _handle_fasteners_loaded(self, fasteners) -> None:
         if isinstance(fasteners, list):
@@ -187,18 +193,19 @@ class App(tk.Tk):
         self.update_idletasks()
 
         assembly = self._assembly   # capture for thread
+        liaison  = self._liaison    # may be None for demo assemblies
 
         def _run() -> None:
             try:
-                try:
-                    from graph_demo import build_planner
-                    planner = build_planner()
-                except Exception:
-                    from assembly_graph import AssemblyPlanner
-                    planner = AssemblyPlanner.from_assembly(
-                        assembly,
-                        base_part_id=assembly.all_parts()[0].id,
-                    )
+                from assembly_graph import AssemblyPlanner
+                planner = AssemblyPlanner.from_assembly(
+                    assembly,
+                    base_part_id=assembly.all_parts()[0].id,
+                )
+                # Use the liaison matrix from the import (STEP proximity inference
+                # or JSON contacts) rather than the empty one from_assembly creates.
+                if liaison is not None:
+                    planner.liaison = liaison
 
                 sa_iter = 0 if isinstance(algo, str) and (
                     "greedy" in algo.lower() or "kahn" in algo.lower()

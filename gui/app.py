@@ -18,6 +18,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from .panels.load_tab       import LoadTab
 from .panels.dfma_tab       import DfmaTab
+from .panels.graph_tab      import GraphTab
 from .panels.sequencing_tab import SequencingTab
 from .panels.summary_tab    import SummaryTab
 from .event_bus             import EventBus
@@ -88,11 +89,13 @@ class App(tk.Tk):
 
         self.load_tab    = LoadTab(self.notebook, self.bus)
         self.dfma_tab    = DfmaTab(self.notebook, self.bus)
+        self.graph_tab   = GraphTab(self.notebook, self.bus)
         self.seq_tab     = SequencingTab(self.notebook, self.bus)
         self.summary_tab = SummaryTab(self.notebook, self.bus)
 
         self.notebook.add(self.load_tab,    text="  Load Parts  ")
         self.notebook.add(self.dfma_tab,    text="  DFMA  ")
+        self.notebook.add(self.graph_tab,   text="  Graph  ")
         self.notebook.add(self.seq_tab,     text="  Sequencing  ")
         self.notebook.add(self.summary_tab, text="  Summary  ")
 
@@ -119,6 +122,7 @@ class App(tk.Tk):
         self.bus.subscribe("run_resources",    self._handle_run_resources)
         self.bus.subscribe("export_report",    lambda _: self._export_report())
         self.bus.subscribe("open_3d_viewer",   lambda _: self._open_3d_viewer())
+        self.bus.subscribe("export_bom_csv",   lambda _: self._export_bom_csv())
 
     # ── business logic handlers ───────────────────────────────────────────────
 
@@ -167,6 +171,11 @@ class App(tk.Tk):
                         f"DFA Index: {result.dfa_index:.1%}"
                     )
                     self._dfma_running = False
+                    # Chain: if _run_all requested, now fire sequencing
+                    if getattr(self, "_chain_sequence_after_dfma", False):
+                        self._chain_sequence_after_dfma = False
+                        self.bus.publish("gen_sequence",
+                                         "Optimized (Simulated Annealing)")
 
                 self.after(0, _done)
             except Exception as exc:
@@ -290,9 +299,14 @@ class App(tk.Tk):
         self.load_tab._load_demo()
 
     def _run_all(self) -> None:
-        """Run DFMA + generate sequence in one shot."""
-        self.bus.publish("run_dfma",     None)
-        self.bus.publish("gen_sequence", "Optimized (Simulated Annealing)")
+        """Run DFMA first, then generate sequence once DFMA completes."""
+        if self._assembly is None:
+            self._set_status("No assembly loaded — open a file first.")
+            return
+        # Chain: kick off DFMA and set a flag so the DFMA _done callback
+        # automatically fires gen_sequence afterwards.
+        self._chain_sequence_after_dfma = True
+        self.bus.publish("run_dfma", None)
 
     def _export_report(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -307,17 +321,71 @@ class App(tk.Tk):
         if not path:
             return
         try:
-            lines: list[str] = []
-            if self._result:
-                lines.append(self._result.summary())
-            if self._plan:
-                lines.append("")
-                lines.append(self._plan.summary())
-            if not lines:
-                lines = ["No analysis results to export."]
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
+            if path.lower().endswith(".json"):
+                import json as _json
+                data: dict = {}
+                if self._result:
+                    data["dfma"] = {
+                        "dfa_index":           self._result.dfa_index,
+                        "total_assembly_time": self._result.total_assembly_time_s,
+                        "total_parts":         self._result.total_parts,
+                        "theoretical_minimum": self._result.theoretical_minimum,
+                        "warnings": [
+                            {"rule": w.rule_id, "part_id": w.part_id,
+                             "severity": w.severity.value, "message": w.message}
+                            for w in self._result.warnings
+                        ],
+                    }
+                if self._plan:
+                    data["sequence"] = {
+                        "steps": self._plan.optimized_steps(),
+                        "cost":  self._plan.optimized_sequence.total_cost,
+                    }
+                with open(path, "w", encoding="utf-8") as f:
+                    _json.dump(data, f, indent=2)
+            else:
+                lines: list[str] = []
+                if self._result:
+                    lines.append(self._result.summary())
+                if self._plan:
+                    lines.append("")
+                    lines.append(self._plan.summary())
+                if not lines:
+                    lines = ["No analysis results to export."]
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines))
             self._set_status(f"Report exported to: {path}")
+        except Exception as exc:
+            messagebox.showerror("Export Error", str(exc))
+
+    def _export_bom_csv(self) -> None:
+        if self._assembly is None:
+            self._set_status("No assembly loaded — nothing to export.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export BOM as CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            import csv
+            parts = self._assembly.all_parts()
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "ID", "Name", "Qty", "Material", "Process",
+                    "Length_mm", "Width_mm", "Height_mm", "Mass_g",
+                ])
+                for p in parts:
+                    g = p.geometry
+                    writer.writerow([
+                        p.id, p.name, getattr(p, "quantity", 1),
+                        p.material.value, p.process.value,
+                        g.length, g.width, g.height, g.mass_grams,
+                    ])
+            self._set_status(f"BOM exported to: {path}")
         except Exception as exc:
             messagebox.showerror("Export Error", str(exc))
 

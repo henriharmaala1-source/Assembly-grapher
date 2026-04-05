@@ -170,16 +170,19 @@ class SummaryTab(ttk.Frame):
             return
 
         total_t = sum(s.get("time_s", 0.0) for s in steps)
-        # Parse cost summary for direction/tool changes if available
+        # Parse cost summary — format: "cost=8.40  dir_changes=1  tool_changes=1  ..."
         dir_ch = tool_ch = cost = "—"
-        for token in summary.split("|"):
-            t = token.strip()
-            if "dir" in t.lower():
-                dir_ch = t.split("=")[-1].strip()
-            elif "tool" in t.lower():
-                tool_ch = t.split("=")[-1].strip()
-            elif "cost" in t.lower():
-                cost = t.split("=")[-1].strip()
+        for token in summary.split():
+            if "=" not in token:
+                continue
+            key, _, val = token.partition("=")
+            key = key.strip().lower()
+            if key == "dir_changes":
+                dir_ch = val.strip()
+            elif key == "tool_changes":
+                tool_ch = val.strip()
+            elif key == "cost":
+                cost = val.strip()
 
         self._seq_card.set_lines([
             f"Steps:         {len(steps)}",

@@ -91,16 +91,18 @@ class BOMTab(ttk.Frame):
     def _on_warnings_updated(self, result) -> None:
         if result is None:
             return
+        _rank = {"ERROR": 3, "WARNING": 2, "INFO": 1}
         dfa_worst: dict[str, str] = {}
         dfm_worst: dict[str, str] = {}
         for w in result.warnings:
             pid = w.part_id
+            sev = w.severity.value
             if w.rule_id.startswith("DFA"):
-                if pid not in dfa_worst or w.severity.value < dfa_worst[pid]:
-                    dfa_worst[pid] = w.severity.value
+                if _rank.get(sev, 0) > _rank.get(dfa_worst.get(pid, ""), 0):
+                    dfa_worst[pid] = sev
             elif w.rule_id.startswith("DFM"):
-                if pid not in dfm_worst or w.severity.value < dfm_worst[pid]:
-                    dfm_worst[pid] = w.severity.value
+                if _rank.get(sev, 0) > _rank.get(dfm_worst.get(pid, ""), 0):
+                    dfm_worst[pid] = sev
 
         sev_icon = {"ERROR": "✗", "WARNING": "⚠", "INFO": "ℹ"}
         sev_tag  = {"ERROR": "error", "WARNING": "warning", "INFO": "info"}

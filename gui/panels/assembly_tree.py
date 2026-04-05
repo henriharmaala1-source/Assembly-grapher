@@ -125,11 +125,12 @@ class AssemblyTreePanel(ttk.Frame):
         """Colour-code nodes based on worst warning severity."""
         if result is None:
             return
+        _rank = {"ERROR": 3, "WARNING": 2, "INFO": 1}
         worst: dict[str, str] = {}
         for w in result.warnings:
             pid = w.part_id
             sev = w.severity.value
-            if pid not in worst or sev < worst[pid]:
+            if _rank.get(sev, 0) > _rank.get(worst.get(pid, ""), 0):
                 worst[pid] = sev
 
         severity_tag = {"ERROR": "error", "WARNING": "warning", "INFO": "info"}

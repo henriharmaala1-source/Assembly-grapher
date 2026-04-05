@@ -224,13 +224,25 @@ def _build_severity_map(dfma_result) -> dict[str, str]:
 
 
 def _err(msg: str) -> None:
-    """Show a tkinter error box (safe to call from a non-main thread via after)."""
+    """
+    Show an error from inside the viewer thread.
+
+    Creating tk.Tk() from a non-main thread is undefined behaviour on
+    Windows/macOS.  We print to stderr instead; the message is also
+    written to a small log so users can read it.
+    """
+    import sys
+    print(f"[viewer_3d] {msg}", file=sys.stderr)
+    # Best-effort: try to surface the message via a subprocess messagebox
+    # so it is visible to users who launched via VBS (no console).
     try:
-        import tkinter as tk
-        from tkinter import messagebox
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("3D Viewer", msg, parent=root)
-        root.destroy()
+        import subprocess
+        subprocess.Popen(
+            [sys.executable, "-c",
+             f"import tkinter as tk, tkinter.messagebox as mb; "
+             f"r=tk.Tk(); r.withdraw(); "
+             f"mb.showerror('3D Viewer', {repr(msg)}); r.destroy()"],
+            close_fds=True,
+        )
     except Exception:
-        print(f"[viewer_3d] {msg}")
+        pass

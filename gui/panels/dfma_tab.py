@@ -35,7 +35,8 @@ class DfmaTab(ttk.Frame):
         super().__init__(parent)
         self.bus = bus
         self._build()
-        bus.subscribe("warnings_updated", self._on_result)
+        bus.subscribe("warnings_updated",  self._on_result)
+        bus.subscribe("assembly_loaded",   self._on_assembly_loaded)
 
     def _build(self) -> None:
         # ── toolbar ───────────────────────────────────────────────────────────
@@ -67,6 +68,9 @@ class DfmaTab(ttk.Frame):
         pane.add(self.warning_panel, weight=2)
 
     # ── event handler ─────────────────────────────────────────────────────────
+
+    def _on_assembly_loaded(self, _payload) -> None:
+        self._score_var.set("Run DFMA to see results.")
 
     def _on_result(self, result) -> None:
         if result is None:

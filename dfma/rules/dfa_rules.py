@@ -221,13 +221,15 @@ def rule_dfa008_large_part_count(assembly: Assembly) -> list[Warning]:
     """
     DFA-008: High part count vs theoretical minimum indicates consolidation potential.
     DFA efficiency target: ratio N_min/N_total > 0.5 (ideally > 0.7).
+
+    Skipped when n_min == 0 (no necessity metadata — e.g. raw STEP import).
     """
     warnings = []
     parts = assembly.all_parts()
     n_total = len(parts)
     n_min   = assembly.theoretical_minimum_parts()
 
-    if n_total == 0:
+    if n_total == 0 or n_min == 0:
         return []
 
     ratio = n_min / n_total
@@ -276,37 +278,75 @@ def check_assembly(assembly: Assembly) -> AnalysisResult:
       - per-part handling + insertion time (Boothroyd-Dewhurst model)
       - total estimated assembly time
       - DFA Index  = (N_min × 2.93) / T_total
+
+    When no functional-necessity metadata is available (e.g. raw STEP import
+    without a BOM sidecar), DFA-001 and DFA-008 are suppressed to avoid
+    flooding the report with misleading warnings.  A single INFO note is
+    emitted instead, and N_min is set equal to N_total so the DFA Index
+    reflects handling/insertion difficulty rather than part-count efficiency.
     """
     result = AnalysisResult(assembly_name=assembly.name)
     warnings: list[Warning] = []
 
+    parts = assembly.all_parts()
+
+    # Detect whether any part carries explicit necessity metadata.
+    # Raw STEP imports have all flags False (defaulted); JSON BOMs set them.
+    has_necessity_metadata = any(
+        p.must_move or p.must_differ_material or p.must_be_separate
+        for p in parts
+    )
+
     # ── assembly-level rules ─────────────────────────────────────────────
     warnings.extend(rule_dfa007_assembly_direction(assembly))
-    warnings.extend(rule_dfa008_large_part_count(assembly))
+
+    if has_necessity_metadata:
+        warnings.extend(rule_dfa008_large_part_count(assembly))
 
     # ── part-level rules ─────────────────────────────────────────────────
     total_time = 0.0
-    for part in assembly.all_parts():
+    for part in parts:
         t = estimate_total_time(part.geometry) * part.quantity
         total_time += t
 
-        warnings.extend(rule_dfa001_functional_necessity(part))
+        if has_necessity_metadata:
+            warnings.extend(rule_dfa001_functional_necessity(part))
         warnings.extend(rule_dfa002_symmetry(part))
         warnings.extend(rule_dfa003_handling_difficulty(part))
         warnings.extend(rule_dfa004_fastener_count(part))
         warnings.extend(rule_dfa005_fastener_clearance(part))
         warnings.extend(rule_dfa006_obstructed_insertion(part))
 
-    # ── DFA Index ─────────────────────────────────────────────────────────
-    parts      = assembly.all_parts()
-    n_total    = sum(p.quantity for p in parts)
-    n_min      = assembly.theoretical_minimum_parts()
-    dfa_index  = (n_min * IDEAL_ASSEMBLY_TIME) / total_time if total_time > 0 else 0.0
+    if not has_necessity_metadata and parts:
+        warnings.append(Warning(
+            rule_id="DFA-001",
+            severity=Severity.INFO,
+            part_id=assembly.id,
+            message=(
+                "Functional-necessity metadata not available for this assembly "
+                "(imported from STEP without a BOM sidecar file). "
+                "Rules DFA-001 (part elimination) and DFA-008 (part-count "
+                "efficiency) are suppressed to avoid misleading results."
+            ),
+            suggestion=(
+                "Create a JSON BOM sidecar with must_move, must_differ_material, "
+                "and must_be_separate flags per part to unlock full DFA scoring."
+            ),
+        ))
 
-    result.warnings            = warnings
-    result.total_parts         = n_total
-    result.theoretical_minimum = n_min
+    # ── DFA Index ─────────────────────────────────────────────────────────
+    n_total   = sum(p.quantity for p in parts)
+    n_min     = assembly.theoretical_minimum_parts()
+    # When no necessity metadata exists, treat all parts as necessary so the
+    # DFA Index reflects handling/insertion efficiency rather than showing 0 %.
+    if n_min == 0 and n_total > 0:
+        n_min = n_total
+    dfa_index = (n_min * IDEAL_ASSEMBLY_TIME) / total_time if total_time > 0 else 0.0
+
+    result.warnings              = warnings
+    result.total_parts           = n_total
+    result.theoretical_minimum   = n_min
     result.total_assembly_time_s = round(total_time, 2)
-    result.dfa_index           = round(dfa_index, 4)
+    result.dfa_index             = round(dfa_index, 4)
 
     return result

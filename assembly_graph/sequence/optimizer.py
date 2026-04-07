@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -226,6 +227,7 @@ class SequenceOptimizer:
         T_start:          float = 5.0,
         T_end:            float = 0.05,
         seed:             int | None = None,
+        timeout_s:        float = 10.0,
     ) -> ScoredSequence:
         """
         Simulated annealing over the space of valid topological orderings.
@@ -242,8 +244,10 @@ class SequenceOptimizer:
         T_start          : initial temperature
         T_end            : final temperature
         seed             : random seed for reproducibility
+        timeout_s        : wall-clock time limit in seconds (default 10 s)
         """
         rng = random.Random(seed)
+        deadline = time.monotonic() + timeout_s
 
         # Start from Kahn's sequence if none provided
         if initial_sequence is None:
@@ -277,7 +281,7 @@ class SequenceOptimizer:
         n   = len(current_seq)
 
         for _ in range(max_iterations):
-            if n < 2:
+            if n < 2 or time.monotonic() >= deadline:
                 break
 
             # Random swap of two positions

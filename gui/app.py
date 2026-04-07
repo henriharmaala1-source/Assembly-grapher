@@ -14,6 +14,7 @@ owns the business logic handlers (run_dfma, run_screw, gen_sequence, export).
 
 import threading
 import tkinter as tk
+from threading import Lock
 from tkinter import ttk, filedialog, messagebox
 
 from .panels.load_tab       import LoadTab
@@ -38,6 +39,7 @@ class App(tk.Tk):
         theme.apply(self)
 
         self.bus = EventBus()
+        self._state_lock    = Lock()  # guards _assembly, _liaison, _import_result, _result, _plan
         self._assembly      = None
         self._liaison       = None   # LiaisonMatrix from the last import
         self._import_result = None   # full ImportResult (has .shapes for 3D viewer)
@@ -128,14 +130,15 @@ class App(tk.Tk):
 
     def _handle_assembly_loaded(self, payload) -> None:
         # Accepts either a bare Assembly or an ImportResult (has .assembly + .liaison)
-        if hasattr(payload, "assembly"):
-            self._assembly      = payload.assembly
-            self._liaison       = payload.liaison
-            self._import_result = payload          # keep full result for 3D viewer
-        elif hasattr(payload, "all_parts"):
-            self._assembly      = payload
-            self._liaison       = None
-            self._import_result = None
+        with self._state_lock:
+            if hasattr(payload, "assembly"):
+                self._assembly      = payload.assembly
+                self._liaison       = payload.liaison
+                self._import_result = payload          # keep full result for 3D viewer
+            elif hasattr(payload, "all_parts"):
+                self._assembly      = payload
+                self._liaison       = None
+                self._import_result = None
 
     def _handle_fasteners_loaded(self, fasteners) -> None:
         if isinstance(fasteners, list):
@@ -143,7 +146,10 @@ class App(tk.Tk):
             self._publish_resources(fasteners)
 
     def _handle_run_dfma(self, _data) -> None:
-        if self._assembly is None:
+        with self._state_lock:
+            assembly  = self._assembly
+            fasteners = list(self._fasteners) if self._fasteners else None
+        if assembly is None:
             self._set_status("No assembly loaded — open a file first.")
             return
         if getattr(self, "_dfma_running", False):
@@ -152,16 +158,14 @@ class App(tk.Tk):
         self._set_status("Running DFMA analysis…  (please wait)")
         self.update_idletasks()
 
-        assembly  = self._assembly
-        fasteners = self._fasteners or None
-
         def _run() -> None:
             try:
                 from dfma.analyzer import analyze
                 result = analyze(assembly, fasteners=fasteners)
 
                 def _done() -> None:
-                    self._result = result
+                    with self._state_lock:
+                        self._result = result
                     self.bus.publish("warnings_updated", result)
                     e = len(result.errors())
                     w = len(result.warnings_only())
@@ -197,7 +201,10 @@ class App(tk.Tk):
             self._set_status(f"Screw check error: {exc}")
 
     def _handle_gen_sequence(self, algo: str) -> None:
-        if self._assembly is None:
+        with self._state_lock:
+            assembly = self._assembly
+            liaison  = self._liaison
+        if assembly is None:
             self._set_status("No assembly loaded — cannot generate sequence.")
             return
         if getattr(self, "_seq_running", False):
@@ -206,9 +213,6 @@ class App(tk.Tk):
         self._seq_running = True
         self._set_status("Generating assembly sequence…  (please wait)")
         self.update_idletasks()
-
-        assembly = self._assembly   # capture for thread
-        liaison  = self._liaison    # may be None for demo assemblies
 
         def _run() -> None:
             try:
@@ -241,7 +245,8 @@ class App(tk.Tk):
                 )
 
                 def _done() -> None:
-                    self._plan = plan
+                    with self._state_lock:
+                        self._plan = plan
                     self.bus.publish("plan_ready",     plan)
                     self.bus.publish("sequence_ready", payload)
                     self._set_status(status)
@@ -256,11 +261,14 @@ class App(tk.Tk):
         threading.Thread(target=_run, daemon=True).start()
 
     def _open_3d_viewer(self) -> None:
-        if self._import_result is None:
+        with self._state_lock:
+            import_result = self._import_result
+            dfma_result   = self._result
+        if import_result is None:
             self._set_status("Load a STEP file first — JSON BOM has no 3D geometry.")
             return
         from .panels.viewer_3d import open_viewer
-        open_viewer(self._import_result, dfma_result=self._result, title="Assembly 3D View")
+        open_viewer(import_result, dfma_result=dfma_result, title="Assembly 3D View")
 
     def _handle_run_resources(self, _data) -> None:
         self._publish_resources(self._fasteners)
@@ -300,7 +308,9 @@ class App(tk.Tk):
 
     def _run_all(self) -> None:
         """Run DFMA first, then generate sequence once DFMA completes."""
-        if self._assembly is None:
+        with self._state_lock:
+            no_assembly = self._assembly is None
+        if no_assembly:
             self._set_status("No assembly loaded — open a file first.")
             return
         # Chain: kick off DFMA and set a flag so the DFMA _done callback
@@ -321,35 +331,38 @@ class App(tk.Tk):
         if not path:
             return
         try:
+            with self._state_lock:
+                result = self._result
+                plan   = self._plan
             if path.lower().endswith(".json"):
                 import json as _json
                 data: dict = {}
-                if self._result:
+                if result:
                     data["dfma"] = {
-                        "dfa_index":           self._result.dfa_index,
-                        "total_assembly_time": self._result.total_assembly_time_s,
-                        "total_parts":         self._result.total_parts,
-                        "theoretical_minimum": self._result.theoretical_minimum,
+                        "dfa_index":           result.dfa_index,
+                        "total_assembly_time": result.total_assembly_time_s,
+                        "total_parts":         result.total_parts,
+                        "theoretical_minimum": result.theoretical_minimum,
                         "warnings": [
                             {"rule": w.rule_id, "part_id": w.part_id,
                              "severity": w.severity.value, "message": w.message}
-                            for w in self._result.warnings
+                            for w in result.warnings
                         ],
                     }
-                if self._plan:
+                if plan:
                     data["sequence"] = {
-                        "steps": self._plan.optimized_steps(),
-                        "cost":  self._plan.optimized_sequence.total_cost,
+                        "steps": plan.optimized_steps(),
+                        "cost":  plan.optimized_sequence.total_cost,
                     }
                 with open(path, "w", encoding="utf-8") as f:
                     _json.dump(data, f, indent=2)
             else:
                 lines: list[str] = []
-                if self._result:
-                    lines.append(self._result.summary())
-                if self._plan:
+                if result:
+                    lines.append(result.summary())
+                if plan:
                     lines.append("")
-                    lines.append(self._plan.summary())
+                    lines.append(plan.summary())
                 if not lines:
                     lines = ["No analysis results to export."]
                 with open(path, "w", encoding="utf-8") as f:
@@ -359,7 +372,9 @@ class App(tk.Tk):
             messagebox.showerror("Export Error", str(exc))
 
     def _export_bom_csv(self) -> None:
-        if self._assembly is None:
+        with self._state_lock:
+            assembly = self._assembly
+        if assembly is None:
             self._set_status("No assembly loaded — nothing to export.")
             return
         path = filedialog.asksaveasfilename(
@@ -371,7 +386,7 @@ class App(tk.Tk):
             return
         try:
             import csv
-            parts = self._assembly.all_parts()
+            parts = assembly.all_parts()
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow([

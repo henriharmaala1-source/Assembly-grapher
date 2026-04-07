@@ -21,6 +21,7 @@ Reference:
 """
 
 from __future__ import annotations
+import time
 from collections import deque
 
 from ..assembly_graph  import AssemblyGraph
@@ -70,7 +71,7 @@ class SequenceGenerator:
 
     # ── liaison-filtered sequences ────────────────────────────────────────────
 
-    def liaison_sequences(self, max_results: int = 200) -> list[list[str]]:
+    def liaison_sequences(self, max_results: int = 200, timeout_s: float = 8.0) -> list[list[str]]:
         """
         Enumerate assembly sequences that satisfy both:
           1. The precedence constraints (topological order)
@@ -84,6 +85,7 @@ class SequenceGenerator:
         results: list[list[str]] = []
         current: list[str]       = []
         assembled: set[str]      = set()
+        deadline = time.monotonic() + timeout_s
 
         # Pre-compute precedence in-degrees
         in_deg = {pid: self.graph.in_degree(pid) for pid in self.graph.nodes}
@@ -98,7 +100,7 @@ class SequenceGenerator:
             )
 
         def backtrack(in_deg: dict, assembled: set) -> None:
-            if len(results) >= max_results:
+            if len(results) >= max_results or time.monotonic() >= deadline:
                 return
             if len(current) == len(self.graph.nodes):
                 results.append(list(current))

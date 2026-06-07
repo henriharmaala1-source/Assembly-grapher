@@ -1,6 +1,9 @@
+import warnings
 import time
 import cv2
 import torch
+
+warnings.filterwarnings("ignore", message="xFormers is not available")
 
 from tracker.embedding import DINOv2Embedder
 from tracker.core import LockOnTracker, State

@@ -44,11 +44,11 @@ class MouseHandler:
 # ----------------------------------------------------------------- rendering
 
 def _sim_color(sim: float):
-    if sim > 0.65:
-        return (0, 220, 50)       # green
-    if sim > 0.45:
-        return (0, 190, 255)      # amber
-    return (30, 30, 240)          # red
+    if sim >= 0.55:
+        return (0, 220, 50)       # green  — solid lock
+    if sim >= 0.42:
+        return (0, 190, 255)      # amber  — shaky
+    return (30, 30, 240)          # red    — losing target
 
 
 def _draw_brackets(img, x, y, w, h, color, thickness=2, arm=16):

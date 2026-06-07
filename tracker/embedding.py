@@ -37,5 +37,21 @@ class DINOv2Embedder:
         feat = self.model(tensor)                        # (1, 384)
         return F.normalize(feat, dim=-1).squeeze(0)     # (384,)
 
+    @torch.inference_mode()
+    def embed_batch(self, crops_bgr: list) -> torch.Tensor:
+        """
+        Embed many BGR crops in a single forward pass.
+        Returns a normalised (N, 384) tensor on self.device.
+        """
+        if not crops_bgr:
+            return torch.empty(0, 384, device=self.device)
+        tensors = []
+        for crop in crops_bgr:
+            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            tensors.append(self._transform(rgb))
+        batch = torch.stack(tensors).to(self.device)     # (N, 3, 224, 224)
+        feats = self.model(batch)                        # (N, 384)
+        return F.normalize(feats, dim=-1)
+
     def similarity(self, a: torch.Tensor, b: torch.Tensor) -> float:
         return F.cosine_similarity(a.unsqueeze(0), b.unsqueeze(0)).item()

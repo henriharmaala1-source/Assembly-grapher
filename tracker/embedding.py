@@ -65,38 +65,54 @@ class DINOv2Embedder:
     ):
         """
         Extract a foreground mask from the CLS-to-patch attention of the last
-        DINOv2 block via a forward hook on attn_drop.
+        DINOv2 block. Recent DINOv2 builds use fused scaled-dot-product
+        attention, so there is no attention tensor to hook directly. Instead
+        we hook the qkv linear (always a real module), capture its output, and
+        recompute the CLS->patch attention ourselves.
         Returns (soft_map, binary_mask) as float32 numpy in [0,1], sized to crop_bgr.
         """
         h, w = crop_bgr.shape[:2]
         rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
         tensor = self._transform(rgb).unsqueeze(0).to(self.device)
 
-        # Hook on the last block's attn_drop — it receives (B, heads, N+1, N+1)
-        # attention weights right after softmax, before dropout zeros them.
+        attn_mod = self.model.blocks[-1].attn
         captured = {}
 
         def _hook(module, inp, out):
-            captured["attn"] = inp[0].detach()
+            captured["qkv"] = out.detach()      # (B, N, 3*C)
 
-        handle = self.model.blocks[-1].attn.attn_drop.register_forward_hook(_hook)
+        handle = attn_mod.qkv.register_forward_hook(_hook)
         try:
             self.model(tensor)
         finally:
             handle.remove()
 
-        if "attn" not in captured:
+        if "qkv" not in captured:
             blank = np.full((h, w), 0.5, dtype=np.float32)
             return blank, (blank >= threshold).astype(np.float32)
 
-        attn = captured["attn"]          # (1, num_heads, N+1, N+1)
-        nh = attn.shape[1]
+        qkv = captured["qkv"]
+        B, N, C3 = qkv.shape
+        C = C3 // 3
+        nh = attn_mod.num_heads
+        head_dim = C // nh
+        scale = head_dim ** -0.5
 
-        # CLS token attending to every patch: (num_heads, N)
-        cls_attn = attn[0, :, 0, 1:]
+        # (3, B, nh, N, head_dim)
+        qkv = qkv.reshape(B, N, 3, nh, head_dim).permute(2, 0, 3, 1, 4)
+        q, k = qkv[0], qkv[1]                    # (B, nh, N, head_dim)
 
-        side = int(cls_attn.shape[-1] ** 0.5)
-        cls_attn = cls_attn.reshape(nh, side, side)
+        attn = (q * scale) @ k.transpose(-2, -1)   # (B, nh, N, N)
+        attn = attn.softmax(dim=-1)
+
+        # CLS token (row 0) attending to every other token.
+        cls_attn = attn[0, :, 0, 1:]            # (nh, N-1)
+
+        # Keep only the trailing perfect-square patch tokens (drops any
+        # leading register tokens if a *_reg model is ever used).
+        patches = cls_attn.shape[-1]
+        side = int(patches ** 0.5)
+        cls_attn = cls_attn[:, -side * side:].reshape(nh, side, side)
 
         soft = cls_attn.mean(0)
         soft = (soft - soft.min()) / (soft.max() - soft.min() + 1e-8)

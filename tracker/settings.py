@@ -12,6 +12,10 @@ class Settings:
     streak_limit:   int   = 8
     search_radius:  float = 0.6
 
+    # Performance — how often DINOv2 runs (CSRT runs every frame)
+    check_interval: int   = 6    # verify identity every N frames
+    attn_interval:  int   = 10   # recompute attention mask every N frames
+
     # Attention mask display
     show_mask:      bool  = True
     attn_threshold: float = 0.50
@@ -67,10 +71,15 @@ def _run_gui(settings: Settings) -> None:
 
     # ── Tracking ─────────────────────────────────────────────────────────────
     f = section("Tracking")
-    slider_row(f, "Lock threshold",    "sim_confirm",   0.30, 0.90)
-    slider_row(f, "Warning threshold", "sim_warning",   0.20, 0.80)
-    slider_row(f, "Search radius",     "search_radius", 0.20, 3.00)
-    slider_row(f, "Streak limit",      "streak_limit",  2,    30,   as_int=True)
+    slider_row(f, "Lock threshold",    "sim_confirm",    0.30, 0.90)
+    slider_row(f, "Warning threshold", "sim_warning",    0.20, 0.80)
+    slider_row(f, "Search radius",     "search_radius",  0.20, 3.00)
+    slider_row(f, "Streak limit",      "streak_limit",   2,    30,  as_int=True)
+
+    # ── Performance ───────────────────────────────────────────────────────────
+    f = section("Performance")
+    slider_row(f, "DINOv2 check every N frames", "check_interval", 1, 20, as_int=True)
+    slider_row(f, "Attn mask every N frames",    "attn_interval",  3, 30, as_int=True)
 
     # ── Attention mask ────────────────────────────────────────────────────────
     f = section("Attention Mask (DINOv2)")

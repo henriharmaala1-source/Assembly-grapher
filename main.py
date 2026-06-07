@@ -54,10 +54,10 @@ def main():
 
         state, bbox, sim = tracker.update(frame)
 
-        # Recompute attention map every 3 frames when locked and mask is on
+        # Recompute attention map every attn_interval frames when locked and mask is on
         if settings.show_mask and state == State.LOCKED and bbox is not None:
             attn_age += 1
-            if attn_map is None or attn_age >= 3:
+            if attn_map is None or attn_age >= settings.attn_interval:
                 x, y, w, h = bbox
                 fh, fw = frame.shape[:2]
                 crop = frame[max(0,y):min(fh,y+h), max(0,x):min(fw,x+w)]

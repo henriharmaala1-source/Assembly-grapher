@@ -20,37 +20,51 @@ class State(Enum):
 
 
 class LockOnTracker:
-    # Fallback constants used when no Settings object is provided
-    _SIM_CONFIRM    = 0.55
-    _SIM_WARNING    = 0.42
-    _STREAK_LIMIT   = 8
-    _SEARCH_RADIUS  = 0.6
+    """
+    Two-tier tracking:
+      • CSRT runs every frame  (~0.5 ms, CPU) — smooth motion
+      • DINOv2 runs every CHECK_INTERVAL frames — identity verification
+        If identity check fails, a local search (small crop grid) corrects the box.
+        Only after repeated failures does the tracker enter SEARCHING.
+    """
 
-    SCALES          = (0.85, 1.0, 1.18)
-    GRID            = 5
-    BANK_MAX        = 5
-    BANK_ADD_SIM    = 0.72
-    ANCHOR_WEIGHT   = 0.6
-    LOST_RADIUS     = 2.0
-    SCAN_INTERVAL   = 3
-    SCAN_BATCH      = 64
-    SEARCH_TIMEOUT  = 300
+    # --- search geometry used only when correction is needed ------------------
+    GRID   = 3                      # 3×3 offsets — 9×3 scales = 27 crops max
+    SCALES = (0.85, 1.0, 1.18)
+
+    # --- appearance bank ------------------------------------------------------
+    BANK_MAX     = 5
+    BANK_ADD_SIM = 0.72
+    ANCHOR_WEIGHT = 0.6
+
+    # --- recovery (full-frame scan) -------------------------------------------
+    LOST_RADIUS    = 2.0
+    SCAN_INTERVAL  = 3
+    SCAN_BATCH     = 64
+    SEARCH_TIMEOUT = 300
+
+    # --- fallback thresholds (used when Settings is None) ---------------------
+    _SIM_CONFIRM   = 0.55
+    _SIM_WARNING   = 0.42
+    _STREAK_LIMIT  = 8
+    _SEARCH_RADIUS = 0.6
+    _CHECK_INTERVAL = 6
 
     def __init__(self, embedder: DINOv2Embedder, settings: Settings = None):
-        self.embedder  = embedder
-        self._s        = settings       # live settings; may be None
-        self.state     = State.IDLE
-        self.bbox      = None
+        self.embedder = embedder
+        self._s       = settings
+        self.state    = State.IDLE
+        self.bbox     = None
         self.similarity = 1.0
 
         self._csrt         = None
         self._anchor       = None
         self._bank         = None
         self._bad_streak   = 0
+        self._frame_n      = 0
         self._search_frame = 0
 
     # ------------------------------------------------------------------ props
-    # Read thresholds from settings at runtime so GUI sliders take effect live.
 
     @property
     def _sim_confirm(self):
@@ -68,6 +82,10 @@ class LockOnTracker:
     def _search_radius(self):
         return self._s.search_radius if self._s else self._SEARCH_RADIUS
 
+    @property
+    def _check_interval(self):
+        return self._s.check_interval if self._s else self._CHECK_INTERVAL
+
     # ------------------------------------------------------------------ public
 
     def init(self, frame: np.ndarray, bbox: tuple) -> bool:
@@ -84,13 +102,13 @@ class LockOnTracker:
         self._csrt.init(frame, (x, y, w, h))
         self.bbox        = (x, y, w, h)
         self._bad_streak   = 0
+        self._frame_n      = 0
         self._search_frame = 0
         self.similarity    = 1.0
         self.state = State.LOCKED
         return True
 
     def update(self, frame: np.ndarray):
-        """Returns (State, bbox_or_None, similarity_or_None)."""
         if self.state == State.LOCKED:
             return self._update_locked(frame)
         if self.state == State.SEARCHING:
@@ -105,37 +123,50 @@ class LockOnTracker:
         self._bank       = None
         self.similarity      = 1.0
         self._bad_streak     = 0
+        self._frame_n        = 0
         self._search_frame   = 0
 
-    # ----------------------------------------------------------------- locked
+    # --------------------------------------------------------------- LOCKED
 
     def _update_locked(self, frame):
+        # ── Tier 1: CSRT every frame (fast) ──────────────────────────────────
         ok, raw = self._csrt.update(frame)
-        prior = tuple(int(v) for v in raw) if ok else self.bbox
-
-        radius = self._search_radius
-        if self._bad_streak >= self._streak_limit // 2:
-            radius = self.LOST_RADIUS
-
-        best_box, best_sim = self._local_search(frame, prior, radius)
-
-        if best_box is None or best_sim < self._sim_warning:
-            self._bad_streak += 1
-            self.similarity = best_sim or 0.0
-            if self._bad_streak >= self._streak_limit:
-                self._enter_searching()
+        if not ok:
+            self._enter_searching()
             return self.state, self.bbox, self.similarity
 
-        self.similarity = best_sim
-        self.bbox = best_box
-        self._reseat_csrt(frame, best_box)
-        self._bad_streak = 0
-        if best_sim >= self.BANK_ADD_SIM:
-            self._maybe_bank(frame, best_box)
+        self.bbox = tuple(int(v) for v in raw)
+        self._frame_n += 1
+
+        # ── Tier 2: DINOv2 identity check every N frames ─────────────────────
+        if self._frame_n % self._check_interval != 0:
+            return self.state, self.bbox, self.similarity
+
+        sim = self._single_sim(frame, self.bbox)
+        self.similarity = sim
+
+        if sim >= self._sim_warning:
+            # Identity confirmed — optionally grow the appearance bank
+            self._bad_streak = 0
+            if sim >= self.BANK_ADD_SIM:
+                self._maybe_bank(frame, self.bbox)
+        else:
+            # Identity check failed — run a small correction search
+            best_box, best_sim = self._local_search(frame, self.bbox,
+                                                    self._search_radius)
+            if best_box and best_sim >= self._sim_warning:
+                self.bbox = best_box
+                self._reseat_csrt(frame, best_box)
+                self.similarity = best_sim
+                self._bad_streak = 0
+            else:
+                self._bad_streak += 1
+                if self._bad_streak >= self._streak_limit:
+                    self._enter_searching()
 
         return self.state, self.bbox, self.similarity
 
-    # --------------------------------------------------------------- searching
+    # ------------------------------------------------------------- SEARCHING
 
     def _update_searching(self, frame):
         self._search_frame += 1
@@ -150,23 +181,34 @@ class LockOnTracker:
         best_box, best_sim = self._full_frame_search(frame)
         self.similarity = best_sim
 
-        if best_box is not None and best_sim >= self._sim_confirm:
+        if best_box and best_sim >= self._sim_confirm:
             self.bbox = best_box
             self._reseat_csrt(frame, best_box)
             self._bad_streak   = 0
+            self._frame_n      = 0
             self._search_frame = 0
             self.state = State.LOCKED
 
         return self.state, self.bbox, self.similarity
 
-    # ------------------------------------------------------------------ search
+    # ----------------------------------------------------------------- search
+
+    def _single_sim(self, frame, bbox) -> float:
+        """Cheapest check: embed only the current box crop."""
+        x, y, w, h = bbox
+        fh, fw = frame.shape[:2]
+        crop = frame[max(0,y):min(fh,y+h), max(0,x):min(fw,x+w)]
+        if crop.size == 0:
+            return 0.0
+        emb = self.embedder.embed(crop)
+        return self.embedder.similarity(self._anchor, emb)
 
     def _local_search(self, frame, prior, radius):
+        """Score a small grid of crops around the prior position."""
         fh, fw = frame.shape[:2]
         px, py, pw, ph = prior
         cx, cy = px + pw / 2.0, py + ph / 2.0
 
-        import numpy as np
         offs = np.linspace(-radius, radius, self.GRID)
         boxes, crops = [], []
         for s in self.SCALES:
@@ -175,9 +217,12 @@ class LockOnTracker:
                 continue
             for ox in offs:
                 for oy in offs:
-                    nx = int(cx + ox * pw - bw / 2.0)
-                    ny = int(cy + oy * ph - bh / 2.0)
-                    x, y, w, h = self._clamp(frame, (nx, ny, bw, bh))
+                    x, y, w, h = self._clamp(
+                        frame,
+                        (int(cx + ox * pw - bw / 2.0),
+                         int(cy + oy * ph - bh / 2.0),
+                         bw, bh)
+                    )
                     if w < 10 or h < 10:
                         continue
                     crop = frame[y:y + h, x:x + w]

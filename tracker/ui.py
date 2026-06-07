@@ -89,21 +89,17 @@ def draw_overlay(
         cx, cy = x + w // 2, y + h // 2
         color = _sim_color(sim)
 
-        # Subtle tinted fill
         overlay = out.copy()
         cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
         cv2.addWeighted(overlay, 0.08, out, 0.92, 0, out)
 
-        # Thin border + corner brackets
         cv2.rectangle(out, (x, y), (x + w, y + h), color, 1)
         _draw_brackets(out, x, y, w, h, color)
 
-        # Crosshair
         cv2.line(out,  (cx - 14, cy), (cx + 14, cy), color, 1)
         cv2.line(out,  (cx, cy - 14), (cx, cy + 14), color, 1)
         cv2.circle(out, (cx, cy), 3, color, -1)
 
-        # Confidence bar (above bbox)
         bar_y = max(y - 18, 4)
         cv2.rectangle(out, (x, bar_y), (x + w, bar_y + 8), (40, 40, 40), -1)
         fill = max(0, int(w * min(sim, 1.0)))
@@ -111,10 +107,22 @@ def draw_overlay(
         cv2.putText(out, f"{sim * 100:.0f}%", (x + w + 4, bar_y + 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
 
+    # ── searching overlay (last known position, dashed) ───────────────────────
+    if state == State.SEARCHING and bbox:
+        x, y, w, h = bbox
+        pulse = (int(cv2.getTickCount() / cv2.getTickFrequency() * 4) % 2 == 0)
+        color = (200, 160, 0) if pulse else (120, 90, 0)
+        _draw_brackets(out, x, y, w, h, color, thickness=1)
+        cx, cy = x + w // 2, y + h // 2
+        cv2.circle(out, (cx, cy), 6, color, 1)
+
     # ── status bar ────────────────────────────────────────────────────────────
     if state == State.IDLE:
         status_text  = "IDLE  |  Draw a box around the target"
         status_color = (170, 170, 170)
+    elif state == State.SEARCHING:
+        status_text  = "SEARCHING  |  Looking for target..."
+        status_color = (200, 160, 0)
     else:
         status_text  = f"LOCKED  |  {sim * 100:.0f}% confidence"
         status_color = _sim_color(sim)

@@ -4,6 +4,14 @@ from enum import Enum, auto
 from .embedding import DINOv2Embedder
 
 
+def _make_csrt():
+    # OpenCV 4.5+: trackers live under cv2.legacy; older contrib has them at top level.
+    try:
+        return cv2.legacy.TrackerCSRT_create()
+    except AttributeError:
+        return cv2.TrackerCSRT_create()
+
+
 class State(Enum):
     IDLE = auto()
     LOCKED = auto()
@@ -50,7 +58,7 @@ class LockOnTracker:
             return False
 
         self._target_emb = self.embedder.embed(crop)
-        self._csrt = cv2.TrackerCSRT_create()
+        self._csrt = _make_csrt()
         self._csrt.init(frame, (x, y, w, h))
         self.bbox = (x, y, w, h)
         self._frame_n = 0
@@ -134,7 +142,7 @@ class LockOnTracker:
         # Re-centre tracker inside the found window
         nx = max(0, min(fw - w, sx + (ex - sx) // 2 - w // 2))
         ny = max(0, min(fh - h, sy + (ey - sy) // 2 - h // 2))
-        self._csrt = cv2.TrackerCSRT_create()
+        self._csrt = _make_csrt()
         self._csrt.init(frame, (nx, ny, w, h))
         self.bbox = (nx, ny, w, h)
         self._bad_streak = 0

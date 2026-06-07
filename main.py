@@ -8,8 +8,15 @@ from tracker.ui import MouseHandler, draw_overlay
 
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device: {device}")
+    if torch.cuda.is_available():
+        device = "cuda"
+        print(f"Device: cuda ({torch.cuda.get_device_name(0)})")
+    else:
+        device = "cpu"
+        print("Device: cpu  *** CUDA not available — performance will be low ***")
+        print("  Fix: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121")
+        print("  Then verify: python -c \"import torch; print(torch.cuda.is_available())\"")
+        print()
 
     embedder = DINOv2Embedder(device=device)
     tracker  = LockOnTracker(embedder)

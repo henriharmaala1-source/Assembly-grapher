@@ -5,6 +5,7 @@ import torch
 from tracker.embedding import DINOv2Embedder
 from tracker.core import LockOnTracker, State
 from tracker.ui import MouseHandler, draw_overlay
+from tracker.settings import Settings, launch_settings
 
 
 def main():
@@ -15,12 +16,14 @@ def main():
         device = "cpu"
         print("Device: cpu  *** CUDA not available — performance will be low ***")
         print("  Fix: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121")
-        print("  Then verify: python -c \"import torch; print(torch.cuda.is_available())\"")
         print()
 
     embedder = DINOv2Embedder(device=device)
-    tracker  = LockOnTracker(embedder)
+    settings = Settings()
+    tracker  = LockOnTracker(embedder, settings=settings)
     mouse    = MouseHandler()
+
+    launch_settings(settings)
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -33,34 +36,57 @@ def main():
     cv2.namedWindow(win)
     cv2.setMouseCallback(win, mouse.callback)
 
-    fps    = 30.0
-    t_prev = time.perf_counter()
+    fps      = 30.0
+    t_prev   = time.perf_counter()
+    attn_map = None           # cached attention map (reused between frames)
+    attn_age = 0              # frames since last attention computation
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Consume a freshly drawn bounding box
         if mouse.pending_bbox is not None and tracker.state == State.IDLE:
             tracker.init(frame, mouse.pending_bbox)
             mouse.pending_bbox = None
+            attn_map = None
+            attn_age = 0
 
         state, bbox, sim = tracker.update(frame)
 
-        t_now = time.perf_counter()
-        fps   = 0.9 * fps + 0.1 / max(t_now - t_prev, 1e-9)
+        # Recompute attention map every 3 frames when locked and mask is on
+        if settings.show_mask and state == State.LOCKED and bbox is not None:
+            attn_age += 1
+            if attn_map is None or attn_age >= 3:
+                x, y, w, h = bbox
+                fh, fw = frame.shape[:2]
+                crop = frame[max(0,y):min(fh,y+h), max(0,x):min(fw,x+w)]
+                if crop.size > 0:
+                    attn_map, _ = embedder.get_attention_map(
+                        crop, threshold=settings.attn_threshold
+                    )
+                    attn_age = 0
+        else:
+            attn_map = None
+            attn_age = 0
+
+        t_now  = time.perf_counter()
+        fps    = 0.9 * fps + 0.1 / max(t_now - t_prev, 1e-9)
         t_prev = t_now
 
-        out = draw_overlay(frame, state, bbox, sim or 0.0, mouse, fps)
+        out = draw_overlay(
+            frame, state, bbox, sim or 0.0, mouse, fps,
+            settings=settings, attn_map=attn_map,
+        )
         cv2.imshow(win, out)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == 27:                          # ESC → quit
+        if key == 27:
             break
-        elif key in (ord("r"), ord("R")):      # R → reset lock
+        elif key in (ord("r"), ord("R")):
             tracker.reset()
             mouse.pending_bbox = None
+            attn_map = None
 
     cap.release()
     cv2.destroyAllWindows()

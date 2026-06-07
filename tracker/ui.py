@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from .core import State
+from .settings import Settings
 
 
 class MouseHandler:
@@ -8,7 +9,7 @@ class MouseHandler:
         self._drawing = False
         self._p0 = None
         self._p1 = None
-        self.pending_bbox = None   # (x, y, w, h) — consumed by main loop
+        self.pending_bbox = None
 
     @property
     def drawing(self) -> bool:
@@ -33,7 +34,6 @@ class MouseHandler:
                 self.pending_bbox = (x1, y1, x2 - x1, y2 - y1)
 
     def live_rect(self):
-        """Current drag rectangle as (x1, y1, x2, y2) or None."""
         if not self._drawing or not self._p0 or not self._p1:
             return None
         x1, y1 = self._p0
@@ -45,23 +45,49 @@ class MouseHandler:
 
 def _sim_color(sim: float):
     if sim >= 0.55:
-        return (0, 220, 50)       # green  — solid lock
+        return (0, 220, 50)
     if sim >= 0.42:
-        return (0, 190, 255)      # amber  — shaky
-    return (30, 30, 240)          # red    — losing target
+        return (0, 190, 255)
+    return (30, 30, 240)
 
 
 def _draw_brackets(img, x, y, w, h, color, thickness=2, arm=16):
-    """Corner bracket decoration around bbox."""
-    corners = [
+    for (px, py), (dx, dy) in [
         ((x,     y),     ( 1,  1)),
         ((x + w, y),     (-1,  1)),
         ((x,     y + h), ( 1, -1)),
         ((x + w, y + h), (-1, -1)),
-    ]
-    for (px, py), (dx, dy) in corners:
+    ]:
         cv2.line(img, (px, py), (px + dx * arm, py),        color, thickness)
         cv2.line(img, (px, py), (px,            py + dy * arm), color, thickness)
+
+
+def _draw_attention(out, bbox, soft_map, opacity):
+    """Blend the DINOv2 attention heat map over the tracked region."""
+    x, y, w, h = bbox
+    fh, fw = out.shape[:2]
+    x1 = max(0, x);   y1 = max(0, y)
+    x2 = min(fw, x + w); y2 = min(fh, y + h)
+    if x2 <= x1 or y2 <= y1:
+        return
+
+    rw, rh = x2 - x1, y2 - y1
+    mask = cv2.resize(soft_map, (rw, rh), interpolation=cv2.INTER_LINEAR)
+
+    # Map to a teal-green colour (BGR: 200, 255, 100)
+    coloured = np.zeros((rh, rw, 3), dtype=np.float32)
+    coloured[:, :, 0] = mask * 180   # B
+    coloured[:, :, 1] = mask * 255   # G
+    coloured[:, :, 2] = mask * 80    # R
+
+    roi     = out[y1:y2, x1:x2].astype(np.float32)
+    blended = np.clip(roi + coloured * opacity, 0, 255).astype(np.uint8)
+    out[y1:y2, x1:x2] = blended
+
+    # Contour of the thresholded mask
+    binary   = (mask > 0.5).astype(np.uint8)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(out[y1:y2, x1:x2], contours, -1, (100, 255, 160), 1)
 
 
 def draw_overlay(
@@ -71,9 +97,13 @@ def draw_overlay(
     sim: float,
     mouse: MouseHandler,
     fps: float,
+    settings: Settings = None,
+    attn_map=None,          # soft attention map (numpy float32) or None
 ) -> np.ndarray:
     out = frame.copy()
     fh, fw = out.shape[:2]
+
+    cfg = settings or Settings()    # fall back to defaults if not provided
 
     # ── live selection rectangle ──────────────────────────────────────────────
     rect = mouse.live_rect()
@@ -83,6 +113,10 @@ def draw_overlay(
         cv2.putText(out, "Select target", (x1, max(y1 - 6, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 220), 1)
 
+    # ── attention mask overlay ────────────────────────────────────────────────
+    if cfg.show_mask and attn_map is not None and bbox is not None:
+        _draw_attention(out, bbox, attn_map, cfg.mask_opacity)
+
     # ── lock overlay ──────────────────────────────────────────────────────────
     if state == State.LOCKED and bbox:
         x, y, w, h = bbox
@@ -91,7 +125,7 @@ def draw_overlay(
 
         overlay = out.copy()
         cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
-        cv2.addWeighted(overlay, 0.08, out, 0.92, 0, out)
+        cv2.addWeighted(overlay, 0.07, out, 0.93, 0, out)
 
         cv2.rectangle(out, (x, y), (x + w, y + h), color, 1)
         _draw_brackets(out, x, y, w, h, color)
@@ -100,39 +134,38 @@ def draw_overlay(
         cv2.line(out,  (cx, cy - 14), (cx, cy + 14), color, 1)
         cv2.circle(out, (cx, cy), 3, color, -1)
 
-        bar_y = max(y - 18, 4)
-        cv2.rectangle(out, (x, bar_y), (x + w, bar_y + 8), (40, 40, 40), -1)
-        fill = max(0, int(w * min(sim, 1.0)))
-        cv2.rectangle(out, (x, bar_y), (x + fill, bar_y + 8), color, -1)
-        cv2.putText(out, f"{sim * 100:.0f}%", (x + w + 4, bar_y + 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
+        if cfg.show_confidence_bar:
+            bar_y = max(y - 18, 4)
+            cv2.rectangle(out, (x, bar_y), (x + w, bar_y + 8), (40, 40, 40), -1)
+            cv2.rectangle(out, (x, bar_y),
+                          (x + max(0, int(w * min(sim, 1.0))), bar_y + 8), color, -1)
+            cv2.putText(out, f"{sim * 100:.0f}%", (x + w + 4, bar_y + 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
 
-    # ── searching overlay (last known position, dashed) ───────────────────────
+    # ── searching overlay ─────────────────────────────────────────────────────
     if state == State.SEARCHING and bbox:
         x, y, w, h = bbox
         pulse = (int(cv2.getTickCount() / cv2.getTickFrequency() * 4) % 2 == 0)
-        color = (200, 160, 0) if pulse else (120, 90, 0)
+        color = (200, 160, 0) if pulse else (100, 80, 0)
         _draw_brackets(out, x, y, w, h, color, thickness=1)
         cx, cy = x + w // 2, y + h // 2
-        cv2.circle(out, (cx, cy), 6, color, 1)
+        cv2.circle(out, (cx, cy), 7, color, 1)
 
     # ── status bar ────────────────────────────────────────────────────────────
     if state == State.IDLE:
-        status_text  = "IDLE  |  Draw a box around the target"
-        status_color = (170, 170, 170)
+        status, sc = "IDLE  |  Draw a box around the target", (170, 170, 170)
     elif state == State.SEARCHING:
-        status_text  = "SEARCHING  |  Looking for target..."
-        status_color = (200, 160, 0)
+        status, sc = "SEARCHING  |  Looking for target…",    (200, 160,   0)
     else:
-        status_text  = f"LOCKED  |  {sim * 100:.0f}% confidence"
-        status_color = _sim_color(sim)
+        status, sc = f"LOCKED  |  {sim * 100:.0f}% confidence", _sim_color(sim)
 
-    cv2.putText(out, status_text, (10, 26),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.62, status_color, 2)
+    cv2.putText(out, status, (10, 26),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.62, sc, 2)
 
     # ── FPS ───────────────────────────────────────────────────────────────────
-    cv2.putText(out, f"{fps:.0f} fps", (fw - 76, 26),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (190, 190, 190), 1)
+    if cfg.show_fps:
+        cv2.putText(out, f"{fps:.0f} fps", (fw - 76, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (190, 190, 190), 1)
 
     # ── help strip ───────────────────────────────────────────────────────────
     cv2.putText(out, "R  reset    ESC  quit", (10, fh - 10),

@@ -65,28 +65,39 @@ class DINOv2Embedder:
     ):
         """
         Extract a foreground mask from the CLS-to-patch attention of the last
-        DINOv2 block. Returns (soft_map, binary_mask) as float32 numpy arrays
-        in [0, 1], resized to match crop_bgr.
-
-        soft_map   — continuous heat map, good for blending overlays
-        binary_mask — thresholded, good for contour extraction
+        DINOv2 block via a forward hook on attn_drop.
+        Returns (soft_map, binary_mask) as float32 numpy in [0,1], sized to crop_bgr.
         """
         h, w = crop_bgr.shape[:2]
         rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
         tensor = self._transform(rgb).unsqueeze(0).to(self.device)
 
-        # (1, num_heads, N+1, N+1)  where N = 256 patches for ViT-S/14 @ 224px
-        attn = self.model.get_last_selfattention(tensor)
+        # Hook on the last block's attn_drop — it receives (B, heads, N+1, N+1)
+        # attention weights right after softmax, before dropout zeros them.
+        captured = {}
 
+        def _hook(module, inp, out):
+            captured["attn"] = inp[0].detach()
+
+        handle = self.model.blocks[-1].attn.attn_drop.register_forward_hook(_hook)
+        try:
+            self.model(tensor)
+        finally:
+            handle.remove()
+
+        if "attn" not in captured:
+            blank = np.full((h, w), 0.5, dtype=np.float32)
+            return blank, (blank >= threshold).astype(np.float32)
+
+        attn = captured["attn"]          # (1, num_heads, N+1, N+1)
         nh = attn.shape[1]
-        # CLS token attending to every patch: (num_heads, 256)
+
+        # CLS token attending to every patch: (num_heads, N)
         cls_attn = attn[0, :, 0, 1:]
 
-        # Reshape to spatial grid (16×16)
         side = int(cls_attn.shape[-1] ** 0.5)
         cls_attn = cls_attn.reshape(nh, side, side)
 
-        # Average across heads, normalise to [0, 1]
         soft = cls_attn.mean(0)
         soft = (soft - soft.min()) / (soft.max() - soft.min() + 1e-8)
 

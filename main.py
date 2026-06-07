@@ -9,14 +9,14 @@ from tracker.settings import Settings, launch_settings
 
 
 def main():
-    if torch.cuda.is_available():
-        device = "cuda"
-        print(f"Device: cuda ({torch.cuda.get_device_name(0)})")
-    else:
-        device = "cpu"
-        print("Device: cpu  *** CUDA not available — performance will be low ***")
-        print("  Fix: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121")
-        print()
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA not available. "
+            "Install the CUDA build of PyTorch:\n"
+            "  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121"
+        )
+    device = "cuda"
+    print(f"Device: cuda ({torch.cuda.get_device_name(0)})")
 
     embedder = DINOv2Embedder(device=device)
     settings = Settings()

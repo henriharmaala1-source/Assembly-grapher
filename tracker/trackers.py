@@ -1,3 +1,6 @@
+import os
+import urllib.request
+
 import cv2
 import numpy as np
 
@@ -9,6 +12,56 @@ def _make_cv_tracker(kind: str):
     if legacy is not None and hasattr(legacy, name):
         return getattr(legacy, name)()
     return getattr(cv2, name)()
+
+
+# ----------------------------------------------------- ViT transformer tracker
+# OpenCV's TrackerVit is a dedicated single-object transformer tracker (ViT
+# backbone, direct box regression). It ships in opencv-contrib but needs a small
+# ONNX model, fetched once from the OpenCV model zoo and cached under ./models.
+
+_VIT_MODEL_URL = (
+    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/"
+    "models/object_tracking_vittrack/object_tracking_vittrack_2023sep.onnx"
+)
+_MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
+_VIT_MODEL_PATH = os.path.join(_MODELS_DIR, "object_tracking_vittrack_2023sep.onnx")
+
+
+def _ensure_vit_model() -> str:
+    """Download the ViTTrack ONNX once; return the local path."""
+    if os.path.exists(_VIT_MODEL_PATH) and os.path.getsize(_VIT_MODEL_PATH) > 0:
+        return _VIT_MODEL_PATH
+    os.makedirs(_MODELS_DIR, exist_ok=True)
+    print("Downloading ViTTrack model (~0.7 MB)…")
+    tmp = _VIT_MODEL_PATH + ".part"
+    try:
+        urllib.request.urlretrieve(_VIT_MODEL_URL, tmp)
+        os.replace(tmp, _VIT_MODEL_PATH)
+    except Exception:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+    print(f"Saved ViTTrack model to {_VIT_MODEL_PATH}")
+    return _VIT_MODEL_PATH
+
+
+def _make_vit_tracker():
+    """
+    cv2.TrackerVit with the zoo model. Its init()/update() signature already
+    matches the OpenCV trackers, so it slots straight into the factory.
+
+    The ONNX net runs on OpenCV's DNN backend (CPU) — it's tiny and fast, and
+    keeps the GPU free for DINOv2. Build opencv with CUDA DNN to offload it.
+    """
+    if not hasattr(cv2, "TrackerVit"):
+        raise RuntimeError(
+            "cv2.TrackerVit is unavailable. Upgrade the tracking module:\n"
+            "  pip install -U opencv-contrib-python   (>= 4.8)"
+        )
+    path = _ensure_vit_model()
+    params = cv2.TrackerVit_Params()
+    params.net = path
+    return cv2.TrackerVit_create(params)
 
 
 class OpticalFlowTracker:
@@ -89,7 +142,9 @@ class OpticalFlowTracker:
 
 
 def make_backend(name: str):
-    """Factory: 'CSRT' | 'KCF' | 'Optical Flow'."""
+    """Factory: 'ViT' | 'CSRT' | 'KCF' | 'Optical Flow'."""
+    if name == "ViT":
+        return _make_vit_tracker()
     if name == "Optical Flow":
         return OpticalFlowTracker()
     if name == "KCF":

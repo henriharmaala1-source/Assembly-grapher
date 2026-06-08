@@ -8,6 +8,8 @@ venv/
 # Model / torch hub cache
 *.pt
 *.pth
+*.onnx
+models/
 
 # OS
 .DS_Store

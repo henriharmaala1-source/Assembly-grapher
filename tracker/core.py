@@ -68,6 +68,7 @@ class LockOnTracker:
         self._scan_positions = None   # list of (x,y,w,h) for current sweep
         self._scan_idx       = 0
         self._scan_best      = (None, 0.0)
+        self._backend_fallback = None  # set when a backend fails to construct
 
     # ------------------------------------------------------------------ props
 
@@ -102,6 +103,20 @@ class LockOnTracker:
     def center_trail(self):
         return list(self._centers)
 
+    def _make_backend(self):
+        """Build the configured backend; fall back to CSRT if it can't load
+        (e.g. ViT model download failed or opencv lacks TrackerVit)."""
+        name = self._backend_fallback or self._backend
+        try:
+            return make_backend(name)
+        except Exception as e:
+            if name != "CSRT":
+                print(f"[tracker] backend '{name}' unavailable ({e}); "
+                      f"falling back to CSRT.")
+                self._backend_fallback = "CSRT"
+                return make_backend("CSRT")
+            raise
+
     # ------------------------------------------------------------------ public
 
     def init(self, frame: np.ndarray, bbox: tuple) -> bool:
@@ -114,7 +129,8 @@ class LockOnTracker:
 
         self._anchor  = self.embedder.embed(crop)
         self._bank    = self._anchor.unsqueeze(0).clone()
-        self._tracker = make_backend(self._backend)
+        self._backend_fallback = None      # re-try the configured backend
+        self._tracker = self._make_backend()
         self._tracker.init(frame, (x, y, w, h))
         self.bbox          = (x, y, w, h)
         self._bad_streak   = 0
@@ -375,7 +391,7 @@ class LockOnTracker:
         self._bank = torch.cat([self._bank, emb.unsqueeze(0)], dim=0)
 
     def _reseat_csrt(self, frame, box):
-        self._tracker = make_backend(self._backend)
+        self._tracker = self._make_backend()
         self._tracker.init(frame, box)
 
     def _enter_searching(self):

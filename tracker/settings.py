@@ -33,7 +33,7 @@ class Settings:
     show_fps:            bool = True
 
 
-TRACKER_BACKENDS = ["CSRT", "KCF", "Optical Flow"]
+TRACKER_BACKENDS = ["ViT", "CSRT", "KCF", "Optical Flow"]
 
 
 # ----------------------------------------------------------------- GUI builder

@@ -6,6 +6,7 @@ from enum import Enum, auto
 from .embedding import DINOv2Embedder
 from .settings import Settings
 from .trackers import make_backend
+from .motion import KalmanCenter
 
 
 class State(Enum):
@@ -35,8 +36,7 @@ class LockOnTracker:
     SCAN_BATCH    = 64          # positions processed per frame during SEARCHING
     SEARCH_TIMEOUT = 300        # frames before giving up (~10 s at 30 fps)
 
-    MOTION_HISTORY  = 14        # centers kept for trail + velocity estimate
-    MOTION_SMOOTH   = 5         # frames averaged for velocity
+    MOTION_HISTORY  = 14        # filtered centers kept for the trail
 
     _SIM_CONFIRM   = 0.55
     _SIM_WARNING   = 0.42
@@ -53,8 +53,9 @@ class LockOnTracker:
         self.bbox       = None
         self.similarity = 1.0
 
-        # Motion vector state
+        # Motion vector state (Kalman-filtered)
         self._centers          = deque(maxlen=self.MOTION_HISTORY)
+        self._kalman           = KalmanCenter()
         self.velocity          = (0.0, 0.0)
         self.predicted_center  = None
 
@@ -122,6 +123,8 @@ class LockOnTracker:
         self._scan_positions = None
         self.similarity    = 1.0
         self._centers.clear()
+        self._kalman = KalmanCenter()
+        self._kalman.start((x + w / 2.0, y + h / 2.0))
         self.velocity         = (0.0, 0.0)
         self.predicted_center = None
         self._update_motion()
@@ -180,7 +183,10 @@ class LockOnTracker:
                 self.similarity = best_sim
                 self._bad_streak = 0
             else:
+                # Target not found near the box — coast along predicted motion
+                # so a brief occlusion or fast move doesn't immediately lose it.
                 self._bad_streak += 1
+                self._coast(frame)
                 if self._bad_streak >= self._streak_limit:
                     self._enter_searching()
 
@@ -188,25 +194,33 @@ class LockOnTracker:
         return self.state, self.bbox, self.similarity
 
     def _update_motion(self):
-        """Track the box center, estimate velocity, predict future position."""
+        """Kalman-filter the box center → smoothed velocity + prediction."""
         if self.bbox is None:
             return
         x, y, w, h = self.bbox
         c = (x + w / 2.0, y + h / 2.0)
-        self._centers.append(c)
 
-        if len(self._centers) >= 2:
-            pts   = np.array(self._centers)
-            diffs = np.diff(pts, axis=0)               # per-frame displacements
-            k     = min(len(diffs), self.MOTION_SMOOTH)
-            vel   = diffs[-k:].mean(axis=0)            # smoothed velocity
-            self.velocity = (float(vel[0]), float(vel[1]))
-            horizon = self._predict_horizon
-            self.predicted_center = (c[0] + vel[0] * horizon,
-                                     c[1] + vel[1] * horizon)
-        else:
-            self.velocity = (0.0, 0.0)
-            self.predicted_center = c
+        if not self._kalman.initialized:
+            self._kalman.start(c)
+        self._kalman.predict()
+        fx, fy = self._kalman.correct(c)        # filtered center
+
+        self._centers.append((fx, fy))
+        self.velocity         = self._kalman.velocity
+        self.predicted_center = self._kalman.project(self._predict_horizon)
+
+    def _coast(self, frame):
+        """Move the box along the Kalman velocity when a measurement is missed."""
+        if self.bbox is None or not self._kalman.initialized:
+            return
+        px, py = self._kalman.project(1)        # one step ahead
+        x, y, w, h = self.bbox
+        nx = int(px - w / 2.0)
+        ny = int(py - h / 2.0)
+        nx, ny, w, h = self._clamp(frame, (nx, ny, w, h))
+        if w >= 10 and h >= 10:
+            self.bbox = (nx, ny, w, h)
+            self._reseat_csrt(frame, self.bbox)
 
     # ------------------------------------------------------------- SEARCHING
     # The full-frame sweep is spread across frames: SCAN_BATCH positions per
@@ -218,6 +232,11 @@ class LockOnTracker:
         if self._search_frame > self.SEARCH_TIMEOUT:
             self.state = State.IDLE
             return self.state, None, 0.0
+
+        # Coast the prediction forward so the motion arrow keeps moving and the
+        # scan is steered toward where the object is expected to reappear.
+        if self._kalman.initialized:
+            self.predicted_center = self._kalman.project(self._search_frame)
 
         # Start a fresh sweep when the previous one is exhausted.
         if self._scan_positions is None:
@@ -264,7 +283,11 @@ class LockOnTracker:
     # ----------------------------------------------------------------- search
 
     def _gen_scan_positions(self, frame):
-        """All (x, y, w, h) candidate positions for a full-frame sweep."""
+        """
+        All (x, y, w, h) candidate positions for a full-frame sweep, ordered
+        nearest-first to the Kalman-predicted reappearance point so recovery
+        is fastest where the object is most likely to come back.
+        """
         fh, fw = frame.shape[:2]
         _, _, tw, th = self.bbox
         sx = max(tw // 3, 20)
@@ -277,6 +300,17 @@ class LockOnTracker:
             for x in range(0, fw - bw + 1, sx):
                 for y in range(0, fh - bh + 1, sy):
                     positions.append((x, y, bw, bh))
+
+        # Seed point: predicted reappearance, else last known box center.
+        if self.predicted_center is not None:
+            pcx, pcy = self.predicted_center
+        else:
+            bx, by, bw, bh = self.bbox
+            pcx, pcy = bx + bw / 2.0, by + bh / 2.0
+
+        positions.sort(key=lambda b:
+                       (b[0] + b[2] / 2.0 - pcx) ** 2 +
+                       (b[1] + b[3] / 2.0 - pcy) ** 2)
         return positions
 
     def _single_sim(self, frame, bbox) -> float:

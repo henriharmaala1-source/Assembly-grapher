@@ -1,56 +1,84 @@
 import cv2
 import torch
 import torch.nn.functional as F
-from torchvision import transforms
 import numpy as np
+
+_SIZE = 224
+_MEAN = (0.485, 0.456, 0.406)
+_STD  = (0.229, 0.224, 0.225)
 
 
 class DINOv2Embedder:
     """
     Wraps DINOv2-small (ViT-S/14) for instance-level embedding and
     attention-based foreground segmentation.
+
+    Performance:
+      • FP16 autocast on CUDA (tensor cores ~2x throughput)
+      • GPU preprocessing — cv2.resize per crop, one host->device transfer,
+        normalisation done on the GPU (replaces slow per-crop PIL pipeline)
     """
 
     def __init__(self, device: str = "cuda"):
         self.device = device
+        self._use_amp = (device == "cuda")
         print("Loading DINOv2-small (ViT-S/14)…")
         self.model = torch.hub.load(
             "facebookresearch/dinov2", "dinov2_vits14", verbose=False
         )
         self.model.eval().to(device)
-        self._transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ])
+        if device == "cuda":
+            torch.backends.cudnn.benchmark = True          # fixed 224x224 input
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
+        # Normalisation constants as (1, 3, 1, 1) tensors on the device.
+        self._mean = torch.tensor(_MEAN, device=device).view(1, 3, 1, 1)
+        self._std  = torch.tensor(_STD,  device=device).view(1, 3, 1, 1)
+
+        if device == "cuda":
+            self._warmup()
         print(f"DINOv2 ready on {device}")
+
+    @torch.inference_mode()
+    def _warmup(self):
+        """Run a dummy forward so cudnn autotunes kernels before the live loop."""
+        dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+        self.embed_batch([dummy])
+        torch.cuda.synchronize()
+
+    # ------------------------------------------------------------ preprocessing
+
+    def _preprocess(self, crops_bgr: list) -> torch.Tensor:
+        """
+        BGR numpy crops → normalised (N, 3, 224, 224) tensor on device.
+        cv2 handles colour + resize on CPU (SIMD), then a single transfer and
+        GPU-side normalisation.
+        """
+        arr = np.empty((len(crops_bgr), _SIZE, _SIZE, 3), dtype=np.uint8)
+        for i, crop in enumerate(crops_bgr):
+            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            arr[i] = cv2.resize(rgb, (_SIZE, _SIZE), interpolation=cv2.INTER_LINEAR)
+        t = torch.from_numpy(arr).to(self.device, non_blocking=True)
+        t = t.permute(0, 3, 1, 2).float().div_(255.0)      # (N,3,224,224)
+        return (t - self._mean) / self._std
 
     # ---------------------------------------------------------------- embedding
 
     @torch.inference_mode()
     def embed(self, crop_bgr: np.ndarray) -> torch.Tensor:
         """Normalised (384,) CLS feature vector from a BGR crop."""
-        rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-        tensor = self._transform(rgb).unsqueeze(0).to(self.device)
-        feat = self.model(tensor)
-        return F.normalize(feat, dim=-1).squeeze(0)
+        return self.embed_batch([crop_bgr]).squeeze(0)
 
     @torch.inference_mode()
     def embed_batch(self, crops_bgr: list) -> torch.Tensor:
         """Embed many BGR crops in one GPU forward pass → (N, 384)."""
         if not crops_bgr:
             return torch.empty(0, 384, device=self.device)
-        tensors = []
-        for crop in crops_bgr:
-            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            tensors.append(self._transform(rgb))
-        batch = torch.stack(tensors).to(self.device)
-        feats = self.model(batch)
-        return F.normalize(feats, dim=-1)
+        batch = self._preprocess(crops_bgr)
+        with torch.autocast("cuda", dtype=torch.float16, enabled=self._use_amp):
+            feats = self.model(batch)
+        return F.normalize(feats.float(), dim=-1)
 
     def similarity(self, a: torch.Tensor, b: torch.Tensor) -> float:
         return F.cosine_similarity(a.unsqueeze(0), b.unsqueeze(0)).item()
@@ -72,8 +100,8 @@ class DINOv2Embedder:
         Returns (soft_map, binary_mask) as float32 numpy in [0,1], sized to crop_bgr.
         """
         h, w = crop_bgr.shape[:2]
-        rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-        tensor = self._transform(rgb).unsqueeze(0).to(self.device)
+        # Single-image preprocess; keep FP32 here for clean softmax numerics.
+        tensor = self._preprocess([crop_bgr])
 
         attn_mod = self.model.blocks[-1].attn
         captured = {}

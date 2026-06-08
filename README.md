@@ -26,15 +26,19 @@ transformer tracker backend).
 ## Run
 
 ```bash
-python main.py                # hybrid engine (default)
-python main.py --engine sam2  # SAM 2 engine
+python main.py                # starts on the hybrid engine
+python main.py --engine sam2  # starts on the SAM 2 engine
 ```
+
+`--engine` only sets the *initial* engine — you can switch between **hybrid**
+and **sam2** live from the settings window; the current lock box carries over
+(SAM 2 loads on first switch, which takes a couple of seconds).
 
 - **Draw** a box with the mouse to lock on.
 - **R** resets the lock, **ESC** quits.
-- A settings window lets you switch the box-tracker backend (incl. **ViT**),
-  thresholds, motion vector, and mask overlay live. Re-draw the box to apply a
-  backend change.
+- The settings window also switches the hybrid box-tracker backend (incl.
+  **ViT**), thresholds, motion vector, and mask overlay live. Re-draw the box
+  to apply a backend change.
 
 The first time you select the **ViT** backend it downloads a ~0.7 MB ONNX model
 from the OpenCV model zoo into `./models/` (gitignored).

@@ -6,8 +6,11 @@ from dataclasses import dataclass
 
 @dataclass
 class Settings:
-    # Tracker backend — applied on next lock (re-draw the box to switch)
-    tracker_backend: str = "CSRT"        # "CSRT" | "KCF" | "Optical Flow"
+    # Tracking engine — switched live (lock box carries over)
+    tracking_engine: str = "hybrid"      # "hybrid" | "sam2"
+
+    # Tracker backend (hybrid engine) — applied on next lock (re-draw to switch)
+    tracker_backend: str = "CSRT"        # "ViT" | "CSRT" | "KCF" | "Optical Flow"
 
     # Tracking thresholds
     sim_confirm:    float = 0.55
@@ -34,6 +37,7 @@ class Settings:
 
 
 TRACKER_BACKENDS = ["ViT", "CSRT", "KCF", "Optical Flow"]
+TRACKING_ENGINES = ["hybrid", "sam2"]
 
 
 # ----------------------------------------------------------------- GUI builder
@@ -90,8 +94,12 @@ def _run_gui(settings: Settings) -> None:
         cb.bind("<<ComboboxSelected>>",
                 lambda e: setattr(settings, key, var.get()))
 
+    # ── Engine ────────────────────────────────────────────────────────────────
+    f = section("Engine  (switches live; lock carries over)")
+    combo_row(f, "Tracking engine", "tracking_engine", TRACKING_ENGINES)
+
     # ── Tracker ───────────────────────────────────────────────────────────────
-    f = section("Tracker  (re-draw box to apply)")
+    f = section("Tracker backend  (hybrid; re-draw box to apply)")
     combo_row(f, "Backend", "tracker_backend", TRACKER_BACKENDS)
 
     # ── Tracking ─────────────────────────────────────────────────────────────

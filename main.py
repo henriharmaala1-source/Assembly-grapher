@@ -7,28 +7,27 @@ import torch
 
 warnings.filterwarnings("ignore", message="xFormers is not available")
 
-from tracker.embedding import DINOv2Embedder
-from tracker.core import LockOnTracker, State
+from tracker.core import State
 from tracker.ui import MouseHandler, draw_overlay
 from tracker.settings import Settings, launch_settings
 from tracker.pipeline import SharedState, capture_loop, inference_loop
+from tracker.engine import EngineManager
 
 
-def build_engine(engine: str, device: str, settings: Settings):
-    """Pick the tracking philosophy. Returns (tracker, embedder_or_None)."""
-    if engine == "sam2":
-        from tracker.sam2_engine import SAM2Tracker
-        print("Engine: SAM 2  (promptable mask propagation)")
-        return SAM2Tracker(device=device), None
-    embedder = DINOv2Embedder(device=device)
-    print("Engine: DINOv2 hybrid  (box tracker + DINOv2 verification)")
-    return LockOnTracker(embedder, settings=settings), embedder
+def _banner(out, text, color):
+    """Centered status banner (engine loading / errors)."""
+    fh, fw = out.shape[:2]
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+    x, y = (fw - tw) // 2, fh // 2
+    cv2.rectangle(out, (x - 12, y - th - 10), (x + tw + 12, y + 12), (0, 0, 0), -1)
+    cv2.putText(out, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Object lock-on tracker")
     parser.add_argument("--engine", choices=["hybrid", "sam2"], default="hybrid",
-                        help="hybrid = DINOv2 + box tracker (default); "
+                        help="initial engine; switchable live in the settings "
+                             "window. hybrid = DINOv2 + box tracker (default); "
                              "sam2 = SAM 2 mask propagation")
     args = parser.parse_args()
 
@@ -42,8 +41,10 @@ def main():
     print(f"Device: cuda ({torch.cuda.get_device_name(0)})")
 
     settings = Settings()
-    tracker, embedder = build_engine(args.engine, device, settings)
-    mouse    = MouseHandler()
+    settings.tracking_engine = args.engine
+    manager = EngineManager(device, settings)
+    manager.get(args.engine)          # build the initial engine up front
+    mouse   = MouseHandler()
 
     launch_settings(settings)
 
@@ -62,7 +63,7 @@ def main():
         target=capture_loop, args=(cap, shared, stop), daemon=True)
     inf_thread = threading.Thread(
         target=inference_loop,
-        args=(tracker, embedder, settings, mouse, shared, stop), daemon=True)
+        args=(manager, settings, mouse, shared, stop), daemon=True)
     cap_thread.start()
     inf_thread.start()
 
@@ -104,6 +105,14 @@ def main():
             if inf_fps and settings.show_fps:
                 cv2.putText(out, f"{inf_fps:.0f} trk", (out.shape[1] - 76, 46),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+
+            # Engine-switch feedback.
+            loading = result.get("engine_loading")
+            err     = result.get("engine_error")
+            if loading:
+                _banner(out, f"Loading {loading} engine…", (0, 200, 255))
+            elif err:
+                _banner(out, f"Engine load failed: {err[:48]}", (40, 40, 240))
 
             cv2.imshow(win, out)
 

@@ -78,9 +78,41 @@ def _compute_attention(embedder, frame, bbox, settings):
     return attn
 
 
-def inference_loop(tracker, embedder, settings, mouse, shared: SharedState,
+def _switch_engine(manager, want, active_name, tracker, embedder, frame, shared):
+    """Swap to engine `want`. On failure keep the current engine and revert the
+    setting so we don't retry every frame. Returns (tracker, embedder, name)."""
+    # Tell the display a (possibly slow) load is happening.
+    shared.set_result(dict(state=tracker.state, bbox=getattr(tracker, "bbox", None),
+                           sim=0.0, engine_loading=want))
+    try:
+        new_tracker, new_embedder = manager.get(want)
+    except Exception as e:
+        print(f"[engine] could not load '{want}': {e}")
+        manager.settings.tracking_engine = active_name      # revert dropdown intent
+        shared.set_result(dict(state=tracker.state, engine_error=str(e)))
+        return tracker, embedder, active_name
+
+    carry = tracker.bbox if tracker.state == State.LOCKED else None
+    new_tracker.reset()
+    if carry is not None:
+        try:
+            new_tracker.init(frame, carry)                  # re-prompt, no re-draw
+        except Exception:
+            pass
+    print(f"[engine] switched to '{want}'")
+    return new_tracker, new_embedder, want
+
+
+def inference_loop(manager, settings, mouse, shared: SharedState,
                    stop: threading.Event):
-    """Run the tracker on the newest frame; publish results for display."""
+    """Run the active engine on the newest frame; publish results for display.
+
+    The engine (DINOv2 hybrid / SAM 2) can be switched live from the settings
+    window; the swap happens here on the inference thread, carrying over the
+    current lock box so tracking continues without re-drawing.
+    """
+    active_name = settings.tracking_engine
+    tracker, embedder = manager.get(active_name)
     last_seq  = -1
     attn_map  = None
     attn_age  = 0
@@ -93,6 +125,14 @@ def inference_loop(tracker, embedder, settings, mouse, shared: SharedState,
             time.sleep(0.001)        # nothing new yet
             continue
         last_seq = seq
+
+        # --- live engine switch -------------------------------------------
+        want = settings.tracking_engine
+        if want != active_name:
+            tracker, embedder, active_name = _switch_engine(
+                manager, want, active_name, tracker, embedder, frame, shared)
+            attn_map = None
+            attn_age = 0
 
         if shared.take_reset():
             tracker.reset()

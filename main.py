@@ -1,5 +1,6 @@
 import warnings
 import time
+import threading
 import cv2
 import torch
 
@@ -9,6 +10,7 @@ from tracker.embedding import DINOv2Embedder
 from tracker.core import LockOnTracker, State
 from tracker.ui import MouseHandler, draw_overlay
 from tracker.settings import Settings, launch_settings
+from tracker.pipeline import SharedState, capture_loop, inference_loop
 
 
 def main():
@@ -35,68 +37,70 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,  720)
 
+    shared = SharedState()
+    stop   = threading.Event()
+
+    # Capture and inference run on their own threads; display stays on main.
+    cap_thread = threading.Thread(
+        target=capture_loop, args=(cap, shared, stop), daemon=True)
+    inf_thread = threading.Thread(
+        target=inference_loop,
+        args=(tracker, embedder, settings, mouse, shared, stop), daemon=True)
+    cap_thread.start()
+    inf_thread.start()
+
     win = "Lock-On Tracker"
     cv2.namedWindow(win)
     cv2.setMouseCallback(win, mouse.callback)
 
-    fps      = 30.0
+    disp_fps = 30.0
     t_prev   = time.perf_counter()
-    attn_map = None           # cached attention map (reused between frames)
-    attn_age = 0              # frames since last attention computation
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    try:
+        while not stop.is_set():
+            frame, _ = shared.get_frame()
+            if frame is None:
+                if cv2.waitKey(10) & 0xFF == 27:
+                    break
+                continue
 
-        if mouse.pending_bbox is not None and tracker.state == State.IDLE:
-            tracker.init(frame, mouse.pending_bbox)
-            mouse.pending_bbox = None
-            attn_map = None
-            attn_age = 0
+            result = shared.get_result() or {}
+            state        = result.get("state", State.IDLE)
+            bbox         = result.get("bbox")
+            sim          = result.get("sim", 0.0)
+            attn_map     = result.get("attn_map")
+            motion_trail = result.get("motion_trail")
+            predicted    = result.get("predicted")
 
-        state, bbox, sim = tracker.update(frame)
+            t_now    = time.perf_counter()
+            disp_fps = 0.9 * disp_fps + 0.1 / max(t_now - t_prev, 1e-9)
+            t_prev   = t_now
 
-        # Recompute attention map every attn_interval frames when locked and mask is on
-        if settings.show_mask and state == State.LOCKED and bbox is not None:
-            attn_age += 1
-            if attn_map is None or attn_age >= settings.attn_interval:
-                x, y, w, h = bbox
-                fh, fw = frame.shape[:2]
-                crop = frame[max(0,y):min(fh,y+h), max(0,x):min(fw,x+w)]
-                if crop.size > 0:
-                    attn_map, _ = embedder.get_attention_map(
-                        crop, threshold=settings.attn_threshold
-                    )
-                    attn_age = 0
-        else:
-            attn_map = None
-            attn_age = 0
+            out = draw_overlay(
+                frame, state, bbox, sim, mouse, disp_fps,
+                settings=settings, attn_map=attn_map,
+                motion_trail=motion_trail, predicted_center=predicted,
+            )
 
-        t_now  = time.perf_counter()
-        fps    = 0.9 * fps + 0.1 / max(t_now - t_prev, 1e-9)
-        t_prev = t_now
+            # Inference (tracking) rate, decoupled from display rate.
+            inf_fps = result.get("inf_fps")
+            if inf_fps and settings.show_fps:
+                cv2.putText(out, f"{inf_fps:.0f} trk", (out.shape[1] - 76, 46),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
 
-        motion_trail = tracker.center_trail() if settings.show_motion_vector else None
-        predicted    = tracker.predicted_center if settings.show_motion_vector else None
+            cv2.imshow(win, out)
 
-        out = draw_overlay(
-            frame, state, bbox, sim or 0.0, mouse, fps,
-            settings=settings, attn_map=attn_map,
-            motion_trail=motion_trail, predicted_center=predicted,
-        )
-        cv2.imshow(win, out)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == 27:
-            break
-        elif key in (ord("r"), ord("R")):
-            tracker.reset()
-            mouse.pending_bbox = None
-            attn_map = None
-
-    cap.release()
-    cv2.destroyAllWindows()
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:
+                break
+            elif key in (ord("r"), ord("R")):
+                shared.request_reset()
+    finally:
+        stop.set()
+        cap_thread.join(timeout=1.0)
+        inf_thread.join(timeout=1.0)
+        cap.release()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

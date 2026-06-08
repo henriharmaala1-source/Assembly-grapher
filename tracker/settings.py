@@ -6,15 +6,22 @@ from dataclasses import dataclass
 
 @dataclass
 class Settings:
+    # Tracker backend — applied on next lock (re-draw the box to switch)
+    tracker_backend: str = "CSRT"        # "CSRT" | "KCF" | "Optical Flow"
+
     # Tracking thresholds
     sim_confirm:    float = 0.55
     sim_warning:    float = 0.42
     streak_limit:   int   = 8
     search_radius:  float = 0.6
 
-    # Performance — how often DINOv2 runs (CSRT runs every frame)
+    # Performance — how often DINOv2 runs (backend tracker runs every frame)
     check_interval: int   = 6    # verify identity every N frames
     attn_interval:  int   = 10   # recompute attention mask every N frames
+
+    # Motion vector
+    show_motion_vector: bool = True
+    predict_horizon:    int  = 8   # frames ahead the prediction arrow points
 
     # Attention mask display
     show_mask:      bool  = True
@@ -24,6 +31,9 @@ class Settings:
     # Display toggles
     show_confidence_bar: bool = True
     show_fps:            bool = True
+
+
+TRACKER_BACKENDS = ["CSRT", "KCF", "Optical Flow"]
 
 
 # ----------------------------------------------------------------- GUI builder
@@ -69,12 +79,32 @@ def _run_gui(settings: Settings) -> None:
                         command=lambda: setattr(settings, key, var.get())
                         ).pack(anchor="w", pady=2)
 
+    def combo_row(parent, label, key, values):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=3)
+        ttk.Label(row, text=label, width=22, anchor="w").pack(side="left")
+        var = tk.StringVar(value=getattr(settings, key))
+        cb = ttk.Combobox(row, textvariable=var, values=values,
+                          state="readonly", width=14)
+        cb.pack(side="left", padx=6)
+        cb.bind("<<ComboboxSelected>>",
+                lambda e: setattr(settings, key, var.get()))
+
+    # ── Tracker ───────────────────────────────────────────────────────────────
+    f = section("Tracker  (re-draw box to apply)")
+    combo_row(f, "Backend", "tracker_backend", TRACKER_BACKENDS)
+
     # ── Tracking ─────────────────────────────────────────────────────────────
     f = section("Tracking")
     slider_row(f, "Lock threshold",    "sim_confirm",    0.30, 0.90)
     slider_row(f, "Warning threshold", "sim_warning",    0.20, 0.80)
     slider_row(f, "Search radius",     "search_radius",  0.20, 3.00)
     slider_row(f, "Streak limit",      "streak_limit",   2,    30,  as_int=True)
+
+    # ── Motion vector ─────────────────────────────────────────────────────────
+    f = section("Motion Vector")
+    check_row(f, "Show motion vector",  "show_motion_vector")
+    slider_row(f, "Prediction horizon", "predict_horizon", 2, 30, as_int=True)
 
     # ── Performance ───────────────────────────────────────────────────────────
     f = section("Performance")

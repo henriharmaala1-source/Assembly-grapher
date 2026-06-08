@@ -1,16 +1,11 @@
 import cv2
 import torch
 import numpy as np
+from collections import deque
 from enum import Enum, auto
 from .embedding import DINOv2Embedder
 from .settings import Settings
-
-
-def _make_csrt():
-    try:
-        return cv2.legacy.TrackerCSRT_create()
-    except AttributeError:
-        return cv2.TrackerCSRT_create()
+from .trackers import make_backend
 
 
 class State(Enum):
@@ -40,11 +35,16 @@ class LockOnTracker:
     SCAN_BATCH    = 64          # positions processed per frame during SEARCHING
     SEARCH_TIMEOUT = 300        # frames before giving up (~10 s at 30 fps)
 
+    MOTION_HISTORY  = 14        # centers kept for trail + velocity estimate
+    MOTION_SMOOTH   = 5         # frames averaged for velocity
+
     _SIM_CONFIRM   = 0.55
     _SIM_WARNING   = 0.42
     _STREAK_LIMIT  = 8
     _SEARCH_RADIUS = 0.6
     _CHECK_INTERVAL = 6
+    _BACKEND        = "CSRT"
+    _PREDICT_HORIZON = 8
 
     def __init__(self, embedder: DINOv2Embedder, settings: Settings = None):
         self.embedder   = embedder
@@ -53,12 +53,17 @@ class LockOnTracker:
         self.bbox       = None
         self.similarity = 1.0
 
-        self._csrt          = None
-        self._anchor        = None
-        self._bank          = None
-        self._bad_streak    = 0
-        self._frame_n       = 0
-        self._search_frame  = 0
+        # Motion vector state
+        self._centers          = deque(maxlen=self.MOTION_HISTORY)
+        self.velocity          = (0.0, 0.0)
+        self.predicted_center  = None
+
+        self._tracker        = None
+        self._anchor         = None
+        self._bank           = None
+        self._bad_streak     = 0
+        self._frame_n        = 0
+        self._search_frame   = 0
         self._scan_positions = None   # list of (x,y,w,h) for current sweep
         self._scan_idx       = 0
         self._scan_best      = (None, 0.0)
@@ -85,6 +90,17 @@ class LockOnTracker:
     def _check_interval(self):
         return self._s.check_interval if self._s else self._CHECK_INTERVAL
 
+    @property
+    def _backend(self):
+        return self._s.tracker_backend if self._s else self._BACKEND
+
+    @property
+    def _predict_horizon(self):
+        return self._s.predict_horizon if self._s else self._PREDICT_HORIZON
+
+    def center_trail(self):
+        return list(self._centers)
+
     # ------------------------------------------------------------------ public
 
     def init(self, frame: np.ndarray, bbox: tuple) -> bool:
@@ -95,16 +111,20 @@ class LockOnTracker:
         if crop.size == 0:
             return False
 
-        self._anchor = self.embedder.embed(crop)
-        self._bank   = self._anchor.unsqueeze(0).clone()
-        self._csrt   = _make_csrt()
-        self._csrt.init(frame, (x, y, w, h))
+        self._anchor  = self.embedder.embed(crop)
+        self._bank    = self._anchor.unsqueeze(0).clone()
+        self._tracker = make_backend(self._backend)
+        self._tracker.init(frame, (x, y, w, h))
         self.bbox          = (x, y, w, h)
         self._bad_streak   = 0
         self._frame_n      = 0
         self._search_frame = 0
         self._scan_positions = None
         self.similarity    = 1.0
+        self._centers.clear()
+        self.velocity         = (0.0, 0.0)
+        self.predicted_center = None
+        self._update_motion()
         self.state = State.LOCKED
         return True
 
@@ -117,7 +137,7 @@ class LockOnTracker:
 
     def reset(self):
         self.state           = State.IDLE
-        self._csrt           = None
+        self._tracker        = None
         self.bbox            = None
         self._anchor         = None
         self._bank           = None
@@ -126,11 +146,14 @@ class LockOnTracker:
         self._frame_n        = 0
         self._search_frame   = 0
         self._scan_positions = None
+        self._centers.clear()
+        self.velocity         = (0.0, 0.0)
+        self.predicted_center = None
 
     # --------------------------------------------------------------- LOCKED
 
     def _update_locked(self, frame):
-        ok, raw = self._csrt.update(frame)
+        ok, raw = self._tracker.update(frame)
         if not ok:
             self._enter_searching()
             return self.state, self.bbox, self.similarity
@@ -139,6 +162,7 @@ class LockOnTracker:
         self._frame_n += 1
 
         if self._frame_n % self._check_interval != 0:
+            self._update_motion()
             return self.state, self.bbox, self.similarity
 
         sim = self._single_sim(frame, self.bbox)
@@ -160,7 +184,29 @@ class LockOnTracker:
                 if self._bad_streak >= self._streak_limit:
                     self._enter_searching()
 
+        self._update_motion()
         return self.state, self.bbox, self.similarity
+
+    def _update_motion(self):
+        """Track the box center, estimate velocity, predict future position."""
+        if self.bbox is None:
+            return
+        x, y, w, h = self.bbox
+        c = (x + w / 2.0, y + h / 2.0)
+        self._centers.append(c)
+
+        if len(self._centers) >= 2:
+            pts   = np.array(self._centers)
+            diffs = np.diff(pts, axis=0)               # per-frame displacements
+            k     = min(len(diffs), self.MOTION_SMOOTH)
+            vel   = diffs[-k:].mean(axis=0)            # smoothed velocity
+            self.velocity = (float(vel[0]), float(vel[1]))
+            horizon = self._predict_horizon
+            self.predicted_center = (c[0] + vel[0] * horizon,
+                                     c[1] + vel[1] * horizon)
+        else:
+            self.velocity = (0.0, 0.0)
+            self.predicted_center = c
 
     # ------------------------------------------------------------- SEARCHING
     # The full-frame sweep is spread across frames: SCAN_BATCH positions per
@@ -295,8 +341,8 @@ class LockOnTracker:
         self._bank = torch.cat([self._bank, emb.unsqueeze(0)], dim=0)
 
     def _reseat_csrt(self, frame, box):
-        self._csrt = _make_csrt()
-        self._csrt.init(frame, box)
+        self._tracker = make_backend(self._backend)
+        self._tracker.init(frame, box)
 
     def _enter_searching(self):
         self.state           = State.SEARCHING

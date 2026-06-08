@@ -77,9 +77,13 @@ def main():
         fps    = 0.9 * fps + 0.1 / max(t_now - t_prev, 1e-9)
         t_prev = t_now
 
+        motion_trail = tracker.center_trail() if settings.show_motion_vector else None
+        predicted    = tracker.predicted_center if settings.show_motion_vector else None
+
         out = draw_overlay(
             frame, state, bbox, sim or 0.0, mouse, fps,
             settings=settings, attn_map=attn_map,
+            motion_trail=motion_trail, predicted_center=predicted,
         )
         cv2.imshow(win, out)
 

@@ -90,6 +90,30 @@ def _draw_attention(out, bbox, soft_map, opacity):
     cv2.drawContours(out[y1:y2, x1:x2], contours, -1, (100, 255, 160), 1)
 
 
+def _draw_motion(out, center, trail, predicted):
+    """Draw the path trail and a predictive velocity arrow from the center."""
+    cx, cy = int(center[0]), int(center[1])
+
+    # Fading trail of past centers
+    if trail and len(trail) >= 2:
+        n = len(trail)
+        for i in range(1, n):
+            a = (int(trail[i - 1][0]), int(trail[i - 1][1]))
+            b = (int(trail[i][0]),     int(trail[i][1]))
+            t = i / n                         # 0 (old) → 1 (recent)
+            col = (int(80 + 100 * t), int(120 + 100 * t), 30)
+            cv2.line(out, a, b, col, 1, cv2.LINE_AA)
+
+    # Predictive arrow: where the object is heading
+    if predicted is not None:
+        px, py = int(predicted[0]), int(predicted[1])
+        dist = ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5
+        if dist > 4:                          # only when actually moving
+            cv2.arrowedLine(out, (cx, cy), (px, py),
+                            (0, 140, 255), 2, cv2.LINE_AA, tipLength=0.3)
+            cv2.circle(out, (px, py), 4, (0, 140, 255), 1, cv2.LINE_AA)
+
+
 def draw_overlay(
     frame: np.ndarray,
     state: State,
@@ -99,6 +123,8 @@ def draw_overlay(
     fps: float,
     settings: Settings = None,
     attn_map=None,          # soft attention map (numpy float32) or None
+    motion_trail=None,      # list of (cx, cy) recent centers
+    predicted_center=None,  # (px, py) predicted future center
 ) -> np.ndarray:
     out = frame.copy()
     fh, fw = out.shape[:2]
@@ -142,6 +168,10 @@ def draw_overlay(
             cv2.putText(out, f"{sim * 100:.0f}%", (x + w + 4, bar_y + 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
 
+        # ── motion vector: trail + predictive arrow ───────────────────────────
+        if cfg.show_motion_vector:
+            _draw_motion(out, (cx, cy), motion_trail, predicted_center)
+
     # ── searching overlay ─────────────────────────────────────────────────────
     if state == State.SEARCHING and bbox:
         x, y, w, h = bbox
@@ -166,6 +196,10 @@ def draw_overlay(
     if cfg.show_fps:
         cv2.putText(out, f"{fps:.0f} fps", (fw - 76, 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (190, 190, 190), 1)
+
+    # ── backend label ─────────────────────────────────────────────────────────
+    cv2.putText(out, f"backend: {cfg.tracker_backend}", (fw - 200, fh - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (140, 140, 140), 1)
 
     # ── help strip ───────────────────────────────────────────────────────────
     cv2.putText(out, "R  reset    ESC  quit", (10, fh - 10),

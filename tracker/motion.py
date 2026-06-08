@@ -41,22 +41,22 @@ class KalmanCenter:
     def predict(self):
         """Advance one step; returns the a-priori predicted (x, y)."""
         p = self.kf.predict()
-        return float(p[0]), float(p[1])
+        return float(p[0][0]), float(p[1][0])
 
     def correct(self, center):
         """Fuse a measurement; returns the filtered (x, y)."""
         x, y = center
         m = np.array([[np.float32(x)], [np.float32(y)]])
         s = self.kf.correct(m)
-        return float(s[0]), float(s[1])
+        return float(s[0][0]), float(s[1][0])
 
     @property
     def position(self):
-        return float(self.kf.statePost[0]), float(self.kf.statePost[1])
+        return float(self.kf.statePost[0][0]), float(self.kf.statePost[1][0])
 
     @property
     def velocity(self):
-        return float(self.kf.statePost[2]), float(self.kf.statePost[3])
+        return float(self.kf.statePost[2][0]), float(self.kf.statePost[3][0])
 
     def project(self, steps: float):
         """Predicted centre `steps` frames into the future (no state change)."""

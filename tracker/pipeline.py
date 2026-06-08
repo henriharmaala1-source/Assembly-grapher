@@ -109,10 +109,14 @@ def inference_loop(tracker, embedder, settings, mouse, shared: SharedState,
         state, bbox, sim = tracker.update(frame)
 
         if settings.show_mask and state == State.LOCKED and bbox is not None:
-            attn_age += 1
-            if attn_map is None or attn_age >= settings.attn_interval:
-                attn_map = _compute_attention(embedder, frame, bbox, settings)
-                attn_age = 0
+            if getattr(tracker, "provides_mask", False):
+                # SAM 2 already produced a pixel-accurate mask this frame.
+                attn_map = tracker.mask_crop()
+            else:
+                attn_age += 1
+                if attn_map is None or attn_age >= settings.attn_interval:
+                    attn_map = _compute_attention(embedder, frame, bbox, settings)
+                    attn_age = 0
         else:
             attn_map = None
             attn_age = 0

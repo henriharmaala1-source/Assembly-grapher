@@ -1,3 +1,4 @@
+import argparse
 import warnings
 import time
 import threading
@@ -13,7 +14,24 @@ from tracker.settings import Settings, launch_settings
 from tracker.pipeline import SharedState, capture_loop, inference_loop
 
 
+def build_engine(engine: str, device: str, settings: Settings):
+    """Pick the tracking philosophy. Returns (tracker, embedder_or_None)."""
+    if engine == "sam2":
+        from tracker.sam2_engine import SAM2Tracker
+        print("Engine: SAM 2  (promptable mask propagation)")
+        return SAM2Tracker(device=device), None
+    embedder = DINOv2Embedder(device=device)
+    print("Engine: DINOv2 hybrid  (box tracker + DINOv2 verification)")
+    return LockOnTracker(embedder, settings=settings), embedder
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Object lock-on tracker")
+    parser.add_argument("--engine", choices=["hybrid", "sam2"], default="hybrid",
+                        help="hybrid = DINOv2 + box tracker (default); "
+                             "sam2 = SAM 2 mask propagation")
+    args = parser.parse_args()
+
     if not torch.cuda.is_available():
         raise RuntimeError(
             "CUDA not available. "
@@ -23,9 +41,8 @@ def main():
     device = "cuda"
     print(f"Device: cuda ({torch.cuda.get_device_name(0)})")
 
-    embedder = DINOv2Embedder(device=device)
     settings = Settings()
-    tracker  = LockOnTracker(embedder, settings=settings)
+    tracker, embedder = build_engine(args.engine, device, settings)
     mouse    = MouseHandler()
 
     launch_settings(settings)

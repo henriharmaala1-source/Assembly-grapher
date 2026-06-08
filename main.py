@@ -43,7 +43,13 @@ def main():
     settings = Settings()
     settings.tracking_engine = args.engine
     manager = EngineManager(device, settings)
-    manager.get(args.engine)          # build the initial engine up front
+    try:
+        manager.get(args.engine)          # build the initial engine up front
+    except Exception as e:
+        print(f"[warning] could not load '{args.engine}' engine: {e}")
+        print("[warning] falling back to hybrid engine.")
+        settings.tracking_engine = "hybrid"
+        manager.get("hybrid")
     mouse   = MouseHandler()
 
     launch_settings(settings)

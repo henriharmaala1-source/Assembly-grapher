@@ -105,20 +105,35 @@ class DINOv2Embedder:
         attn = (q * scale) @ k.transpose(-2, -1)   # (B, nh, N, N)
         attn = attn.softmax(dim=-1)
 
-        # CLS token (row 0) attending to every other token.
-        cls_attn = attn[0, :, 0, 1:]            # (nh, N-1)
+        # CLS token (row 0) attending to every other token: (nh, N-1)
+        cls_attn = attn[0, :, 0, 1:]
 
-        # Keep only the trailing perfect-square patch tokens (drops any
-        # leading register tokens if a *_reg model is ever used).
+        # Trim to trailing perfect-square patch tokens (tolerates *_reg models)
         patches = cls_attn.shape[-1]
         side = int(patches ** 0.5)
-        cls_attn = cls_attn[:, -side * side:].reshape(nh, side, side)
+        cls_attn = cls_attn[:, -side * side:].reshape(nh, side, side)  # (nh,s,s)
 
-        soft = cls_attn.mean(0)
-        soft = (soft - soft.min()) / (soft.max() - soft.min() + 1e-8)
+        # Weight each head by inverse entropy — focused heads (low entropy)
+        # carry more spatial information and should dominate the mask.
+        flat    = cls_attn.reshape(nh, -1).clamp(min=1e-8)
+        entropy = -(flat * flat.log()).sum(-1)          # (nh,) lower = sharper
+        weights = 1.0 / (entropy + 1e-6)
+        weights = weights / weights.sum()
+        soft    = (cls_attn * weights[:, None, None]).sum(0)   # (s, s)
+        soft    = (soft - soft.min()) / (soft.max() - soft.min() + 1e-8)
 
         soft_np = soft.cpu().float().numpy()
         soft_up = cv2.resize(soft_np, (w, h), interpolation=cv2.INTER_LINEAR)
-        binary  = (soft_up >= threshold).astype(np.float32)
+
+        # Otsu automatic threshold (ignores the manual slider value) unless
+        # the image is near-uniform, in which case fall back to the slider.
+        soft_u8 = (soft_up * 255).astype(np.uint8)
+        otsu_thresh, binary_otsu = cv2.threshold(
+            soft_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        if otsu_thresh > 0:
+            binary = (binary_otsu / 255).astype(np.float32)
+        else:
+            binary = (soft_up >= threshold).astype(np.float32)
 
         return soft_up, binary

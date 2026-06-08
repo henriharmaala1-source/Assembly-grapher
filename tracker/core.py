@@ -22,28 +22,24 @@ class State(Enum):
 class LockOnTracker:
     """
     Two-tier tracking:
-      • CSRT runs every frame  (~0.5 ms, CPU) — smooth motion
-      • DINOv2 runs every CHECK_INTERVAL frames — identity verification
-        If identity check fails, a local search (small crop grid) corrects the box.
-        Only after repeated failures does the tracker enter SEARCHING.
+      • CSRT every frame  (~0.5 ms, CPU)  — smooth motion
+      • DINOv2 every check_interval frames — identity verify + correction
+
+    SEARCHING spreads the full-frame scan across multiple frames
+    (SCAN_BATCH positions per frame) so the video loop never blocks.
     """
 
-    # --- search geometry used only when correction is needed ------------------
-    GRID   = 3                      # 3×3 offsets — 9×3 scales = 27 crops max
-    SCALES = (0.85, 1.0, 1.18)
+    GRID          = 3
+    SCALES        = (0.85, 1.0, 1.18)
 
-    # --- appearance bank ------------------------------------------------------
-    BANK_MAX     = 5
-    BANK_ADD_SIM = 0.72
+    BANK_MAX      = 5
+    BANK_ADD_SIM  = 0.72
     ANCHOR_WEIGHT = 0.6
 
-    # --- recovery (full-frame scan) -------------------------------------------
-    LOST_RADIUS    = 2.0
-    SCAN_INTERVAL  = 3
-    SCAN_BATCH     = 64
-    SEARCH_TIMEOUT = 300
+    LOST_RADIUS   = 2.0
+    SCAN_BATCH    = 64          # positions processed per frame during SEARCHING
+    SEARCH_TIMEOUT = 300        # frames before giving up (~10 s at 30 fps)
 
-    # --- fallback thresholds (used when Settings is None) ---------------------
     _SIM_CONFIRM   = 0.55
     _SIM_WARNING   = 0.42
     _STREAK_LIMIT  = 8
@@ -51,18 +47,21 @@ class LockOnTracker:
     _CHECK_INTERVAL = 6
 
     def __init__(self, embedder: DINOv2Embedder, settings: Settings = None):
-        self.embedder = embedder
-        self._s       = settings
-        self.state    = State.IDLE
-        self.bbox     = None
+        self.embedder   = embedder
+        self._s         = settings
+        self.state      = State.IDLE
+        self.bbox       = None
         self.similarity = 1.0
 
-        self._csrt         = None
-        self._anchor       = None
-        self._bank         = None
-        self._bad_streak   = 0
-        self._frame_n      = 0
-        self._search_frame = 0
+        self._csrt          = None
+        self._anchor        = None
+        self._bank          = None
+        self._bad_streak    = 0
+        self._frame_n       = 0
+        self._search_frame  = 0
+        self._scan_positions = None   # list of (x,y,w,h) for current sweep
+        self._scan_idx       = 0
+        self._scan_best      = (None, 0.0)
 
     # ------------------------------------------------------------------ props
 
@@ -100,10 +99,11 @@ class LockOnTracker:
         self._bank   = self._anchor.unsqueeze(0).clone()
         self._csrt   = _make_csrt()
         self._csrt.init(frame, (x, y, w, h))
-        self.bbox        = (x, y, w, h)
+        self.bbox          = (x, y, w, h)
         self._bad_streak   = 0
         self._frame_n      = 0
         self._search_frame = 0
+        self._scan_positions = None
         self.similarity    = 1.0
         self.state = State.LOCKED
         return True
@@ -116,20 +116,20 @@ class LockOnTracker:
         return self.state, None, None
 
     def reset(self):
-        self.state       = State.IDLE
-        self._csrt       = None
-        self.bbox        = None
-        self._anchor     = None
-        self._bank       = None
+        self.state           = State.IDLE
+        self._csrt           = None
+        self.bbox            = None
+        self._anchor         = None
+        self._bank           = None
         self.similarity      = 1.0
         self._bad_streak     = 0
         self._frame_n        = 0
         self._search_frame   = 0
+        self._scan_positions = None
 
     # --------------------------------------------------------------- LOCKED
 
     def _update_locked(self, frame):
-        # ── Tier 1: CSRT every frame (fast) ──────────────────────────────────
         ok, raw = self._csrt.update(frame)
         if not ok:
             self._enter_searching()
@@ -138,7 +138,6 @@ class LockOnTracker:
         self.bbox = tuple(int(v) for v in raw)
         self._frame_n += 1
 
-        # ── Tier 2: DINOv2 identity check every N frames ─────────────────────
         if self._frame_n % self._check_interval != 0:
             return self.state, self.bbox, self.similarity
 
@@ -146,14 +145,11 @@ class LockOnTracker:
         self.similarity = sim
 
         if sim >= self._sim_warning:
-            # Identity confirmed — optionally grow the appearance bank
             self._bad_streak = 0
             if sim >= self.BANK_ADD_SIM:
                 self._maybe_bank(frame, self.bbox)
         else:
-            # Identity check failed — run a small correction search
-            best_box, best_sim = self._local_search(frame, self.bbox,
-                                                    self._search_radius)
+            best_box, best_sim = self._local_search(frame, self.bbox, self._search_radius)
             if best_box and best_sim >= self._sim_warning:
                 self.bbox = best_box
                 self._reseat_csrt(frame, best_box)
@@ -167,6 +163,8 @@ class LockOnTracker:
         return self.state, self.bbox, self.similarity
 
     # ------------------------------------------------------------- SEARCHING
+    # The full-frame sweep is spread across frames: SCAN_BATCH positions per
+    # frame, so the loop never blocks for more than one GPU batch (~2 ms).
 
     def _update_searching(self, frame):
         self._search_frame += 1
@@ -175,36 +173,75 @@ class LockOnTracker:
             self.state = State.IDLE
             return self.state, None, 0.0
 
-        if self._search_frame % self.SCAN_INTERVAL != 0:
-            return self.state, self.bbox, self.similarity
+        # Start a fresh sweep when the previous one is exhausted.
+        if self._scan_positions is None:
+            self._scan_positions = self._gen_scan_positions(frame)
+            self._scan_idx  = 0
+            self._scan_best = (None, 0.0)
 
-        best_box, best_sim = self._full_frame_search(frame)
-        self.similarity = best_sim
+        # Process one batch of candidate positions from the current frame.
+        end        = min(self._scan_idx + self.SCAN_BATCH, len(self._scan_positions))
+        batch_pos  = self._scan_positions[self._scan_idx:end]
+        self._scan_idx = end
 
-        if best_box and best_sim >= self._sim_confirm:
-            self.bbox = best_box
-            self._reseat_csrt(frame, best_box)
-            self._bad_streak   = 0
-            self._frame_n      = 0
-            self._search_frame = 0
-            self.state = State.LOCKED
+        fh, fw = frame.shape[:2]
+        boxes, crops = [], []
+        for (bx, by, bw, bh) in batch_pos:
+            crop = frame[by:min(fh, by+bh), bx:min(fw, bx+bw)]
+            if crop.size > 0:
+                boxes.append((bx, by, bw, bh))
+                crops.append(crop)
+
+        if crops:
+            embs = self.embedder.embed_batch(crops)
+            sims = embs @ self._anchor
+            idx  = int(torch.argmax(sims).item())
+            if float(sims[idx]) > self._scan_best[1]:
+                self._scan_best = (boxes[idx], float(sims[idx]))
+
+        # Sweep complete — check result and start a new sweep next frame.
+        if self._scan_idx >= len(self._scan_positions):
+            self._scan_positions = None          # triggers new sweep next frame
+            best_box, best_sim = self._scan_best
+            self.similarity = best_sim
+
+            if best_box and best_sim >= self._sim_confirm:
+                self.bbox = best_box
+                self._reseat_csrt(frame, best_box)
+                self._bad_streak   = 0
+                self._frame_n      = 0
+                self._search_frame = 0
+                self.state = State.LOCKED
 
         return self.state, self.bbox, self.similarity
 
     # ----------------------------------------------------------------- search
 
+    def _gen_scan_positions(self, frame):
+        """All (x, y, w, h) candidate positions for a full-frame sweep."""
+        fh, fw = frame.shape[:2]
+        _, _, tw, th = self.bbox
+        sx = max(tw // 3, 20)
+        sy = max(th // 3, 20)
+        positions = []
+        for s in (0.8, 1.0, 1.25):
+            bw, bh = int(tw * s), int(th * s)
+            if bw < 10 or bh < 10:
+                continue
+            for x in range(0, fw - bw + 1, sx):
+                for y in range(0, fh - bh + 1, sy):
+                    positions.append((x, y, bw, bh))
+        return positions
+
     def _single_sim(self, frame, bbox) -> float:
-        """Cheapest check: embed only the current box crop."""
         x, y, w, h = bbox
         fh, fw = frame.shape[:2]
         crop = frame[max(0,y):min(fh,y+h), max(0,x):min(fw,x+w)]
         if crop.size == 0:
             return 0.0
-        emb = self.embedder.embed(crop)
-        return self.embedder.similarity(self._anchor, emb)
+        return self.embedder.similarity(self._anchor, self.embedder.embed(crop))
 
     def _local_search(self, frame, prior, radius):
-        """Score a small grid of crops around the prior position."""
         fh, fw = frame.shape[:2]
         px, py, pw, ph = prior
         cx, cy = px + pw / 2.0, py + ph / 2.0
@@ -241,39 +278,6 @@ class LockOnTracker:
         best     = int(torch.argmax(score).item())
         return boxes[best], float(anchor_s[best].item())
 
-    def _full_frame_search(self, frame):
-        fh, fw = frame.shape[:2]
-        _, _, tw, th = self.bbox
-        sx = max(tw // 3, 20)
-        sy = max(th // 3, 20)
-
-        boxes, crops = [], []
-        for s in (0.8, 1.0, 1.25):
-            bw, bh = int(tw * s), int(th * s)
-            if bw < 10 or bh < 10:
-                continue
-            for x in range(0, fw - bw + 1, sx):
-                for y in range(0, fh - bh + 1, sy):
-                    crop = frame[y:y + bh, x:x + bw]
-                    if crop.size == 0:
-                        continue
-                    boxes.append((x, y, bw, bh))
-                    crops.append(crop)
-
-        if not crops:
-            return None, 0.0
-
-        best_sim, best_box = 0.0, None
-        for i in range(0, len(crops), self.SCAN_BATCH):
-            embs = self.embedder.embed_batch(crops[i:i + self.SCAN_BATCH])
-            sims = embs @ self._anchor
-            idx  = int(torch.argmax(sims).item())
-            if float(sims[idx]) > best_sim:
-                best_sim = float(sims[idx])
-                best_box = boxes[i + idx]
-
-        return best_box, best_sim
-
     # ----------------------------------------------------------------- helpers
 
     def _maybe_bank(self, frame, box):
@@ -295,9 +299,10 @@ class LockOnTracker:
         self._csrt.init(frame, box)
 
     def _enter_searching(self):
-        self.state         = State.SEARCHING
-        self._bad_streak   = 0
-        self._search_frame = 0
+        self.state           = State.SEARCHING
+        self._bad_streak     = 0
+        self._search_frame   = 0
+        self._scan_positions = None
 
     def _clamp(self, frame, bbox):
         x, y, w, h = (int(v) for v in bbox)

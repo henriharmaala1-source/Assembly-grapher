@@ -209,4 +209,8 @@ def _build_predictor(cfg: str, ckpt: str, device: str):
             "Download the checkpoints (e.g. tiny) per the SAM 2 repo, or set "
             "SAM2_CKPT / SAM2_CFG to point at your files."
         )
-    return build_sam2_camera_predictor(cfg, ckpt, device=device)
+    # apply_postprocessing=False keeps fill_hole_area at 0, so the optional
+    # connected-components CUDA kernel (sam2._C) is never called. That lets the
+    # package install without building it — no CUDA Toolkit / nvcc needed.
+    return build_sam2_camera_predictor(
+        cfg, ckpt, device=device, apply_postprocessing=False)

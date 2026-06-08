@@ -45,24 +45,36 @@ from the OpenCV model zoo into `./models/` (gitignored).
 
 ## SAM 2 engine setup
 
-The SAM 2 engine needs the streaming (camera) build and a checkpoint:
+The SAM 2 engine needs the streaming (camera) build and a checkpoint. That
+fork's `setup.py` tries to compile an *optional* CUDA kernel, which fails
+without the full CUDA Toolkit — so install it with that kernel disabled (the app
+doesn't use it). **Install into the same Python 3.11 you run the app with.**
 
-```bash
-# streaming-capable SAM 2 build
-pip install "git+https://github.com/Gy920/segment-anything-2-real-time.git"
+```powershell
+git clone https://github.com/Gy920/segment-anything-2-real-time.git
+cd segment-anything-2-real-time
 
-# a checkpoint — tiny is the fastest; download per the SAM 2 repo, e.g.:
-mkdir -p checkpoints && cd checkpoints
-# (use the repo's download_ckpts.sh, or fetch sam2.1_hiera_tiny.pt manually)
+# Drop the optional CUDA extension so no CUDA Toolkit / nvcc is required
+(Get-Content setup.py) -replace 'ext_modules=get_extensions\(\),','ext_modules=[],' | Set-Content setup.py
+
+# Install into your 3.11 env (matches `py -3.11 main.py`)
+py -3.11 -m pip install -e . --no-build-isolation
+```
+
+Then a checkpoint (tiny is fastest):
+
+```powershell
+mkdir checkpoints
+curl -L -o checkpoints/sam2.1_hiera_tiny.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt
 ```
 
 Defaults point at `configs/sam2.1/sam2.1_hiera_t.yaml` and
 `./checkpoints/sam2.1_hiera_tiny.pt`. Override with environment variables:
 
-```bash
-SAM2_CFG=configs/sam2.1/sam2.1_hiera_s.yaml \
-SAM2_CKPT=./checkpoints/sam2.1_hiera_small.pt \
-python main.py --engine sam2
+```powershell
+$env:SAM2_CFG="configs/sam2.1/sam2.1_hiera_s.yaml"
+$env:SAM2_CKPT="./checkpoints/sam2.1_hiera_small.pt"
+py -3.11 main.py --engine sam2
 ```
 
 ## Architecture

@@ -155,30 +155,17 @@ def _draw_segment(out, mask, point, backend_name, opacity=0.45):
 
 
 def _draw_drone_hud(out, drone_result, settings):
-    """Fighter-jet targeting HUD for drone mode."""
+    """Minimal drone-mode overlay: box on target + reliability counters."""
     fh, fw = out.shape[:2]
-    fcx, fcy = fw // 2, fh // 2
+    dim_gray = (110, 110, 110)
 
-    # Boresight crosshair — frame center = camera / gimbal neutral point
-    bs = (40, 200, 80)
-    gap = 22
-    reach = 64
-    for (x0, y0), (x1, y1) in [
-        ((fcx - reach, fcy), (fcx - gap, fcy)),
-        ((fcx + gap,   fcy), (fcx + reach, fcy)),
-        ((fcx, fcy - reach), (fcx, fcy - gap)),
-        ((fcx, fcy + gap),   (fcx, fcy + reach)),
-    ]:
-        cv2.line(out, (x0, y0), (x1, y1), bs, 1, cv2.LINE_AA)
-    cv2.circle(out, (fcx, fcy), gap - 2, bs, 1, cv2.LINE_AA)
-
-    # No target yet — standby
+    # No target yet
     bbox = (drone_result or {}).get("bbox")
     if not drone_result or bbox is None:
-        cv2.putText(out, "DRONE  STANDBY — click to designate", (10, 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, bs, 2, cv2.LINE_AA)
+        cv2.putText(out, "DRONE  —  click to designate target", (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, (160, 160, 160), 2, cv2.LINE_AA)
         cv2.putText(out, "click=designate  D=exit drone  R=reset  ESC=quit",
-                    (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+                    (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, dim_gray, 1)
         return
 
     locked       = drone_result.get("locked", False)
@@ -186,66 +173,36 @@ def _draw_drone_hud(out, drone_result, settings):
     age          = drone_result.get("age", 0)
     total_losses = drone_result.get("total_losses", 0)
 
-    x, y, w, h  = bbox
-    tcx, tcy    = x + w // 2, y + h // 2
+    x, y, w, h = bbox
+    cx, cy     = x + w // 2, y + h // 2
 
     if locked and loss_frames == 0:
-        color, state_str = (0, 255, 70),  "LOCK"
+        color, label = (0, 255, 70),  "LOCK"
     elif locked:
-        color, state_str = (0, 200, 255), "COAST"
+        color, label = (0, 200, 255), "COAST"
     else:
-        color, state_str = (40, 60, 255), "LOST"
+        color, label = (40, 60, 255), "LOST"
 
-    # Target designation box
+    # Target box
     _draw_brackets(out, x, y, w, h, color, thickness=2, arm=10)
-    cv2.circle(out, (tcx, tcy), 3, color, -1, cv2.LINE_AA)
+    cv2.circle(out, (cx, cy), 3, color, -1, cv2.LINE_AA)
 
-    # Error vector: boresight → target
-    if abs(tcx - fcx) > 6 or abs(tcy - fcy) > 6:
-        cv2.arrowedLine(out, (fcx, fcy), (tcx, tcy),
-                        (60, 200, 100), 1, cv2.LINE_AA, tipLength=0.05)
+    # Reliability stats next to the box
+    bk  = getattr(settings, "drone_backend", "CSRT")
+    lh  = 18
+    ty  = max(y - 6, lh)
+    cv2.putText(out, f"{label}  {bk}", (x, ty),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+    cv2.putText(out, f"age {age}f  lost {total_losses}x",
+                (x, ty + lh), cv2.FONT_HERSHEY_SIMPLEX, 0.40, dim_gray, 1)
 
-    # Angular errors
-    fov_h   = getattr(settings, "drone_fov_h", 90.0)
-    fov_v   = fov_h * fh / fw
-    err_yaw   = (tcx - fcx) / (fw / 2.0) * (fov_h / 2.0)
-    err_pitch = (tcy - fcy) / (fh / 2.0) * (fov_v / 2.0)
-
-    # HUD data panel — top right
-    px, py, lh = fw - 188, 44, 22
-    cv2.putText(out, f"[ {state_str} ]",
-                (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color, 2, cv2.LINE_AA)
-    for i, txt in enumerate([
-        f"Yaw   {err_yaw:+6.1f}\xb0",
-        f"Pitch {err_pitch:+6.1f}\xb0",
-        f"Age   {age:6d} f",
-        f"Loss  {total_losses:6d} x",
-    ]):
-        cv2.putText(out, txt, (px, py + lh * (i + 1)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40,
-                    (200, 255, 200) if i < 2 else (160, 200, 160), 1)
-
-    # Mini gimbal command compass
-    gx = px + 18
-    gy = py + lh * 5 + 26
-    cv2.circle(out, (gx, gy), 18, (50, 90, 50), 1, cv2.LINE_AA)
-    cv2.line(out, (gx - 18, gy), (gx + 18, gy), (40, 70, 40), 1)
-    cv2.line(out, (gx, gy - 18), (gx, gy + 18), (40, 70, 40), 1)
-    max_a  = max(fov_h, fov_v) / 2.0
-    dot_x  = int(gx + np.clip(err_yaw   / max_a * 16, -16, 16))
-    dot_y  = int(gy + np.clip(err_pitch / max_a * 16, -16, 16))
-    cv2.circle(out, (dot_x, dot_y), 4, color, -1, cv2.LINE_AA)
-    cv2.putText(out, "GIMBAL CMD", (gx - 30, gy + 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (100, 150, 100), 1)
-
-    # Top status bar
-    bk = getattr(settings, "drone_backend", "CSRT")
-    cv2.putText(out, f"DRONE  |  {state_str}  |  {bk}",
-                (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.62, color, 2, cv2.LINE_AA)
+    # Status bar
+    cv2.putText(out, f"DRONE  {label}  |  {bk}", (10, 26),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.62, color, 2, cv2.LINE_AA)
 
     # Help strip
     cv2.putText(out, "click=designate  D=exit drone  R=reset  ESC=quit",
-                (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+                (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, dim_gray, 1)
 
 
 def _draw_motion_detect(out, blobs, fg_mask):

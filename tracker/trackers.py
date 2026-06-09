@@ -6,12 +6,18 @@ import numpy as np
 
 
 def _make_cv_tracker(kind: str):
-    """CSRT / KCF from cv2.legacy (4.5+) with a top-level fallback."""
+    """CSRT / KCF — lives in cv2.legacy on opencv-contrib >= 4.5."""
+    name   = f"Tracker{kind}_create"
     legacy = getattr(cv2, "legacy", None)
-    name = f"Tracker{kind}_create"
     if legacy is not None and hasattr(legacy, name):
         return getattr(legacy, name)()
-    return getattr(cv2, name)()
+    if hasattr(cv2, name):
+        return getattr(cv2, name)()
+    raise RuntimeError(
+        f"cv2.{name} not found — opencv-contrib-python is required:\n"
+        "  pip uninstall opencv-python opencv-contrib-python -y\n"
+        "  pip install opencv-contrib-python"
+    )
 
 
 # ----------------------------------------------------- ViT transformer tracker

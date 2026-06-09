@@ -32,8 +32,10 @@ class Settings:
     mask_opacity:   float = 0.40
 
     # Click-to-segment
-    segment_backend: str   = "SAM 2"    # "SAM 2" | "MobileSAM" | "FastSAM-s"
-    seg_opacity:     float = 0.45
+    segment_backend:  str   = "SAM 2"   # "SAM 2" | "MobileSAM" | "FastSAM-s"
+    seg_opacity:      float = 0.45
+    seg_continuous:   bool  = True      # re-segment every frame
+    seg_interval:     int   = 3         # re-segment every N frames (non-SAM2)
 
     # Display toggles
     show_confidence_bar: bool = True
@@ -116,8 +118,10 @@ def _run_gui(settings: Settings) -> None:
 
     # ── Click-to-Segment ──────────────────────────────────────────────────────
     f = section("Click-to-Segment  (single click; drag to track)")
-    combo_row(f, "Backend", "segment_backend", SEGMENT_BACKENDS)
-    slider_row(f, "Mask opacity", "seg_opacity", 0.10, 0.80)
+    combo_row(f, "Backend",      "segment_backend", SEGMENT_BACKENDS)
+    check_row(f,  "Continuous update (follow object)", "seg_continuous")
+    slider_row(f, "Re-segment every N frames", "seg_interval", 1, 15, as_int=True)
+    slider_row(f, "Mask opacity",  "seg_opacity", 0.10, 0.80)
 
     # ── Motion vector ─────────────────────────────────────────────────────────
     f = section("Motion Vector")

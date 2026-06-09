@@ -103,6 +103,26 @@ def _switch_engine(manager, want, active_name, tracker, embedder, frame, shared)
     return new_tracker, new_embedder, want
 
 
+def _make_seg_result(mask, point, backend):
+    return dict(mask=mask, point=point, backend=backend) if mask is not None else None
+
+
+def _start_sam2_continuous(manager, settings, current_tracker, point, frame, shared):
+    """Switch the tracking engine to SAM 2 and init it with a point prompt."""
+    want = "sam2"
+    try:
+        new_tracker, _ = manager.get(want)
+    except Exception as e:
+        print(f"[segmenter] SAM 2 continuous unavailable: {e}")
+        return
+    new_tracker.reset()
+    ok = new_tracker.init_from_point(frame, point)
+    if not ok:
+        print("[segmenter] SAM 2 point prompt returned empty mask")
+        return
+    settings.tracking_engine = want
+
+
 def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
                    stop: threading.Event):
     """Run the active engine on the newest frame; publish results for display.
@@ -142,20 +162,38 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             tracker.reset()
             mouse.pending_bbox  = None
             mouse.pending_point = None
+            segmenter.stop_continuous()
             seg_result = None
             attn_map   = None
             attn_age   = 0
 
-        # --- click-to-segment --------------------------------------------
+        # --- click-to-segment (one-shot or continuous) -------------------
         if mouse.pending_point is not None:
             pt = mouse.pending_point
             mouse.pending_point = None
-            mask = segmenter.segment(frame, pt)
-            seg_result = dict(
-                mask    = mask,
-                point   = pt,
-                backend = settings.segment_backend,
-            ) if mask is not None else None
+
+            if settings.seg_continuous:
+                # SAM 2 continuous: hand off to the SAM2Tracker engine
+                if settings.segment_backend == "SAM 2":
+                    _start_sam2_continuous(
+                        manager, settings, tracker, pt, frame, shared)
+                    active_name = settings.tracking_engine   # may have switched
+                    tracker, embedder = manager.get(active_name)
+                    seg_result = None   # tracking engine now owns the mask
+                else:
+                    mask = segmenter.start_continuous(frame, pt)
+                    seg_result = _make_seg_result(mask, pt, settings.segment_backend)
+            else:
+                segmenter.stop_continuous()
+                mask = segmenter.segment(frame, pt)
+                seg_result = _make_seg_result(mask, pt, settings.segment_backend)
+
+        # Continuous update (MobileSAM / FastSAM backends)
+        elif segmenter.is_continuous:
+            mask = segmenter.update(frame)
+            if seg_result is not None:
+                seg_result = _make_seg_result(mask, seg_result.get("point"),
+                                              settings.segment_backend)
 
         if mouse.pending_bbox is not None and tracker.state == State.IDLE:
             tracker.init(frame, mouse.pending_bbox)

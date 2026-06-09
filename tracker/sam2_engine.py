@@ -92,6 +92,28 @@ class SAM2Tracker:
         self._lost_frame = 0
         return True
 
+    def init_from_point(self, frame: np.ndarray, point: tuple) -> bool:
+        """Prompt SAM 2 with a single foreground click instead of a box."""
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        torch = _torch()
+        with torch.inference_mode(), torch.autocast(self.device, dtype=self._autocast_dtype):
+            self._predictor.load_first_frame(rgb)
+            _, _, mask_logits = self._predictor.add_new_prompt(
+                frame_idx=0, obj_id=1,
+                points=[[float(point[0]), float(point[1])]],
+                labels=[1])
+
+        mask = self._logits_to_mask(mask_logits)
+        if mask is None:
+            return False
+
+        ys, xs = np.where(mask)
+        self._reset_motion((float(xs.mean()), float(ys.mean())))
+        self._apply_mask(frame, mask)
+        self.state = State.LOCKED
+        self._lost_frame = 0
+        return True
+
     def update(self, frame: np.ndarray):
         if self.state == State.IDLE:
             return self.state, None, None

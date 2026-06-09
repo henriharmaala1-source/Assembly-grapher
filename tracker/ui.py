@@ -154,6 +154,100 @@ def _draw_segment(out, mask, point, backend_name, opacity=0.45):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 160), 1)
 
 
+def _draw_drone_hud(out, drone_result, settings):
+    """Fighter-jet targeting HUD for drone mode."""
+    fh, fw = out.shape[:2]
+    fcx, fcy = fw // 2, fh // 2
+
+    # Boresight crosshair — frame center = camera / gimbal neutral point
+    bs = (40, 200, 80)
+    gap = 22
+    reach = 64
+    for (x0, y0), (x1, y1) in [
+        ((fcx - reach, fcy), (fcx - gap, fcy)),
+        ((fcx + gap,   fcy), (fcx + reach, fcy)),
+        ((fcx, fcy - reach), (fcx, fcy - gap)),
+        ((fcx, fcy + gap),   (fcx, fcy + reach)),
+    ]:
+        cv2.line(out, (x0, y0), (x1, y1), bs, 1, cv2.LINE_AA)
+    cv2.circle(out, (fcx, fcy), gap - 2, bs, 1, cv2.LINE_AA)
+
+    # No target yet — standby
+    bbox = (drone_result or {}).get("bbox")
+    if not drone_result or bbox is None:
+        cv2.putText(out, "DRONE  STANDBY — click to designate", (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, bs, 2, cv2.LINE_AA)
+        cv2.putText(out, "click=designate  D=exit drone  R=reset  ESC=quit",
+                    (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+        return
+
+    locked       = drone_result.get("locked", False)
+    loss_frames  = drone_result.get("loss_frames", 0)
+    age          = drone_result.get("age", 0)
+    total_losses = drone_result.get("total_losses", 0)
+
+    x, y, w, h  = bbox
+    tcx, tcy    = x + w // 2, y + h // 2
+
+    if locked and loss_frames == 0:
+        color, state_str = (0, 255, 70),  "LOCK"
+    elif locked:
+        color, state_str = (0, 200, 255), "COAST"
+    else:
+        color, state_str = (40, 60, 255), "LOST"
+
+    # Target designation box
+    _draw_brackets(out, x, y, w, h, color, thickness=2, arm=10)
+    cv2.circle(out, (tcx, tcy), 3, color, -1, cv2.LINE_AA)
+
+    # Error vector: boresight → target
+    if abs(tcx - fcx) > 6 or abs(tcy - fcy) > 6:
+        cv2.arrowedLine(out, (fcx, fcy), (tcx, tcy),
+                        (60, 200, 100), 1, cv2.LINE_AA, tipLength=0.05)
+
+    # Angular errors
+    fov_h   = getattr(settings, "drone_fov_h", 90.0)
+    fov_v   = fov_h * fh / fw
+    err_yaw   = (tcx - fcx) / (fw / 2.0) * (fov_h / 2.0)
+    err_pitch = (tcy - fcy) / (fh / 2.0) * (fov_v / 2.0)
+
+    # HUD data panel — top right
+    px, py, lh = fw - 188, 44, 22
+    cv2.putText(out, f"[ {state_str} ]",
+                (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.58, color, 2, cv2.LINE_AA)
+    for i, txt in enumerate([
+        f"Yaw   {err_yaw:+6.1f}\xb0",
+        f"Pitch {err_pitch:+6.1f}\xb0",
+        f"Age   {age:6d} f",
+        f"Loss  {total_losses:6d} x",
+    ]):
+        cv2.putText(out, txt, (px, py + lh * (i + 1)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40,
+                    (200, 255, 200) if i < 2 else (160, 200, 160), 1)
+
+    # Mini gimbal command compass
+    gx = px + 18
+    gy = py + lh * 5 + 26
+    cv2.circle(out, (gx, gy), 18, (50, 90, 50), 1, cv2.LINE_AA)
+    cv2.line(out, (gx - 18, gy), (gx + 18, gy), (40, 70, 40), 1)
+    cv2.line(out, (gx, gy - 18), (gx, gy + 18), (40, 70, 40), 1)
+    max_a  = max(fov_h, fov_v) / 2.0
+    dot_x  = int(gx + np.clip(err_yaw   / max_a * 16, -16, 16))
+    dot_y  = int(gy + np.clip(err_pitch / max_a * 16, -16, 16))
+    cv2.circle(out, (dot_x, dot_y), 4, color, -1, cv2.LINE_AA)
+    cv2.putText(out, "GIMBAL CMD", (gx - 30, gy + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (100, 150, 100), 1)
+
+    # Top status bar
+    bk = getattr(settings, "drone_backend", "CSRT")
+    cv2.putText(out, f"DRONE  |  {state_str}  |  {bk}",
+                (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.62, color, 2, cv2.LINE_AA)
+
+    # Help strip
+    cv2.putText(out, "click=designate  D=exit drone  R=reset  ESC=quit",
+                (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+
+
 def _draw_motion_detect(out, blobs, fg_mask):
     """Foreground mask tint + boxes around moving blobs (largest highlighted)."""
     if fg_mask is not None:
@@ -180,12 +274,13 @@ def draw_overlay(
     mouse: MouseHandler,
     fps: float,
     settings: Settings = None,
-    attn_map=None,          # soft attention map (numpy float32) or None
-    motion_trail=None,      # list of (cx, cy) recent centers
-    predicted_center=None,  # (px, py) predicted future center
-    seg_result=None,        # dict(mask=..., point=...) from click segmenter
-    motion_blobs=None,      # list of (x,y,w,h,area) detected moving blobs
-    motion_mask=None,       # foreground uint8 mask or None
+    attn_map=None,
+    motion_trail=None,
+    predicted_center=None,
+    seg_result=None,
+    motion_blobs=None,
+    motion_mask=None,
+    drone_result=None,      # dict from DroneTracker when drone_mode is active
 ) -> np.ndarray:
     out = frame.copy()
     fh, fw = out.shape[:2]
@@ -214,66 +309,72 @@ def draw_overlay(
     if cfg.show_mask and attn_map is not None and bbox is not None:
         _draw_attention(out, bbox, attn_map, cfg.mask_opacity)
 
-    # ── lock overlay ──────────────────────────────────────────────────────────
-    if state == State.LOCKED and bbox:
-        x, y, w, h = bbox
-        cx, cy = x + w // 2, y + h // 2
-        color = _sim_color(sim)
+    drone_mode = getattr(cfg, "drone_mode", False)
 
-        overlay = out.copy()
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
-        cv2.addWeighted(overlay, 0.07, out, 0.93, 0, out)
-
-        cv2.rectangle(out, (x, y), (x + w, y + h), color, 1)
-        _draw_brackets(out, x, y, w, h, color)
-
-        cv2.line(out,  (cx - 14, cy), (cx + 14, cy), color, 1)
-        cv2.line(out,  (cx, cy - 14), (cx, cy + 14), color, 1)
-        cv2.circle(out, (cx, cy), 3, color, -1)
-
-        if cfg.show_confidence_bar:
-            bar_y = max(y - 18, 4)
-            cv2.rectangle(out, (x, bar_y), (x + w, bar_y + 8), (40, 40, 40), -1)
-            cv2.rectangle(out, (x, bar_y),
-                          (x + max(0, int(w * min(sim, 1.0))), bar_y + 8), color, -1)
-            cv2.putText(out, f"{sim * 100:.0f}%", (x + w + 4, bar_y + 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
-
-        # ── motion vector: trail + predictive arrow ───────────────────────────
-        if cfg.show_motion_vector:
-            _draw_motion(out, (cx, cy), motion_trail, predicted_center)
-
-    # ── searching overlay ─────────────────────────────────────────────────────
-    if state == State.SEARCHING and bbox:
-        x, y, w, h = bbox
-        pulse = (int(cv2.getTickCount() / cv2.getTickFrequency() * 4) % 2 == 0)
-        color = (200, 160, 0) if pulse else (100, 80, 0)
-        _draw_brackets(out, x, y, w, h, color, thickness=1)
-        cx, cy = x + w // 2, y + h // 2
-        cv2.circle(out, (cx, cy), 7, color, 1)
-
-    # ── status bar ────────────────────────────────────────────────────────────
-    if state == State.IDLE:
-        status, sc = "IDLE  |  Draw a box around the target", (170, 170, 170)
-    elif state == State.SEARCHING:
-        status, sc = "SEARCHING  |  Looking for target…",    (200, 160,   0)
+    if drone_mode:
+        # Drone mode: drone HUD owns the target box, status bar, and help strip.
+        _draw_drone_hud(out, drone_result, cfg)
     else:
-        status, sc = f"LOCKED  |  {sim * 100:.0f}% confidence", _sim_color(sim)
+        # ── lock overlay ──────────────────────────────────────────────────────
+        if state == State.LOCKED and bbox:
+            x, y, w, h = bbox
+            cx, cy = x + w // 2, y + h // 2
+            color = _sim_color(sim)
 
-    cv2.putText(out, status, (10, 26),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.62, sc, 2)
+            overlay = out.copy()
+            cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
+            cv2.addWeighted(overlay, 0.07, out, 0.93, 0, out)
 
-    # ── FPS ───────────────────────────────────────────────────────────────────
+            cv2.rectangle(out, (x, y), (x + w, y + h), color, 1)
+            _draw_brackets(out, x, y, w, h, color)
+
+            cv2.line(out,  (cx - 14, cy), (cx + 14, cy), color, 1)
+            cv2.line(out,  (cx, cy - 14), (cx, cy + 14), color, 1)
+            cv2.circle(out, (cx, cy), 3, color, -1)
+
+            if cfg.show_confidence_bar:
+                bar_y = max(y - 18, 4)
+                cv2.rectangle(out, (x, bar_y), (x + w, bar_y + 8), (40, 40, 40), -1)
+                cv2.rectangle(out, (x, bar_y),
+                              (x + max(0, int(w * min(sim, 1.0))), bar_y + 8), color, -1)
+                cv2.putText(out, f"{sim * 100:.0f}%", (x + w + 4, bar_y + 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
+
+            if cfg.show_motion_vector:
+                _draw_motion(out, (cx, cy), motion_trail, predicted_center)
+
+        # ── searching overlay ─────────────────────────────────────────────────
+        if state == State.SEARCHING and bbox:
+            x, y, w, h = bbox
+            pulse = (int(cv2.getTickCount() / cv2.getTickFrequency() * 4) % 2 == 0)
+            color = (200, 160, 0) if pulse else (100, 80, 0)
+            _draw_brackets(out, x, y, w, h, color, thickness=1)
+            cx, cy = x + w // 2, y + h // 2
+            cv2.circle(out, (cx, cy), 7, color, 1)
+
+        # ── status bar ────────────────────────────────────────────────────────
+        if state == State.IDLE:
+            status, sc = "IDLE  |  Draw a box around the target", (170, 170, 170)
+        elif state == State.SEARCHING:
+            status, sc = "SEARCHING  |  Looking for target…",    (200, 160,   0)
+        else:
+            status, sc = f"LOCKED  |  {sim * 100:.0f}% confidence", _sim_color(sim)
+
+        cv2.putText(out, status, (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, sc, 2)
+
+        # ── help strip ────────────────────────────────────────────────────────
+        cv2.putText(out, "click=segment  drag=track  C=clear  D=drone  R=reset  ESC=quit",
+                    (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+
+    # ── FPS (always shown) ────────────────────────────────────────────────────
     if cfg.show_fps:
         cv2.putText(out, f"{fps:.0f} fps", (fw - 76, 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (190, 190, 190), 1)
 
     # ── backend label ─────────────────────────────────────────────────────────
-    cv2.putText(out, f"backend: {cfg.tracker_backend}", (fw - 200, fh - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (140, 140, 140), 1)
-
-    # ── help strip ───────────────────────────────────────────────────────────
-    cv2.putText(out, "click=segment  drag=track  C=clear  R=reset  ESC=quit",
-                (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+    if not drone_mode:
+        cv2.putText(out, f"backend: {cfg.tracker_backend}", (fw - 200, fh - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (140, 140, 140), 1)
 
     return out

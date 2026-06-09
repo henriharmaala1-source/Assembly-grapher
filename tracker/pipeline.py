@@ -133,9 +133,15 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
 
     A ClickSegmenter runs alongside: a single mouse click triggers a one-shot
     point-prompt segmentation (independent of tracking).
+
+    In drone mode, clicks bypass the segmenter and instead initialize a
+    DroneTracker (CSRT/KCF/Optical Flow) on a fixed-size box.  No DINOv2,
+    no SAM 2 — identical workload to what Pi 5 / RK3588 hardware would run.
     """
     from .motion_detect import MotionDetector
-    detector = MotionDetector()
+    from .drone import DroneTracker
+    detector     = MotionDetector()
+    drone_tracker = DroneTracker()
 
     active_name = settings.tracking_engine
     tracker, embedder = manager.get(active_name)
@@ -165,6 +171,7 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
 
         if shared.take_reset():
             tracker.reset()
+            drone_tracker.reset()
             mouse.pending_bbox  = None
             mouse.pending_point = None
             segmenter.stop_continuous()
@@ -178,7 +185,8 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
         # --- blob motion detection (auto-acquire when idle) ---------------
         motion_blobs, motion_mask = None, None
         idle = (tracker.state == State.IDLE and not segmenter.is_continuous
-                and mouse.pending_point is None and mouse.pending_bbox is None)
+                and mouse.pending_point is None and mouse.pending_bbox is None
+                and not settings.drone_mode)
         if settings.motion_detect and idle:
             detector.set_threshold(settings.motion_threshold)
             motion_mask, motion_blobs = detector.detect(
@@ -195,12 +203,17 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
         elif not idle:
             detector.reset_persist()
 
-        # --- click-to-segment (one-shot or continuous) -------------------
+        # --- click-to-segment or drone designation ---------------------------
         if mouse.pending_point is not None:
             pt = mouse.pending_point
             mouse.pending_point = None
 
-            if settings.seg_continuous:
+            if settings.drone_mode:
+                # Drone mode: click → fixed-box lightweight tracker, no ML
+                drone_tracker.init(frame, pt,
+                                   backend=settings.drone_backend,
+                                   box_size=settings.drone_box_size)
+            elif settings.seg_continuous:
                 # SAM 2 continuous: hand off to the SAM2Tracker engine
                 if settings.segment_backend == "SAM 2":
                     _start_sam2_continuous(
@@ -247,6 +260,21 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
         motion_trail = tracker.center_trail() if settings.show_motion_vector else None
         predicted    = tracker.predicted_center if settings.show_motion_vector else None
 
+        # --- drone tracker (runs every frame when mode is active) -------------
+        drone_result = None
+        if settings.drone_mode:
+            if drone_tracker.bbox is not None:
+                drone_tracker.update(frame)
+                drone_result = dict(
+                    bbox         = drone_tracker.bbox,
+                    locked       = drone_tracker.locked,
+                    age          = drone_tracker.age,
+                    loss_frames  = drone_tracker.loss_frames,
+                    total_losses = drone_tracker.total_losses,
+                )
+            else:
+                drone_result = {}   # mode active, no target designated yet
+
         t_now   = time.perf_counter()
         inf_fps = 0.9 * inf_fps + 0.1 / max(t_now - t_prev, 1e-9)
         t_prev  = t_now
@@ -258,4 +286,5 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             seg_result=seg_result,
             motion_blobs=motion_blobs,
             motion_mask=motion_mask if settings.show_motion_mask else None,
+            drone_result=drone_result,
         ))

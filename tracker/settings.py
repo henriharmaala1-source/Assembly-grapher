@@ -48,10 +48,17 @@ class Settings:
     show_confidence_bar: bool = True
     show_fps:            bool = True
 
+    # Drone mode — lightweight click-to-track (no ML inference)
+    drone_mode:     bool  = False
+    drone_backend:  str   = "CSRT"    # "CSRT" | "KCF" | "Optical Flow"
+    drone_box_size: int   = 80        # fixed box diameter (px)
+    drone_fov_h:    float = 90.0      # camera horizontal FOV (degrees)
+
 
 TRACKER_BACKENDS  = ["ViT", "CSRT", "KCF", "Optical Flow"]
 TRACKING_ENGINES  = ["hybrid", "sam2"]
 SEGMENT_BACKENDS  = ["SAM 2", "MobileSAM", "FastSAM-s"]
+DRONE_BACKENDS    = ["CSRT", "KCF", "Optical Flow"]
 
 
 # ----------------------------------------------------------------- GUI builder
@@ -159,8 +166,15 @@ def _run_gui(settings: Settings) -> None:
     check_row(f, "Show confidence bar", "show_confidence_bar")
     check_row(f, "Show FPS",            "show_fps")
 
+    # ── Drone Mode ────────────────────────────────────────────────────────────
+    f = section("Drone Mode  (D key toggles — click=designate, no ML)")
+    check_row(f,  "Enable drone mode",    "drone_mode")
+    combo_row(f,  "Tracker backend",      "drone_backend", DRONE_BACKENDS)
+    slider_row(f, "Box size (px)",        "drone_box_size", 30, 200, as_int=True)
+    slider_row(f, "Camera FOV (horiz°)",  "drone_fov_h", 30.0, 180.0)
+
     ttk.Separator(root).pack(fill="x", pady=8)
-    ttk.Label(root, text="R  reset lock    ESC  quit",
+    ttk.Label(root, text="R  reset    D  drone mode    ESC  quit",
               foreground="gray").pack(pady=(0, 8))
 
     root.mainloop()

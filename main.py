@@ -100,6 +100,7 @@ def main():
             seg_result   = result.get("seg_result")
             motion_blobs = result.get("motion_blobs")
             motion_mask  = result.get("motion_mask")
+            drone_result = result.get("drone_result")
 
             t_now    = time.perf_counter()
             disp_fps = 0.9 * disp_fps + 0.1 / max(t_now - t_prev, 1e-9)
@@ -111,6 +112,7 @@ def main():
                 motion_trail=motion_trail, predicted_center=predicted,
                 seg_result=seg_result,
                 motion_blobs=motion_blobs, motion_mask=motion_mask,
+                drone_result=drone_result,
             )
 
             # Inference (tracking) rate, decoupled from display rate.
@@ -134,6 +136,8 @@ def main():
                 break
             elif key in (ord("r"), ord("R")):
                 shared.request_reset()
+            elif key in (ord("d"), ord("D")):
+                settings.drone_mode = not settings.drone_mode
             elif key in (ord("c"), ord("C")):
                 # clear the segment overlay without resetting tracking
                 mouse.pending_point = None

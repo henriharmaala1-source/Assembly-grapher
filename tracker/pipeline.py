@@ -209,7 +209,9 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             mouse.pending_point = None
 
             if settings.drone_mode:
-                # Drone mode: click → fixed-box lightweight tracker, no ML
+                # Drone mode: drop any active segmentation then init the box tracker
+                segmenter.stop_continuous()
+                seg_result = None
                 drone_tracker.init(frame, pt,
                                    backend=settings.drone_backend,
                                    box_size=settings.drone_box_size)
@@ -229,10 +231,12 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
                 mask = segmenter.segment(frame, pt)
                 seg_result = _make_seg_result(mask, pt, settings.segment_backend)
 
-        # Continuous update (MobileSAM / FastSAM backends)
-        elif segmenter.is_continuous:
+        # Continuous update (MobileSAM / FastSAM backends) — skip in drone mode
+        elif segmenter.is_continuous and not settings.drone_mode:
             mask = segmenter.update(frame)
-            if seg_result is not None:
+            if mask is None:
+                segmenter.stop_continuous()   # backend failed — stop retrying
+            elif seg_result is not None:
                 seg_result = _make_seg_result(mask, seg_result.get("point"),
                                               settings.segment_backend)
 

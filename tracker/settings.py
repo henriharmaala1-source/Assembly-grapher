@@ -53,6 +53,11 @@ class Settings:
     drone_backend:  str   = "CSRT"    # "CSRT" | "KCF" | "Optical Flow"
     drone_box_size: int   = 80        # fixed box diameter (px)
 
+    # VisDrone detection
+    visdrone_detect:   bool  = False
+    visdrone_conf:     float = 0.25
+    visdrone_interval: int   = 3      # run detector every N frames
+
 
 TRACKER_BACKENDS  = ["ViT", "CSRT", "KCF", "Optical Flow"]
 TRACKING_ENGINES  = ["hybrid", "sam2"]
@@ -170,6 +175,12 @@ def _run_gui(settings: Settings) -> None:
     check_row(f,  "Enable drone mode",    "drone_mode")
     combo_row(f,  "Tracker backend",      "drone_backend", DRONE_BACKENDS)
     slider_row(f, "Box size (px)",        "drone_box_size", 30, 200, as_int=True)
+
+    # ── VisDrone Detection ────────────────────────────────────────────────────
+    f = section("VisDrone Detection  (aerial-view objects; auto-downloads model)")
+    check_row(f,  "Enable detection",      "visdrone_detect")
+    slider_row(f, "Confidence threshold",  "visdrone_conf",     0.10, 0.90)
+    slider_row(f, "Run every N frames",    "visdrone_interval",    1,  15, as_int=True)
 
     ttk.Separator(root).pack(fill="x", pady=8)
     ttk.Label(root, text="R  reset    D  drone mode    ESC  quit",

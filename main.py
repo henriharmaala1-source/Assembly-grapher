@@ -100,7 +100,8 @@ def main():
             seg_result   = result.get("seg_result")
             motion_blobs = result.get("motion_blobs")
             motion_mask  = result.get("motion_mask")
-            drone_result = result.get("drone_result")
+            drone_result       = result.get("drone_result")
+            visdrone_detections = result.get("visdrone_detections") or []
 
             t_now    = time.perf_counter()
             disp_fps = 0.9 * disp_fps + 0.1 / max(t_now - t_prev, 1e-9)
@@ -113,6 +114,7 @@ def main():
                 seg_result=seg_result,
                 motion_blobs=motion_blobs, motion_mask=motion_mask,
                 drone_result=drone_result,
+                visdrone_detections=visdrone_detections,
             )
 
             # Inference (tracking) rate, decoupled from display rate.

@@ -12,6 +12,7 @@ from tracker.ui import MouseHandler, draw_overlay
 from tracker.settings import Settings, launch_settings
 from tracker.pipeline import SharedState, capture_loop, inference_loop
 from tracker.engine import EngineManager
+from tracker.click_segment import ClickSegmenter
 
 
 def _banner(out, text, color):
@@ -50,7 +51,8 @@ def main():
         print("[warning] falling back to hybrid engine.")
         settings.tracking_engine = "hybrid"
         manager.get("hybrid")
-    mouse   = MouseHandler()
+    segmenter = ClickSegmenter(device, settings)
+    mouse     = MouseHandler()
 
     launch_settings(settings)
 
@@ -69,7 +71,7 @@ def main():
         target=capture_loop, args=(cap, shared, stop), daemon=True)
     inf_thread = threading.Thread(
         target=inference_loop,
-        args=(manager, settings, mouse, shared, stop), daemon=True)
+        args=(manager, segmenter, settings, mouse, shared, stop), daemon=True)
     cap_thread.start()
     inf_thread.start()
 
@@ -95,6 +97,7 @@ def main():
             attn_map     = result.get("attn_map")
             motion_trail = result.get("motion_trail")
             predicted    = result.get("predicted")
+            seg_result   = result.get("seg_result")
 
             t_now    = time.perf_counter()
             disp_fps = 0.9 * disp_fps + 0.1 / max(t_now - t_prev, 1e-9)
@@ -104,6 +107,7 @@ def main():
                 frame, state, bbox, sim, mouse, disp_fps,
                 settings=settings, attn_map=attn_map,
                 motion_trail=motion_trail, predicted_center=predicted,
+                seg_result=seg_result,
             )
 
             # Inference (tracking) rate, decoupled from display rate.
@@ -127,6 +131,12 @@ def main():
                 break
             elif key in (ord("r"), ord("R")):
                 shared.request_reset()
+            elif key in (ord("c"), ord("C")):
+                # clear the segment overlay without resetting tracking
+                mouse.pending_point = None
+                result = shared.get_result() or {}
+                result.pop("seg_result", None)
+                shared.set_result(result)
     finally:
         stop.set()
         cap_thread.join(timeout=1.0)

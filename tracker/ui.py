@@ -5,11 +5,14 @@ from .settings import Settings
 
 
 class MouseHandler:
+    _CLICK_THRESH = 8   # pixels — move less than this → treated as a click
+
     def __init__(self):
         self._drawing = False
         self._p0 = None
         self._p1 = None
-        self.pending_bbox = None
+        self.pending_bbox  = None
+        self.pending_point = None   # (x, y) set on a short click (no drag)
 
     @property
     def drawing(self) -> bool:
@@ -20,7 +23,7 @@ class MouseHandler:
             self._drawing = True
             self._p0 = (x, y)
             self._p1 = (x, y)
-            self.pending_bbox = None
+            self.pending_bbox  = None
         elif event == cv2.EVENT_MOUSEMOVE and self._drawing:
             self._p1 = (x, y)
         elif event == cv2.EVENT_LBUTTONUP and self._drawing:
@@ -28,10 +31,16 @@ class MouseHandler:
             self._p1 = (x, y)
             x1, y1 = self._p0
             x2, y2 = self._p1
-            x1, x2 = min(x1, x2), max(x1, x2)
-            y1, y2 = min(y1, y2), max(y1, y2)
-            if x2 - x1 > 10 and y2 - y1 > 10:
-                self.pending_bbox = (x1, y1, x2 - x1, y2 - y1)
+            dx, dy = abs(x2 - x1), abs(y2 - y1)
+            if dx <= self._CLICK_THRESH and dy <= self._CLICK_THRESH:
+                # Short click → segment prompt
+                self.pending_point = (x, y)
+            else:
+                # Drag → tracking box
+                x1, x2 = min(x1, x2), max(x1, x2)
+                y1, y2 = min(y1, y2), max(y1, y2)
+                if x2 - x1 > 10 and y2 - y1 > 10:
+                    self.pending_bbox = (x1, y1, x2 - x1, y2 - y1)
 
     def live_rect(self):
         if not self._drawing or not self._p0 or not self._p1:
@@ -114,6 +123,37 @@ def _draw_motion(out, center, trail, predicted):
             cv2.circle(out, (px, py), 4, (0, 140, 255), 1, cv2.LINE_AA)
 
 
+def _draw_segment(out, mask, point, backend_name, opacity=0.45):
+    """Filled colour mask + white edge contour + clicked point marker."""
+    if mask is None:
+        return
+
+    # Coloured fill (vivid cyan-green)
+    coloured = np.zeros_like(out, dtype=np.float32)
+    coloured[mask, 0] = 30
+    coloured[mask, 1] = 230
+    coloured[mask, 2] = 160
+    out[:] = np.clip(
+        out.astype(np.float32) * (1 - opacity * mask[:, :, None]) + coloured * opacity,
+        0, 255,
+    ).astype(np.uint8)
+
+    # Edge contour
+    binary = mask.astype(np.uint8)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(out, contours, -1, (255, 255, 255), 2, cv2.LINE_AA)
+
+    # Clicked point
+    if point is not None:
+        px, py = int(point[0]), int(point[1])
+        cv2.circle(out, (px, py), 7, (0, 255, 160), -1, cv2.LINE_AA)
+        cv2.circle(out, (px, py), 7, (0, 0, 0),     2,  cv2.LINE_AA)
+
+    # Backend label
+    cv2.putText(out, f"seg: {backend_name}", (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 160), 1)
+
+
 def draw_overlay(
     frame: np.ndarray,
     state: State,
@@ -125,11 +165,18 @@ def draw_overlay(
     attn_map=None,          # soft attention map (numpy float32) or None
     motion_trail=None,      # list of (cx, cy) recent centers
     predicted_center=None,  # (px, py) predicted future center
+    seg_result=None,        # dict(mask=..., point=...) from click segmenter
 ) -> np.ndarray:
     out = frame.copy()
     fh, fw = out.shape[:2]
 
     cfg = settings or Settings()    # fall back to defaults if not provided
+
+    # ── click-to-segment overlay (drawn first, tracking overlays on top) ──────
+    if seg_result is not None:
+        _draw_segment(out, seg_result.get("mask"), seg_result.get("point"),
+                      seg_result.get("backend", ""),
+                      opacity=getattr(cfg, "seg_opacity", 0.45))
 
     # ── live selection rectangle ──────────────────────────────────────────────
     rect = mouse.live_rect()
@@ -202,7 +249,7 @@ def draw_overlay(
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (140, 140, 140), 1)
 
     # ── help strip ───────────────────────────────────────────────────────────
-    cv2.putText(out, "R  reset    ESC  quit", (10, fh - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+    cv2.putText(out, "click=segment  drag=track  C=clear  R=reset  ESC=quit",
+                (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
 
     return out

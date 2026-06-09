@@ -103,21 +103,25 @@ def _switch_engine(manager, want, active_name, tracker, embedder, frame, shared)
     return new_tracker, new_embedder, want
 
 
-def inference_loop(manager, settings, mouse, shared: SharedState,
+def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
                    stop: threading.Event):
     """Run the active engine on the newest frame; publish results for display.
 
     The engine (DINOv2 hybrid / SAM 2) can be switched live from the settings
     window; the swap happens here on the inference thread, carrying over the
     current lock box so tracking continues without re-drawing.
+
+    A ClickSegmenter runs alongside: a single mouse click triggers a one-shot
+    point-prompt segmentation (independent of tracking).
     """
     active_name = settings.tracking_engine
     tracker, embedder = manager.get(active_name)
-    last_seq  = -1
-    attn_map  = None
-    attn_age  = 0
-    inf_fps   = 30.0
-    t_prev    = time.perf_counter()
+    last_seq   = -1
+    attn_map   = None
+    attn_age   = 0
+    seg_result = None      # last click-to-segment result, shown until next click
+    inf_fps    = 30.0
+    t_prev     = time.perf_counter()
 
     while not stop.is_set():
         frame, seq = shared.get_frame()
@@ -136,9 +140,22 @@ def inference_loop(manager, settings, mouse, shared: SharedState,
 
         if shared.take_reset():
             tracker.reset()
-            mouse.pending_bbox = None
-            attn_map = None
-            attn_age = 0
+            mouse.pending_bbox  = None
+            mouse.pending_point = None
+            seg_result = None
+            attn_map   = None
+            attn_age   = 0
+
+        # --- click-to-segment --------------------------------------------
+        if mouse.pending_point is not None:
+            pt = mouse.pending_point
+            mouse.pending_point = None
+            mask = segmenter.segment(frame, pt)
+            seg_result = dict(
+                mask    = mask,
+                point   = pt,
+                backend = settings.segment_backend,
+            ) if mask is not None else None
 
         if mouse.pending_bbox is not None and tracker.state == State.IDLE:
             tracker.init(frame, mouse.pending_bbox)
@@ -172,4 +189,5 @@ def inference_loop(manager, settings, mouse, shared: SharedState,
             state=state, bbox=bbox, sim=sim or 0.0,
             attn_map=attn_map, motion_trail=motion_trail,
             predicted=predicted, inf_fps=inf_fps,
+            seg_result=seg_result,
         ))

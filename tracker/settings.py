@@ -31,13 +31,18 @@ class Settings:
     attn_threshold: float = 0.50
     mask_opacity:   float = 0.40
 
+    # Click-to-segment
+    segment_backend: str   = "SAM 2"    # "SAM 2" | "MobileSAM" | "FastSAM-s"
+    seg_opacity:     float = 0.45
+
     # Display toggles
     show_confidence_bar: bool = True
     show_fps:            bool = True
 
 
-TRACKER_BACKENDS = ["ViT", "CSRT", "KCF", "Optical Flow"]
-TRACKING_ENGINES = ["hybrid", "sam2"]
+TRACKER_BACKENDS  = ["ViT", "CSRT", "KCF", "Optical Flow"]
+TRACKING_ENGINES  = ["hybrid", "sam2"]
+SEGMENT_BACKENDS  = ["SAM 2", "MobileSAM", "FastSAM-s"]
 
 
 # ----------------------------------------------------------------- GUI builder
@@ -108,6 +113,11 @@ def _run_gui(settings: Settings) -> None:
     slider_row(f, "Warning threshold", "sim_warning",    0.20, 0.80)
     slider_row(f, "Search radius",     "search_radius",  0.20, 3.00)
     slider_row(f, "Streak limit",      "streak_limit",   2,    30,  as_int=True)
+
+    # ── Click-to-Segment ──────────────────────────────────────────────────────
+    f = section("Click-to-Segment  (single click; drag to track)")
+    combo_row(f, "Backend", "segment_backend", SEGMENT_BACKENDS)
+    slider_row(f, "Mask opacity", "seg_opacity", 0.10, 0.80)
 
     # ── Motion vector ─────────────────────────────────────────────────────────
     f = section("Motion Vector")

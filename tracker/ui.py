@@ -154,29 +154,22 @@ def _draw_segment(out, mask, point, backend_name, opacity=0.45):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 160), 1)
 
 
-_VD_CLASSES = [
-    "pedestrian", "people", "bicycle", "car", "van",
-    "truck", "tricycle", "awning-tricycle", "bus", "motor",
-]
-_VD_COLORS = [          # BGR, one per class
-    (255, 180,  80), (255, 255, 100), ( 80, 220, 255), (100, 100, 255),
-    (200,  80, 255), (255,  80, 180), (100, 255, 160), (200, 200,  80),
-    ( 80, 200, 200), (200, 160, 255),
-]
-
-
-def _draw_visdrone(out, detections):
-    """Thin colored boxes + class labels for VisDrone detections."""
+def _draw_drone_detect(out, detections, preset):
+    """Boxes for drone/bird detections — red for drones, green for birds."""
+    from .drone_detect import PRESETS
+    cfg     = PRESETS.get(preset, {})
+    classes = cfg.get("classes", [])
+    colors  = cfg.get("colors",  [(40, 80, 255)])
     for x, y, w, h, cls_id, conf in detections:
-        label = _VD_CLASSES[cls_id] if cls_id < len(_VD_CLASSES) else str(cls_id)
-        color = _VD_COLORS[cls_id % len(_VD_COLORS)]
-        cv2.rectangle(out, (x, y), (x + w, y + h), color, 1, cv2.LINE_AA)
+        label = classes[cls_id] if cls_id < len(classes) else str(cls_id)
+        color = colors[cls_id % len(colors)]
+        cv2.rectangle(out, (x, y), (x + w, y + h), color, 2, cv2.LINE_AA)
         txt = f"{label} {conf * 100:.0f}%"
-        (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+        (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
         ty = max(y - 2, th + 3)
-        cv2.rectangle(out, (x, ty - th - 2), (x + tw + 4, ty + 2), color, -1)
+        cv2.rectangle(out, (x, ty - th - 3), (x + tw + 5, ty + 3), color, -1)
         cv2.putText(out, txt, (x + 2, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 0, 0), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
 
 def _draw_drone_hud(out, drone_result, settings):
@@ -263,16 +256,17 @@ def draw_overlay(
     motion_blobs=None,
     motion_mask=None,
     drone_result=None,
-    visdrone_detections=None,
+    drone_detections=None,   # list of (x,y,w,h,cls,conf) from DroneDetector
+    drone_detect_preset=None,
 ) -> np.ndarray:
     out = frame.copy()
     fh, fw = out.shape[:2]
 
     cfg = settings or Settings()    # fall back to defaults if not provided
 
-    # ── VisDrone detections (drawn first — under all tracking overlays) ───────
-    if visdrone_detections:
-        _draw_visdrone(out, visdrone_detections)
+    # ── Drone detections (drawn first — under all tracking overlays) ─────────
+    if drone_detections:
+        _draw_drone_detect(out, drone_detections, drone_detect_preset)
 
     # ── motion detection overlay (drawn under everything) ─────────────────────
     if cfg.motion_detect and (motion_blobs or motion_mask is not None):

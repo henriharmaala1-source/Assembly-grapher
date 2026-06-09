@@ -140,12 +140,12 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
     """
     from .motion_detect import MotionDetector
     from .drone import DroneTracker
-    from .visdrone import VisDroneDetector
-    detector          = MotionDetector()
-    drone_tracker     = DroneTracker()
-    visdrone_detector = VisDroneDetector(device=manager.device)
-    visdrone_age      = 0
-    visdrone_dets     = []
+    from .drone_detect import DroneDetector
+    detector        = MotionDetector()
+    drone_tracker   = DroneTracker()
+    drone_detector  = DroneDetector(device=manager.device)
+    drone_det_age   = 0
+    drone_dets      = []
 
     active_name = settings.tracking_engine
     tracker, embedder = manager.get(active_name)
@@ -268,20 +268,23 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
         motion_trail = tracker.center_trail() if settings.show_motion_vector else None
         predicted    = tracker.predicted_center if settings.show_motion_vector else None
 
-        # --- VisDrone detection (runs on interval when enabled) ---------------
-        if settings.visdrone_detect:
-            visdrone_age += 1
-            if visdrone_age >= settings.visdrone_interval:
-                visdrone_age = 0
+        # --- drone detection (runs on interval when enabled) ------------------
+        if settings.drone_detect:
+            drone_det_age += 1
+            if drone_det_age >= settings.drone_detect_interval:
+                drone_det_age = 0
                 try:
-                    visdrone_dets = visdrone_detector.detect(
-                        frame, conf=settings.visdrone_conf)
+                    drone_dets = drone_detector.detect(
+                        frame,
+                        preset=settings.drone_detect_preset,
+                        conf=settings.drone_detect_conf,
+                    )
                 except Exception as exc:
-                    print(f"[visdrone] {exc}")
-                    visdrone_dets = []
-                    settings.visdrone_detect = False
+                    print(f"[drone-detect] {exc}")
+                    drone_dets = []
+                    settings.drone_detect = False
         else:
-            visdrone_dets = []
+            drone_dets = []
 
         # --- drone tracker (runs every frame when mode is active) -------------
         drone_result = None
@@ -310,5 +313,6 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             motion_blobs=motion_blobs,
             motion_mask=motion_mask if settings.show_motion_mask else None,
             drone_result=drone_result,
-            visdrone_detections=visdrone_dets,
+            drone_detections=drone_dets,
+            drone_detect_preset=settings.drone_detect_preset,
         ))

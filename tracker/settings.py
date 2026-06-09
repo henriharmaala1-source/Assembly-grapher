@@ -53,10 +53,11 @@ class Settings:
     drone_backend:  str   = "CSRT"    # "CSRT" | "KCF" | "Optical Flow"
     drone_box_size: int   = 80        # fixed box diameter (px)
 
-    # VisDrone detection
-    visdrone_detect:   bool  = False
-    visdrone_conf:     float = 0.25
-    visdrone_interval: int   = 3      # run detector every N frames
+    # Drone detection (Drone-vs-Bird / MAV-VID)
+    drone_detect:          bool  = False
+    drone_detect_preset:   str   = "Drone-vs-Bird"   # "Drone-vs-Bird" | "MAV-VID"
+    drone_detect_conf:     float = 0.25
+    drone_detect_interval: int   = 3
 
 
 TRACKER_BACKENDS  = ["ViT", "CSRT", "KCF", "Optical Flow"]
@@ -176,11 +177,13 @@ def _run_gui(settings: Settings) -> None:
     combo_row(f,  "Tracker backend",      "drone_backend", DRONE_BACKENDS)
     slider_row(f, "Box size (px)",        "drone_box_size", 30, 200, as_int=True)
 
-    # ── VisDrone Detection ────────────────────────────────────────────────────
-    f = section("VisDrone Detection  (aerial-view objects; auto-downloads model)")
-    check_row(f,  "Enable detection",      "visdrone_detect")
-    slider_row(f, "Confidence threshold",  "visdrone_conf",     0.10, 0.90)
-    slider_row(f, "Run every N frames",    "visdrone_interval",    1,  15, as_int=True)
+    # ── Drone Detection ───────────────────────────────────────────────────────
+    f = section("Drone Detection  (place .pt in models/ — see drone_detect.py)")
+    check_row(f,  "Enable drone detection",  "drone_detect")
+    combo_row(f,  "Model preset",            "drone_detect_preset",
+              ["Drone-vs-Bird", "MAV-VID"])
+    slider_row(f, "Confidence threshold",    "drone_detect_conf",     0.10, 0.90)
+    slider_row(f, "Run every N frames",      "drone_detect_interval",    1,  15, as_int=True)
 
     ttk.Separator(root).pack(fill="x", pady=8)
     ttk.Label(root, text="R  reset    D  drone mode    ESC  quit",

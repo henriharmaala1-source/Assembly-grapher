@@ -134,14 +134,19 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
     A ClickSegmenter runs alongside: a single mouse click triggers a one-shot
     point-prompt segmentation (independent of tracking).
     """
+    from .motion_detect import MotionDetector
+    detector = MotionDetector()
+
     active_name = settings.tracking_engine
     tracker, embedder = manager.get(active_name)
-    last_seq   = -1
-    attn_map   = None
-    attn_age   = 0
-    seg_result = None      # last click-to-segment result, shown until next click
-    inf_fps    = 30.0
-    t_prev     = time.perf_counter()
+    last_seq     = -1
+    attn_map     = None
+    attn_age     = 0
+    seg_result   = None    # last click-to-segment result, shown until next click
+    motion_blobs = None
+    motion_mask  = None
+    inf_fps      = 30.0
+    t_prev       = time.perf_counter()
 
     while not stop.is_set():
         frame, seq = shared.get_frame()
@@ -163,9 +168,32 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             mouse.pending_bbox  = None
             mouse.pending_point = None
             segmenter.stop_continuous()
-            seg_result = None
-            attn_map   = None
-            attn_age   = 0
+            detector.reset_persist()
+            seg_result   = None
+            motion_blobs = None
+            motion_mask  = None
+            attn_map     = None
+            attn_age     = 0
+
+        # --- blob motion detection (auto-acquire when idle) ---------------
+        motion_blobs, motion_mask = None, None
+        idle = (tracker.state == State.IDLE and not segmenter.is_continuous
+                and mouse.pending_point is None and mouse.pending_bbox is None)
+        if settings.motion_detect and idle:
+            detector.set_threshold(settings.motion_threshold)
+            motion_mask, motion_blobs = detector.detect(
+                frame, settings.motion_min_area)
+            if settings.motion_auto_segment and motion_blobs:
+                if detector.confirm(motion_blobs[0]):
+                    x, y, w, h, _ = motion_blobs[0]
+                    detector.reset_persist()
+                    # Hand the blob to the better model via the existing path.
+                    if settings.segment_backend == "SAM 2" or settings.seg_continuous:
+                        mouse.pending_point = (x + w // 2, y + h // 2)
+                    else:
+                        mouse.pending_bbox = (x, y, w, h)
+        elif not idle:
+            detector.reset_persist()
 
         # --- click-to-segment (one-shot or continuous) -------------------
         if mouse.pending_point is not None:
@@ -228,4 +256,6 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             attn_map=attn_map, motion_trail=motion_trail,
             predicted=predicted, inf_fps=inf_fps,
             seg_result=seg_result,
+            motion_blobs=motion_blobs,
+            motion_mask=motion_mask if settings.show_motion_mask else None,
         ))

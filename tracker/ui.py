@@ -154,6 +154,24 @@ def _draw_segment(out, mask, point, backend_name, opacity=0.45):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 160), 1)
 
 
+def _draw_motion_detect(out, blobs, fg_mask):
+    """Foreground mask tint + boxes around moving blobs (largest highlighted)."""
+    if fg_mask is not None:
+        tint = np.zeros_like(out)
+        tint[fg_mask > 0] = (60, 0, 120)
+        cv2.addWeighted(tint, 0.5, out, 1.0, 0, out)
+
+    if not blobs:
+        return
+    for i, (x, y, w, h, area) in enumerate(blobs):
+        primary = (i == 0)
+        color = (60, 220, 255) if primary else (90, 140, 160)
+        cv2.rectangle(out, (x, y), (x + w, y + h), color, 2 if primary else 1)
+        if primary:
+            cv2.putText(out, f"motion {int(area)}px", (x, max(y - 6, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+
 def draw_overlay(
     frame: np.ndarray,
     state: State,
@@ -166,11 +184,17 @@ def draw_overlay(
     motion_trail=None,      # list of (cx, cy) recent centers
     predicted_center=None,  # (px, py) predicted future center
     seg_result=None,        # dict(mask=..., point=...) from click segmenter
+    motion_blobs=None,      # list of (x,y,w,h,area) detected moving blobs
+    motion_mask=None,       # foreground uint8 mask or None
 ) -> np.ndarray:
     out = frame.copy()
     fh, fw = out.shape[:2]
 
     cfg = settings or Settings()    # fall back to defaults if not provided
+
+    # ── motion detection overlay (drawn under everything) ─────────────────────
+    if cfg.motion_detect and (motion_blobs or motion_mask is not None):
+        _draw_motion_detect(out, motion_blobs, motion_mask)
 
     # ── click-to-segment overlay (drawn first, tracking overlays on top) ──────
     if seg_result is not None:

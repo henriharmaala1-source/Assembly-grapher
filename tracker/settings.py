@@ -37,6 +37,13 @@ class Settings:
     seg_continuous:   bool  = True      # re-segment every frame
     seg_interval:     int   = 3         # re-segment every N frames (non-SAM2)
 
+    # Motion detection (auto-acquire)
+    motion_detect:       bool  = False   # run blob motion detection when idle
+    motion_threshold:    float = 24.0    # MOG2 varThreshold — lower = more sensitive
+    motion_min_area:     int   = 1500    # ignore blobs smaller than this (px)
+    motion_auto_segment: bool  = True    # auto-hand the blob to the segmenter
+    show_motion_mask:    bool  = False   # overlay the foreground mask
+
     # Display toggles
     show_confidence_bar: bool = True
     show_fps:            bool = True
@@ -122,6 +129,14 @@ def _run_gui(settings: Settings) -> None:
     check_row(f,  "Continuous update (follow object)", "seg_continuous")
     slider_row(f, "Re-segment every N frames", "seg_interval", 1, 15, as_int=True)
     slider_row(f, "Mask opacity",  "seg_opacity", 0.10, 0.80)
+
+    # ── Motion Detection ──────────────────────────────────────────────────────
+    f = section("Motion Detection  (auto-acquire when idle)")
+    check_row(f,  "Enable motion detect", "motion_detect")
+    slider_row(f, "Sensitivity (lower=more)", "motion_threshold", 8, 80)
+    slider_row(f, "Min blob area",  "motion_min_area", 300, 20000, as_int=True)
+    check_row(f,  "Auto-segment detected object", "motion_auto_segment")
+    check_row(f,  "Show motion mask", "show_motion_mask")
 
     # ── Motion vector ─────────────────────────────────────────────────────────
     f = section("Motion Vector")

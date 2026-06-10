@@ -156,8 +156,31 @@ class OpticalFlowTracker:
 
         disp = good_new - good_old
         dx, dy = float(np.median(disp[:, 0])), float(np.median(disp[:, 1]))
-        self._box[0] += int(round(dx))
-        self._box[1] += int(round(dy))
+
+        # Scale estimation: compare median point-spread before and after.
+        # When the object approaches or recedes the spread ratio gives the
+        # zoom factor. Cap to ±18% per frame to prevent runaway box drift.
+        if len(good_new) >= 8:
+            center_old = good_old.mean(axis=0)
+            center_new = good_new.mean(axis=0)
+            spread_old = float(np.median(np.linalg.norm(good_old - center_old, axis=1)))
+            spread_new = float(np.median(np.linalg.norm(good_new - center_new, axis=1)))
+            if spread_old > 2.0:
+                scale = float(np.clip(spread_new / (spread_old + 1e-6), 0.82, 1.18))
+                cx = self._box[0] + self._box[2] / 2.0 + dx
+                cy = self._box[1] + self._box[3] / 2.0 + dy
+                w_new = max(20, int(self._box[2] * scale))
+                h_new = max(20, int(self._box[3] * scale))
+                self._box[0] = int(cx - w_new / 2)
+                self._box[1] = int(cy - h_new / 2)
+                self._box[2] = w_new
+                self._box[3] = h_new
+            else:
+                self._box[0] += int(round(dx))
+                self._box[1] += int(round(dy))
+        else:
+            self._box[0] += int(round(dx))
+            self._box[1] += int(round(dy))
 
         self._prev_gray = gray
         self._pts = good_new.reshape(-1, 1, 2)

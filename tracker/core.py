@@ -70,6 +70,7 @@ class LockOnTracker:
         self._scan_idx       = 0
         self._scan_best      = (None, 0.0)
         self._backend_fallback = None  # set when a backend fails to construct
+        self._smooth_sim     = 1.0    # EWMA-smoothed similarity for display
 
     # ------------------------------------------------------------------ props
 
@@ -100,6 +101,37 @@ class LockOnTracker:
     @property
     def _predict_horizon(self):
         return self._s.predict_horizon if self._s else self._PREDICT_HORIZON
+
+    @property
+    def _effective_check_interval(self) -> int:
+        """Double the DINOv2 check interval when the object is stationary and
+        confidently locked — halves GPU inference cost for static scenes."""
+        base = self._check_interval
+        if (self._kalman.initialized
+                and not self._coasting
+                and self._bad_streak == 0
+                and self._smooth_sim > 0.75):
+            vx, vy = self._kalman.velocity
+            if vx * vx + vy * vy < 4.0:   # < 2 px/frame
+                return base * 2
+        return base
+
+    @property
+    def _effective_search_radius(self) -> float:
+        """Scale the local search radius up with current velocity so fast-moving
+        objects don't escape the search window between DINOv2 checks."""
+        base = self._search_radius
+        if not self._kalman.initialized or self.bbox is None:
+            return base
+        vx, vy = self._kalman.velocity
+        vel_mag = (vx * vx + vy * vy) ** 0.5
+        _, _, bw, bh = self.bbox
+        box_scale = (bw * bh) ** 0.5
+        if box_scale < 1:
+            return base
+        # How far the object moves between checks in box-size units
+        vel_radius = vel_mag * self._check_interval / box_scale
+        return max(base, vel_radius * 1.5)
 
     def center_trail(self):
         return list(self._centers)
@@ -136,6 +168,7 @@ class LockOnTracker:
         self.bbox          = (x, y, w, h)
         self._bad_streak   = 0
         self._coasting     = False
+        self._smooth_sim   = 1.0
         self._frame_n      = 0
         self._search_frame = 0
         self._scan_positions = None
@@ -163,6 +196,7 @@ class LockOnTracker:
         self._anchor         = None
         self._bank           = None
         self.similarity      = 1.0
+        self._smooth_sim     = 1.0
         self._bad_streak     = 0
         self._coasting       = False
         self._frame_n        = 0
@@ -186,12 +220,13 @@ class LockOnTracker:
         self.bbox = tuple(int(v) for v in raw)
         self._frame_n += 1
 
-        if self._frame_n % self._check_interval != 0:
+        if self._frame_n % self._effective_check_interval != 0:
             self._update_motion()
             return self.state, self.bbox, self.similarity
 
         sim = self._verify_sim(frame, self.bbox)
-        self.similarity = sim
+        self._smooth_sim = 0.8 * self._smooth_sim + 0.2 * sim
+        self.similarity  = self._smooth_sim
 
         if sim >= self._sim_warning:
             self._bad_streak = 0
@@ -199,7 +234,8 @@ class LockOnTracker:
                 self._maybe_bank(frame, self.bbox)
             self._update_motion()
         else:
-            best_box, best_sim = self._local_search(frame, self.bbox, self._search_radius)
+            best_box, best_sim = self._local_search(frame, self.bbox,
+                                                     self._effective_search_radius)
             if best_box and best_sim >= self._sim_warning:
                 self.bbox = best_box
                 self._reseat_tracker(frame, best_box)
@@ -224,8 +260,9 @@ class LockOnTracker:
         self._coast_step(frame)
         self._frame_n += 1
 
-        if self._frame_n % self._check_interval == 0:
-            best_box, best_sim = self._local_search(frame, self.bbox, self._search_radius)
+        if self._frame_n % self._effective_check_interval == 0:
+            best_box, best_sim = self._local_search(frame, self.bbox,
+                                                     self._effective_search_radius)
             if best_box and best_sim >= self._sim_warning:
                 self.bbox = best_box
                 self._reseat_tracker(frame, best_box)
@@ -305,15 +342,18 @@ class LockOnTracker:
         self._scan_idx = end
 
         fh, fw = frame.shape[:2]
-        boxes, crops = [], []
+        boxes = []
         for (bx, by, bw, bh) in batch_pos:
-            crop = frame[by:min(fh, by+bh), bx:min(fw, bx+bw)]
-            if crop.size > 0:
+            if bx + bw <= fw and by + bh <= fh and bw > 0 and bh > 0:
                 boxes.append((bx, by, bw, bh))
-                crops.append(crop)
 
-        if crops:
-            embs     = self.embedder.embed_batch(crops)
+        if boxes:
+            if self.embedder._frame_cache is not None:
+                embs = self.embedder.embed_boxes(boxes)
+            else:
+                crops = [frame[by:by+bh, bx:bx+bw] for bx, by, bw, bh in boxes]
+                embs  = self.embedder.embed_batch(crops)
+
             anchor_s = embs @ self._anchor
             bank_s   = (embs @ self._bank.T).max(dim=1).values
             sims     = self.ANCHOR_WEIGHT * anchor_s + (1 - self.ANCHOR_WEIGHT) * bank_s
@@ -384,12 +424,11 @@ class LockOnTracker:
         return self.ANCHOR_WEIGHT * anchor_s + (1 - self.ANCHOR_WEIGHT) * bank_s
 
     def _local_search(self, frame, prior, radius):
-        fh, fw = frame.shape[:2]
         px, py, pw, ph = prior
         cx, cy = px + pw / 2.0, py + ph / 2.0
 
-        offs = np.linspace(-radius, radius, self.GRID)
-        boxes, crops = [], []
+        offs  = np.linspace(-radius, radius, self.GRID)
+        boxes = []
         for s in self.SCALES:
             bw, bh = int(pw * s), int(ph * s)
             if bw < 10 or bh < 10:
@@ -402,24 +441,23 @@ class LockOnTracker:
                          int(cy + oy * ph - bh / 2.0),
                          bw, bh)
                     )
-                    if w < 10 or h < 10:
-                        continue
-                    crop = frame[y:y + h, x:x + w]
-                    if crop.size == 0:
-                        continue
-                    boxes.append((x, y, w, h))
-                    crops.append(crop)
+                    if w >= 10 and h >= 10:
+                        boxes.append((x, y, w, h))
 
-        if not crops:
+        if not boxes:
             return None, 0.0
 
-        embs     = self.embedder.embed_batch(crops)
+        # GPU path (frame already uploaded by pipeline.cache_frame); CPU fallback.
+        if self.embedder._frame_cache is not None:
+            embs = self.embedder.embed_boxes(boxes)
+        else:
+            crops = [frame[y:y+h, x:x+w] for x, y, w, h in boxes]
+            embs  = self.embedder.embed_batch(crops)
+
         anchor_s = embs @ self._anchor
         bank_s   = (embs @ self._bank.T).max(dim=1).values
         score    = self.ANCHOR_WEIGHT * anchor_s + (1 - self.ANCHOR_WEIGHT) * bank_s
         best     = int(torch.argmax(score).item())
-        # Accept by the same blended score used to select — accepting by
-        # anchor-only would reject candidates the bank correctly recognizes.
         return boxes[best], float(score[best].item())
 
     # ----------------------------------------------------------------- helpers

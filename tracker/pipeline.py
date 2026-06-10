@@ -149,14 +149,15 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
 
     active_name = settings.tracking_engine
     tracker, embedder = manager.get(active_name)
-    last_seq     = -1
-    attn_map     = None
-    attn_age     = 0
-    seg_result   = None    # last click-to-segment result, shown until next click
-    motion_blobs = None
-    motion_mask  = None
-    inf_fps      = 30.0
-    t_prev       = time.perf_counter()
+    last_seq      = -1
+    attn_map      = None
+    attn_age      = 0
+    seg_result    = None    # last click-to-segment result, shown until next click
+    motion_blobs  = None
+    motion_mask   = None
+    motion_age    = 0       # subsampling counter for MOG2
+    inf_fps       = 30.0
+    t_prev        = time.perf_counter()
 
     while not stop.is_set():
         frame, seq = shared.get_frame()
@@ -164,6 +165,10 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             time.sleep(0.001)        # nothing new yet
             continue
         last_seq = seq
+
+        # --- upload frame to GPU once (enables embed_boxes fast path) --------
+        if embedder is not None:
+            embedder.cache_frame(frame)
 
         # --- live engine switch -------------------------------------------
         want = settings.tracking_engine
@@ -192,9 +197,13 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
                 and mouse.pending_point is None and mouse.pending_bbox is None
                 and not settings.drone_mode)
         if settings.motion_detect and idle:
-            detector.set_threshold(settings.motion_threshold)
-            motion_mask, motion_blobs = detector.detect(
-                frame, settings.motion_min_area)
+            # Run MOG2 every 2 frames — halves morphology + contour cost when idle.
+            motion_age += 1
+            if motion_age >= 2:
+                motion_age = 0
+                detector.set_threshold(settings.motion_threshold)
+                motion_mask, motion_blobs = detector.detect(
+                    frame, settings.motion_min_area)
             if settings.motion_auto_segment and motion_blobs:
                 if detector.confirm(motion_blobs[0]):
                     x, y, w, h, _ = motion_blobs[0]

@@ -1,12 +1,17 @@
 # RPi 5 Lock-On Tracker
 
-Standalone C++ port of the Python app's drone mode for the Raspberry Pi 5.
-Click the video to lock a fixed-size box onto that point; a lightweight
-tracker (CSRT / KCF / sparse optical flow) follows it every frame and the
-HUD reports lock age and loss count for reliability testing. No neural
-networks, no GPU — pure CPU, single core.
+Standalone C++ app for the Raspberry Pi 5 combining two things:
 
-## Build (on the Pi 5, Raspberry Pi OS Bookworm)
+1. **Click-to-lock tracker** — click to designate a fixed-size box, tracked
+   every frame by CSRT / KCF / sparse optical flow. Reports lock age and loss
+   count for reliability testing. Pure CPU, no neural networks.
+
+2. **Monocular depth navigation** *(optional)* — a depth estimation model
+   (MiDaS Small or Depth Anything v2 Small) runs every N frames via OpenCV DNN,
+   divides the frame into a 3×3 grid, and draws a direction arrow toward the
+   most open sector. Tells the drone which way has clear airspace.
+
+## Build (Raspberry Pi OS Bookworm)
 
 ```bash
 sudo apt update
@@ -16,39 +21,98 @@ cmake -B build
 cmake --build build -j4
 ```
 
-Debian's `libopencv-dev` includes the contrib `tracking` module (CSRT/KCF),
-so no custom OpenCV build is needed.
+`libopencv-dev` includes CSRT/KCF tracking and the DNN module — no custom
+OpenCV build needed.
 
-## Run
+## Run — tracker only
 
 ```bash
-./build/lockon                       # USB webcam at /dev/video0, 640x480, CSRT
-./build/lockon -b=kcf -s=100        # KCF backend, 100 px lock box
+./build/lockon                         # USB cam, 640×480, CSRT
+./build/lockon -b=kcf -s=100          # KCF backend, 100 px box
 ./build/lockon -c=1 --width=1280 --height=720
+./build/lockon --deinterlace           # analog capture dongle (EasyCap)
 ```
+
+## Run — with depth navigation
+
+Download one of the ONNX models first (see below), then:
+
+```bash
+# MiDaS Small (~50 MB, ~8-12 fps on Pi 5)
+./build/lockon --depth-model=models/midas_small.onnx --depth-backend=midas --depth-on
+
+# Depth Anything v2 Small (~100 MB, ~5-8 fps on Pi 5)
+./build/lockon --depth-model=models/depth_anything_v2_small.onnx --depth-backend=dav2 --depth-on
+
+# Run depth every 10 frames instead of default 6 (reduces CPU load)
+./build/lockon --depth-model=models/midas_small.onnx --depth-interval=10
+```
+
+Press **`d`** at any time to toggle the depth overlay on/off.
+
+## Downloading the ONNX models
+
+**MiDaS Small** (faster, ~8-12 fps):
+```bash
+mkdir -p models
+wget -O models/midas_small.onnx \
+  https://github.com/isl-org/MiDaS/releases/download/v2_1/model-small.onnx
+```
+
+**Depth Anything v2 Small** (better quality, ~5-8 fps):
+```bash
+mkdir -p models
+# Export from PyTorch (requires Python + torch + transformers):
+pip install torch transformers
+python3 - <<'EOF'
+import torch
+from transformers import pipeline
+pipe = pipeline(task="depth-estimation",
+                model="depth-anything/Depth-Anything-V2-Small-hf")
+dummy = torch.zeros(1, 3, 518, 518)
+torch.onnx.export(pipe.model, dummy, "models/depth_anything_v2_small.onnx",
+                  opset_version=17, input_names=["pixel_values"],
+                  output_names=["predicted_depth"])
+EOF
+```
+
+## Keys
 
 | Key | Action |
 | --- | ------ |
 | left click | lock onto that point |
 | `1` / `2` / `3` | switch backend: CSRT / KCF / optical flow (resets lock) |
-| `r` | reset |
+| `d` | toggle depth overlay (only if model loaded) |
+| `r` | reset tracker |
 | `q` / ESC | quit |
 
-HUD colors: **green** = locked, **orange** = coasting through a momentary
-loss, **red** = lost (15 consecutive failed frames). `age` counts frames
-tracked since lock; `losses` counts loss episodes the tracker recovered from.
+## HUD
 
-## Expected performance (640x480)
+**Lock box colours:** green = locked, orange = coasting through a momentary
+loss, red = lost (15 consecutive failed frames).
 
-| Backend | FPS on Pi 5 | Character |
-| ------- | ----------- | --------- |
-| KCF | 60+ | fastest, weaker on scale change / occlusion |
-| CSRT | 30–60 | most accurate of the three |
-| Optical flow | 60+ | forward-backward validated LK, handles partial occlusion well |
+**Depth grid** (when enabled): 3×3 coloured overlay — green sector = furthest
+(most open), red = closest/blocked. Arrow points from frame centre toward the
+most open sector. Score 0.0–1.0 printed per cell.
 
-## Pi Camera Module note
+## Expected performance (640×480, Pi 5)
 
-`cv::VideoCapture(0, CAP_V4L2)` works out of the box for USB webcams. The
-Pi Camera Module uses libcamera; either run
-`libcamera-vid --inline -t 0 -o - | …` through a GStreamer pipeline, or use
-a USB webcam for testing.
+| Component | Interval | FPS cost |
+| --------- | -------- | -------- |
+| CSRT tracker | every frame | ~30-60 fps |
+| KCF tracker | every frame | 60+ fps |
+| Optical flow tracker | every frame | 60+ fps |
+| MiDaS Small depth | every 6 frames | ~1-2 fps overhead |
+| Depth Anything v2 Small | every 6 frames | ~2-3 fps overhead |
+
+## Analog camera (FPV drone tap)
+
+Use `--deinterlace` when capturing from an analog FPV camera via a USB capture
+dongle (EasyCap UTV007/MS2106). This drops alternating lines and resizes back
+up, eliminating comb artifacts on moving objects. Sparse optical flow backend
+is most sensitive to analog noise — prefer CSRT/KCF with analog input.
+
+## Pi Camera Module
+
+`cv::VideoCapture(0, CAP_V4L2)` works for USB webcams. The Pi Camera Module
+uses libcamera — pipe it through GStreamer or use a USB webcam for testing.

@@ -8,11 +8,12 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(OpenCV REQUIRED COMPONENTS
-  core imgproc video videoio highgui tracking)
+  core imgproc video videoio highgui tracking dnn)
 
 add_executable(lockon
   src/main.cpp
-  src/lock_tracker.cpp)
+  src/lock_tracker.cpp
+  src/depth_nav.cpp)
 
 target_link_libraries(lockon PRIVATE ${OpenCV_LIBS})
 target_include_directories(lockon PRIVATE ${OpenCV_INCLUDE_DIRS})

@@ -65,7 +65,13 @@ class DroneTracker:
         if self._tracker is None or self._bbox is None:
             return False, None
 
-        ok, raw = self._tracker.update(frame)
+        # KCF (and occasionally CSRT) raise cv2.error instead of returning
+        # ok=False when the box leaves the frame — record it as a loss, the
+        # whole point of this harness is counting failures, not crashing on them.
+        try:
+            ok, raw = self._tracker.update(frame)
+        except Exception:
+            ok, raw = False, None
         if ok:
             self._bbox = tuple(int(v) for v in raw)
             self._age += 1

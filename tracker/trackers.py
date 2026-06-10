@@ -86,6 +86,7 @@ class OpticalFlowTracker:
     )
     FEAT_PARAMS = dict(maxCorners=80, qualityLevel=0.01, minDistance=5, blockSize=7)
     MIN_POINTS = 8
+    FB_MAX_ERR = 1.5   # px — forward-backward error above this rejects a point
 
     def __init__(self):
         self._prev_gray = None
@@ -129,9 +130,25 @@ class OpticalFlowTracker:
             self._pts = None
             return False, tuple(self._box)
 
-        st = st.reshape(-1).astype(bool)
-        good_old = self._pts.reshape(-1, 2)[st]
-        good_new = nxt.reshape(-1, 2)[st]
+        # Forward-backward check: track the results back to the previous frame
+        # and reject points that don't land where they started. Points that
+        # slid onto the background still "track" — this is what catches them.
+        back, st_b, _ = cv2.calcOpticalFlowPyrLK(
+            gray, self._prev_gray, nxt, None, **self.LK_PARAMS
+        )
+        if back is None or st_b is None:
+            self._prev_gray = gray
+            self._pts = None
+            return False, tuple(self._box)
+
+        fb_err = np.linalg.norm(
+            self._pts.reshape(-1, 2) - back.reshape(-1, 2), axis=1)
+        valid = (st.reshape(-1).astype(bool)
+                 & st_b.reshape(-1).astype(bool)
+                 & (fb_err < self.FB_MAX_ERR))
+
+        good_old = self._pts.reshape(-1, 2)[valid]
+        good_new = nxt.reshape(-1, 2)[valid]
         if len(good_new) < self.MIN_POINTS:
             self._prev_gray = gray
             self._pts = None

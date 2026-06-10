@@ -63,6 +63,7 @@ class LockOnTracker:
         self._anchor         = None
         self._bank           = None
         self._bad_streak     = 0
+        self._coasting       = False  # target missing; box moves on prediction only
         self._frame_n        = 0
         self._search_frame   = 0
         self._scan_positions = None   # list of (x,y,w,h) for current sweep
@@ -134,6 +135,7 @@ class LockOnTracker:
         self._tracker.init(frame, (x, y, w, h))
         self.bbox          = (x, y, w, h)
         self._bad_streak   = 0
+        self._coasting     = False
         self._frame_n      = 0
         self._search_frame = 0
         self._scan_positions = None
@@ -162,6 +164,7 @@ class LockOnTracker:
         self._bank           = None
         self.similarity      = 1.0
         self._bad_streak     = 0
+        self._coasting       = False
         self._frame_n        = 0
         self._search_frame   = 0
         self._scan_positions = None
@@ -172,6 +175,9 @@ class LockOnTracker:
     # --------------------------------------------------------------- LOCKED
 
     def _update_locked(self, frame):
+        if self._coasting:
+            return self._update_coasting(frame)
+
         ok, raw = self._tracker.update(frame)
         if not ok:
             self._enter_searching()
@@ -184,29 +190,54 @@ class LockOnTracker:
             self._update_motion()
             return self.state, self.bbox, self.similarity
 
-        sim = self._single_sim(frame, self.bbox)
+        sim = self._verify_sim(frame, self.bbox)
         self.similarity = sim
 
         if sim >= self._sim_warning:
             self._bad_streak = 0
             if sim >= self.BANK_ADD_SIM:
                 self._maybe_bank(frame, self.bbox)
+            self._update_motion()
         else:
             best_box, best_sim = self._local_search(frame, self.bbox, self._search_radius)
             if best_box and best_sim >= self._sim_warning:
                 self.bbox = best_box
-                self._reseat_csrt(frame, best_box)
+                self._reseat_tracker(frame, best_box)
                 self.similarity = best_sim
                 self._bad_streak = 0
+                self._update_motion()
             else:
-                # Target not found near the box — coast along predicted motion
-                # so a brief occlusion or fast move doesn't immediately lose it.
+                # Target not found near the box — start coasting along the
+                # predicted motion so a brief occlusion doesn't lose it.
                 self._bad_streak += 1
-                self._coast(frame)
+                self._coasting = True
+                self._coast_step(frame)
                 if self._bad_streak >= self._streak_limit:
                     self._enter_searching()
 
-        self._update_motion()
+        return self.state, self.bbox, self.similarity
+
+    def _update_coasting(self, frame):
+        """Target missing: the backend tracker is paused (its box would drift
+        onto the background), the box moves on the Kalman prediction alone,
+        and a local search at each check interval tries to recover the lock."""
+        self._coast_step(frame)
+        self._frame_n += 1
+
+        if self._frame_n % self._check_interval == 0:
+            best_box, best_sim = self._local_search(frame, self.bbox, self._search_radius)
+            if best_box and best_sim >= self._sim_warning:
+                self.bbox = best_box
+                self._reseat_tracker(frame, best_box)
+                self.similarity  = best_sim
+                self._bad_streak = 0
+                self._coasting   = False
+                self._update_motion()
+            else:
+                self._bad_streak += 1
+                if self._bad_streak >= self._streak_limit:
+                    self._enter_searching()
+
         return self.state, self.bbox, self.similarity
 
     def _update_motion(self):
@@ -225,18 +256,26 @@ class LockOnTracker:
         self.velocity         = self._kalman.velocity
         self.predicted_center = self._kalman.project(self._predict_horizon)
 
-    def _coast(self, frame):
-        """Move the box along the Kalman velocity when a measurement is missed."""
+    def _coast_step(self, frame):
+        """Advance the Kalman filter one step with NO measurement and move the
+        box to the prediction. Feeding the coasted center back through
+        correct() would make the filter confirm its own guess — uncertainty
+        must grow while the target is unobserved so recovery stays honest.
+        The backend tracker is deliberately not reseated here: re-initializing
+        it on a box that may not contain the object teaches it the background.
+        """
         if self.bbox is None or not self._kalman.initialized:
             return
-        px, py = self._kalman.project(1)        # one step ahead
+        px, py = self._kalman.predict()         # predict-only, no correct()
         x, y, w, h = self.bbox
         nx = int(px - w / 2.0)
         ny = int(py - h / 2.0)
         nx, ny, w, h = self._clamp(frame, (nx, ny, w, h))
         if w >= 10 and h >= 10:
             self.bbox = (nx, ny, w, h)
-            self._reseat_csrt(frame, self.bbox)
+        self._centers.append((px, py))
+        self.velocity         = self._kalman.velocity
+        self.predicted_center = self._kalman.project(self._predict_horizon)
 
     # ------------------------------------------------------------- SEARCHING
     # The full-frame sweep is spread across frames: SCAN_BATCH positions per
@@ -274,8 +313,10 @@ class LockOnTracker:
                 crops.append(crop)
 
         if crops:
-            embs = self.embedder.embed_batch(crops)
-            sims = embs @ self._anchor
+            embs     = self.embedder.embed_batch(crops)
+            anchor_s = embs @ self._anchor
+            bank_s   = (embs @ self._bank.T).max(dim=1).values
+            sims     = self.ANCHOR_WEIGHT * anchor_s + (1 - self.ANCHOR_WEIGHT) * bank_s
             idx  = int(torch.argmax(sims).item())
             if float(sims[idx]) > self._scan_best[1]:
                 self._scan_best = (boxes[idx], float(sims[idx]))
@@ -288,7 +329,7 @@ class LockOnTracker:
 
             if best_box and best_sim >= self._sim_confirm:
                 self.bbox = best_box
-                self._reseat_csrt(frame, best_box)
+                self._reseat_tracker(frame, best_box)
                 self._bad_streak   = 0
                 self._frame_n      = 0
                 self._search_frame = 0
@@ -329,13 +370,18 @@ class LockOnTracker:
                        (b[1] + b[3] / 2.0 - pcy) ** 2)
         return positions
 
-    def _single_sim(self, frame, bbox) -> float:
+    def _verify_sim(self, frame, bbox) -> float:
+        """Identity check against the same anchor+bank blend the search paths
+        use — a pose the bank already knows shouldn't trigger a local search."""
         x, y, w, h = bbox
         fh, fw = frame.shape[:2]
         crop = frame[max(0,y):min(fh,y+h), max(0,x):min(fw,x+w)]
         if crop.size == 0:
             return 0.0
-        return self.embedder.similarity(self._anchor, self.embedder.embed(crop))
+        emb      = self.embedder.embed(crop)
+        anchor_s = float(emb @ self._anchor)
+        bank_s   = float((self._bank @ emb).max())
+        return self.ANCHOR_WEIGHT * anchor_s + (1 - self.ANCHOR_WEIGHT) * bank_s
 
     def _local_search(self, frame, prior, radius):
         fh, fw = frame.shape[:2]
@@ -372,31 +418,45 @@ class LockOnTracker:
         bank_s   = (embs @ self._bank.T).max(dim=1).values
         score    = self.ANCHOR_WEIGHT * anchor_s + (1 - self.ANCHOR_WEIGHT) * bank_s
         best     = int(torch.argmax(score).item())
-        return boxes[best], float(anchor_s[best].item())
+        # Accept by the same blended score used to select — accepting by
+        # anchor-only would reject candidates the bank correctly recognizes.
+        return boxes[best], float(score[best].item())
 
     # ----------------------------------------------------------------- helpers
 
     def _maybe_bank(self, frame, box):
-        if self._bank.shape[0] >= self.BANK_MAX:
-            return
         x, y, w, h = box
         crop = frame[y:y + h, x:x + w]
         if crop.size == 0:
             return
         emb = self.embedder.embed(crop)
+        # Gate on anchor similarity so a drifted box can never poison the bank.
         if float(emb @ self._anchor) < self.BANK_ADD_SIM:
             return
-        if float((self._bank @ emb).max()) > 0.97:
+        sims = self._bank @ emb
+        if float(sims.max()) > 0.97:
             return
-        self._bank = torch.cat([self._bank, emb.unsqueeze(0)], dim=0)
+        if self._bank.shape[0] < self.BANK_MAX:
+            self._bank = torch.cat([self._bank, emb.unsqueeze(0)], dim=0)
+        else:
+            # Bank full: replace the entry most similar to the new view so the
+            # bank keeps adapting and stays diverse. Entry 0 (the original
+            # anchor view) is protected.
+            idx = 1 + int(sims[1:].argmax())
+            self._bank[idx] = emb
 
-    def _reseat_csrt(self, frame, box):
-        self._tracker = self._make_backend()
+    def _reseat_tracker(self, frame, box):
+        """Re-anchor the backend at a verified box. Reuses the existing
+        instance — cv2 trackers support re-init, and rebuilding the ViT
+        backend re-reads its ONNX from disk."""
+        if self._tracker is None:
+            self._tracker = self._make_backend()
         self._tracker.init(frame, box)
 
     def _enter_searching(self):
         self.state           = State.SEARCHING
         self._bad_streak     = 0
+        self._coasting       = False
         self._search_frame   = 0
         self._scan_positions = None
 

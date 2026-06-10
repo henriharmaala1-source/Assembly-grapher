@@ -14,3 +14,4 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+rpi5_tracker/build/

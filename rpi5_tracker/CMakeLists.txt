@@ -13,6 +13,7 @@ find_package(OpenCV REQUIRED COMPONENTS
 add_executable(lockon
   src/main.cpp
   src/lock_tracker.cpp
+  src/kalman_center.cpp
   src/depth_nav.cpp)
 
 target_link_libraries(lockon PRIVATE ${OpenCV_LIBS})

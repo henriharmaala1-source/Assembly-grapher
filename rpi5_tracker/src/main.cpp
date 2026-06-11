@@ -57,21 +57,40 @@ void draw_hud(cv::Mat& frame, const LockOnTracker& trk, Backend backend,
         if (!trk.locked()) {
             color  = cv::Scalar(60, 60, 230);
             status = "LOST";
-        } else if (trk.lossFrames() > 0) {
+        } else if (trk.coasting()) {
             color  = cv::Scalar(60, 180, 255);
             status = "COAST";
         }
 
-        const cv::Rect& b = trk.bbox();
-        cv::rectangle(frame, b, color, 2);
-        cv::drawMarker(frame, (b.tl() + b.br()) / 2, color,
-                       cv::MARKER_CROSS, 12, 1);
+        const cv::Rect& b      = trk.bbox();
+        const cv::Point centre = (b.tl() + b.br()) / 2;
 
-        char buf[96];
-        std::snprintf(buf, sizeof(buf), "%s  age %ld  losses %d",
-                      status, trk.age(), trk.totalLosses());
+        cv::rectangle(frame, b, color, 2);
+        cv::drawMarker(frame, centre, color, cv::MARKER_CROSS, 12, 1);
+
+        // Motion-vector arrow — projected centre 8 frames ahead.
+        if (trk.locked()) {
+            const auto proj = trk.projected(8.f);
+            const cv::Point tip((int)proj.x, (int)proj.y);
+            if (tip != centre)
+                cv::arrowedLine(frame, centre, tip, {200, 200, 0},
+                                1, cv::LINE_AA, 0, 0.3);
+        }
+
+        // Confidence bar (bottom of box).
+        const int barW = (int)(b.width * trk.confidence());
+        cv::rectangle(frame, {b.x, b.y + b.height + 3,
+                               b.width, 4}, {60, 60, 60}, cv::FILLED);
+        if (barW > 0)
+            cv::rectangle(frame, {b.x, b.y + b.height + 3, barW, 4},
+                          color, cv::FILLED);
+
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "%s  age %ld  loss %d  conf %.0f%%",
+                      status, trk.age(), trk.totalLosses(),
+                      trk.confidence() * 100.f);
         cv::putText(frame, buf, {b.x, std::max(14, b.y - 8)},
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv::LINE_AA);
+                    cv::FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv::LINE_AA);
     }
 
     char info[160];

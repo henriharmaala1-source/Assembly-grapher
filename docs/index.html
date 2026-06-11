@@ -15,6 +15,7 @@
     <li><a href="#bom">BOM</a></li>
     <li><a href="#pipeline">Pipeline</a></li>
     <li><a href="#virta">Virransyöttö</a></li>
+    <li><a href="#riskit">Riskit</a></li>
   </ul>
 </nav>
 
@@ -133,6 +134,95 @@
       <div class="warning-box">
         <span class="mono">// Huomio</span>
         <p>Matek UBEC DUO max sisääntulo on <strong>26V</strong>. 6S täyteen ladattuna = 25.2V — todella tiukka marginaali. Tarkkaile lämpötilaa ja harkitse 5S-akkua alkuvaiheessa.</p>
+      </div>
+    </section>
+
+    <section id="riskit">
+      <h2><span class="accent">#</span> Riskienhallinta</h2>
+      <p class="section-desc">T = todennäköisyys · V = vaikutus · M = matala · K = korkea</p>
+
+      <table class="risk-table">
+        <thead>
+          <tr><th>#</th><th>Riski</th><th>T</th><th>V</th><th>Taso</th><th>Fallback / Vastatoimenpide</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><strong>Laskentateho ei riitä</strong><br><small>RPi 5 ei pysy reaaliaikaisessa CV-käsittelyssä</small></td>
+            <td>K</td><td>K</td>
+            <td><span class="risk-badge risk-high">KORKEA</span></td>
+            <td>Vaihto MCU-pohjaiseen inferenssiin (Hailo AI Hat) tai kevyempään malliin (MobileNet)</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><strong>Viive kasvaa liian suureksi FPV:lle</strong><br><small>Digitaalinen pipeline lisää 80–130 ms — liikaa aktiiviseen lennättämiseen</small></td>
+            <td>K</td><td>K</td>
+            <td><span class="risk-badge risk-high">KORKEA</span></td>
+            <td>Vaihto analogiseen kameraan suoraan VTX:lle; RPi tuottaa vain OSD-datan FC:lle</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><strong>UBEC jännitemarginaali</strong><br><small>6S täysi = 25.2 V, UBEC max 26 V — 0.8 V varaa</small></td>
+            <td>M</td><td>K</td>
+            <td><span class="risk-badge risk-medium">KESKINEN</span></td>
+            <td>Aloita 5S-akulla; tai vaihda UBEC malliin jonka max ≥ 30 V</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><strong>RPi 5 ylikuumenee lennon aikana</strong><br><small>Suljettu rakenne + ESC-lämpö — throttle-rajoitus tai sammuminen</small></td>
+            <td>K</td><td>K</td>
+            <td><span class="risk-badge risk-high">KORKEA</span></td>
+            <td>Aktiivinen tuuletus (5 V miniviuhka), alumiiniheatsink, ilmakanavat frameen</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><strong>Tärinä rikkoo SD-kortin tai kiinnitykset</strong><br><small>Drone tärisee voimakkaasti — SD-kortti irtoaa tai korruptoituu</small></td>
+            <td>K</td><td>M</td>
+            <td><span class="risk-badge risk-medium">KESKINEN</span></td>
+            <td>Anti-vibration mount RPi:lle; siirry NVMe SSD:hen (RPi 5 PCIe) tai eMMC-moduuliin</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><strong>EMI häiritsee GPS:ää tai RPi:tä</strong><br><small>ESC:n PWM-kohinat sekoittavat GPS-signaalia tai UART-liikennettä</small></td>
+            <td>K</td><td>M</td>
+            <td><span class="risk-badge risk-medium">KESKINEN</span></td>
+            <td>Suojatut kaapelit, GPS mahdollisimman kauas ESC:stä, ferriittirenkaat UART-linjaan</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td><strong>Kokonaispaino kasvaa liikaa</strong><br><small>RPi 5 + kamera + adapteri ≈ +120 g — lentäika ja ohjattavuus heikkenevät</small></td>
+            <td>K</td><td>M</td>
+            <td><span class="risk-badge risk-medium">KESKINEN</span></td>
+            <td>Vaihda RPi 5 → RPi Zero 2 W jos CV-kuorma sallii; optimoi kaapelointi</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td><strong>HDMI → Composite -adapterin signaalilaatu</strong><br><small>Halpa adapteri voi tuoda artefakteja tai värivirheen FPV-kuvaan</small></td>
+            <td>K</td><td>M</td>
+            <td><span class="risk-badge risk-medium">KESKINEN</span></td>
+            <td>Testaa useita adaptereita ennen asennusta; vaihtoehto: RPi composite-lähtö suoraan ilman adapteria</td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td><strong>MSP-protokollan yhteensopivuusongelmat</strong><br><small>FC:n Betaflight-versio ei tue kaikkia tarvittavia MSP-komentoja</small></td>
+            <td>M</td><td>K</td>
+            <td><span class="risk-badge risk-medium">KESKINEN</span></td>
+            <td>Testaa MSP-käskyt etukäteen CLI:ssä; fallback: MAVLink + ArduPilot jos BF ei riitä</td>
+          </tr>
+          <tr>
+            <td>10</td>
+            <td><strong>CV-ohjelmistokehitys viivästyy</strong><br><small>C++/Python-pipeline monimutkaisempi kuin arvioitu — projekti jumiutuu</small></td>
+            <td>K</td><td>K</td>
+            <td><span class="risk-badge risk-high">KORKEA</span></td>
+            <td>MVP-lähestyminen: ensin pelkkä OSD-data, sitten yksinkertainen bounding box, vasta lopuksi täysi CV</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="risk-legend">
+        <span class="risk-badge risk-high">KORKEA</span> todennäköinen ja vakava — vaatii fallback-suunnitelman
+        <span class="risk-badge risk-medium">KESKINEN</span> mahdollinen tai hallittava vaikutus — seuraa aktiivisesti
+        <span class="risk-badge risk-low">MATALA</span> epätodennäköinen tai pieni vaikutus
       </div>
     </section>
 

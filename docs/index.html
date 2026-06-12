@@ -15,6 +15,7 @@
     <li><a href="#bom">BOM</a></li>
     <li><a href="#pipeline">Pipeline</a></li>
     <li><a href="#virta">Virransyöttö</a></li>
+    <li><a href="#osd">OSD</a></li>
     <li><a href="#riskit">Riskit</a></li>
   </ul>
 </nav>
@@ -135,6 +136,50 @@
         <span class="mono">// Huomio</span>
         <p>Matek UBEC DUO max sisääntulo on <strong>26V</strong>. 6S täyteen ladattuna = 25.2V — todella tiukka marginaali. Tarkkaile lämpötilaa ja harkitse 5S-akkua alkuvaiheessa.</p>
       </div>
+    </section>
+
+    <section id="osd">
+      <h2><span class="accent">#</span> Ongelma: OSD-piirto Betaflightissa</h2>
+
+      <p class="lead">OSD-piirto analogiseen FPV-kuvaan — kaksi lähestymistapaa</p>
+
+      <p>Kun aloin miettiä miten saan Raspberry Pin piirtämään OSD:lle, törmäsin heti ongelmaan jota ei ensisilmäyksellä näe: analoginen FPV-järjestelmä ei yksinkertaisesti odota kenenkaan tulevan väliin kesken videoketjun.</p>
+
+      <p>Ensimmäinen ajatus oli lisätä sarjaan erillinen <strong>MAX7456</strong>-piiri. Se on sama OSD-piiri jota Betaflight jo käyttää FC:n sisällä, mutta ulkoisena moduulina, joka istuisi kameran ja lähettimen välissä. Raspberry Pi ohjaisi sitä SPI-väylän yli, piiri lisäisi merkit analogiseen signaaliin reaaliajassa, ja lentäjä näkisi tuloksen laseissaan. Videoketju pysyisi analogisena alusta loppuun eikä latenssia syntyisi.</p>
+
+      <p>Se toimii, mutta se on lisälaite. Johdot, liittimet, tila rungossa, rahaa.</p>
+
+      <div class="highlight-box">
+        <span class="mono">// Oivallus</span>
+        <p>Sitten huomasin ilmeisen asian: FC:ssä on jo <strong>AT7456E</strong>. Se on saman perheen piiri kuin MAX7456, ja Betaflight ohjaa sitä joka lennolla. Kysymys muuttuikin: voiko Betaflight-lähdekoodiin lisätä komennon jolla ulkoinen laite käskee FC:tä kirjoittamaan haluamansa merkin haluamaansa kohtaan ruudukkoa?</p>
+      </div>
+
+      <p>Vastaus on kyllä, ja muutos onyllättävän pieni. Betaflight on avointa lähdekoodia ja MSP-protokolla — se sama protokolla jolla Configurator kommunikoi FC:n kanssa — on laajennettavissa. Käytännössä kyse on muutamasta sadasta rivistä C:tä: lisätään uusi MSP-käsittelijä joka ottaa vastaan koordinaatit ja merkkikoodin, ja kirjoittaa ne suoraan AT7456E:n näyttömuistiin.</p>
+
+      <pre class="code-block">// Raspberry Pi lähettää UART:lla:
+MSP_SET_OSD_CHAR  col=3  row=5  char=0xC2
+
+// FC kirjoittaa AT7456E:n VRAM:iin:
+AT7456E[row * 30 + col] = char_code
+
+// Analogiseen kuvaan ilmestyy merkki —
+// videosignaali ei ole käynyt digitaalisena missaan</pre>
+
+      <p>Rajoite on se mitä AT7456E ylipäätään osaa: se operoi <strong>30×16 merkkiruudukolla</strong>, ei vapailla pikseleillä. Bounding boxia ei voi piirtää pikselikoordinaateilla. Mutta piirille voi ladata kerran oman merkistön — kulmalmerkit, viivanpätkat, nuolet — ja niitä sijoittelemalla syntyy visuaalisesti riittävä kohteen osoitus. Tarkka pikseliruudukko olisi joka tapauksessa valetarkkuutta, koska CV-tulos on aina jonkin verran vanha siihen mennessä kun se piirtyy.</p>
+
+      <div class="highlight-box">
+        <span class="mono">// Lopputulos</span>
+        <p>Yksi UART-kaapeli Raspberry Pilta FC:lle, splitteri josta RPi saa oman kopion videosta analyysiä varten, ja forkattu Betaflight joka ymmärtää uuden komennon. Ei erillistä OSD-moduulia, ei ylimääräistä rautaa ketjussa.</p>
+      </div>
+
+      <p>Ja koska muutos on tehty avoimeen lähdekoodiin, sen voi julkaista sellaisenaan. Jos protokollan dokumentoi kunnolla, kuka tahansa voi kytkeä oman laitteensa mihin tahansa Betaflight-droneen samalla tavalla.</p>
+
+      <ul class="notes">
+        <li>MAX7456 (ulkoinen) → toimii, mutta vaatii lisärautaa ja johdotuksen</li>
+        <li>AT7456E (FC:n sisäinen) + MSP-laajennus → ei lisälaitteita, yksi UART-kaapeli</li>
+        <li>30×16 merkkiruudukko — ei pikselikoordinaatteja, mutta riittää kohteen osoitukseen</li>
+        <li>Forkattu Betaflight + dokumentoitu protokolla → julkaisukelpoiseksi sellaisenaan</li>
+      </ul>
     </section>
 
     <section id="riskit">

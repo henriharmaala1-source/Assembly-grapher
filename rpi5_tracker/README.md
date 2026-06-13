@@ -81,7 +81,7 @@ EOF
 | Key | Action |
 | --- | ------ |
 | left click | lock onto that point |
-| `1` / `2` / `3` | switch backend: CSRT / KCF / optical flow (resets lock) |
+| `1` / `2` / `3` / `4` | switch backend: CSRT / KCF / optical flow / MOSSE (resets lock) |
 | `d` | toggle depth overlay (only if model loaded) |
 | `r` | reset tracker |
 | `q` / ESC | quit |
@@ -99,11 +99,26 @@ most open sector. Score 0.0–1.0 printed per cell.
 
 | Component | Interval | FPS cost |
 | --------- | -------- | -------- |
+| MOSSE tracker | every frame | 100+ fps (fastest, raw-pixel correlation filter) |
 | CSRT tracker | every frame | ~30-60 fps |
 | KCF tracker | every frame | 60+ fps |
 | Optical flow tracker | every frame | 60+ fps |
 | MiDaS Small depth | every 6 frames | ~1-2 fps overhead |
 | Depth Anything v2 Small | every 6 frames | ~2-3 fps overhead |
+
+## Choosing a backend
+
+| Backend | Speed | Character |
+| ------- | ----- | --------- |
+| MOSSE | fastest | Raw-pixel correlation filter (FFT). Lowest CPU — frees headroom for depth on every frame. Drifts on lighting/scale changes; the Kalman + template re-detection layer compensates. |
+| KCF | fast | HOG-feature correlation filter. Good balance. |
+| CSRT | moderate | Spatial-reliability correlation filter. Most accurate, handles partial occlusion and scale best. |
+| Optical Flow | fast | Forward-backward validated Lucas-Kanade. Handles partial occlusion; sensitive to analog noise. |
+
+All four backends sit behind the same Kalman filter and template re-detection,
+so even MOSSE's raw-pixel drift is caught and re-acquired. Pick MOSSE when you
+need maximum frame rate or CPU headroom for the depth model; CSRT when raw
+tracking accuracy matters most.
 
 ## Analog camera (FPV drone tap)
 

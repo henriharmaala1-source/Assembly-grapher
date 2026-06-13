@@ -6,7 +6,7 @@
 // (MiDaS Small or Depth Anything v2 Small) every N frames to show which
 // sector of the frame is most open. No GPU — pure CPU.
 //
-// Keys:  1=CSRT  2=KCF  3=Optical Flow
+// Keys:  1=CSRT  2=KCF  3=Optical Flow  4=MOSSE
 //        d=toggle depth overlay   r=reset   ESC/q=quit
 // Mouse: left click = lock onto that point
 
@@ -95,7 +95,7 @@ void draw_hud(cv::Mat& frame, const LockOnTracker& trk, Backend backend,
 
     char info[160];
     std::snprintf(info, sizeof(info),
-                  "%s  %.0f fps   click=lock  1/2/3=backend  d=depth  r=reset  q=quit",
+                  "%s  %.0f fps   click=lock  1234=backend  d=depth  r=reset  q=quit",
                   backend_name(backend), fps);
     cv::putText(frame, info,
                 {8, frame.rows - (depthActive ? 46 : 10)},
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
         "{width            | 640   | capture width }"
         "{height           | 480   | capture height }"
         "{size s           | 80    | lock box size in px }"
-        "{backend b        | csrt  | tracking backend: csrt | kcf | flow }"
+        "{backend b        | csrt  | tracking backend: csrt | kcf | flow | mosse }"
         "{deinterlace      | false | drop odd lines (analog capture dongle) }"
         "{depth-model      |       | path to ONNX model for depth nav }"
         "{depth-backend    | midas | depth model: midas | dav2 }"
@@ -124,8 +124,9 @@ int main(int argc, char** argv) {
     // ---- tracking backend
     Backend backend = Backend::CSRT;
     const std::string be = parser.get<std::string>("backend");
-    if (be == "kcf")  backend = Backend::KCF;
-    if (be == "flow") backend = Backend::FLOW;
+    if (be == "kcf")   backend = Backend::KCF;
+    if (be == "flow")  backend = Backend::FLOW;
+    if (be == "mosse") backend = Backend::MOSSE;
     const int boxSize = parser.get<int>("size");
 
     // ---- depth nav
@@ -211,10 +212,11 @@ int main(int argc, char** argv) {
         if (key == 27 || key == 'q') break;
         if (key == 'r') tracker.reset();
         if (key == 'd' && depthNav.isReady()) depthShow = !depthShow;
-        if (key == '1' || key == '2' || key == '3') {
+        if (key == '1' || key == '2' || key == '3' || key == '4') {
             backend = (key == '1')   ? Backend::CSRT
                       : (key == '2') ? Backend::KCF
-                                     : Backend::FLOW;
+                      : (key == '3') ? Backend::FLOW
+                                     : Backend::MOSSE;
             tracker.reset();
         }
     }

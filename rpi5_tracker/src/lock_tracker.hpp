@@ -2,12 +2,13 @@
 
 #include <opencv2/core.hpp>
 #include <opencv2/tracking.hpp>
+#include <opencv2/tracking/tracking_legacy.hpp>   // cv::legacy::TrackerMOSSE
 #include <memory>
 #include <vector>
 
 #include "kalman_center.hpp"
 
-enum class Backend { CSRT, KCF, FLOW };
+enum class Backend { CSRT, KCF, FLOW, MOSSE };
 const char* backend_name(Backend b);
 
 // Sparse Lucas-Kanade tracker with forward-backward validation and
@@ -73,8 +74,9 @@ private:
 
     float searchRadius() const;
 
-    cv::Ptr<cv::Tracker>           cvTracker_;
-    std::unique_ptr<LKFlowTracker> lkTracker_;
+    cv::Ptr<cv::Tracker>           cvTracker_;       // CSRT / KCF
+    cv::Ptr<cv::legacy::Tracker>   legacyTracker_;   // MOSSE (legacy API)
+    std::unique_ptr<LKFlowTracker> lkTracker_;       // Optical Flow
     Backend                        backend_      = Backend::CSRT;
     int                            boxSize_      = 80;
 

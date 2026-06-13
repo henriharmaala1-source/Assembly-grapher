@@ -7,9 +7,10 @@
 
 const char* backend_name(Backend b) {
     switch (b) {
-        case Backend::CSRT: return "CSRT";
-        case Backend::KCF:  return "KCF";
-        case Backend::FLOW: return "FLOW";
+        case Backend::CSRT:  return "CSRT";
+        case Backend::KCF:   return "KCF";
+        case Backend::FLOW:  return "FLOW";
+        case Backend::MOSSE: return "MOSSE";
     }
     return "?";
 }
@@ -222,10 +223,16 @@ bool LockOnTracker::reinitBackend(const cv::Mat& frame,
                                   const cv::Rect& box) {
     lkTracker_.reset();
     cvTracker_.release();
+    legacyTracker_.release();
     try {
         if (backend_ == Backend::FLOW) {
             lkTracker_ = std::make_unique<LKFlowTracker>();
             return lkTracker_->init(frame, box);
+        }
+        if (backend_ == Backend::MOSSE) {
+            // MOSSE uses the legacy Tracker API (Rect2d init/update).
+            legacyTracker_ = cv::legacy::TrackerMOSSE::create();
+            return legacyTracker_->init(frame, cv::Rect2d(box));
         }
         cvTracker_ = (backend_ == Backend::KCF)
                          ? cv::Ptr<cv::Tracker>(cv::TrackerKCF::create())
@@ -274,8 +281,16 @@ void LockOnTracker::update(const cv::Mat& frame) {
     bool     ok  = false;
     cv::Rect box = bbox_;
     try {
-        ok = lkTracker_ ? lkTracker_->update(frame, box)
-                        : cvTracker_->update(frame, box);
+        if (lkTracker_) {
+            ok = lkTracker_->update(frame, box);
+        } else if (legacyTracker_) {
+            cv::Rect2d r2d(box);
+            ok  = legacyTracker_->update(frame, r2d);
+            box = cv::Rect((int)r2d.x, (int)r2d.y,
+                           (int)r2d.width, (int)r2d.height);
+        } else {
+            ok = cvTracker_->update(frame, box);
+        }
     } catch (const cv::Exception&) { ok = false; }
 
     if (ok) {
@@ -319,6 +334,7 @@ void LockOnTracker::update(const cv::Mat& frame) {
 
 void LockOnTracker::reset() {
     cvTracker_.release();
+    legacyTracker_.release();
     lkTracker_.reset();
     kalman_      = KalmanCenter();
     tmpl_        = cv::Mat();

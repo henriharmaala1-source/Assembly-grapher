@@ -1,4 +1,5 @@
 import argparse
+import os
 import warnings
 import time
 import threading
@@ -43,6 +44,32 @@ def main():
                              "no DINOv2/SAM2). Auto-enabled when CUDA is missing.")
     args = parser.parse_args()
 
+    # Resolve depth model path — search order:
+    #   1. exactly as given (absolute path or ./models/... that already exists)
+    #   2. DEPTH_MODELS env var folder   e.g. set DEPTH_MODELS=C:\Users\you\depth_models
+    #   3. ~/depth_models/               persistent across project re-downloads
+    #   4. ./models/                     project-local fallback
+    depth_model = args.depth_model
+    if depth_model and not os.path.isfile(depth_model):
+        basename = os.path.basename(depth_model)
+        search = [
+            os.path.join(os.environ.get("DEPTH_MODELS", ""), basename),
+            os.path.join(os.path.expanduser("~"), "depth_models", basename),
+            os.path.join("models", basename),
+        ]
+        for candidate in search:
+            if candidate and os.path.isfile(candidate):
+                print(f"[depth] resolved model: {candidate}")
+                depth_model = candidate
+                break
+        else:
+            print(f"[depth] model not found: {args.depth_model}")
+            print(f"[depth] searched: {[s for s in search if s]}")
+            print("[depth] download it once to ~/depth_models/ to keep it across updates:")
+            print("  curl.exe -L -o %USERPROFILE%\\depth_models\\midas_small.onnx "
+                  "https://github.com/isl-org/MiDaS/releases/download/v2_1/model-small.onnx")
+            depth_model = ""
+
     cpu_mode = args.cpu or not torch.cuda.is_available()
     if cpu_mode and not args.cpu:
         print("[warning] CUDA not available in this Python — running CPU-only mode.")
@@ -53,7 +80,7 @@ def main():
 
     settings = Settings()
     settings.tracking_engine = args.engine
-    settings.depth_model    = args.depth_model
+    settings.depth_model    = depth_model
     settings.depth_backend  = args.depth_backend
     settings.depth_interval = args.depth_interval
     settings.depth_on       = args.depth_on

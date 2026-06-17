@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", message="xFormers is not available")
 from tracker.core import State
 from tracker.ui import MouseHandler, draw_overlay
 from tracker.settings import Settings, launch_settings
-from tracker.pipeline import SharedState, capture_loop, inference_loop
+from tracker.pipeline import SharedState, capture_loop, inference_loop, cpu_inference_loop
 from tracker.engine import EngineManager
 from tracker.click_segment import ClickSegmenter
 
@@ -38,16 +38,18 @@ def main():
                         help="run depth every N tracking frames (default 6)")
     parser.add_argument("--depth-on", action="store_true",
                         help="start with depth overlay visible")
+    parser.add_argument("--cpu", action="store_true",
+                        help="force CPU-only mode (depth nav + drone CV tracking; "
+                             "no DINOv2/SAM2). Auto-enabled when CUDA is missing.")
     args = parser.parse_args()
 
-    if not torch.cuda.is_available():
-        raise RuntimeError(
-            "CUDA not available. "
-            "Install the CUDA build of PyTorch:\n"
-            "  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121"
-        )
-    device = "cuda"
-    print(f"Device: cuda ({torch.cuda.get_device_name(0)})")
+    cpu_mode = args.cpu or not torch.cuda.is_available()
+    if cpu_mode and not args.cpu:
+        print("[warning] CUDA not available in this Python — running CPU-only mode.")
+        print("[warning] Depth nav + drone CV tracking work; DINOv2 / SAM 2 are disabled.")
+        print("[warning] For GPU lock-on, install the CUDA build of PyTorch:")
+        print("[warning]   pip install torch torchvision "
+              "--index-url https://download.pytorch.org/whl/cu121")
 
     settings = Settings()
     settings.tracking_engine = args.engine
@@ -55,16 +57,22 @@ def main():
     settings.depth_backend  = args.depth_backend
     settings.depth_interval = args.depth_interval
     settings.depth_on       = args.depth_on
-    manager = EngineManager(device, settings)
-    try:
-        manager.get(args.engine)          # build the initial engine up front
-    except Exception as e:
-        print(f"[warning] could not load '{args.engine}' engine: {e}")
-        print("[warning] falling back to hybrid engine.")
-        settings.tracking_engine = "hybrid"
-        manager.get("hybrid")
-    segmenter = ClickSegmenter(device, settings)
-    mouse     = MouseHandler()
+
+    manager = segmenter = None
+    if not cpu_mode:
+        device = "cuda"
+        print(f"Device: cuda ({torch.cuda.get_device_name(0)})")
+        manager = EngineManager(device, settings)
+        try:
+            manager.get(args.engine)          # build the initial engine up front
+        except Exception as e:
+            print(f"[warning] could not load '{args.engine}' engine: {e}")
+            print("[warning] falling back to hybrid engine.")
+            settings.tracking_engine = "hybrid"
+            manager.get("hybrid")
+        segmenter = ClickSegmenter(device, settings)
+
+    mouse = MouseHandler()
 
     launch_settings(settings)
 
@@ -81,9 +89,14 @@ def main():
     # Capture and inference run on their own threads; display stays on main.
     cap_thread = threading.Thread(
         target=capture_loop, args=(cap, shared, stop), daemon=True)
-    inf_thread = threading.Thread(
-        target=inference_loop,
-        args=(manager, segmenter, settings, mouse, shared, stop), daemon=True)
+    if cpu_mode:
+        inf_thread = threading.Thread(
+            target=cpu_inference_loop,
+            args=(settings, mouse, shared, stop), daemon=True)
+    else:
+        inf_thread = threading.Thread(
+            target=inference_loop,
+            args=(manager, segmenter, settings, mouse, shared, stop), daemon=True)
     cap_thread.start()
     inf_thread.start()
 
@@ -154,7 +167,7 @@ def main():
                 break
             elif key in (ord("r"), ord("R")):
                 shared.request_reset()
-            elif key in (ord("d"), ord("D")):
+            elif key in (ord("d"), ord("D")) and not cpu_mode:
                 settings.drone_mode = not settings.drone_mode
             elif key in (ord("n"), ord("N")):
                 settings.depth_on = not settings.depth_on

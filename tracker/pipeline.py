@@ -123,6 +123,90 @@ def _start_sam2_continuous(manager, settings, current_tracker, point, frame, sha
     settings.tracking_engine = want
 
 
+def cpu_inference_loop(settings, mouse, shared: SharedState,
+                       stop: threading.Event):
+    """CPU-only pipeline — depth nav + drone-mode CV tracking, no GPU engines.
+
+    Used when CUDA isn't available. DINOv2 and SAM 2 need a GPU; the depth model
+    (OpenCV DNN) and the CSRT / KCF / Optical-Flow trackers are pure CPU, so this
+    loop runs the same workload a Pi 5 / companion computer would. Clicks (or a
+    drag box) designate a fixed-box target; the depth overlay rides on top.
+    """
+    from .drone import DroneTracker
+    from .depth_nav import DepthNav
+
+    drone_tracker = DroneTracker()
+    depth_nav     = DepthNav()
+    depth_loaded  = False
+    depth_age     = 0
+    last_seq      = -1
+    inf_fps       = 30.0
+    t_prev        = time.perf_counter()
+
+    # No DINOv2 / SAM 2 on CPU — drone-style click-to-lock is the only tracker.
+    settings.drone_mode = True
+
+    while not stop.is_set():
+        frame, seq = shared.get_frame()
+        if frame is None or seq == last_seq:
+            time.sleep(0.001)
+            continue
+        last_seq = seq
+
+        if shared.take_reset():
+            drone_tracker.reset()
+            mouse.pending_point = None
+            mouse.pending_bbox  = None
+
+        # --- click or drag designates the target box ----------------------
+        pt = None
+        if mouse.pending_point is not None:
+            pt = mouse.pending_point
+            mouse.pending_point = None
+        elif mouse.pending_bbox is not None:
+            x, y, w, h = mouse.pending_bbox
+            pt = (x + w // 2, y + h // 2)
+            mouse.pending_bbox = None
+        if pt is not None:
+            drone_tracker.init(frame, pt,
+                               backend=settings.drone_backend,
+                               box_size=settings.drone_box_size)
+
+        # --- depth navigation (every N frames) ----------------------------
+        if settings.depth_on and settings.depth_model and not depth_loaded:
+            depth_loaded = depth_nav.init(settings.depth_model,
+                                          settings.depth_backend)
+        depth_snap = None
+        if settings.depth_on and depth_nav.is_ready():
+            depth_age += 1
+            if depth_age >= max(1, settings.depth_interval):
+                depth_age = 0
+                depth_nav.update(frame)
+            depth_snap = depth_nav.snapshot()
+
+        # --- drone tracker (every frame once designated) ------------------
+        if drone_tracker.bbox is not None:
+            drone_tracker.update(frame)
+            drone_result = dict(
+                bbox         = drone_tracker.bbox,
+                locked       = drone_tracker.locked,
+                age          = drone_tracker.age,
+                loss_frames  = drone_tracker.loss_frames,
+                total_losses = drone_tracker.total_losses,
+            )
+        else:
+            drone_result = {}
+
+        t_now   = time.perf_counter()
+        inf_fps = 0.9 * inf_fps + 0.1 / max(t_now - t_prev, 1e-9)
+        t_prev  = t_now
+
+        shared.set_result(dict(
+            state=State.IDLE, bbox=None, sim=0.0, inf_fps=inf_fps,
+            drone_result=drone_result, depth_snap=depth_snap,
+        ))
+
+
 def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
                    stop: threading.Event):
     """Run the active engine on the newest frame; publish results for display.

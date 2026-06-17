@@ -24,8 +24,7 @@ _WORK_W    = 96
 _WORK_H    = 72
 _BIAS_K    = 0.40
 _MIN_MARGIN = 0.04
-_GRID_ROWS = 3
-_GRID_COLS = 3
+_HEAT_ALPHA = 0.55   # heat overlay opacity — higher = more pronounced colour
 
 
 class DepthNav:
@@ -35,7 +34,7 @@ class DepthNav:
         self._invert   = False
         self._in_size  = (256, 256)   # (W, H) for cv2.resize
         self._depth    = None         # (H, W) float32, normalised [0,1]
-        self._sectors  = None         # (_GRID_ROWS, _GRID_COLS) float32
+        self._heat     = None         # (_WORK_H, _WORK_W) downscaled depth, for overlay
         self._traverse = None         # dict — see _compute_traverse
         self._bias     = None         # (_WORK_H, _WORK_W) float32, cached
         self._kalman   = KalmanCenter()
@@ -68,10 +67,6 @@ class DepthNav:
     def traverse(self):
         return self._traverse
 
-    @property
-    def sectors(self):
-        return self._sectors
-
     # ---------------------------------------------------------------- update
 
     def update(self, frame: np.ndarray) -> bool:
@@ -90,6 +85,7 @@ class DepthNav:
         fh, fw = frame.shape[:2]
         if mx - mn < 1e-6:
             self._depth    = np.zeros((fh, fw), dtype=np.float32)
+            self._heat     = None
             self._traverse = {"valid": False}
             return True
 
@@ -98,7 +94,6 @@ class DepthNav:
             norm = 1.0 - norm
 
         self._depth = cv2.resize(norm, (fw, fh), interpolation=cv2.INTER_LINEAR)
-        self._compute_sectors(fw, fh)
         self._compute_traverse(fw, fh)
         return True
 
@@ -116,18 +111,6 @@ class DepthNav:
         fp   = (fp - mean) / std
         return fp.transpose(2, 0, 1)[np.newaxis].astype(np.float32)
 
-    # ---------------------------------------------------------- sector grid
-
-    def _compute_sectors(self, fw: int, fh: int):
-        cw = fw // _GRID_COLS
-        ch = fh // _GRID_ROWS
-        self._sectors = np.array(
-            [[self._depth[r*ch:(r+1)*ch, c*cw:(c+1)*cw].mean()
-              for c in range(_GRID_COLS)]
-             for r in range(_GRID_ROWS)],
-            dtype=np.float32,
-        )
-
     # ------------------------------------------------------- corridor score
 
     def _build_bias(self):
@@ -140,6 +123,7 @@ class DepthNav:
     def _compute_traverse(self, fw: int, fh: int):
         small = cv2.resize(self._depth, (_WORK_W, _WORK_H),
                            interpolation=cv2.INTER_AREA)
+        self._heat = small            # cached for the heat overlay
 
         k     = (_WORK_W // 6) | 1     # odd kernel
         clear = cv2.GaussianBlur(small, (k, k), 0)
@@ -174,10 +158,10 @@ class DepthNav:
 
     def snapshot(self) -> dict | None:
         """Serialisable dict for the result pipeline (display thread reads this)."""
-        if self._sectors is None or self._traverse is None:
+        if self._heat is None or self._traverse is None:
             return None
         return {
-            "sectors":  self._sectors.copy(),
+            "heat":     self._heat.copy(),
             "traverse": dict(self._traverse),
             "backend":  self._backend,
         }
@@ -185,31 +169,31 @@ class DepthNav:
 
 # ----------------------------------------------------------------- rendering
 
+def _heat_color(heat: np.ndarray) -> np.ndarray:
+    """Map depth [0,1] (0=near/blocked, 1=far/open) to a vivid BGR ramp:
+    red → orange → yellow → green. Mid values stay saturated (no muddy olive)."""
+    g = np.clip(2.0 * heat,         0.0, 1.0)   # ramps up over [0.0, 0.5]
+    r = np.clip(2.0 * (1.0 - heat), 0.0, 1.0)   # ramps down over [0.5, 1.0]
+    bgr = np.zeros((*heat.shape, 3), dtype=np.uint8)
+    bgr[..., 1] = (g * 255).astype(np.uint8)    # green = far / open
+    bgr[..., 2] = (r * 255).astype(np.uint8)    # red   = near / blocked
+    return bgr
+
+
 def draw_depth_overlay(frame: np.ndarray, snap: dict) -> None:
-    """Draw depth heat grid + corridor arrow onto frame in-place."""
+    """Draw a smooth depth heatmap + corridor arrow onto frame in-place."""
     if snap is None:
         return
-    sectors  = snap.get("sectors")
+    heat     = snap.get("heat")
     traverse = snap.get("traverse", {})
     backend  = snap.get("backend", "")
 
     fh, fw = frame.shape[:2]
 
-    if sectors is not None:
-        cw = fw // _GRID_COLS
-        ch = fh // _GRID_ROWS
-        for r in range(_GRID_ROWS):
-            for c in range(_GRID_COLS):
-                s    = float(sectors[r, c])
-                x0   = c * cw;  y0 = r * ch
-                col  = (0, int(s * 220), int((1.0 - s) * 220))
-                roi  = frame[y0:y0+ch, x0:x0+cw]
-                over = np.full_like(roi, col)
-                cv2.addWeighted(roi, 0.75, over, 0.25, 0, roi)
-                cv2.rectangle(frame, (x0, y0), (x0+cw, y0+ch), (200, 200, 200), 1)
-                cv2.putText(frame, f"{s:.2f}", (x0+4, y0+ch-6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1,
-                            cv2.LINE_AA)
+    if heat is not None:
+        small = _heat_color(heat)
+        big   = cv2.resize(small, (fw, fh), interpolation=cv2.INTER_LINEAR)
+        cv2.addWeighted(frame, 1.0 - _HEAT_ALPHA, big, _HEAT_ALPHA, 0, frame)
 
     if not traverse.get("valid"):
         return
@@ -228,9 +212,13 @@ def draw_depth_overlay(frame: np.ndarray, snap: dict) -> None:
             int(round(ctr[0] + dx / length * tip)),
             int(round(ctr[1] + dy / length * tip)),
         )
+        # Dark outline under the arrow so it reads against the bright heatmap.
+        cv2.arrowedLine(frame, ctr, end, (0, 0, 0),
+                        6 if decisive else 5, cv2.LINE_AA, tipLength=0.28)
         cv2.arrowedLine(frame, ctr, end, col,
-                        3 if decisive else 2, cv2.LINE_AA, tipLength=0.28)
-    cv2.circle(frame, tgt, 6, col, 2 if decisive else 1, cv2.LINE_AA)
+                        4 if decisive else 3, cv2.LINE_AA, tipLength=0.28)
+    cv2.circle(frame, tgt, 8, (0, 0, 0), -1, cv2.LINE_AA)
+    cv2.circle(frame, tgt, 7, col,       -1, cv2.LINE_AA)
 
     label = (f"depth: {backend}   "
              f"{'TRAVERSE' if decisive else 'SCANNING'}  "

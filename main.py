@@ -30,6 +30,14 @@ def main():
                         help="initial engine; switchable live in the settings "
                              "window. hybrid = DINOv2 + box tracker (default); "
                              "sam2 = SAM 2 mask propagation")
+    parser.add_argument("--depth-model", default="",
+                        help="path to ONNX depth model (MiDaS Small or DAv2 Small)")
+    parser.add_argument("--depth-backend", choices=["midas", "dav2"], default="midas",
+                        help="depth model type: midas (default) or dav2")
+    parser.add_argument("--depth-interval", type=int, default=6,
+                        help="run depth every N tracking frames (default 6)")
+    parser.add_argument("--depth-on", action="store_true",
+                        help="start with depth overlay visible")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -43,6 +51,10 @@ def main():
 
     settings = Settings()
     settings.tracking_engine = args.engine
+    settings.depth_model    = args.depth_model
+    settings.depth_backend  = args.depth_backend
+    settings.depth_interval = args.depth_interval
+    settings.depth_on       = args.depth_on
     manager = EngineManager(device, settings)
     try:
         manager.get(args.engine)          # build the initial engine up front
@@ -103,6 +115,7 @@ def main():
             drone_result        = result.get("drone_result")
             drone_detections    = result.get("drone_detections") or []
             drone_detect_preset = result.get("drone_detect_preset", "Drone-vs-Bird")
+            depth_snap          = result.get("depth_snap")
 
             t_now    = time.perf_counter()
             disp_fps = 0.9 * disp_fps + 0.1 / max(t_now - t_prev, 1e-9)
@@ -117,6 +130,7 @@ def main():
                 drone_result=drone_result,
                 drone_detections=drone_detections,
                 drone_detect_preset=drone_detect_preset,
+                depth_snap=depth_snap,
             )
 
             # Inference (tracking) rate, decoupled from display rate.
@@ -142,6 +156,8 @@ def main():
                 shared.request_reset()
             elif key in (ord("d"), ord("D")):
                 settings.drone_mode = not settings.drone_mode
+            elif key in (ord("n"), ord("N")):
+                settings.depth_on = not settings.depth_on
             elif key in (ord("c"), ord("C")):
                 # clear the segment overlay without resetting tracking
                 mouse.pending_point = None

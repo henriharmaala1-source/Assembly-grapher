@@ -59,11 +59,18 @@ class Settings:
     drone_detect_conf:     float = 0.25
     drone_detect_interval: int   = 3
 
+    # Depth navigation (monocular — MiDaS Small / Depth Anything v2 Small)
+    depth_model:    str  = ""       # path to ONNX file; set via --depth-model
+    depth_backend:  str  = "midas"  # "midas" | "dav2"
+    depth_on:       bool = False
+    depth_interval: int  = 6        # run depth every N tracking frames
+
 
 TRACKER_BACKENDS  = ["ViT", "CSRT", "KCF", "Optical Flow"]
 TRACKING_ENGINES  = ["hybrid", "sam2"]
 SEGMENT_BACKENDS  = ["SAM 2", "MobileSAM", "FastSAM-s"]
 DRONE_BACKENDS    = ["CSRT", "KCF", "Optical Flow"]
+DEPTH_BACKENDS    = ["midas", "dav2"]
 
 
 # ----------------------------------------------------------------- GUI builder
@@ -185,8 +192,26 @@ def _run_gui(settings: Settings) -> None:
     slider_row(f, "Confidence threshold",    "drone_detect_conf",     0.10, 0.90)
     slider_row(f, "Run every N frames",      "drone_detect_interval",    1,  15, as_int=True)
 
+    # ── Depth Navigation ──────────────────────────────────────────────────────
+    f = section("Depth Navigation  (N key toggles — needs --depth-model ONNX)")
+    check_row(f,  "Enable depth overlay",  "depth_on")
+    combo_row(f,  "Model backend",         "depth_backend", DEPTH_BACKENDS)
+    slider_row(f, "Run every N frames",    "depth_interval", 1, 20, as_int=True)
+    # Model path is read-only here; set via --depth-model at launch.
+    path_frame = ttk.Frame(f)
+    path_frame.pack(fill="x", pady=2)
+    ttk.Label(path_frame, text="Model path", width=22, anchor="w").pack(side="left")
+    path_lbl = ttk.Label(path_frame, foreground="gray", anchor="w")
+    path_lbl.pack(side="left", fill="x", expand=True)
+
+    def _refresh_path():
+        p = settings.depth_model or "(not set — use --depth-model)"
+        path_lbl.config(text=p)
+        root.after(1000, _refresh_path)
+    _refresh_path()
+
     ttk.Separator(root).pack(fill="x", pady=8)
-    ttk.Label(root, text="R  reset    D  drone mode    ESC  quit",
+    ttk.Label(root, text="R  reset    D  drone mode    N  depth nav    ESC  quit",
               foreground="gray").pack(pady=(0, 8))
 
     root.mainloop()

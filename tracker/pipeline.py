@@ -141,9 +141,13 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
     from .motion_detect import MotionDetector
     from .drone import DroneTracker
     from .drone_detect import DroneDetector
+    from .depth_nav import DepthNav
     detector        = MotionDetector()
     drone_tracker   = DroneTracker()
     drone_detector  = DroneDetector(device=manager.device)
+    depth_nav       = DepthNav()
+    depth_loaded    = False
+    depth_age       = 0
     drone_det_age   = 0
     drone_dets      = []
 
@@ -295,6 +299,18 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
         else:
             drone_dets = []
 
+        # --- depth navigation (runs every N frames when enabled) --------------
+        if settings.depth_on and settings.depth_model and not depth_loaded:
+            depth_loaded = depth_nav.init(settings.depth_model,
+                                          settings.depth_backend)
+        depth_snap = None
+        if settings.depth_on and depth_nav.is_ready():
+            depth_age += 1
+            if depth_age >= max(1, settings.depth_interval):
+                depth_age = 0
+                depth_nav.update(frame)
+            depth_snap = depth_nav.snapshot()
+
         # --- drone tracker (runs every frame when mode is active) -------------
         drone_result = None
         if settings.drone_mode:
@@ -324,4 +340,5 @@ def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
             drone_result=drone_result,
             drone_detections=drone_dets,
             drone_detect_preset=settings.drone_detect_preset,
+            depth_snap=depth_snap,
         ))

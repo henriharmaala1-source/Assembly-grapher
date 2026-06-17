@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from .core import State
 from .settings import Settings
+from .depth_nav import draw_depth_overlay
 
 
 class MouseHandler:
@@ -258,11 +259,16 @@ def draw_overlay(
     drone_result=None,
     drone_detections=None,   # list of (x,y,w,h,cls,conf) from DroneDetector
     drone_detect_preset=None,
+    depth_snap=None,         # snapshot dict from DepthNav.snapshot()
 ) -> np.ndarray:
     out = frame.copy()
     fh, fw = out.shape[:2]
 
     cfg = settings or Settings()    # fall back to defaults if not provided
+
+    # ── Depth navigation overlay (drawn first — sits under everything) ────────
+    if depth_snap is not None:
+        draw_depth_overlay(out, depth_snap)
 
     # ── Drone detections (drawn first — under all tracking overlays) ─────────
     if drone_detections:

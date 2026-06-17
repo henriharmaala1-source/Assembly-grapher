@@ -90,7 +90,65 @@ bool DepthNav::update(const cv::Mat& frame) {
 
     cv::resize(norm, depthMap_, frame.size(), 0, 0, cv::INTER_LINEAR);
     computeSectors(frame.size());
+    computeTraverse(frame.size());
     return true;
+}
+
+// ----------------------------------------------------- corridor scoring
+
+void DepthNav::buildBias(const cv::Size& sz) {
+    // Radial falloff from centre: 1.0 at centre → (1 − BIAS_K) at the corners.
+    // Multiplying the clearance field by this makes straight-ahead win ties.
+    bias_.create(sz, CV_32F);
+    const float cx = sz.width  / 2.f;
+    const float cy = sz.height / 2.f;
+    const float rmax = std::sqrt(cx * cx + cy * cy);
+    for (int y = 0; y < sz.height; ++y) {
+        float* row = bias_.ptr<float>(y);
+        for (int x = 0; x < sz.width; ++x) {
+            const float dx = x - cx, dy = y - cy;
+            const float r  = std::sqrt(dx * dx + dy * dy) / rmax;
+            row[x] = 1.f - BIAS_K * r;
+        }
+    }
+}
+
+void DepthNav::computeTraverse(const cv::Size& frameSize) {
+    // Work on a small copy — corridor scoring doesn't need full resolution.
+    cv::Mat small;
+    cv::resize(depthMap_, small, {WORK_W, WORK_H}, 0, 0, cv::INTER_AREA);
+
+    // 1. Clearance field: blur with a kernel ~ vehicle width. An isolated far
+    //    pixel (needle gap) is averaged down; only a far region with open
+    //    margin around it stays bright.
+    const int k = (WORK_W / 6) | 1;            // odd kernel
+    cv::Mat clear;
+    cv::GaussianBlur(small, clear, {k, k}, 0);
+
+    // 2. Forward bias: prefer straight-ahead when corridors tie.
+    if (bias_.size() != clear.size()) buildBias(clear.size());
+    cv::Mat steer = clear.mul(bias_);
+
+    double mn, mx;
+    cv::Point mxLoc;
+    cv::minMaxLoc(steer, &mn, &mx, nullptr, &mxLoc);
+    const float meanS = (float)cv::mean(steer)[0];
+
+    // Map the peak back to frame coordinates (cell centre).
+    const cv::Point2f raw(
+        (mxLoc.x + 0.5f) / WORK_W * frameSize.width,
+        (mxLoc.y + 0.5f) / WORK_H * frameSize.height);
+
+    // 3. Temporal smoothing through the shared Kalman filter.
+    if (!steerKalman_.initialized()) steerKalman_.init(raw);
+    steerKalman_.predict();
+    const cv::Point2f smooth = steerKalman_.correct(raw);
+
+    traverse_.raw      = raw;
+    traverse_.point    = smooth;
+    traverse_.openness = clear.at<float>(mxLoc);  // clearance at peak
+    traverse_.margin   = (float)(mx - meanS);     // decisiveness
+    traverse_.valid    = true;
 }
 
 // --------------------------------------------------------- sector analysis
@@ -145,29 +203,38 @@ void DepthNav::drawOverlay(cv::Mat& frame) const {
         }
     }
 
-    // Arrow from frame centre toward centre of best sector.
+    // Corridor arrow: frame centre → smoothed traverse target.
     const cv::Point frameCentre(W / 2, H / 2);
-    const cv::Point sectorCentre(
-        sectors_.bestCol * cellW + cellW / 2,
-        sectors_.bestRow * cellH + cellH / 2);
+    const bool decisive = traverse_.valid && traverse_.margin >= MIN_MARGIN;
 
-    // Shorten so the arrowhead doesn't land on top of text.
-    const cv::Point2f dir(
-        (float)(sectorCentre.x - frameCentre.x),
-        (float)(sectorCentre.y - frameCentre.y));
-    const float len  = (float)std::sqrt(dir.x * dir.x + dir.y * dir.y);
-    const float tip  = std::max(len - 20.f, len * 0.6f);
-    const cv::Point endpoint(
-        (int)std::lround(frameCentre.x + dir.x / (len + 1e-6f) * tip),
-        (int)std::lround(frameCentre.y + dir.y / (len + 1e-6f) * tip));
+    if (traverse_.valid) {
+        const cv::Point target((int)traverse_.point.x, (int)traverse_.point.y);
+        const cv::Point2f dir((float)(target.x - frameCentre.x),
+                              (float)(target.y - frameCentre.y));
+        const float len = (float)std::sqrt(dir.x * dir.x + dir.y * dir.y);
 
-    cv::arrowedLine(frame, frameCentre, endpoint,
-                    {0, 255, 128}, 2, cv::LINE_AA, 0, 0.25);
+        // Decisive = green; indecisive (everything equally open) = amber.
+        const cv::Scalar col = decisive ? cv::Scalar(0, 255, 128)
+                                        : cv::Scalar(0, 200, 255);
 
-    // Backend label (bottom-left corner, above the tracker HUD line)
-    char lbl[32];
-    std::snprintf(lbl, sizeof(lbl), "depth: %s",
-                  depth_backend_name(backend_));
+        if (len > 4.f) {
+            const float tip = std::max(len - 18.f, len * 0.6f);
+            const cv::Point endpoint(
+                (int)std::lround(frameCentre.x + dir.x / len * tip),
+                (int)std::lround(frameCentre.y + dir.y / len * tip));
+            cv::arrowedLine(frame, frameCentre, endpoint, col,
+                            decisive ? 3 : 2, cv::LINE_AA, 0, 0.28);
+        }
+        // Ring at the target so the steer point is visible even when centred.
+        cv::circle(frame, target, 6, col, decisive ? 2 : 1, cv::LINE_AA);
+    }
+
+    // Backend + decision readout (bottom-left, above the tracker HUD line).
+    char lbl[64];
+    std::snprintf(lbl, sizeof(lbl), "depth: %s   %s  open %.0f%%",
+                  depth_backend_name(backend_),
+                  decisive ? "TRAVERSE" : "SCANNING",
+                  traverse_.openness * 100.f);
     cv::putText(frame, lbl, {8, H - 28},
                 cv::FONT_HERSHEY_SIMPLEX, 0.42, {200, 200, 200}, 1, cv::LINE_AA);
 }

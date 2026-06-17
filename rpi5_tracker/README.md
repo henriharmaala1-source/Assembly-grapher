@@ -91,9 +91,26 @@ EOF
 **Lock box colours:** green = locked, orange = coasting through a momentary
 loss, red = lost (15 consecutive failed frames).
 
-**Depth grid** (when enabled): 3×3 coloured overlay — green sector = furthest
-(most open), red = closest/blocked. Arrow points from frame centre toward the
-most open sector. Score 0.0–1.0 printed per cell.
+**Depth grid** (when enabled): 3×3 coloured heat overlay — green = far/open,
+red = close/blocked, score 0.0–1.0 per cell.
+
+**Corridor arrow:** the arrow does *not* simply point at the furthest pixel
+(noisy — picks gaps between branches) or the best 3×3 cell (too coarse).
+Instead it uses **navigable-corridor scoring**:
+
+1. **Clearance field** — the depth map is Gaussian-blurred with a kernel ≈ the
+   vehicle's width, so an isolated far pixel can't win; only a far region with
+   open margin around it survives.
+2. **Forward bias** — a radial falloff from frame centre makes straight-ahead
+   win when two corridors tie, minimising control effort and stopping the
+   arrow flip-flopping between equally-open sides.
+3. **Kalman smoothing** — the peak is filtered through the same constant-
+   velocity filter the tracker uses, so the arrow glides and coasts through a
+   single noisy frame.
+
+The readout shows **TRAVERSE** (green, decisive heading) or **SCANNING**
+(amber — everything is equally open/blocked, no confident direction), plus the
+clearance percentage at the chosen point.
 
 ## Expected performance (640×480, Pi 5)
 

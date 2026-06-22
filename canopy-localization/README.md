@@ -84,6 +84,23 @@ python3 app/canopy_planner.py        # Tkinter ships with Python on Windows
 `app/estimator.py` holds the pure estimation logic (`python3 app/estimator.py`
 prints a self-test).
 
+## Cold start — prior-free relocalization (`coldstart.py`)
+
+Finds the global position with **no GPS and no prior**. A single 90° look is
+massively ambiguous (≈1000 look-alikes over a 2 km area), so this fuses a short
+**sequence** of looks with known relative motion (IMU heading + VO/baro
+displacement) against a reference grid, collapsing the ambiguity to a unique fix.
+
+```
+python3 coldstart.py --demo        # 12-frame sequence -> 36 m start fix, no prior
+```
+
+API: `build_reference(rc, bounds, spacing)` then `cold_start(ref, frames,
+daz, headings, rel_xy)`. After cold start hands off an initial fix + trajectory,
+the prior-based matcher (`matcher.localize`) takes over for tracking. Note: the
+confidence metric is not yet calibrated, and low-saliency (flat uniform forest)
+needs a longer sequence — keep accumulating frames until the peak is distinct.
+
 ## Video test (`video_test.py`)
 
 Process a forward-looking video: extract the skyline from every frame (classical

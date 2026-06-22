@@ -117,7 +117,7 @@ def cold_start_blind(ref, frame_curves, frame_daz, fov_deg=65.0,
     if headings_deg is None:
         headings_deg = np.arange(0, 360, 5)
     if speeds_m is None:
-        speeds_m = np.array([20., 30., 40., 50., 60.])
+        speeds_m = np.array([20., 40., 60., 80., 100., 120., 150.])
     ny, nx = ref["panos"].shape[:2]; sp = ref["spacing"]; Nf = len(frame_curves)
 
     t0 = time.time()

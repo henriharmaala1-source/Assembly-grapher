@@ -84,6 +84,32 @@ python3 app/canopy_planner.py        # Tkinter ships with Python on Windows
 `app/estimator.py` holds the pure estimation logic (`python3 app/estimator.py`
 prints a self-test).
 
+## End-to-end: DSM + video -> location (`locate_video.py`)
+
+The one-command glue. Loads a DSM GeoTIFF (MML EPSG:3067, or any projected/
+geographic raster), reads a forward-looking video, extracts the skyline per
+frame, and runs blind cold start to output a global position (in the DSM's CRS,
++ lat/lon if `pyproj` is installed).
+
+```
+# sanity-check the plumbing on a DSM by rendering a test clip from it:
+python3 locate_video.py --dsm tile.tif --make-test-video --alt 15 --fov 65
+# localize your own video against an MML DSM tile:
+python3 locate_video.py --dsm mml_dsm.tif --video clip.mp4 --alt 15 --fov 65 \
+    [--en-bounds Emin Emax Nmin Nmax] [--grid 80] [--speeds 30 60 90 120]
+```
+
+Verified on a real Copernicus GeoTIFF (Lapland): rendered clip + DSM -> **6 m**
+start fix, no GPS/IMU/VO.
+
+**You must supply / it assumes:** correct camera `--fov`; flight altitude
+`--alt` (AGL above the DSM surface); a DSM tile covering the flight area;
+`--speeds` covering the real per-sampled-frame motion; footage from **above the
+canopy looking forward** in an area with skyline structure. Not yet handled:
+camera **roll/pitch** (assumes level/gimballed) and lens distortion. The one
+field unknown remains the **classical segmentation on real camera imagery** —
+that's the core sim-to-real test this enables.
+
 ## Cold start — prior-free relocalization (`coldstart.py`)
 
 Finds the global position with **no GPS and no prior**. A single 90° look is

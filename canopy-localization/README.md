@@ -84,6 +84,30 @@ python3 app/canopy_planner.py        # Tkinter ships with Python on Windows
 `app/estimator.py` holds the pure estimation logic (`python3 app/estimator.py`
 prints a self-test).
 
+## Getting the data
+
+**Camera calibration (`calibrate_camera.py`)** — produces `cam.json` for
+`locate_video.py --calib` (intrinsics + lens distortion). Print a chessboard,
+take ~15-20 photos (or a short video) at varied angles/distances:
+```
+python3 calibrate_camera.py --images calib/*.jpg --rows 6 --cols 9 --out cam.json
+python3 calibrate_camera.py --video calib.mp4   --rows 6 --cols 9 --out cam.json
+python3 calibrate_camera.py --selftest          # synthetic check, no inputs
+```
+(`--rows/--cols` are INNER corners.) Self-test recovers a known camera to RMS
+0.03 px.
+
+**DSM download (`download_mml.py`)** — fetches an MML DSM tile via the open WCS
+(needs a free MML API key; set `MML_API_KEY`):
+```
+python3 download_mml.py --capabilities                 # list coverage IDs
+python3 download_mml.py --coverage <id> --bbox Emin Emax Nmin Nmax --out dsm.tif
+python3 download_mml.py --check tile.tif               # validate any GeoTIFF
+```
+BBox is EPSG:3067 metres. If the API/network is unavailable it prints manual
+download routes (MML MapSite / Paituli / funet). Run it on your own machine —
+this sandbox's network policy blocks MML.
+
 ## End-to-end: DSM + video -> location (`locate_video.py`)
 
 The one-command glue. Loads a DSM GeoTIFF (MML EPSG:3067, or any projected/

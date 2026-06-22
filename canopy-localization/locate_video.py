@@ -29,6 +29,7 @@ from rasterio.transform import array_bounds, xy as transform_xy
 from horizon.raycaster import HorizonRaycaster
 from horizon import camera
 import coldstart
+import video_preproc as vp
 
 try:
     from pyproj import Transformer
@@ -106,33 +107,35 @@ def make_test_video(dsm, res, out, alt, fov, nframes=12, fps=8):
 
 
 def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
-           speeds=None):
+           speeds=None, calib=None, auto_level=False, use_clahe=True, roll=None):
     rc = HorizonRaycaster(dsm, res)
     H, W = dsm.shape
-    f = camera.focal_px(640, fov)
-    dcol = np.arctan((np.arange(640) - 320) / f)
 
     cap = cv2.VideoCapture(video)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
     take = max(1, total // max_n) if total else 1
-    frames, i = [], 0
+    frames, i, fov_eff, dcol = [], 0, None, None
     while True:
         ok, fr = cap.read()
         if not ok:
             break
         if i % take == 0:
-            g = fr if fr.ndim == 2 else cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
-            if g.shape != (480, 640):
-                g = cv2.resize(g, (640, 480))
-            frames.append(camera.extract_horizon(g, hfov_deg=fov))
+            pre, fov_used, _ = vp.preprocess(fr, fov, calib, auto_level, use_clahe,
+                                             roll_override=roll)
+            if pre.shape != (480, 640):
+                pre = cv2.resize(pre, (640, 480))
+            if fov_eff is None:
+                fov_eff = fov_used
+                dcol = np.arctan((np.arange(640) - 320) / camera.focal_px(640, fov_eff))
+            frames.append(camera.extract_horizon(pre, hfov_deg=fov_eff))
         i += 1
     cap.release()
-    print(f"  {len(frames)} frames used (of {total})")
+    print(f"  {len(frames)} frames used (of {total}); preprocessed, fov {fov_eff:.0f} deg")
 
     ref = coldstart.build_reference(
         rc, (res * 2, W * res - res * 2, res * 2, H * res - res * 2),
         grid_m, agl=alt, max_range_m=min(20000, max(W, H) * res), dr_m=res)
-    r = coldstart.cold_start_blind(ref, frames, dcol, fov,
+    r = coldstart.cold_start_blind(ref, frames, dcol, fov_eff,
                                    speeds_m=np.array(speeds) if speeds else None)
     E, N = local_to_world(*r["start_xy"], res, transform)
     out = dict(result=r, E=E, N=N, crs=crs)
@@ -156,6 +159,12 @@ def main():
     ap.add_argument("--grid", type=float, default=80.0)
     ap.add_argument("--speeds", type=float, nargs="+",
                     help="candidate per-sampled-frame motion (m); tune for your video")
+    ap.add_argument("--calib", help="camera calibration .json/.npz (fx,fy,cx,cy,k1,k2,...)")
+    ap.add_argument("--roll", type=float, help="constant camera roll (deg) from IMU to correct")
+    ap.add_argument("--level", action="store_true",
+                    help="skyline-based auto roll-level — ONLY for ~flat horizons; "
+                         "conflates with real terrain slope, prefer --roll from IMU")
+    ap.add_argument("--no-clahe", action="store_true", help="disable contrast normalization")
     ap.add_argument("--en-bounds", type=float, nargs=4)
     ap.add_argument("--lonlat-bounds", type=float, nargs=4)
     ap.add_argument("--out", default="out")
@@ -176,7 +185,9 @@ def main():
         print("Provide --video, or --make-test-video. Done (DSM loaded OK).")
         return
 
-    out, ref = locate(vid, dsm, res, tr, crs, a.fov, a.alt, a.grid, speeds=a.speeds)
+    calib = vp.load_calib(a.calib) if a.calib else None
+    out, ref = locate(vid, dsm, res, tr, crs, a.fov, a.alt, a.grid, speeds=a.speeds,
+                      calib=calib, auto_level=a.level, use_clahe=not a.no_clahe, roll=a.roll)
     r = out["result"]
     print(f"\nLOCATION (cold start, no GPS/IMU/VO):")
     print(f"  E={out['E']:.0f}  N={out['N']:.0f}  ({crs})")

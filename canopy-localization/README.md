@@ -102,13 +102,21 @@ python3 locate_video.py --dsm mml_dsm.tif --video clip.mp4 --alt 15 --fov 65 \
 Verified on a real Copernicus GeoTIFF (Lapland): rendered clip + DSM -> **6 m**
 start fix, no GPS/IMU/VO.
 
-**You must supply / it assumes:** correct camera `--fov`; flight altitude
-`--alt` (AGL above the DSM surface); a DSM tile covering the flight area;
-`--speeds` covering the real per-sampled-frame motion; footage from **above the
-canopy looking forward** in an area with skyline structure. Not yet handled:
-camera **roll/pitch** (assumes level/gimballed) and lens distortion. The one
-field unknown remains the **classical segmentation on real camera imagery** —
-that's the core sim-to-real test this enables.
+**Preprocessing (`video_preproc.py`, on by default)** canonicalizes each frame so
+it's comparable to the reference: lens **undistort** + FOV from `--calib`, and
+**CLAHE** contrast normalization. Roll must come from the **IMU** (`--roll DEG`);
+skyline-based auto-level (`--level`) is *only* safe for near-flat horizons because
+it can't tell camera roll from genuine terrain slope (it broke the Lapland test
+until disabled). Pitch (a constant) is absorbed by the curve's zero-meaning.
+Demonstrated by `test_preproc.py`: a clip corrupted with roll + barrel distortion
++ low contrast is recovered from **2.88° -> 0.84°** skyline error.
+
+**You must supply:** correct `--fov` (or `--calib`); `--alt` (AGL above the DSM
+surface); a DSM tile covering the flight area; `--speeds` covering the real
+per-frame motion; roll from IMU for tilted footage; footage from **above the
+canopy looking forward** with skyline structure. The one field unknown remains
+the **classical segmentation on real camera imagery** — the core sim-to-real test
+this enables.
 
 ## Cold start — prior-free relocalization (`coldstart.py`)
 

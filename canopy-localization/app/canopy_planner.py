@@ -14,6 +14,7 @@ import json
 import time
 import queue
 import threading
+import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -128,6 +129,7 @@ class Planner(tk.Tk):
         btns = ttk.Frame(r); btns.pack(fill="x", pady=6)
         ttk.Button(btns, text="Calibrate on this PC", command=self._calibrate).pack(side="left", padx=3)
         ttk.Button(btns, text="Generate dataset…", command=self._generate).pack(side="left", padx=3)
+        ttk.Button(btns, text="Test on video…", command=self._test_video).pack(side="left", padx=3)
         ttk.Button(btns, text="Save plan…", command=self._save_plan).pack(side="left", padx=3)
         self.status = ttk.Label(r, text="", foreground="#06c")
         self.status.pack(fill="x")
@@ -281,6 +283,45 @@ class Planner(tk.Tk):
         except Exception as ex:                       # noqa: BLE001
             self.q.put(("err", f"Generation failed: {ex}"))
 
+    def _test_video(self):
+        vid = filedialog.askopenfilename(
+            title="Video to test",
+            filetypes=[("Video", "*.mp4 *.avi *.mov *.mkv"), ("All", "*.*")])
+        if not vid:
+            return
+        dsm = filedialog.askopenfilename(
+            title="DSM GeoTIFF for comparison (Cancel = segmentation overlay only)",
+            filetypes=[("GeoTIFF", "*.tif *.tiff"), ("All", "*.*")])
+        self.status.config(text="Processing video…")
+        threading.Thread(target=self._test_video_worker,
+                         args=(vid, dsm), daemon=True).start()
+
+    def _test_video_worker(self, vid, dsm):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cmd = [sys.executable, os.path.join(root, "video_test.py"), "--video", vid]
+        if dsm:
+            cmd += ["--dsm", dsm]
+        try:
+            r = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
+            if r.returncode != 0:
+                self.q.put(("err", "Video test failed:\n" + (r.stderr or r.stdout)[-500:]))
+                return
+            png = os.path.join(root, "out", "video_summary.png")
+            self.q.put(("vtest", (png, (r.stdout or "").strip().splitlines())))
+        except Exception as ex:                       # noqa: BLE001
+            self.q.put(("err", f"Video test error: {ex}"))
+
+    def _open(self, path):
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)                    # noqa: B606
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception:                             # noqa: BLE001
+            pass
+
     def _poll(self):
         try:
             while True:
@@ -298,6 +339,12 @@ class Planner(tk.Tk):
                                        f"{os.path.basename(out)} "
                                        f"({st['pos_per_s']:.0f} pos/s)")
                     self.cal_pps = st["pos_per_s"]; self.recompute()
+                elif kind == "vtest":
+                    png, lines = payload
+                    self.status.config(text="Video test: " +
+                                       (lines[0] if lines else "done"))
+                    if os.path.exists(png):
+                        self._open(png)
                 elif kind == "err":
                     self.status.config(text=payload)
                     messagebox.showerror("Error", payload)

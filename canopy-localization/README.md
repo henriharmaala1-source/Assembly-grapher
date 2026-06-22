@@ -84,6 +84,24 @@ python3 app/canopy_planner.py        # Tkinter ships with Python on Windows
 `app/estimator.py` holds the pure estimation logic (`python3 app/estimator.py`
 prints a self-test).
 
+## Video test (`video_test.py`)
+
+Process a forward-looking video: extract the skyline from every frame (classical
+segmenter) and, on a cadence, match it to the DSM reference to produce an
+absolute fix. Writes an annotated video (detected horizon in red, DSM-expected
+in cyan) and a summary report (truth vs fixes, GPS-prior error vs horizon-fix
+error). Also wired to the planner's **Test on video…** button.
+
+```
+python3 video_test.py --demo                  # synthetic flythrough, then test it
+python3 video_test.py --video clip.mp4 [--dsm tile.tif --fov 65]
+```
+
+Needs `numpy`, `opencv-python`, `matplotlib` (+ `rasterio` for `--dsm`). On the
+synthetic GPS-denied demo the horizon fix (~70 m) bounds a degraded ~113 m
+prior; occasional per-frame outliers are why the live system gates by confidence
+and fuses with the EKF.
+
 ## Real-data run (`real_demo.py`)
 
 Runs the *same* ray-caster + matcher on a **real Finnish DEM** — Copernicus

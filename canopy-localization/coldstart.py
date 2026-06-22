@@ -107,6 +107,58 @@ def cold_start(ref, frame_curves, frame_daz, headings, rel_xy, fov_deg=65.0):
                 single_frame_confusion=single_conf)
 
 
+def cold_start_blind(ref, frame_curves, frame_daz, fov_deg=65.0,
+                     headings_deg=None, speeds_m=None, progress=True):
+    """Cold start with NO IMU and NO VO: brute-force heading + speed too.
+
+    Assumes roughly straight forward flight (camera along course) during the
+    bootstrap window. Searches start position x heading x constant speed.
+    """
+    if headings_deg is None:
+        headings_deg = np.arange(0, 360, 5)
+    if speeds_m is None:
+        speeds_m = np.array([20., 30., 40., 50., 60.])
+    ny, nx = ref["panos"].shape[:2]; sp = ref["spacing"]; Nf = len(frame_curves)
+
+    t0 = time.time()
+    cube = {}                                          # heading -> [per-frame cost maps]
+    for th in headings_deg:
+        thr = np.deg2rad(th)
+        cube[th] = [residual_map(ref, frame_curves[i], frame_daz, thr, fov_deg)
+                    for i in range(Nf)]
+    if progress:
+        print(f"  precomputed {len(headings_deg)*Nf} cost maps in {time.time()-t0:.0f}s")
+
+    best = None
+    for th in headings_deg:
+        c, s = np.cos(np.deg2rad(th)), np.sin(np.deg2rad(th))
+        maps = cube[th]
+        for v in speeds_m:
+            seq = np.zeros((ny, nx)); cnt = np.zeros((ny, nx))
+            for i in range(Nf):
+                ox = int(round(i * v * c / sp)); oy = int(round(i * v * s / sp))
+                m = _lookup_shift(maps[i], oy, ox)
+                good = np.isfinite(m) & ref["valid"]
+                seq[good] += m[good]; cnt[good] += 1
+            seq[cnt < Nf] = np.inf
+            mn = float(seq.min())
+            if best is None or mn < best["cost"]:
+                iy, ix = np.unravel_index(np.argmin(seq), seq.shape)
+                best = dict(cost=mn, theta=th, speed=float(v), iy=iy, ix=ix,
+                            seq=seq.copy())
+
+    sx, sy = ref["xs"][best["ix"]], ref["ys"][best["iy"]]
+    c, s = np.cos(np.deg2rad(best["theta"])), np.sin(np.deg2rad(best["theta"]))
+    traj = np.array([(sx + i * best["speed"] * c, sy + i * best["speed"] * s)
+                     for i in range(Nf)])
+    first = np.min([cube[th][0] for th in headings_deg], axis=0)   # best-over-heading
+    f0 = first[ref["valid"]]
+    single = int((f0 <= f0.min() + np.deg2rad(0.4) ** 2).sum())
+    return dict(start_xy=(sx, sy), heading_deg=best["theta"], speed=best["speed"],
+                trajectory=traj, seq_cost=best["seq"], first_cost=first,
+                single_frame_confusion=single, seconds=time.time() - t0)
+
+
 # ----------------------------------------------------------------- demo
 def _demo():
     import matplotlib
@@ -171,15 +223,81 @@ def _demo():
     print("saved out/coldstart.png")
 
 
+def _demo_blind():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    dsm, meta = make_synthetic_dsm(1500, 2.0, 0)
+    rc = HorizonRaycaster(dsm, meta["res_m"])
+    fov = 65.0
+    f = camera.focal_px(640, fov)
+    dcol = np.arctan((np.arange(640) - 320) / f)
+
+    # forward flight (camera along course), NO IMU heading, NO VO motion logged
+    n, step, heading = 12, 40.0, np.pi / 2          # truth: north, 40 m/frame
+    sx0, sy0 = 1000.0, 1430.0
+    frames = []
+    for i in range(n):
+        x = sx0 + i * step * np.cos(heading); y = sy0 + i * step * np.sin(heading)
+        z = float(rc.sample(x, y)) + 12.0
+        img, _, _ = camera.render_camera_frame(rc, x, y, z, heading, 640, 480,
+                                               fov, False, i, MAXR)
+        frames.append(camera.extract_horizon(img, hfov_deg=fov))
+
+    print("Blind cold start (NO IMU, NO VO) — brute-forcing heading + speed too…")
+    ref = build_reference(rc, (400, 2600, 400, 2600), 60.0, agl=12.0)
+    r = cold_start_blind(ref, frames, dcol, fov,
+                         headings_deg=np.arange(0, 360, 5),
+                         speeds_m=np.array([20., 30., 40., 50., 60.]))
+    err = np.hypot(r["start_xy"][0] - sx0, r["start_xy"][1] - sy0)
+    print(f"\nResult over {(ref['xs'][-1]-ref['xs'][0])/1000:.1f}x"
+          f"{(ref['ys'][-1]-ref['ys'][0])/1000:.1f} km, {n}-frame sequence, "
+          f"{r['seconds']:.0f}s:")
+    print(f"  single look alone  : {r['single_frame_confusion']} look-alike cells "
+          f"(heading also unknown)")
+    print(f"  recovered start    : {err:.0f} m error")
+    print(f"  recovered heading  : {r['heading_deg']:.0f} deg (truth 90)")
+    print(f"  recovered speed    : {r['speed']:.0f} m/frame (truth 40)")
+
+    fig, ax = plt.subplots(1, 3, figsize=(16, 4.7))
+    ext = [ref["xs"][0], ref["xs"][-1], ref["ys"][0], ref["ys"][-1]]
+    sc = lambda R: np.exp(-(R - np.nanmin(R)) / (3 * np.deg2rad(0.4) ** 2))
+    ax[0].imshow(sc(r["first_cost"]), origin="lower", cmap="magma", extent=ext)
+    ax[0].plot(sx0, sy0, "c+", ms=14, mew=3)
+    ax[0].set_title(f"one look, heading unknown ({r['single_frame_confusion']} matches)")
+    seqm = r["seq_cost"].copy(); seqm[~np.isfinite(seqm)] = np.nan
+    ax[1].imshow(sc(seqm), origin="lower", cmap="magma", extent=ext)
+    ax[1].plot(sx0, sy0, "c+", ms=14, mew=3)
+    ax[1].set_title("blind sequence — likelihood")
+    ax[2].imshow(dsm, origin="lower", cmap="terrain",
+                 extent=[0, dsm.shape[1]*2, 0, dsm.shape[0]*2])
+    tru = np.array([(sx0 + i*step*np.cos(heading), sy0 + i*step*np.sin(heading))
+                    for i in range(n)])
+    ax[2].plot(tru[:, 0], tru[:, 1], "g-", lw=2, label="true path")
+    ax[2].plot(r["trajectory"][:, 0], r["trajectory"][:, 1], "c--", lw=2, label="recovered")
+    ax[2].plot(sx0, sy0, "g*", ms=14); ax[2].plot(*r["start_xy"], "c+", ms=14, mew=3)
+    ax[2].legend(); ax[2].set_title(
+        f"start err {err:.0f} m | hdg {r['heading_deg']:.0f}° spd {r['speed']:.0f}")
+    fig.suptitle("Blind cold start — NO IMU, NO VO (search position+heading+speed)",
+                 fontsize=13)
+    fig.tight_layout(); fig.savefig("out/coldstart_blind.png", dpi=120)
+    print("saved out/coldstart_blind.png")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--demo", action="store_true")
+    ap.add_argument("--blind", action="store_true",
+                    help="cold start with no IMU and no VO (search heading+speed)")
     a = ap.parse_args()
     os.makedirs("out", exist_ok=True)
-    if a.demo:
+    if a.blind:
+        _demo_blind()
+    elif a.demo:
         _demo()
     else:
-        ap.error("use --demo (library functions: build_reference, cold_start)")
+        ap.error("use --demo or --blind")
 
 
 if __name__ == "__main__":

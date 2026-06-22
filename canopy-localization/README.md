@@ -92,8 +92,17 @@ massively ambiguous (≈1000 look-alikes over a 2 km area), so this fuses a shor
 displacement) against a reference grid, collapsing the ambiguity to a unique fix.
 
 ```
-python3 coldstart.py --demo        # 12-frame sequence -> 36 m start fix, no prior
+python3 coldstart.py --demo        # 12-frame sequence -> 36 m start fix (IMU heading + VO motion)
+python3 coldstart.py --blind       # NO IMU, NO VO: also brute-forces heading + speed
 ```
+
+**Blind mode (`--blind`, `cold_start_blind`)** needs no IMU and no VO — just the
+frames. Assuming roughly straight forward flight, it searches position × heading
+× speed. In the demo a single look was ambiguous over the *whole* 2.2×2.2 km area
+(1354 cells, heading unknown), yet the 12-frame sequence recovered the start to
+**10 m** and the heading (90°) and speed (40 m/frame) **exactly**. Cost grows
+with the search grid, so country-scale needs the ANN index + coarse-to-fine, but
+the method is the same.
 
 API: `build_reference(rc, bounds, spacing)` then `cold_start(ref, frames,
 daz, headings, rel_xy)`. After cold start hands off an initial fix + trajectory,

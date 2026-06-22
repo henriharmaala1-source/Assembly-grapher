@@ -62,6 +62,16 @@ Run: `python3 demo.py`  (needs `numpy`, `matplotlib`)
   `load_geotiff(path, window=...)` on an MML DSM tile (EPSG:3067, 2 m/px). The
   ray-caster and matcher are unchanged; only the height-field source differs.
 
+## Real-data run (`real_demo.py`)
+
+Runs the *same* ray-caster + matcher on a **real Finnish DEM** — Copernicus
+GLO-30 over the Lapland fells (Ylläs area), auto-downloaded from AWS open data.
+Result: segmentation RMS 0.41°, fix error **14 m** from a 75 m-off prior on real
+terrain. Caveat: Copernicus is a **30 m radar** DEM, so it resolves *terrain
+relief* (fells), not canopy. Canopy-scale needs the **2 m MML LiDAR** (DSM),
+which this sandbox's network policy blocks; drop a real MML tile in via
+`load_geotiff()` and the code path is identical.
+
 ## Status
 
 Proves the concept end to end. Not flight code. The on-Pi port is the same

@@ -62,6 +62,28 @@ Run: `python3 demo.py`  (needs `numpy`, `matplotlib`)
   `load_geotiff(path, window=...)` on an MML DSM tile (EPSG:3067, 2 m/px). The
   ray-caster and matcher are unchanged; only the height-field source differs.
 
+## Dataset planner app (`app/canopy_planner.py`)
+
+A Tkinter desktop app to plan a training run: drag-select the area on a map of
+Finland (or type EPSG:3067 coordinates) and it live-estimates the number of
+horizon "pictures" (curves), storage, generation time, and training time.
+
+```
+python3 app/canopy_planner.py        # Tkinter ships with Python on Windows
+```
+
+- **Estimate** updates as you change the area/parameters (pure Python, no deps).
+- **Calibrate on this PC** remeasures ray-cast throughput on your machine
+  (needs `numpy`).
+- **Generate dataset…** runs the real pipeline over the AOI from a DSM GeoTIFF
+  (needs `numpy` + `rasterio`), or a synthetic DSM if you cancel the file dialog,
+  writing curves + coordinates to an `.npz`.
+- Throughput defaults are calibrated from `bench.py`; gen time scales with
+  ray-march *positions* (one march yields all altitude curves).
+
+`app/estimator.py` holds the pure estimation logic (`python3 app/estimator.py`
+prints a self-test).
+
 ## Real-data run (`real_demo.py`)
 
 Runs the *same* ray-caster + matcher on a **real Finnish DEM** — Copernicus

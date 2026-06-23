@@ -19,7 +19,7 @@ import subprocess
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from app.estimator import (estimate, PRESETS, TRAIN_DEVICES,
                            fmt_count, fmt_dur, fmt_size)
@@ -285,31 +285,53 @@ class Planner(tk.Tk):
 
     def _test_video(self):
         vid = filedialog.askopenfilename(
-            title="Video to test",
+            title="Video to localize",
             filetypes=[("Video", "*.mp4 *.avi *.mov *.mkv"), ("All", "*.*")])
         if not vid:
             return
         dsm = filedialog.askopenfilename(
-            title="DSM GeoTIFF for comparison (Cancel = segmentation overlay only)",
+            title="DSM GeoTIFF for LOCATION (Cancel = horizon overlay only)",
             filetypes=[("GeoTIFF", "*.tif *.tiff"), ("All", "*.*")])
+        fov = alt = calib = None
+        if dsm:                                        # full comparison -> location
+            fov = simpledialog.askfloat("Camera FOV", "Horizontal FOV (deg):",
+                                        initialvalue=65.0, parent=self)
+            if fov is None:
+                return
+            alt = simpledialog.askfloat("Altitude", "Altitude above ground/canopy (m):",
+                                        initialvalue=12.0, parent=self)
+            if alt is None:
+                return
+            calib = filedialog.askopenfilename(
+                title="Camera calibration (Cancel = use FOV only)",
+                filetypes=[("calib", "*.json *.npz"), ("All", "*.*")]) or None
         self.status.config(text="Processing video…")
         threading.Thread(target=self._test_video_worker,
-                         args=(vid, dsm), daemon=True).start()
+                         args=(vid, dsm, fov, alt, calib), daemon=True).start()
 
-    def _test_video_worker(self, vid, dsm):
+    def _test_video_worker(self, vid, dsm, fov, alt, calib):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cmd = [sys.executable, os.path.join(root, "video_test.py"), "--video", vid]
-        if dsm:
-            cmd += ["--dsm", dsm]
         try:
+            if dsm:                                    # locate (real comparison)
+                cmd = [sys.executable, os.path.join(root, "locate_video.py"),
+                       "--dsm", dsm, "--video", vid, "--fov", str(fov),
+                       "--alt", str(alt), "--speeds", "20", "40", "60", "80", "100"]
+                if calib:
+                    cmd += ["--calib", calib]
+                png = os.path.join(root, "out", "locate.png")
+            else:                                      # overlay only (no DSM)
+                cmd = [sys.executable, os.path.join(root, "video_test.py"), "--video", vid]
+                png = os.path.join(root, "out", "video_summary.png")
             r = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
             if r.returncode != 0:
-                self.q.put(("err", "Video test failed:\n" + (r.stderr or r.stdout)[-500:]))
+                self.q.put(("err", "Video processing failed:\n"
+                            + (r.stderr or r.stdout)[-600:]))
                 return
-            png = os.path.join(root, "out", "video_summary.png")
-            self.q.put(("vtest", (png, (r.stdout or "").strip().splitlines())))
+            lines = (r.stdout or "").strip().splitlines()
+            loc = [ln.strip() for ln in lines if "E=" in ln or "lat=" in ln]
+            self.q.put(("vtest", (png, loc or lines[-2:])))
         except Exception as ex:                       # noqa: BLE001
-            self.q.put(("err", f"Video test error: {ex}"))
+            self.q.put(("err", f"Video processing error: {ex}"))
 
     def _open(self, path):
         try:

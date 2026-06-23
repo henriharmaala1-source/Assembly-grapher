@@ -107,7 +107,8 @@ def make_test_video(dsm, res, out, alt, fov, nframes=12, fps=8):
 
 
 def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
-           speeds=None, calib=None, auto_level=False, use_clahe=True, roll=None):
+           speeds=None, calib=None, auto_level=False, use_clahe=True, roll=None,
+           range_step=None):
     rc = HorizonRaycaster(dsm, res)
     H, W = dsm.shape
 
@@ -130,11 +131,15 @@ def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
             frames.append(camera.extract_horizon(pre, hfov_deg=fov_eff))
         i += 1
     cap.release()
+    if not frames:
+        raise RuntimeError(f"no frames decoded from '{video}' — unreadable, empty, "
+                           f"or unsupported codec (try re-encoding to H.264 mp4)")
     print(f"  {len(frames)} frames used (of {total}); preprocessed, fov {fov_eff:.0f} deg")
 
     ref = coldstart.build_reference(
         rc, (res * 2, W * res - res * 2, res * 2, H * res - res * 2),
-        grid_m, agl=alt, max_range_m=min(20000, max(W, H) * res), dr_m=res)
+        grid_m, agl=alt, max_range_m=min(20000, max(W, H) * res),
+        dr_m=range_step or max(res, 5.0))              # march step: speed/accuracy knob
     r = coldstart.cold_start_blind(ref, frames, dcol, fov_eff,
                                    speeds_m=np.array(speeds) if speeds else None)
     E, N = local_to_world(*r["start_xy"], res, transform)
@@ -157,6 +162,8 @@ def main():
     ap.add_argument("--fov", type=float, default=65.0)
     ap.add_argument("--alt", type=float, default=15.0)
     ap.add_argument("--grid", type=float, default=80.0)
+    ap.add_argument("--range-step", type=float,
+                    help="ray-march step (m) for the reference; larger = faster build")
     ap.add_argument("--speeds", type=float, nargs="+",
                     help="candidate per-sampled-frame motion (m); tune for your video")
     ap.add_argument("--calib", help="camera calibration .json/.npz (fx,fy,cx,cy,k1,k2,...)")
@@ -187,7 +194,8 @@ def main():
 
     calib = vp.load_calib(a.calib) if a.calib else None
     out, ref = locate(vid, dsm, res, tr, crs, a.fov, a.alt, a.grid, speeds=a.speeds,
-                      calib=calib, auto_level=a.level, use_clahe=not a.no_clahe, roll=a.roll)
+                      calib=calib, auto_level=a.level, use_clahe=not a.no_clahe,
+                      roll=a.roll, range_step=a.range_step)
     r = out["result"]
     print(f"\nLOCATION (cold start, no GPS/IMU/VO):")
     print(f"  E={out['E']:.0f}  N={out['N']:.0f}  ({crs})")

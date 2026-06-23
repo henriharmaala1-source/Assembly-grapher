@@ -120,11 +120,19 @@ frame, and runs blind cold start to output a global position (in the DSM's CRS,
 python3 locate_video.py --dsm tile.tif --make-test-video --alt 15 --fov 65
 # localize your own video against an MML DSM tile:
 python3 locate_video.py --dsm mml_dsm.tif --video clip.mp4 --alt 15 --fov 65 \
-    [--en-bounds Emin Emax Nmin Nmax] [--grid 80] [--speeds 30 60 90 120]
+    [--en-bounds Emin Emax Nmin Nmax] [--grid 80] [--range-step 5] [--speeds 30 60 90 120]
 ```
 
-Verified on a real Copernicus GeoTIFF (Lapland): rendered clip + DSM -> **6 m**
-start fix, no GPS/IMU/VO.
+Verified end-to-end on a real **EPSG:3067 (MML-format) GeoTIFF** and a real
+Copernicus GeoTIFF: reports the fix in the DSM's CRS + lat/lon, no GPS/IMU/VO.
+Cold start localizes to about the **reference grid spacing** (`--grid`); tighten
+`--grid` for a finer fix (slower) — tracking then refines. `--range-step` is the
+build speed/accuracy knob (e.g. 5 m cut a 3 km-tile build from 172 s to ~50 s
+with no accuracy loss, since grid spacing dominates).
+
+Also wired into the **planner app**: the "Test on video…" button now *localizes*
+(prompts for FOV / altitude / optional calibration) when you give it a DSM, or
+falls back to a horizon-overlay pass without one.
 
 **Preprocessing (`video_preproc.py`, on by default)** canonicalizes each frame so
 it's comparable to the reference: lens **undistort** + FOV from `--calib`, and

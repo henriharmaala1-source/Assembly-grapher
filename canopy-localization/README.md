@@ -108,6 +108,19 @@ BBox is EPSG:3067 metres. If the API/network is unavailable it prints manual
 download routes (MML MapSite / Paituli / funet). Run it on your own machine —
 this sandbox's network policy blocks MML.
 
+**Point cloud -> DSM (`laz_to_dsm.py`)** — MML often offers only the laser point
+cloud (*Laserkeilausaineisto*, `.laz`), not a ready surface raster. Note
+*Korkeusmalli 2 m* is the **DTM (bare earth, trees removed)** — not the canopy.
+This rasterizes the **highest returns** (canopy top) of the point cloud into a
+DSM GeoTIFF. For the older **0.5 pts/m²** product use ~5 m cells:
+```
+pip install "laspy[lazrs]"
+python3 laz_to_dsm.py tile1.laz tile2.laz --res 5 --out dsm.tif
+python3 laz_to_dsm.py --selftest       # synthetic 0.5 p check
+```
+Verified: 0.5 pts/m² -> a 100%-filled 5 m DSM. The skyline method works fine at
+5-10 m (it worked at 30 m).
+
 ## End-to-end: DSM + video -> location (`locate_video.py`)
 
 The one-command glue. Loads a DSM GeoTIFF (MML EPSG:3067, or any projected/

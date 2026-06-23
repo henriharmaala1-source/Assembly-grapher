@@ -39,9 +39,10 @@ class Planner(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Canopy-Localization Dataset Planner")
-        self.geometry("980x620")
+        self.geometry("1060x620")
         self._syncing = False
         self.cal_pps = None                      # calibrated positions/s/core
+        self.last_dsm = None                     # DSM built from a point cloud
         self.q = queue.Queue()
 
         self.cw, self.ch = 340, 580
@@ -127,6 +128,7 @@ class Planner(tk.Tk):
         self.note.pack(fill="x", pady=2)
 
         btns = ttk.Frame(r); btns.pack(fill="x", pady=6)
+        ttk.Button(btns, text="LAZ → DSM…", command=self._make_dsm).pack(side="left", padx=3)
         ttk.Button(btns, text="Calibrate on this PC", command=self._calibrate).pack(side="left", padx=3)
         ttk.Button(btns, text="Generate dataset…", command=self._generate).pack(side="left", padx=3)
         ttk.Button(btns, text="Test on video…", command=self._test_video).pack(side="left", padx=3)
@@ -283,6 +285,39 @@ class Planner(tk.Tk):
         except Exception as ex:                       # noqa: BLE001
             self.q.put(("err", f"Generation failed: {ex}"))
 
+    def _make_dsm(self):
+        files = filedialog.askopenfilenames(
+            title="LiDAR point cloud(s) — MML Laserkeilausaineisto (.laz/.las)",
+            filetypes=[("LAS/LAZ", "*.laz *.las"), ("All", "*.*")])
+        if not files:
+            return
+        res = simpledialog.askfloat("DSM resolution",
+                                    "Cell size (m)  [~5 for 0.5 p, ~2 for 5 p]:",
+                                    initialvalue=5.0, parent=self)
+        if res is None:
+            return
+        out = filedialog.asksaveasfilename(title="Save DSM to…", defaultextension=".tif",
+                                           filetypes=[("GeoTIFF", "*.tif")])
+        if not out:
+            return
+        self.status.config(text="Building DSM from point cloud…")
+        threading.Thread(target=self._make_dsm_worker,
+                         args=(list(files), res, out), daemon=True).start()
+
+    def _make_dsm_worker(self, files, res, out):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cmd = [sys.executable, os.path.join(root, "laz_to_dsm.py"),
+               *files, "--res", str(res), "--out", out]
+        try:
+            r = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
+            if r.returncode != 0:
+                self.q.put(("err", "DSM build failed:\n" + (r.stderr or r.stdout)[-600:]))
+                return
+            lines = (r.stdout or "").strip().splitlines()
+            self.q.put(("dsm", (out, lines[0] if lines else "done")))
+        except Exception as ex:                       # noqa: BLE001
+            self.q.put(("err", f"DSM build error: {ex}"))
+
     def _test_video(self):
         vid = filedialog.askopenfilename(
             title="Video to localize",
@@ -361,6 +396,11 @@ class Planner(tk.Tk):
                                        f"{os.path.basename(out)} "
                                        f"({st['pos_per_s']:.0f} pos/s)")
                     self.cal_pps = st["pos_per_s"]; self.recompute()
+                elif kind == "dsm":
+                    out, msg = payload
+                    self.last_dsm = out
+                    self.status.config(text="DSM ready (" + msg.split("->")[0].strip()
+                                       + ") — use it in 'Test on video…'")
                 elif kind == "vtest":
                     png, lines = payload
                     self.status.config(text="Video test: " +

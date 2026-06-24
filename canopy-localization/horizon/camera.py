@@ -63,6 +63,19 @@ def _boxmean(I, r):
 
 
 # ---------------------------------------------------------------- segmentation
+def _robust_boundary(boundary, conf, win=25, thr_px=20.0):
+    """Reject per-column boundary outliers (skyline spikes that 'go down') using a
+    local median prior + low-confidence rejection, then lightly smooth."""
+    from numpy.lib.stride_tricks import sliding_window_view
+    n = boundary.size
+    pad = win // 2
+    med = np.median(sliding_window_view(np.pad(boundary, pad, mode="edge"), win), 1)[:n]
+    c = conf / (np.median(conf) + 1e-9)
+    bad = (np.abs(boundary - med) > thr_px) | (c < 0.3)     # spike or weak column
+    out = np.where(bad, med, boundary)
+    return np.convolve(np.pad(out, 2, mode="edge"), np.ones(5) / 5, "valid")[:n]
+
+
 def extract_horizon(img, img_w=None, hfov_deg=65.0, win=4, return_conf=False):
     """Classical sky/canopy boundary -> elevation angle per column (radians)."""
     I = img.astype(np.float64)
@@ -95,6 +108,7 @@ def extract_horizon(img, img_w=None, hfov_deg=65.0, win=4, return_conf=False):
     off = np.where(denom != 0, 0.5 * (gm - gp) / denom, 0.0)
     off = np.clip(off, -1, 1)
     boundary = bic + off + 1                                            # row (float) per col
+    boundary = _robust_boundary(boundary, conf)        # reject downward skyline spikes
 
     elev = np.arctan((cy - boundary) / f)
     if return_conf:

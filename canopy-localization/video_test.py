@@ -111,7 +111,10 @@ def run_test(video, out_video, out_png, hfov=65.0, rc=None, gt_track=None,
               f"prior err median {np.median(R[:,0]):.0f} m -> "
               f"horizon fix median {np.median(R[:,1]):.0f} m")
     else:
-        print(f"frames {fi} | segmentation overlay only (no DSM/track given)")
+        print(f"frames {fi} | horizon OVERLAY only — this tool does NOT localize a "
+              f"real clip.\n  For a LOCATION run:  python3 locate_video.py --dsm "
+              f"your_dsm.tif --video your_clip.mp4 --fov 90\n  (or in the app use "
+              f"'Test on video...' and SELECT your DSM when asked).")
     print(f"annotated video -> {out_video}\nsummary -> {out_png}")
     return recs
 

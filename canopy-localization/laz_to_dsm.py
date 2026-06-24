@@ -17,11 +17,25 @@ import argparse
 import glob
 import sys
 import numpy as np
-import laspy
 import rasterio
 from rasterio.transform import from_origin
+try:
+    import laspy
+except ImportError:
+    laspy = None
 
 NOISE_CLASSES = {7, 18}            # low/high noise — drop so they don't spike the DSM
+
+
+def _require_laspy():
+    if laspy is None:
+        sys.exit(
+            "ERROR: laspy is not installed in THIS Python interpreter:\n"
+            f"  {sys.executable}\n"
+            "The app runs this tool with its own Python, which may differ from the\n"
+            "one your `pip install laspy` used. Install into exactly this interpreter\n"
+            "(the [lazrs] backend is needed to read compressed .laz):\n"
+            f'  "{sys.executable}" -m pip install "laspy[lazrs]"')
 
 
 def _bounds(paths):
@@ -64,6 +78,7 @@ def fill_gaps(dsm, nod, iters=6):
 
 
 def rasterize(paths, res, out, crs_override=None, drop_noise=True, fill=True):
+    _require_laspy()
     (xmin, ymin, xmax, ymax), crs = _bounds(paths)
     W = int(np.ceil((xmax - xmin) / res))
     H = int(np.ceil((ymax - ymin) / res))
@@ -99,6 +114,7 @@ def rasterize(paths, res, out, crs_override=None, drop_noise=True, fill=True):
 
 
 def _selftest():
+    _require_laspy()
     from horizon.synthetic_dsm import make_synthetic_dsm
     d, m = make_synthetic_dsm(500, 2.0, 0)              # 1x1 km truth @ 2 m
     H, W = d.shape; E0, Ntop = 380000.0, 6951000.0

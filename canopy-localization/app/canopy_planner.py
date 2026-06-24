@@ -333,12 +333,12 @@ class Planner(tk.Tk):
                                         initialvalue=65.0, parent=self)
             if fov is None:
                 return
-            alt = simpledialog.askfloat("Altitude", "Altitude above ground/canopy (m):",
-                                        initialvalue=12.0, parent=self)
-            if alt is None:
-                return
+            alt = simpledialog.askfloat(
+                "Altitude (optional)",
+                "Height above the treetops (m)\nCancel = search automatically:",
+                initialvalue=12.0, parent=self)              # None -> search
             calib = filedialog.askopenfilename(
-                title="Camera calibration (Cancel = use FOV only)",
+                title="Camera calibration (optional; Cancel = use FOV only)",
                 filetypes=[("calib", "*.json *.npz"), ("All", "*.*")]) or None
         self.status.config(text="Processing video…")
         threading.Thread(target=self._test_video_worker,
@@ -350,7 +350,9 @@ class Planner(tk.Tk):
             if dsm:                                    # locate (real comparison)
                 cmd = [sys.executable, os.path.join(root, "locate_video.py"),
                        "--dsm", dsm, "--video", vid, "--fov", str(fov),
-                       "--alt", str(alt), "--speeds", "20", "40", "60", "80", "100"]
+                       "--speeds", "20", "40", "60", "80", "100"]
+                if alt is not None:
+                    cmd += ["--alt", str(alt)]             # else locate_video searches
                 if calib:
                     cmd += ["--calib", calib]
                 png = os.path.join(root, "out", "locate.png")

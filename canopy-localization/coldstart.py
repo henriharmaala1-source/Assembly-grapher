@@ -28,28 +28,33 @@ MAXR, DR = 1200.0, 2.0
 
 def build_reference(rc, bounds, spacing_m, n_az=360, agl=12.0,
                     max_range_m=MAXR, dr_m=DR, progress=True):
+    """agl may be a scalar or a list of heights-above-canopy to search over.
+    All altitudes come from ONE ray-march per cell, so extra altitudes are cheap.
+    """
+    agls = np.atleast_1d(np.asarray(agl, dtype=float))
     xmin, xmax, ymin, ymax = bounds
     xs = np.arange(xmin, xmax, spacing_m)
     ys = np.arange(ymin, ymax, spacing_m)
     az = np.linspace(0, 2 * np.pi, n_az, endpoint=False)
-    panos = np.full((ys.size, xs.size, n_az), np.nan, np.float32)
+    panos = np.full((agls.size, ys.size, xs.size, n_az), np.nan, np.float32)
     t0 = time.time()
     for iy, y in enumerate(ys):
         for ix, x in enumerate(xs):
             z = rc.sample(x, y)
             if np.isfinite(z):
-                p = rc.raycast(x, y, [float(z) + agl], az,
-                               max_range_m=max_range_m, dr_m=dr_m)[0]
-                panos[iy, ix] = _smooth(p, 5)            # pre-smooth once
+                ps = rc.raycast(x, y, [float(z) + a for a in agls], az,
+                                max_range_m=max_range_m, dr_m=dr_m)   # (n_alt,n_az)
+                for ai in range(agls.size):
+                    panos[ai, iy, ix] = _smooth(ps[ai], 5)
     if progress:
         print(f"  reference {ys.size}x{xs.size} = {xs.size*ys.size} cells "
-              f"in {time.time()-t0:.0f}s")
+              f"x {agls.size} alt in {time.time()-t0:.0f}s")
     return dict(panos=panos, xs=xs, ys=ys, az=az, n_az=n_az, spacing=spacing_m,
-                valid=np.isfinite(panos).all(2))
+                agls=agls, valid=np.isfinite(panos[0]).all(2))
 
 
-def residual_map(ref, query_elev, query_daz, heading_rad, fov_deg=65.0):
-    """Weighted SSD of one look (at known heading) vs every reference cell."""
+def residual_map(ref, query_elev, query_daz, heading_rad, fov_deg=65.0, alt_idx=0):
+    """Weighted SSD of one look (at known heading, altitude) vs every cell."""
     n_az = ref["n_az"]; step = 2 * np.pi / n_az
     nfov = int(np.deg2rad(fov_deg) / step)
     k = np.arange(-nfov // 2, nfov - nfov // 2)
@@ -58,7 +63,7 @@ def residual_map(ref, query_elev, query_daz, heading_rad, fov_deg=65.0):
     w = _smooth(np.abs(np.gradient(q)), 15); w /= w.sum() + 1e-9
     base = int(round((heading_rad % (2 * np.pi)) / (2 * np.pi) * n_az))
     idx = (base + k) % n_az
-    refw = ref["panos"][:, :, idx]
+    refw = ref["panos"][alt_idx][:, :, idx]
     refw = refw - refw.mean(2, keepdims=True)
     return np.tensordot((refw - q) ** 2, w, axes=([2], [0]))   # (ny,nx)
 
@@ -77,7 +82,7 @@ def cold_start(ref, frame_curves, frame_daz, headings, rel_xy, fov_deg=65.0):
 
     Returns dict: start_xy, trajectory, confidence, single_frame_confusion.
     """
-    sp = ref["spacing"]; ny, nx = ref["panos"].shape[:2]
+    sp = ref["spacing"]; ny, nx = ref["panos"].shape[1:3]
     seq = np.zeros((ny, nx)); cnt = np.zeros((ny, nx))
     first_R = None
     for i in range(len(frame_curves)):
@@ -118,44 +123,49 @@ def cold_start_blind(ref, frame_curves, frame_daz, fov_deg=65.0,
         headings_deg = np.arange(0, 360, 5)
     if speeds_m is None:
         speeds_m = np.array([20., 40., 60., 80., 100., 120., 150.])
-    ny, nx = ref["panos"].shape[:2]; sp = ref["spacing"]; Nf = len(frame_curves)
+    n_alt, ny, nx, _ = ref["panos"].shape
+    sp = ref["spacing"]; Nf = len(frame_curves); agls = ref["agls"]
 
     t0 = time.time()
-    cube = {}                                          # heading -> [per-frame cost maps]
+    cube = {}                                          # (heading,alt) -> [per-frame maps]
     for th in headings_deg:
         thr = np.deg2rad(th)
-        cube[th] = [residual_map(ref, frame_curves[i], frame_daz, thr, fov_deg)
-                    for i in range(Nf)]
+        for ai in range(n_alt):
+            cube[(th, ai)] = [residual_map(ref, frame_curves[i], frame_daz, thr,
+                                           fov_deg, ai) for i in range(Nf)]
     if progress:
-        print(f"  precomputed {len(headings_deg)*Nf} cost maps in {time.time()-t0:.0f}s")
+        print(f"  precomputed {len(headings_deg)*n_alt*Nf} cost maps "
+              f"({n_alt} altitudes) in {time.time()-t0:.0f}s")
 
     best = None
     for th in headings_deg:
         c, s = np.cos(np.deg2rad(th)), np.sin(np.deg2rad(th))
-        maps = cube[th]
-        for v in speeds_m:
-            seq = np.zeros((ny, nx)); cnt = np.zeros((ny, nx))
-            for i in range(Nf):
-                ox = int(round(i * v * c / sp)); oy = int(round(i * v * s / sp))
-                m = _lookup_shift(maps[i], oy, ox)
-                good = np.isfinite(m) & ref["valid"]
-                seq[good] += m[good]; cnt[good] += 1
-            seq[cnt < Nf] = np.inf
-            mn = float(seq.min())
-            if best is None or mn < best["cost"]:
-                iy, ix = np.unravel_index(np.argmin(seq), seq.shape)
-                best = dict(cost=mn, theta=th, speed=float(v), iy=iy, ix=ix,
-                            seq=seq.copy())
+        for ai in range(n_alt):
+            maps = cube[(th, ai)]
+            for v in speeds_m:
+                seq = np.zeros((ny, nx)); cnt = np.zeros((ny, nx))
+                for i in range(Nf):
+                    ox = int(round(i * v * c / sp)); oy = int(round(i * v * s / sp))
+                    m = _lookup_shift(maps[i], oy, ox)
+                    good = np.isfinite(m) & ref["valid"]
+                    seq[good] += m[good]; cnt[good] += 1
+                seq[cnt < Nf] = np.inf
+                mn = float(seq.min())
+                if best is None or mn < best["cost"]:
+                    iy, ix = np.unravel_index(np.argmin(seq), seq.shape)
+                    best = dict(cost=mn, theta=th, alt_idx=ai, speed=float(v),
+                                iy=iy, ix=ix, seq=seq.copy())
 
     sx, sy = ref["xs"][best["ix"]], ref["ys"][best["iy"]]
     c, s = np.cos(np.deg2rad(best["theta"])), np.sin(np.deg2rad(best["theta"]))
     traj = np.array([(sx + i * best["speed"] * c, sy + i * best["speed"] * s)
                      for i in range(Nf)])
-    first = np.min([cube[th][0] for th in headings_deg], axis=0)   # best-over-heading
+    first = np.min([cube[(th, best["alt_idx"])][0] for th in headings_deg], axis=0)
     f0 = first[ref["valid"]]
     single = int((f0 <= f0.min() + np.deg2rad(0.4) ** 2).sum())
     return dict(start_xy=(sx, sy), heading_deg=best["theta"], speed=best["speed"],
-                trajectory=traj, seq_cost=best["seq"], first_cost=first,
+                altitude=float(agls[best["alt_idx"]]), trajectory=traj,
+                seq_cost=best["seq"], first_cost=first,
                 single_frame_confusion=single, seconds=time.time() - t0)
 
 
@@ -245,8 +255,10 @@ def _demo_blind():
                                                fov, False, i, MAXR)
         frames.append(camera.extract_horizon(img, hfov_deg=fov))
 
-    print("Blind cold start (NO IMU, NO VO) — brute-forcing heading + speed too…")
-    ref = build_reference(rc, (400, 2600, 400, 2600), 60.0, agl=12.0)
+    print("Blind cold start (NO IMU, NO VO) — brute-forcing heading + speed "
+          "+ altitude (drone height unknown)…")
+    ref = build_reference(rc, (400, 2600, 400, 2600), 60.0,
+                          agl=[6., 9., 12., 15., 18.])      # search altitude too
     r = cold_start_blind(ref, frames, dcol, fov,
                          headings_deg=np.arange(0, 360, 5),
                          speeds_m=np.array([20., 30., 40., 50., 60.]))
@@ -259,6 +271,7 @@ def _demo_blind():
     print(f"  recovered start    : {err:.0f} m error")
     print(f"  recovered heading  : {r['heading_deg']:.0f} deg (truth 90)")
     print(f"  recovered speed    : {r['speed']:.0f} m/frame (truth 40)")
+    print(f"  recovered altitude : {r['altitude']:.0f} m (truth 12)")
 
     fig, ax = plt.subplots(1, 3, figsize=(16, 4.7))
     ext = [ref["xs"][0], ref["xs"][-1], ref["ys"][0], ref["ys"][-1]]

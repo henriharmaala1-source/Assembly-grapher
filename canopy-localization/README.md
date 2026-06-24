@@ -156,12 +156,21 @@ until disabled). Pitch (a constant) is absorbed by the curve's zero-meaning.
 Demonstrated by `test_preproc.py`: a clip corrupted with roll + barrel distortion
 + low contrast is recovered from **2.88° -> 0.84°** skyline error.
 
-**You must supply:** correct `--fov` (or `--calib`); `--alt` (AGL above the DSM
-surface); a DSM tile covering the flight area; `--speeds` covering the real
-per-frame motion; roll from IMU for tilted footage; footage from **above the
-canopy looking forward** with skyline structure. The one field unknown remains
-the **classical segmentation on real camera imagery** — the core sim-to-real test
-this enables.
+**Inputs (most are optional):**
+- `--fov` (degrees) — or a calibration file via `--calib`. **Calibration is
+  optional**: it's just your camera's lens parameters (focal length, centre,
+  distortion) from `calibrate_camera.py`; without it, `--fov` alone is fine
+  (calibration mainly helps wide/distorted action-cam lenses).
+- `--alt` — height above the treetops. **Optional and searched**: give one exact
+  value, a few to search (`--alt 8 12 16`), or omit it and the cold start tries a
+  default 5–18 m set and recovers the altitude. (One ray-march does all altitudes,
+  so this is nearly free.) Verified: it recovers the true height exactly in the demo.
+- Required: a DSM tile covering the area; footage from **above the canopy looking
+  forward** with skyline structure. Tune `--speeds` to your per-frame motion, and
+  pass `--roll` from the IMU for tilted (non-gimballed) footage.
+
+The one field unknown remains the **classical segmentation on real camera
+imagery** — the core sim-to-real test this enables.
 
 ## Cold start — prior-free relocalization (`coldstart.py`)
 

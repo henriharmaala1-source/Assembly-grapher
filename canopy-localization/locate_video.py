@@ -160,7 +160,9 @@ def main():
     ap.add_argument("--video")
     ap.add_argument("--make-test-video", action="store_true")
     ap.add_argument("--fov", type=float, default=65.0)
-    ap.add_argument("--alt", type=float, default=15.0)
+    ap.add_argument("--alt", type=float, nargs="+",
+                    help="height(s) above the treetops (m); give one exact value, a "
+                         "few to search, or omit to search a default 5-18 m set")
     ap.add_argument("--grid", type=float, default=80.0)
     ap.add_argument("--range-step", type=float,
                     help="ray-march step (m) for the reference; larger = faster build")
@@ -177,6 +179,7 @@ def main():
     ap.add_argument("--out", default="out")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
+    alts = a.alt if a.alt else [5., 8., 11., 14., 18.]   # search if not given
 
     dsm, res, tr, crs = load_metric_dsm(a.dsm, a.en_bounds, a.lonlat_bounds)
     print(f"DSM {dsm.shape} @ {res:.0f} m, CRS {crs}, "
@@ -186,14 +189,14 @@ def main():
     truth = None
     if a.make_test_video:
         vid = os.path.join(a.out, "test_clip.mp4")
-        truth, hd = make_test_video(dsm, res, vid, a.alt, a.fov)
+        truth, hd = make_test_video(dsm, res, vid, alts[len(alts) // 2], a.fov)
         print(f"test video -> {vid} (truth start local {truth[0].round()} m)")
     if not vid:
         print("Provide --video, or --make-test-video. Done (DSM loaded OK).")
         return
 
     calib = vp.load_calib(a.calib) if a.calib else None
-    out, ref = locate(vid, dsm, res, tr, crs, a.fov, a.alt, a.grid, speeds=a.speeds,
+    out, ref = locate(vid, dsm, res, tr, crs, a.fov, alts, a.grid, speeds=a.speeds,
                       calib=calib, auto_level=a.level, use_clahe=not a.no_clahe,
                       roll=a.roll, range_step=a.range_step)
     r = out["result"]
@@ -202,6 +205,7 @@ def main():
     if "lat" in out:
         print(f"  lat={out['lat']:.5f}  lon={out['lon']:.5f}")
     print(f"  heading {r['heading_deg']:.0f} deg, speed {r['speed']:.0f} m/frame, "
+          f"altitude {r['altitude']:.0f} m, "
           f"single-look ambiguity {r['single_frame_confusion']} cells")
     if truth is not None:
         eE, eN = local_to_world(*r["start_xy"], res, tr)

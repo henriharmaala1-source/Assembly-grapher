@@ -108,7 +108,7 @@ def make_test_video(dsm, res, out, alt, fov, nframes=12, fps=8):
 
 def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
            speeds=None, calib=None, auto_level=False, use_clahe=True, roll=None,
-           range_step=None):
+           range_step=None, spin=False):
     rc = HorizonRaycaster(dsm, res)
     H, W = dsm.shape
 
@@ -150,8 +150,11 @@ def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
     ref = coldstart.build_reference(
         rc, bnds, grid_m, agl=alt, max_range_m=mr,
         dr_m=range_step or max(res, 5.0))              # march step: speed/accuracy knob
-    r = coldstart.cold_start_blind(ref, frames, dcol, fov_eff,
-                                   speeds_m=np.array(speeds) if speeds else None)
+    if spin:                                            # camera spinning in place
+        r = coldstart.cold_start_spin(ref, frames, dcol, fov_eff)
+    else:
+        r = coldstart.cold_start_blind(ref, frames, dcol, fov_eff,
+                                       speeds_m=np.array(speeds) if speeds else None)
     E, N = local_to_world(*r["start_xy"], res, transform)
     out = dict(result=r, E=E, N=N, crs=crs)
     if Transformer is not None and crs:
@@ -184,6 +187,9 @@ def main():
                     help="skyline-based auto roll-level — ONLY for ~flat horizons; "
                          "conflates with real terrain slope, prefer --roll from IMU")
     ap.add_argument("--no-clahe", action="store_true", help="disable contrast normalization")
+    ap.add_argument("--spin", action="store_true",
+                    help="camera spinning in place (hover+yaw): treat as a panorama "
+                         "from one spot instead of forward flight")
     ap.add_argument("--en-bounds", type=float, nargs=4)
     ap.add_argument("--lonlat-bounds", type=float, nargs=4)
     ap.add_argument("--out", default="out")
@@ -208,15 +214,20 @@ def main():
     calib = vp.load_calib(a.calib) if a.calib else None
     out, ref = locate(vid, dsm, res, tr, crs, a.fov, alts, a.grid, speeds=a.speeds,
                       calib=calib, auto_level=a.level, use_clahe=not a.no_clahe,
-                      roll=a.roll, range_step=a.range_step)
+                      roll=a.roll, range_step=a.range_step, spin=a.spin)
     r = out["result"]
-    print(f"\nLOCATION (cold start, no GPS/IMU/VO):")
+    print(f"\nLOCATION (cold start, no GPS/IMU/VO{', SPIN' if a.spin else ''}):")
     print(f"  E={out['E']:.0f}  N={out['N']:.0f}  ({crs})")
     if "lat" in out:
         print(f"  lat={out['lat']:.5f}  lon={out['lon']:.5f}")
-    print(f"  heading {r['heading_deg']:.0f} deg, speed {r['speed']:.0f} m/frame, "
-          f"altitude {r['altitude']:.0f} m, "
-          f"single-look ambiguity {r['single_frame_confusion']} cells")
+    if a.spin:
+        print(f"  heading {r['heading_deg']:.0f} deg, altitude {r['altitude']:.0f} m, "
+              f"swept ~{r['spin_span_deg']:.0f} deg, "
+              f"single-look ambiguity {r['single_frame_confusion']} cells")
+    else:
+        print(f"  heading {r['heading_deg']:.0f} deg, speed {r['speed']:.0f} m/frame, "
+              f"altitude {r['altitude']:.0f} m, "
+              f"single-look ambiguity {r['single_frame_confusion']} cells")
     if truth is not None:
         eE, eN = local_to_world(*r["start_xy"], res, tr)
         tE, tN = local_to_world(truth[0][0], truth[0][1], res, tr)

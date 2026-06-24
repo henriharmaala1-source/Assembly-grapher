@@ -171,6 +171,74 @@ def cold_start_blind(ref, frame_curves, frame_daz, fov_deg=65.0,
                 single_frame_confusion=single, seconds=time.time() - t0)
 
 
+def _best_shift(a, b, max_frac=0.8):
+    """Azimuth shift (samples) such that b ~= a shifted by s, via overlap SSD."""
+    n = a.size; rng = int(n * max_frac); best = (1e18, 0)
+    for s in range(-rng, rng + 1):
+        if s >= 0:
+            aa, bb = a[s:], b[:n - s]
+        else:
+            aa, bb = a[:n + s], b[-s:]
+        if aa.size < n // 4:
+            continue
+        aa = aa - aa.mean(); bb = bb - bb.mean()
+        d = float(np.mean((aa - bb) ** 2))
+        if d < best[0]:
+            best = (d, s)
+    return best[1]
+
+
+def _spin_rotations(curves, daz, step_deg=0.5):
+    """Cumulative camera rotation (radians) per frame, from consecutive overlap."""
+    step = np.deg2rad(step_deg)
+    g = np.arange(daz.min(), daz.max(), step)
+    fr = [np.interp(g, daz, c) for c in curves]
+    cum = [0.0]
+    for i in range(1, len(fr)):
+        cum.append(cum[-1] + _best_shift(fr[i - 1], fr[i]) * step)
+    return np.array(cum)
+
+
+def cold_start_spin(ref, frame_curves, frame_daz, fov_deg=65.0,
+                    headings_deg=None, progress=True):
+    """Spinning camera at ~one spot (hover + yaw): the drone is STATIONARY and
+    the heading sweeps. Estimate the per-frame rotation from frame overlap, then
+    find the position by summing per-frame residuals at those headings (no speed,
+    no straight-line motion). A wide sweep makes the fix uniquely localizing."""
+    if headings_deg is None:
+        headings_deg = np.arange(0, 360, 4)
+    n_alt, ny, nx, _ = ref["panos"].shape
+    Nf = len(frame_curves)
+    cumrot = _spin_rotations(frame_curves, frame_daz)
+    span = float(np.rad2deg(cumrot.max() - cumrot.min()))
+    t0 = time.time()
+    best = None
+    for th in headings_deg:
+        thr = np.deg2rad(th)
+        for ai in range(n_alt):
+            seq = np.zeros((ny, nx))
+            for i in range(Nf):
+                seq += residual_map(ref, frame_curves[i], frame_daz,
+                                    thr + cumrot[i], fov_deg, ai)
+            seq = np.where(ref["valid"], seq, np.inf)
+            mn = float(np.nanmin(seq))
+            if best is None or mn < best["cost"]:
+                iy, ix = np.unravel_index(np.nanargmin(seq), seq.shape)
+                best = dict(cost=mn, theta=th, alt_idx=ai, iy=iy, ix=ix, seq=seq)
+    sx, sy = ref["xs"][best["ix"]], ref["ys"][best["iy"]]
+    f0 = np.min([residual_map(ref, frame_curves[0], frame_daz, np.deg2rad(t),
+                              fov_deg, best["alt_idx"]) for t in headings_deg], 0)
+    f0v = f0[ref["valid"]]
+    single = int((f0v <= f0v.min() + np.deg2rad(0.4) ** 2).sum())
+    if progress:
+        print(f"  spin: {Nf} frames swept ~{span:.0f} deg, {time.time()-t0:.0f}s")
+    return dict(start_xy=(sx, sy), heading_deg=best["theta"],
+                altitude=float(ref["agls"][best["alt_idx"]]),
+                trajectory=np.array([(sx, sy)]), seq_cost=best["seq"],
+                first_cost=f0, single_frame_confusion=single,
+                spin_span_deg=span, speed=0.0, seconds=time.time() - t0)
+
+
 # ----------------------------------------------------------------- demo
 def _demo():
     import matplotlib

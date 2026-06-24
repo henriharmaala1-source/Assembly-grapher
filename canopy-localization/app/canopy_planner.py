@@ -328,6 +328,7 @@ class Planner(tk.Tk):
             title="DSM GeoTIFF for LOCATION (Cancel = horizon overlay only)",
             filetypes=[("GeoTIFF", "*.tif *.tiff"), ("All", "*.*")])
         fov = alt = calib = None
+        spin = False
         if dsm:                                        # full comparison -> location
             fov = simpledialog.askfloat("Camera FOV", "Horizontal FOV (deg):",
                                         initialvalue=65.0, parent=self)
@@ -340,17 +341,24 @@ class Planner(tk.Tk):
             calib = filedialog.askopenfilename(
                 title="Camera calibration (optional; Cancel = use FOV only)",
                 filetypes=[("calib", "*.json *.npz"), ("All", "*.*")]) or None
+            spin = messagebox.askyesno(
+                "Spin mode?",
+                "Was the camera spinning in place (hover + yaw)?\n"
+                "Yes = panorama-from-one-spot.  No = forward flight.")
         self.status.config(text="Processing video…")
         threading.Thread(target=self._test_video_worker,
-                         args=(vid, dsm, fov, alt, calib), daemon=True).start()
+                         args=(vid, dsm, fov, alt, calib, spin if dsm else False),
+                         daemon=True).start()
 
-    def _test_video_worker(self, vid, dsm, fov, alt, calib):
+    def _test_video_worker(self, vid, dsm, fov, alt, calib, spin):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         try:
             if dsm:                                    # locate (real comparison)
                 cmd = [sys.executable, os.path.join(root, "locate_video.py"),
                        "--dsm", dsm, "--video", vid, "--fov", str(fov),
                        "--speeds", "20", "40", "60", "80", "100"]
+                if spin:
+                    cmd += ["--spin"]
                 if alt is not None:
                     cmd += ["--alt", str(alt)]             # else locate_video searches
                 if calib:

@@ -46,6 +46,8 @@ def build_reference(rc, bounds, spacing_m, n_az=360, agl=12.0,
                                 max_range_m=max_range_m, dr_m=dr_m)   # (n_alt,n_az)
                 for ai in range(agls.size):
                     panos[ai, iy, ix] = _smooth(ps[ai], 5)
+        if progress and ys.size >= 20 and (iy + 1) % max(1, ys.size // 10) == 0:
+            print(f"    …{iy+1}/{ys.size} rows ({time.time()-t0:.0f}s)", flush=True)
     if progress:
         print(f"  reference {ys.size}x{xs.size} = {xs.size*ys.size} cells "
               f"x {agls.size} alt in {time.time()-t0:.0f}s")

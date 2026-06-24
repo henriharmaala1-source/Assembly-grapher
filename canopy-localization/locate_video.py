@@ -136,9 +136,19 @@ def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
                            f"or unsupported codec (try re-encoding to H.264 mp4)")
     print(f"  {len(frames)} frames used (of {total}); preprocessed, fov {fov_eff:.0f} deg")
 
+    bnds = (res * 2, W * res - res * 2, res * 2, H * res - res * 2)
+    xspan, yspan = bnds[1] - bnds[0], bnds[3] - bnds[2]
+    n_cells = (xspan / grid_m) * (yspan / grid_m)
+    if n_cells > 6000:                                  # keep build time bounded
+        grid_m = float(np.sqrt(xspan * yspan / 6000))
+        print(f"  NOTE: DSM is large ({xspan/1000:.0f}x{yspan/1000:.0f} km) -> "
+              f"coarsening grid to {grid_m:.0f} m so the build stays fast. For a "
+              f"finer fix, crop the DSM (--en-bounds) or set --grid explicitly.")
+    mr = min(8000.0, max(W, H) * res)                   # far horizon: little gain, big cost
+    print(f"  building reference: ~{(xspan/grid_m)*(yspan/grid_m):.0f} cells, "
+          f"range {mr/1000:.0f} km …", flush=True)
     ref = coldstart.build_reference(
-        rc, (res * 2, W * res - res * 2, res * 2, H * res - res * 2),
-        grid_m, agl=alt, max_range_m=min(20000, max(W, H) * res),
+        rc, bnds, grid_m, agl=alt, max_range_m=mr,
         dr_m=range_step or max(res, 5.0))              # march step: speed/accuracy knob
     r = coldstart.cold_start_blind(ref, frames, dcol, fov_eff,
                                    speeds_m=np.array(speeds) if speeds else None)

@@ -157,13 +157,26 @@ def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
                                        speeds_m=np.array(speeds) if speeds else None)
     E, N = local_to_world(*r["start_xy"], res, transform)
     out = dict(result=r, E=E, N=N, crs=crs)
+    tf = None
     if Transformer is not None and crs:
         try:
-            lon, lat = Transformer.from_crs(crs, "EPSG:4326",
-                                            always_xy=True).transform(E, N)
+            tf = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+            lon, lat = tf.transform(E, N)
             out["lat"], out["lon"] = lat, lon
         except Exception:                               # noqa: BLE001
-            pass
+            tf = None
+    # the top-K best-guess positions (spatially-distinct cost minima), each in
+    # world coords + lat/lon, so a human can check if the true spot is among them
+    cands = coldstart.top_k_candidates(r["seq_cost"], ref, k=8)
+    for cd in cands:
+        cd["E"], cd["N"] = local_to_world(cd["x"], cd["y"], res, transform)
+        if tf is not None:
+            try:
+                clon, clat = tf.transform(cd["E"], cd["N"])
+                cd["lat"], cd["lon"] = clat, clon
+            except Exception:                           # noqa: BLE001
+                pass
+    out["candidates"] = cands
     return out, ref
 
 
@@ -233,6 +246,15 @@ def main():
         tE, tN = local_to_world(truth[0][0], truth[0][1], res, tr)
         print(f"  (test) start error: {np.hypot(eE-tE, eN-tN):.0f} m")
 
+    cands = out["candidates"]
+    print(f"\nBEST GUESSES (top {len(cands)} — check if one is your true spot):")
+    c0 = cands[0]["cost"] if cands else 1.0
+    for cd in cands:
+        ll = f"  ({cd['lat']:.5f}, {cd['lon']:.5f})" if "lat" in cd else ""
+        rel = cd["cost"] / c0 if c0 else 1.0
+        print(f"  #{cd['rank']}  E={cd['E']:.0f}  N={cd['N']:.0f}{ll}"
+              f"   cost x{rel:.3f}")
+
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -256,6 +278,29 @@ def main():
     fig.suptitle("locate_video: DSM GeoTIFF + video -> location (cold start)", fontsize=12)
     fig.tight_layout(); fig.savefig(os.path.join(a.out, "locate.png"), dpi=120)
     print(f"  figure -> {os.path.join(a.out, 'locate.png')}")
+
+    # best-guesses map: numbered top-K candidates on the DSM so the user can see
+    # at a glance whether their true location is among them
+    fig2, bx = plt.subplots(figsize=(8.6, 8.0))
+    bx.imshow(dsm, origin="lower", cmap="terrain", extent=[0, W*res, 0, H*res])
+    for cd in cands:
+        first = cd["rank"] == 1
+        col = "lime" if first else "yellow"
+        bx.plot(cd["x"], cd["y"], "o", mfc="none", mec=col,
+                ms=18 if first else 13, mew=2.5 if first else 1.8)
+        lab = f"#{cd['rank']}"
+        if "lat" in cd:
+            lab += f"\n{cd['lat']:.4f},{cd['lon']:.4f}"
+        bx.annotate(lab, (cd["x"], cd["y"]), color=col, fontsize=8,
+                    fontweight="bold", xytext=(7, 7), textcoords="offset points")
+    if truth is not None:
+        bx.plot(truth[0, 0], truth[0, 1], "r*", ms=18, label="truth")
+        bx.legend(loc="upper right")
+    bx.set_title(f"Best guesses (#1 = best, lime). E/N origin at SW corner.\n"
+                 f"DSM {W*res/1000:.1f}x{H*res/1000:.1f} km @ {res:.0f} m")
+    bx.set_xlabel("local east (m)"); bx.set_ylabel("local north (m)")
+    fig2.tight_layout(); fig2.savefig(os.path.join(a.out, "candidates.png"), dpi=120)
+    print(f"  best-guesses map -> {os.path.join(a.out, 'candidates.png')}")
 
 
 if __name__ == "__main__":

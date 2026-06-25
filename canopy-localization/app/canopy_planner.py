@@ -363,7 +363,7 @@ class Planner(tk.Tk):
                     cmd += ["--alt", str(alt)]             # else locate_video searches
                 if calib:
                     cmd += ["--calib", calib]
-                png = os.path.join(root, "out", "locate.png")
+                png = os.path.join(root, "out", "candidates.png")   # best-guesses map
             else:                                      # overlay only (no DSM)
                 cmd = [sys.executable, os.path.join(root, "video_test.py"), "--video", vid]
                 png = os.path.join(root, "out", "video_summary.png")

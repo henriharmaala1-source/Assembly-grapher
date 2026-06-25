@@ -79,6 +79,36 @@ def _lookup_shift(R, oy, ox):
     return out
 
 
+def top_k_candidates(seq_cost, ref, k=8, min_sep_m=None):
+    """The k best-guess positions from a cold-start cost surface.
+
+    Greedy non-maximum suppression: take the lowest-cost cell, blank out a
+    radius around it, repeat. That keeps the guesses SPATIALLY DISTINCT (one per
+    local basin) instead of k cells clustered on the same peak — so a human can
+    eyeball whether the true spot is among them. Returns a list of dicts
+    (rank, x, y in local metres, ix, iy, cost), best first.
+    """
+    sp = ref["spacing"]
+    if min_sep_m is None:
+        min_sep_m = max(5 * sp, 300.0)
+    sep = max(1, int(round(min_sep_m / sp)))
+    work = np.array(seq_cost, dtype=float)
+    work[~np.isfinite(work)] = np.inf
+    ny, nx = work.shape
+    out = []
+    for _ in range(k):
+        iy, ix = np.unravel_index(np.argmin(work), work.shape)
+        c = float(work[iy, ix])
+        if not np.isfinite(c):
+            break
+        out.append(dict(rank=len(out) + 1, ix=int(ix), iy=int(iy),
+                        x=float(ref["xs"][ix]), y=float(ref["ys"][iy]), cost=c))
+        y0, y1 = max(0, iy - sep), min(ny, iy + sep + 1)
+        x0, x1 = max(0, ix - sep), min(nx, ix + sep + 1)
+        work[y0:y1, x0:x1] = np.inf
+    return out
+
+
 def cold_start(ref, frame_curves, frame_daz, headings, rel_xy, fov_deg=65.0):
     """Fuse a sequence (no prior). rel_xy: cumulative (dE,dN) metres from frame 0.
 

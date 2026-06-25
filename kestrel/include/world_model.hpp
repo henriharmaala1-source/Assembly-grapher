@@ -5,8 +5,20 @@
 #include <string>
 #include <vector>
 
+#include "control_types.hpp"
+
 // ---------------------------------------------------------------- behaviour
-enum class Behavior { IDLE, NAVIGATE, TRACK, SEARCH, EVADE, RTL, HOLD };
+// MANUAL     — pilot has the sticks; OS computes but does not send control
+// IDLE       — armed-idle, nothing to do
+// NAVIGATE   — follow the monocular-depth open corridor
+// ROAD_FOLLOW— follow a visually-detected road/track
+// TRACK      — centre and pursue a locked-on target
+// SEARCH     — slow yaw scan looking for a target / corridor
+// EVADE      — back off from a close high-confidence obstacle/intruder
+// HOLD       — hover level, hold position
+// RTL        — return to launch (handed to the flight controller's own RTL)
+enum class Behavior { MANUAL, IDLE, NAVIGATE, ROAD_FOLLOW, TRACK,
+                      SEARCH, EVADE, HOLD, RTL };
 const char* behavior_name(Behavior b);
 
 // ---------------------------------------------------------------- detections
@@ -47,11 +59,32 @@ struct WorldState {
     // --- Detect ---
     std::vector<Detection> detections;
 
-    // --- Vehicle telemetry (filled by MAVLink in P2; stubbed for now) ---
-    bool        vehArmed   = false;
-    float       vehBattery = 1.0f;    // [0,1]
-    float       vehAltM    = 0.f;
-    std::string vehMode    = "SIM";
+    // --- Road follow (appearance-based; pairs with the depth corridor) ---
+    bool        roadValid   = false;
+    float       roadOffset  = 0.f;    // lateral centreline offset [-1,1]
+    float       roadHeading = 0.f;    // near→far bend [-1,1]
+    float       roadConf    = 0.f;    // [0,1]
+
+    // --- Vehicle telemetry (filled by the flight-controller backend) ---
+    bool        vehArmed     = false;
+    float       vehBattery   = 1.0f;  // [0,1]
+    float       vehBattV     = 0.f;   // volts
+    float       vehAltM      = 0.f;
+    float       vehRollDeg   = 0.f;
+    float       vehPitchDeg  = 0.f;
+    float       vehYawDeg    = 0.f;   // heading, 0 = North
+    double      vehLat       = 0.0;
+    double      vehLon       = 0.0;
+    int         vehSats      = 0;
+    int         vehFix       = 0;     // 0 none, 2 = 2D, 3 = 3D
+    float       vehGroundspeed = 0.f; // m/s
+    bool        vehLink      = false; // FC serial link alive
+    std::string vehMode      = "SIM";
+
+    // --- Control (what the OS wants the FC to do) ---
+    ControlCmd  control;              // last computed command
+    bool        controlActive = false;// true once actually sent to the FC
+    std::string modeReason;           // why the FSM chose the current behaviour
 
     std::string brief() const;        // one-line scene state (LLM input)
 };

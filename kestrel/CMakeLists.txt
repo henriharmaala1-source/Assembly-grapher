@@ -18,6 +18,11 @@ add_executable(kestrel
   src/world_model.cpp
   src/perception.cpp
   src/scheduler.cpp
+  src/road_follow.cpp
+  src/fsm.cpp
+  src/controller.cpp
+  src/serial_port.cpp
+  src/msp_backend.cpp
   ${RPI5}/lock_tracker.cpp
   ${RPI5}/kalman_center.cpp
   ${RPI5}/depth_nav.cpp)

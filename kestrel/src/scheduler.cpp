@@ -4,7 +4,7 @@ bool PerceptionScheduler::maybeRun(Slot& s, const cv::Mat& frame, WorldModel& wm
                                    long frameId, float& budget, int interval) {
     if (!s.mod->isReady()) return false;
     if (frameId - s.lastRun < interval) return false;
-    if (s.mod->costMs() > budget) return false;   // no room this tick
+    if (budget <= 0.f) return false;   // a heavy module already ran this tick
 
     s.mod->run(frame, wm);
     s.lastRun = frameId;

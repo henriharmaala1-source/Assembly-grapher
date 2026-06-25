@@ -4,13 +4,15 @@
 
 const char* behavior_name(Behavior b) {
     switch (b) {
-        case Behavior::IDLE:     return "IDLE";
-        case Behavior::NAVIGATE: return "NAVIGATE";
-        case Behavior::TRACK:    return "TRACK";
-        case Behavior::SEARCH:   return "SEARCH";
-        case Behavior::EVADE:    return "EVADE";
-        case Behavior::RTL:      return "RTL";
-        case Behavior::HOLD:     return "HOLD";
+        case Behavior::MANUAL:      return "MANUAL";
+        case Behavior::IDLE:        return "IDLE";
+        case Behavior::NAVIGATE:    return "NAVIGATE";
+        case Behavior::ROAD_FOLLOW: return "ROAD_FOLLOW";
+        case Behavior::TRACK:       return "TRACK";
+        case Behavior::SEARCH:      return "SEARCH";
+        case Behavior::EVADE:       return "EVADE";
+        case Behavior::HOLD:        return "HOLD";
+        case Behavior::RTL:         return "RTL";
     }
     return "?";
 }
@@ -37,6 +39,10 @@ std::string WorldState::brief() const {
            << int(corridorHeading.x) << "," << int(corridorHeading.y) << ")";
     }
 
+    os << " road=";
+    if (!roadValid) os << "none";
+    else os << "(off" << int(roadOffset * 100) << ",c" << int(roadConf * 100) << "%)";
+
     os << " det=[";
     for (size_t i = 0; i < detections.size(); ++i) {
         if (i) os << ",";
@@ -44,7 +50,13 @@ std::string WorldState::brief() const {
     }
     os << "]";
 
+    if (control.valid)
+        os << " ctl(r" << int(control.roll * 100) << ",p" << int(control.pitch * 100)
+           << ",y" << int(control.yaw * 100) << ",t" << int(control.throttle * 100)
+           << (controlActive ? ",LIVE)" : ",dry)");
+
     os << " bat=" << int(vehBattery * 100) << "% alt=" << int(vehAltM) << "m"
+       << (vehLink ? " fc=up" : " fc=down")
        << " fps=" << int(fps);
     return os.str();
 }

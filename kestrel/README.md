@@ -25,7 +25,7 @@ The LLM never sends control commands; it selects among allowed behaviours and
 tunes parameters within hard bounds. A guard layer validates every LLM output
 and a watchdog keeps the reactive layer flying if the LLM stalls.
 
-## What's implemented (P0 + P1)
+## What's implemented (P0–P2)
 
 | Piece | File | Status |
 | ----- | ---- | ------ |
@@ -34,11 +34,44 @@ and a watchdog keeps the reactive layer flying if the LLM stalls.
 | Track module (wraps `LockOnTracker`) | `perception.cpp` | ✅ |
 | Navigate module (wraps `DepthNav` corridor) | `perception.cpp` | ✅ |
 | Detect module (YOLOv8 ONNX via OpenCV DNN) | `perception.cpp` | ✅ |
+| Road-follow module (CIELab appearance, no NN) | `road_follow.*` | ✅ |
 | Compute-budgeted scheduler | `scheduler.*` | ✅ |
-| Behaviour arbiter | `main.cpp` (stub) | ⚠️ stub — full FSM in P2 |
-| MAVLink offboard control | — | ⬜ P2 |
+| Behaviour FSM (hysteretic modes) | `fsm.*` | ✅ |
+| Controller (behaviour → normalised command) | `controller.*` | ✅ |
+| Flight-controller abstraction | `flight_controller.hpp` | ✅ |
+| MSP backend (iNAV, verified AETR + telemetry) | `msp_backend.*`, `serial_port.*` | ✅ |
+| MAVLink backend (ArduPilot) | `mavlink_backend.hpp` | ⚠️ documented stub |
 | LLM sidecar + guard layer | — | ⬜ P3 |
 | Ground UI / telemetry viz | — | ⬜ P4 |
+| Localization (canopy + SLAM + EKF) | — | ⬜ P5 |
+
+## Modes (behaviour FSM)
+
+`MANUAL · IDLE · NAVIGATE · ROAD_FOLLOW · TRACK · SEARCH · EVADE · HOLD · RTL`
+
+Priority, highest first: **failsafe** (low battery / lost FC link → RTL or HOLD)
+→ **operator** latch (`m`/`h`/`g` keys) → **autonomy** ladder (TRACK > EVADE >
+ROAD_FOLLOW > NAVIGATE > SEARCH). Debounce counters stop the mode flapping.
+
+## Flight-controller control
+
+The OS is **FC-agnostic**: an `IFlightController` abstraction with an **MSP
+(iNAV)** backend now and a **MAVLink (ArduPilot)** stub to fill later. The shared
+control primitive is RC override (`MSP_SET_RAW_RC` ↔ `RC_CHANNELS_OVERRIDE`).
+
+> **SAFETY — control is DRY-RUN by default.** The command is computed and shown
+> but **not sent**. Pass `--allow-control` (and toggle with `space`) to actually
+> send. Arm on the radio, props off, bench-test first. MSP channel order is
+> **AETR** (throttle = ch index 2, yaw = ch index 3) — verified against iNAV
+> firmware; the classic RPYT assumption silently swaps throttle and yaw.
+
+```bash
+# dry-run autonomy with depth + road follow, video window
+./build/kestrel --depth-model=models/midas_small.onnx --display
+
+# talk to an iNAV FC over UART, still dry-run until you press space / pass --allow-control
+./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --display
+```
 
 ## Build
 

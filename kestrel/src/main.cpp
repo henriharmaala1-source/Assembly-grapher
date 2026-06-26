@@ -11,15 +11,20 @@
 //   click = lock target      1/2/3/4 = track backend (CSRT/KCF/FLOW/MOSSE)
 //   m = MANUAL    h = HOLD    g = resume autonomy    space = arm/disarm control
 //   r = reset     q/ESC = quit
+//
+// Bench-test (--bench-test): no camera; connects to the FC and prints a live
+// telemetry table + DRY-RUN RC channel map every 500 ms. Ctrl+C to exit.
 
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "controller.hpp"
 #include "flight_controller.hpp"
@@ -33,6 +38,111 @@
 
 namespace {
 
+// ---- bench-test ----
+volatile std::sig_atomic_t g_benchQuit = 0;
+void bench_sig(int) { g_benchQuit = 1; }
+
+// Axis helper (mirrors MspBackend internals for display).
+static uint16_t axUs(float v) {
+    v = std::max(-1.f, std::min(1.f, v));
+    int us = 1500 + (int)(v * 500.f);
+    return (uint16_t)std::max(1000, std::min(2000, us));
+}
+// Throttle [0,1] → [1500,2000] µs (0 = mid/hold, 1 = full climb).
+// Matches MspBackend::thrToUs() exactly.
+static uint16_t thrUs(float v) {
+    v = std::max(0.f, std::min(1.f, v));
+    int us = 1500 + (int)(v * 500.f);
+    return (uint16_t)std::max(1000, std::min(2000, us));
+}
+
+static void printBenchRow(const char* label, float roll, float pitch,
+                          float thr, float yaw) {
+    std::printf("  %-12s  A=%-4u  E=%-4u  T=%-4u  R=%-4u µs\n",
+                label, axUs(roll), axUs(pitch), thrUs(thr), axUs(yaw));
+}
+
+static void runBenchTest(IFlightController& fc) {
+    using clock = std::chrono::steady_clock;
+    std::signal(SIGINT,  bench_sig);
+    std::signal(SIGTERM, bench_sig);
+
+    std::printf("\n");
+    std::printf("╔══════════════════════════════════════════════════════════════╗\n");
+    std::printf("║        kestrel  MSP BENCH-TEST  (all control DRY-RUN)       ║\n");
+    std::printf("║   Ctrl+C to exit. Arm on the radio — NOT via this tool.     ║\n");
+    std::printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+
+    auto tPrint = clock::now() - std::chrono::seconds(2);   // force immediate first print
+    int  ticks  = 0;
+
+    while (!g_benchQuit) {
+        fc.tick();
+        ++ticks;
+
+        const auto now   = clock::now();
+        const double age = std::chrono::duration<double>(now - tPrint).count();
+        if (age < 0.5) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+        tPrint = now;
+
+        FcTelemetry t{};
+        fc.poll(t);
+
+        // ---- header
+        std::printf("─────────────────────────────────── [tick %-5d] ─────\n", ticks);
+
+        // ---- link / armed
+        std::printf("link    : %-6s          armed   : %s\n",
+                    t.linkUp ? "UP" : "DOWN",
+                    t.armed  ? "ARMED (!!)" : "disarmed");
+
+        // ---- attitude
+        std::printf("roll    : %+7.1f °       pitch   : %+7.1f °       yaw : %+7.1f °\n",
+                    t.rollDeg, t.pitchDeg, t.yawDeg);
+
+        // ---- battery
+        const int cellCount = (t.battV > 16.f) ? 4 : (t.battV > 12.f) ? 3 : 0;
+        if (cellCount) {
+            std::printf("battery : %5.2f V  [%d%%]   (%dS pack assumed)\n",
+                        t.battV, (int)(t.battPct * 100.f), cellCount);
+        } else {
+            std::printf("battery : %5.2f V  [reading — verify cell count]\n", t.battV);
+        }
+
+        // ---- GPS
+        const char* fixNames[] = {"NO FIX","NO FIX","2D","3D","DGPS","RTK"};
+        const char* fixStr = (t.fixType < 6) ? fixNames[t.fixType] : "?";
+        std::printf("GPS     : %-6s  sats=%-2d  lat=%+.6f  lon=%+.6f\n",
+                    fixStr, t.sats, t.lat, t.lon);
+        std::printf("          alt=%.0f m   spd=%.1f m/s\n", t.altM, t.groundspeedMs);
+
+        // ---- DRY-RUN RC channel map
+        std::printf("\n── DRY-RUN RC (AETR — throttle=Ch2, yaw=Ch3) ─────────────\n");
+        std::printf("  %-12s  A=Roll  E=Pitch  T=Throttle  R=Yaw  (µs)\n", "maneuver");
+        std::printf("  ────────────────────────────────────────────────────────\n");
+        printBenchRow("neutral",     0.f,  0.f,  0.f,  0.f);
+        printBenchRow("fwd cruise",  0.f,  0.25f, 0.f, 0.f);
+        printBenchRow("climb +25%",  0.f,  0.f,  0.5f, 0.f);
+        printBenchRow("yaw left",    0.f,  0.f,  0.f, -0.15f);
+        printBenchRow("yaw right",   0.f,  0.f,  0.f, +0.15f);
+        printBenchRow("roll right",  0.35f, 0.f, 0.f,  0.f);
+        std::printf("  AUX Ch4–7 = 1000 µs (arm on the radio)\n\n");
+
+        if (!t.linkUp) {
+            std::printf("  [!] FC not responding — check baud rate and cable\n\n");
+        }
+
+        std::fflush(stdout);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    std::printf("\n[bench] exited cleanly.\n");
+}
+
+// ---- main loop display helpers ----
 struct ClickState {
     cv::Point pt{-1, -1};
     bool      pending = false;
@@ -62,6 +172,7 @@ int main(int argc, char** argv) {
         "{fc-port        | /dev/ttyAMA0 | FC serial device }"
         "{fc-baud        | 115200 | FC serial baud }"
         "{allow-control  | false | actually SEND control to the FC (else dry-run) }"
+        "{bench-test     | false | connect FC, print live telemetry table, then exit (no camera) }"
         "{budget         | 60    | per-tick CPU budget ms }"
         "{display        | false | show the video window (desk testing) }";
 
@@ -118,6 +229,19 @@ int main(int argc, char** argv) {
     if (allowControl && !fc) {
         std::fprintf(stderr, "[fc] --allow-control set but no FC link; staying dry-run\n");
         allowControl = false;
+    }
+
+    // ---- bench-test mode: live telemetry table, no camera, no vision pipeline
+    if (parser.get<bool>("bench-test")) {
+        if (!fc) {
+            std::fprintf(stderr,
+                "[bench] --bench-test requires --fc=msp (or mavlink). "
+                "Pass --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200\n");
+            return 1;
+        }
+        runBenchTest(*fc);
+        fc->disconnect();
+        return 0;
     }
 
     BehaviorFsm fsm;

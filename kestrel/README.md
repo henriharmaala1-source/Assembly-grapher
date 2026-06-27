@@ -40,10 +40,13 @@ and a watchdog keeps the reactive layer flying if the LLM stalls.
 | Controller (behaviour → normalised command) | `controller.*` | ✅ |
 | Flight-controller abstraction | `flight_controller.hpp` | ✅ |
 | MSP backend (iNAV, verified AETR + telemetry) | `msp_backend.*`, `serial_port.*` | ✅ |
+| MSP bench-test mode (live telemetry table) | `main.cpp --bench-test` | ✅ |
+| State estimator (loosely-coupled KF, ENU) | `state_estimator.*` | ✅ |
+| Synthetic-GPS feedback to iNAV (MSP2_SENSOR_GPS) | `msp_backend.*` | ✅ |
 | MAVLink backend (ArduPilot) | `mavlink_backend.hpp` | ⚠️ documented stub |
 | LLM sidecar + guard layer | — | ⬜ P3 |
 | Ground UI / telemetry viz | — | ⬜ P4 |
-| Localization (canopy + SLAM + EKF) | — | ⬜ P5 |
+| Localization (VIO/SLAM + image-to-map + EKF) | — | ⬜ P5 |
 
 ## Modes (behaviour FSM)
 
@@ -71,6 +74,46 @@ control primitive is RC override (`MSP_SET_RAW_RC` ↔ `RC_CHANNELS_OVERRIDE`).
 
 # talk to an iNAV FC over UART, still dry-run until you press space / pass --allow-control
 ./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --display
+
+# bench-test: live MSP telemetry table + dry-run RC channel map, no camera
+./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --bench-test
+```
+
+## State estimator + synthetic-GPS feedback
+
+`StateEstimator` is a **loosely-coupled Kalman filter** in a local ENU frame
+(origin = first 3-D fix). State `[pe,pn,pu, ve,vn,vu]`, constant-velocity model.
+It is **not** a re-implementation of the FC's filter — iNAV already fuses IMU +
+GPS + baro well. The Pi-side filter fuses the things the FC can't on its own
+(chiefly visual odometry / SLAM) into one drift-corrected pose at loop rate:
+
+| Source | Update | Status |
+| ------ | ------ | ------ |
+| FC GPS (lat/lon + course-speed) | absolute position + velocity, glitch-gated (2.5 m) | ✅ |
+| FC baro (`MSP_ALTITUDE`) | vertical position | ✅ |
+| Vision odometry velocity | `updateVisionVelocity()` (body→ENU via FC yaw) | ⬜ P5 hook |
+| Absolute image-to-map fix | `updateVisionPose()` | ⬜ P5 hook |
+
+Roll/pitch/yaw come straight from FC telemetry (its Mahony AHRS beats anything
+derived casually); geodetic projection and body→world rotation are done at the
+measurement boundary so the core filter stays linear and well-conditioned.
+
+**Closing the loop — feed the estimate back to iNAV.** iNAV has no native
+vision-pose message, so the supported path is a **synthetic GPS** via
+`MSP2_SENSOR_GPS` (v2 frame, CRC8/DVB-S2). With `gps_provider = MSP` on the FC,
+iNAV's own PosHold/RTH/WP use the injected fix exactly like a real GPS — this is
+how a Pi running SLAM keeps the FC navigating GPS-denied. Injection is gated by
+`--feed-gps` (off by default) and rate-limited (`--feed-gps-hz`, default 10).
+
+> **SAFETY.** Feeding synthetic GPS requires `set gps_provider = MSP` on the FC.
+> Honest accuracy fields are sent (`ephM`/`epvM` from the filter covariance) so
+> iNAV's glitch/timeout gating still protects you. Until the P5 VIO front-end
+> exists, the estimate is GPS+baro only, so `--feed-gps` is for bench-validating
+> the MSP2_SENSOR_GPS framing and the geodetic round-trip, not GPS-denied flight.
+
+```bash
+# fuse FC telemetry into the ENU estimate and inject it back as synthetic GPS
+./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --feed-gps
 ```
 
 ## Build

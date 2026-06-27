@@ -81,6 +81,15 @@ struct WorldState {
     bool        vehLink      = false; // FC serial link alive
     std::string vehMode      = "SIM";
 
+    // --- Fused state estimate (Pi-side EKF; ENU local frame) ---
+    bool        estValid     = false;
+    float       estPe = 0.f, estPn = 0.f, estPu = 0.f;   // local ENU position (m)
+    float       estVe = 0.f, estVn = 0.f, estVu = 0.f;   // local ENU velocity (m/s)
+    float       estSpeed     = 0.f;   // horizontal speed (m/s)
+    float       estEphM      = 0.f;   // horizontal 1σ uncertainty (m)
+    bool        estGpsDenied = false; // coasting without a GPS fix
+    bool        estFeedingFc = false; // injecting synthetic GPS into the FC
+
     // --- Control (what the OS wants the FC to do) ---
     ControlCmd  control;              // last computed command
     bool        controlActive = false;// true once actually sent to the FC

@@ -28,13 +28,17 @@ public:
     void tick() override;
     bool poll(FcTelemetry& out) override;
     bool sendControl(const ControlCmd& cmd) override;
+    bool feedExternalGps(const ExtGps& fix) override;
 
 private:
-    // MSP message IDs (decimal).
+    // MSP v1 message IDs (decimal).
     enum : uint8_t { MSP_STATUS = 101, MSP_RAW_GPS = 106, MSP_ATTITUDE = 108,
-                     MSP_ANALOG = 110, MSP_SET_RAW_RC = 200 };
+                     MSP_ALTITUDE = 109, MSP_ANALOG = 110, MSP_SET_RAW_RC = 200 };
+    // MSP v2 function IDs (16-bit). Sensor messages are fire-and-forget (no ACK).
+    enum : uint16_t { MSP2_SENSOR_GPS = 0x1F03 };
 
     void sendV1(uint8_t cmd, const uint8_t* payload, uint8_t size);
+    void sendV2(uint16_t function, const uint8_t* payload, uint16_t size);
     void requestNextTelemetry();
     void drainRx();
     void onMessage(uint8_t cmd, const std::vector<uint8_t>& p);

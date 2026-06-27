@@ -21,6 +21,7 @@ add_executable(kestrel
   src/road_follow.cpp
   src/fsm.cpp
   src/controller.cpp
+  src/state_estimator.cpp
   src/serial_port.cpp
   src/msp_backend.cpp
   ${RPI5}/lock_tracker.cpp

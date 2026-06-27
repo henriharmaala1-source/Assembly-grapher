@@ -1,10 +1,13 @@
 #include "msp_backend.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
 namespace {
+constexpr float kPi = 3.14159265358979323846f;
+
 inline uint16_t rdU16(const std::vector<uint8_t>& p, size_t o) {
     return (uint16_t)(p[o] | (p[o + 1] << 8));
 }
@@ -13,6 +16,14 @@ inline int16_t rdS16(const std::vector<uint8_t>& p, size_t o) {
 }
 inline int32_t rdS32(const std::vector<uint8_t>& p, size_t o) {
     return (int32_t)(p[o] | (p[o + 1] << 8) | (p[o + 2] << 16) | (p[o + 3] << 24));
+}
+
+// CRC8 / DVB-S2 (poly 0xD5, init 0, no reflection) — iNAV MSP v2 checksum.
+inline uint8_t crc8_dvb_s2(uint8_t crc, uint8_t a) {
+    crc ^= a;
+    for (int i = 0; i < 8; ++i)
+        crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0xD5) : (uint8_t)(crc << 1);
+    return crc;
 }
 }  // namespace
 
@@ -58,6 +69,58 @@ void MspBackend::sendV1(uint8_t cmd, const uint8_t* payload, uint8_t size) {
     serial_.write(f.data(), (int)f.size());
 }
 
+void MspBackend::sendV2(uint16_t function, const uint8_t* payload, uint16_t size) {
+    std::vector<uint8_t> f;
+    f.reserve(9 + size);
+    f.push_back('$'); f.push_back('X'); f.push_back('<');
+    uint8_t crc = 0;
+    auto put = [&](uint8_t b) { f.push_back(b); crc = crc8_dvb_s2(crc, b); };
+    put(0);                                          // flags
+    put(function & 0xFF); put((function >> 8) & 0xFF);
+    put(size & 0xFF);     put((size >> 8) & 0xFF);
+    for (uint16_t i = 0; i < size; ++i) put(payload[i]);
+    f.push_back(crc);
+    serial_.write(f.data(), (int)f.size());
+}
+
+bool MspBackend::feedExternalGps(const ExtGps& fix) {
+    if (!connected_) return false;
+
+    std::vector<uint8_t> p;
+    p.reserve(52);
+    auto u8  = [&](uint8_t v)  { p.push_back(v); };
+    auto u16 = [&](uint16_t v) { p.push_back(v & 0xFF); p.push_back((v >> 8) & 0xFF); };
+    auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) p.push_back((v >> (8 * i)) & 0xFF); };
+    auto i32 = [&](int32_t v)  { u32((uint32_t)v); };
+
+    // MSP2_SENSOR_GPS layout (iNAV io/gps_msp.c). All little-endian.
+    u8(0);                                              // instance
+    u16(0);                                             // gpsWeek (nav ignores)
+    u32(0);                                             // msTOW
+    u8((uint8_t)fix.fixType);                           // 3 = 3D
+    u8((uint8_t)fix.sats);                              // satellitesInView
+    u16((uint16_t)std::min(65535.f, fix.ephM * 100.f)); // horizontalPosAccuracy cm
+    u16((uint16_t)std::min(65535.f, fix.epvM * 100.f)); // verticalPosAccuracy cm
+    u16(50);                                            // horizontalVelAccuracy cm/s
+    u16((uint16_t)std::min(9999.f, fix.hdop * 100.f));  // hdop ×100
+    i32((int32_t)std::llround(fix.lon * 1e7));          // longitude deg×1e7
+    i32((int32_t)std::llround(fix.lat * 1e7));          // latitude  deg×1e7
+    i32((int32_t)std::lround(fix.altMslM * 100.f));     // mslAltitude cm
+    i32((int32_t)std::lround(fix.velN * 100.f));        // nedVelNorth cm/s
+    i32((int32_t)std::lround(fix.velE * 100.f));        // nedVelEast  cm/s
+    i32((int32_t)std::lround(fix.velD * 100.f));        // nedVelDown  cm/s
+
+    float course = fix.yawDeg;                          // ground course deg×10
+    if (course < 0.f) { course = std::atan2(fix.velE, fix.velN) * 180.f / kPi; }
+    if (course < 0.f) course += 360.f;
+    u16((uint16_t)std::lround(course * 10.f));          // groundCourse
+    u16(0xFFFF);                                        // trueYaw = invalid → FC keeps AHRS heading
+    u16(0); u8(0); u8(0); u8(0); u8(0); u8(0);          // year/month/day/hour/min/sec (unused)
+
+    sendV2(MSP2_SENSOR_GPS, p.data(), (uint16_t)p.size());   // fire-and-forget, no ACK
+    return true;
+}
+
 bool MspBackend::sendControl(const ControlCmd& cmd) {
     if (!connected_ || !cmd.valid) return false;
     // AETR: [Roll, Pitch, Throttle, Yaw, AUX1..AUX4]. Throttle is index 2.
@@ -78,8 +141,10 @@ bool MspBackend::sendControl(const ControlCmd& cmd) {
 }
 
 void MspBackend::requestNextTelemetry() {
-    static const uint8_t ids[] = {MSP_STATUS, MSP_ATTITUDE, MSP_RAW_GPS, MSP_ANALOG};
-    sendV1(ids[pollIdx_ % 4], nullptr, 0);
+    static const uint8_t ids[] = {MSP_ATTITUDE, MSP_ALTITUDE, MSP_RAW_GPS,
+                                  MSP_ATTITUDE, MSP_STATUS,   MSP_ANALOG};
+    // Attitude polled twice as often (fast-changing); GPS/status/analog slower.
+    sendV1(ids[pollIdx_ % 6], nullptr, 0);
     ++pollIdx_;
 }
 
@@ -141,8 +206,13 @@ void MspBackend::onMessage(uint8_t cmd, const std::vector<uint8_t>& p) {
                 tel_.lat           = rdS32(p, 2) / 1e7;
                 tel_.lon           = rdS32(p, 6) / 1e7;
                 tel_.altM          = (float)rdU16(p, 10);
-                tel_.groundspeedMs = rdU16(p, 12) / 100.f;   // cm/s → m/s
+                tel_.groundspeedMs = rdU16(p, 12) / 100.f;        // cm/s → m/s
+                tel_.groundCourseDeg = rdU16(p, 14) / 10.f;       // decideg → deg
             }
+            break;
+        case MSP_ALTITUDE:
+            if (p.size() >= 4)
+                tel_.baroAltM = rdS32(p, 0) / 100.f;              // estimated alt, cm → m
             break;
         case MSP_ANALOG:
             if (p.size() >= 7) {

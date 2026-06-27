@@ -19,7 +19,9 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <memory>
@@ -34,9 +36,12 @@
 #include "perception.hpp"
 #include "road_follow.hpp"
 #include "scheduler.hpp"
+#include "state_estimator.hpp"
 #include "world_model.hpp"
 
 namespace {
+
+constexpr float kDeg2Rad = 3.14159265358979323846f / 180.f;
 
 // ---- bench-test ----
 volatile std::sig_atomic_t g_benchQuit = 0;
@@ -173,6 +178,8 @@ int main(int argc, char** argv) {
         "{fc-baud        | 115200 | FC serial baud }"
         "{allow-control  | false | actually SEND control to the FC (else dry-run) }"
         "{bench-test     | false | connect FC, print live telemetry table, then exit (no camera) }"
+        "{feed-gps       | false | inject the fused estimate into iNAV as MSP2_SENSOR_GPS }"
+        "{feed-gps-hz    | 10    | rate to inject synthetic GPS (Hz) }"
         "{budget         | 60    | per-tick CPU budget ms }"
         "{display        | false | show the video window (desk testing) }";
 
@@ -202,6 +209,8 @@ int main(int argc, char** argv) {
     const bool display      = parser.get<bool>("display");
     const bool roadOn        = parser.get<bool>("road");
     bool       allowControl = parser.get<bool>("allow-control");
+    const bool feedGps       = parser.get<bool>("feed-gps");
+    const double feedPeriod  = 1.0 / std::max(1.0, (double)parser.get<float>("feed-gps-hz"));
 
     // ---- perception modules
     TrackModule    track(backend, parser.get<int>("size"));
@@ -244,8 +253,10 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    BehaviorFsm fsm;
-    Controller  controller;
+    BehaviorFsm    fsm;
+    Controller     controller;
+    StateEstimator est;
+    auto           tFeed = std::chrono::steady_clock::now();
 
     // ---- camera
     cv::VideoCapture cap(parser.get<int>("camera"), cv::CAP_V4L2);
@@ -278,10 +289,11 @@ int main(int argc, char** argv) {
         ++frameId;
 
         // ---- flight-controller telemetry
+        FcTelemetry t;
+        bool        haveTel = false;
         if (fc) {
             fc->tick();
-            FcTelemetry t;
-            fc->poll(t);
+            haveTel = fc->poll(t);
             wm.with([&](WorldState& s) {
                 s.vehArmed = t.armed; s.vehBattery = t.battPct; s.vehBattV = t.battV;
                 s.vehAltM = t.altM;   s.vehRollDeg = t.rollDeg; s.vehPitchDeg = t.pitchDeg;
@@ -305,6 +317,38 @@ int main(int argc, char** argv) {
         const double dt   = std::chrono::duration<double>(tNow - tPrev).count();
         tPrev = tNow;
         fps   = 0.9 * fps + 0.1 / std::max(dt, 1e-6);
+
+        // ---- state estimator (Pi-side EKF): predict, then fuse FC data.
+        // Vision-odometry / SLAM fixes plug in here via est.updateVisionVelocity()
+        // / est.updateVisionPose() once the P5 front-end exists.
+        bool feeding = false;
+        if (haveTel) {
+            est.setHeading(t.yawDeg);
+            est.predict((float)dt);
+            if (t.fixType >= 3) {                       // GPS velocity from course+speed
+                const float course = t.groundCourseDeg * kDeg2Rad;
+                const float vN = t.groundspeedMs * std::cos(course);
+                const float vE = t.groundspeedMs * std::sin(course);
+                est.updateGps(t.lat, t.lon, t.altM, t.fixType, true, vN, vE, 0.f, 2.5f, 3.0f);
+            }
+            est.updateBaro(t.baroAltM);
+
+            // Inject the fused estimate back as synthetic GPS, rate-limited.
+            if (feedGps && fc && est.hasOrigin() &&
+                std::chrono::duration<double>(tNow - tFeed).count() >= feedPeriod) {
+                ExtGps g;
+                if (est.makeExtGps(g)) feeding = fc->feedExternalGps(g);
+                tFeed = tNow;
+            }
+        }
+        const StateEstimator::State es = est.state();
+        wm.with([&](WorldState& s) {
+            s.estValid = es.valid;
+            s.estPe = es.pe; s.estPn = es.pn; s.estPu = es.pu;
+            s.estVe = es.ve; s.estVn = es.vn; s.estVu = es.vu;
+            s.estSpeed = es.speedMs; s.estEphM = es.ephM;
+            s.estGpsDenied = es.gpsDenied; s.estFeedingFc = feeding;
+        });
 
         std::string reason;
         const WorldState snap = wm.snapshot();

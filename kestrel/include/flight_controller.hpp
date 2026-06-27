@@ -11,8 +11,10 @@
 //   - the backend owns link keep-alive (MSP poll / MAVLink HEARTBEAT); the
 //     caller just calls tick() every loop. Forgetting a heartbeat triggers the
 //     MAVLink GCS failsafe, so it must never be the caller's job.
-//   - feedVisionPose() exists for the localization pipeline (MAVLink
-//     VISION_POSITION_ESTIMATE); MSP backends no-op it.
+//   - feedExternalGps() pushes a companion-computed position INTO the FC's own
+//     estimator. iNAV has no native vision-pose message, so the supported path
+//     is a synthetic GPS (MSP2_SENSOR_GPS, gps_provider=MSP). MAVLink backends
+//     map it to GPS_INPUT / VISION_POSITION_ESTIMATE.
 enum class FcMode { STABILIZE, ALT_HOLD, OFFBOARD, ANGLE, LOITER, RTL, LAND, UNKNOWN };
 
 class IFlightController {
@@ -37,6 +39,8 @@ public:
     virtual bool setMode(FcMode)  { return false; }
     virtual bool arm(bool /*force*/) { return false; }
     virtual bool disarm()         { return false; }
-    virtual bool feedVisionPose(double /*x*/, double /*y*/, double /*z*/,
-                                float /*yawDeg*/) { return false; }
+
+    // Inject a companion-computed position into the FC's navigation estimator.
+    // MSP backend: MSP2_SENSOR_GPS (no ACK). Requires gps_provider=MSP on the FC.
+    virtual bool feedExternalGps(const ExtGps& /*fix*/) { return false; }
 };

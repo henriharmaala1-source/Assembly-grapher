@@ -50,6 +50,14 @@ std::string WorldState::brief() const {
     }
     os << "]";
 
+    if (estValid) {
+        os << " est(" << int(estPe) << "," << int(estPn) << "," << int(estPu) << "m"
+           << ",v" << int(estSpeed) << ",e" << int(estEphM);
+        if (estGpsDenied) os << ",DENIED";
+        if (estFeedingFc) os << ",feed";
+        os << ")";
+    }
+
     if (control.valid)
         os << " ctl(r" << int(control.roll * 100) << ",p" << int(control.pitch * 100)
            << ",y" << int(control.yaw * 100) << ",t" << int(control.throttle * 100)

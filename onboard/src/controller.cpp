@@ -13,13 +13,13 @@ ControlCmd Controller::compute(const WorldState& s, Behavior beh,
 
     switch (beh) {
         case Behavior::TRACK: {
-            // Observe-from-hover. Target tracking is a SENSING capability: the
-            // world model carries the target (s.targetBox) for a camera/gimbal to
-            // point at and for the operator to see, but the airframe deliberately
-            // does NOT translate or steer toward it. Driving the aircraft onto a
-            // tracked target is steer-to-target guidance and is intentionally not
-            // implemented here — TRACK holds a level hover and watches.
-            c.valid = true;   // all axes zero → stable hover while observing
+            // Pure SENSING — no control output. The tracker's only product is the
+            // bounding box (s.targetBox, with s.targetVel/Conf/Age) in the world
+            // model, for a camera/gimbal, the operator, telemetry, or a logger to
+            // read. The controller emits NO flight command here (valid=false → no
+            // override): the airframe is not driven by the tracked target at all.
+            // Steer-to-target guidance is deliberately not implemented.
+            c.valid = false;
             break;
         }
         case Behavior::NAVIGATE: {

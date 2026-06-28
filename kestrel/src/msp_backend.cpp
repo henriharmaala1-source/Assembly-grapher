@@ -262,7 +262,9 @@ void MspBackend::onMessage(uint8_t cmd, const std::vector<uint8_t>& p) {
 }
 
 bool MspBackend::poll(FcTelemetry& out) {
-    tel_.linkUp = linkUp();
+    tel_.linkUp  = linkUp();
+    tel_.rcCount = rcCount_;
+    for (int i = 0; i < rcCount_ && i < 18; ++i) tel_.rc[i] = rc_[i];
     out = tel_;
     return tel_.linkUp;
 }

@@ -7,6 +7,11 @@
 // displayed but NOT sent to the FC. Pass --allow-control (and toggle with the
 // space bar) to actually send. Arm on the radio, props off, bench first.
 //
+// Target designation: click the view (with --display), or flip an RC switch
+// (--lock-aux=<chan>) to lock onto the CENTRE of the view in flight — the
+// on-aircraft equivalent of a click. The lock is a sensing output (a box in the
+// world model for a gimbal/operator); TRACK observes from hover.
+//
 // Keys (with --display):
 //   click = lock target      1/2/3/4 = track backend (CSRT/KCF/FLOW/MOSSE)
 //   m = MANUAL    h = HOLD    g = resume autonomy    space = arm/disarm control
@@ -168,6 +173,8 @@ int main(int argc, char** argv) {
         "{height         | 480   | capture height }"
         "{backend b      | mosse | track backend: csrt|kcf|flow|mosse }"
         "{size s         | 80    | lock box size px }"
+        "{lock-aux       | -1    | RC channel idx (0-based) that locks onto frame centre on a high switch; -1 = off }"
+        "{lock-aux-us    | 1700  | µs threshold above which the lock switch reads high }"
         "{depth-model    |       | ONNX depth model (enables navigate) }"
         "{depth-backend  | midas | midas|dav2 }"
         "{detect-model   |       | ONNX YOLOv8 model (enables detect) }"
@@ -213,6 +220,8 @@ int main(int argc, char** argv) {
     const bool feedGps       = parser.get<bool>("feed-gps");
     const double feedPeriod  = 1.0 / std::max(1.0, (double)parser.get<float>("feed-gps-hz"));
     const bool assistMode    = parser.get<bool>("assist");
+    const int  lockAux       = parser.get<int>("lock-aux");
+    const int  lockAuxUs     = parser.get<int>("lock-aux-us");
 
     // ---- perception modules
     TrackModule    track(backend, parser.get<int>("size"));
@@ -278,9 +287,10 @@ int main(int argc, char** argv) {
         cv::setMouseCallback(win, on_mouse, &click);
     }
 
-    long   frameId   = 0;
-    double fps       = 30.0;
-    bool   wasAllow  = false;   // engage edge for the assist-baseline latch
+    long   frameId    = 0;
+    double fps        = 30.0;
+    bool   wasAllow   = false;  // engage edge for the assist-baseline latch
+    bool   auxWasHigh = false;  // edge for the AUX lock switch
     auto   tPrev   = std::chrono::steady_clock::now();
     auto   tLog    = tPrev;
 
@@ -308,9 +318,20 @@ int main(int argc, char** argv) {
             });
         }
 
-        // ---- target designation
+        // ---- target designation: mouse click (display) or AUX switch (in-flight).
+        // The AUX switch locks onto whatever is at the centre of the view — the
+        // in-flight equivalent of a click, for designating a subject to the
+        // tracker (a sensing output; TRACK observes from hover, see controller).
         OperatorCmd op;
         if (click.pending) { click.pending = false; track.requestLock(click.pt); }
+        if (lockAux >= 0 && haveTel && lockAux < t.rcCount) {
+            const bool hi = t.rc[lockAux] >= lockAuxUs;
+            if (hi && !auxWasHigh)
+                track.requestLock({frame.cols / 2, frame.rows / 2});   // lock frame centre
+            else if (!hi && auxWasHigh)
+                track.reset();                                         // release on switch low
+            auxWasHigh = hi;
+        }
 
         // ---- perception
         const Behavior prevBeh = fsm.current();
@@ -408,6 +429,11 @@ int main(int argc, char** argv) {
                           behavior_name(beh), reason.c_str(), ctlStr, fps);
             cv::putText(frame, hud, {8, 22}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
                         {255, 255, 255}, 2);
+
+            if (lockAux >= 0) {   // centre designation reticle for the AUX lock
+                cv::drawMarker(frame, {frame.cols / 2, frame.rows / 2},
+                               {200, 200, 200}, cv::MARKER_CROSS, 18, 1, cv::LINE_AA);
+            }
 
             cv::imshow(win, frame);
             const int k = cv::waitKey(1) & 0xFF;

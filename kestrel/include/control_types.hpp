@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Shared control/telemetry value types — used by the controller, the world
 // model, and (P-FC) the flight-controller backends. Kept dependency-free so
 // neither the perception layer nor the FC layer has to include the other.
@@ -31,6 +33,8 @@ struct FcTelemetry {
     int    fixType      = 0;       // 0 none, 2 = 2D, 3 = 3D
     float  groundspeedMs = 0.f;
     float  groundCourseDeg = 0.f;  // GPS course over ground, deg (0 = North)
+    uint16_t rc[18]{};             // current RC channel values, µs (from MSP_RC)
+    int    rcCount      = 0;       // number of valid channels in rc[]
     bool   linkUp       = false;   // FC serial link alive
 };
 

@@ -29,11 +29,14 @@ public:
     bool poll(FcTelemetry& out) override;
     bool sendControl(const ControlCmd& cmd) override;
     bool feedExternalGps(const ExtGps& fix) override;
+    void setAssistMode(bool on) override { assist_ = on; }
+    void latchBaseline() override;
 
 private:
     // MSP v1 message IDs (decimal).
-    enum : uint8_t { MSP_STATUS = 101, MSP_RAW_GPS = 106, MSP_ATTITUDE = 108,
-                     MSP_ALTITUDE = 109, MSP_ANALOG = 110, MSP_SET_RAW_RC = 200 };
+    enum : uint8_t { MSP_RC = 105, MSP_STATUS = 101, MSP_RAW_GPS = 106,
+                     MSP_ATTITUDE = 108, MSP_ALTITUDE = 109, MSP_ANALOG = 110,
+                     MSP_SET_RAW_RC = 200 };
     // MSP v2 function IDs (16-bit). Sensor messages are fire-and-forget (no ACK).
     enum : uint16_t { MSP2_SENSOR_GPS = 0x1F03 };
 
@@ -43,11 +46,21 @@ private:
     void drainRx();
     void onMessage(uint8_t cmd, const std::vector<uint8_t>& p);
 
-    static uint16_t axisToUs(float v);   // [-1,1] → [1000,2000]
+    static uint16_t axisToUs(float v);   // [-1,1] → [1000,2000] absolute
     static uint16_t thrToUs(float v);    // [0,1]  → [1500,2000] (mid = hold)
+    static uint16_t addDelta(uint16_t base, float v);  // base + v*500, clamped
 
     SerialPort   serial_;
     FcTelemetry  tel_;
+
+    // Control blending. Total autonomy writes absolute sticks; flight assist
+    // trims relative to baseline_ (operator RC latched at engagement). rc_ holds
+    // the live channels read back via MSP_RC.
+    bool     assist_        = false;
+    bool     baselineValid_ = false;
+    uint16_t baseline_[8]{};
+    uint16_t rc_[18]{};
+    int      rcCount_       = 0;
 
     // RX parser state machine.
     enum class St { DOLLAR, M, DIR, SIZE, CMD, DATA, CRC } st_ = St::DOLLAR;

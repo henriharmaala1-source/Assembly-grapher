@@ -62,6 +62,21 @@ The OS is **FC-agnostic**: an `IFlightController` abstraction with an **MSP
 (iNAV)** backend now and a **MAVLink (ArduPilot)** stub to fill later. The shared
 control primitive is RC override (`MSP_SET_RAW_RC` ↔ `RC_CHANNELS_OVERRIDE`).
 
+Two control modes (same navigation controller underneath — corridor, road,
+hover, RTL — only the stick baseline differs):
+
+| Mode | Flag | Sticks start from | Use |
+| ---- | ---- | ----------------- | --- |
+| **Total autonomy** (default) | — | neutral (1500 µs) — the OS is the stick source | hands-off autonomous flight |
+| **Flight assist** | `--assist` | the operator's **current** sticks, latched at engagement | bumpless takeover; the OS trims from where the pilot's hands are |
+
+Flight assist reads the operator's live channels back via `MSP_RC` and, on the
+dry→live engage edge, latches them as the baseline; control output is then
+`baseline + clamped-trim` instead of absolute-from-neutral, so there's no jolt at
+handoff (throttle especially). It needs a real receiver present — config the FC
+for partial override (`receiver_type = SERIAL` + `msp_override_channels`) so
+`MSP_RC` reflects actual pilot input and arming/AUX stay on the radio.
+
 > **SAFETY — control is DRY-RUN by default.** The command is computed and shown
 > but **not sent**. Pass `--allow-control` (and toggle with `space`) to actually
 > send. Arm on the radio, props off, bench-test first. MSP channel order is

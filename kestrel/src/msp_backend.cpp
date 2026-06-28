@@ -121,16 +121,44 @@ bool MspBackend::feedExternalGps(const ExtGps& fix) {
     return true;
 }
 
+uint16_t MspBackend::addDelta(uint16_t base, float v) {
+    int us = (int)base + (int)(v * 500.f);              // ±1.0 → ±500 µs trim
+    return (uint16_t)std::max(1000, std::min(2000, us));
+}
+
+void MspBackend::latchBaseline() {
+    // Capture the operator's current sticks (read back via MSP_RC) as the assist
+    // baseline. One-shot at engagement, so it reflects pure operator input and
+    // doesn't drift by re-reading our own override frames.
+    if (rcCount_ >= 4) {
+        for (int i = 0; i < 8; ++i)
+            baseline_[i] = (i < rcCount_) ? rc_[i] : (i == 2 ? 1500 : (i < 4 ? 1500 : 1000));
+        baselineValid_ = true;
+    } else {
+        baselineValid_ = false;   // no operator RC seen → assist falls back to total
+    }
+}
+
 bool MspBackend::sendControl(const ControlCmd& cmd) {
     if (!connected_ || !cmd.valid) return false;
     // AETR: [Roll, Pitch, Throttle, Yaw, AUX1..AUX4]. Throttle is index 2.
-    uint16_t ch[8] = {
-        axisToUs(cmd.roll),       // 0 Aileron / Roll
-        axisToUs(cmd.pitch),      // 1 Elevator / Pitch
-        thrToUs(cmd.throttle),    // 2 Throttle
-        axisToUs(cmd.yaw),        // 3 Rudder / Yaw
-        1000, 1000, 1000, 1000,   // AUX (arm left on the radio — not here)
-    };
+    uint16_t ch[8];
+    if (assist_ && baselineValid_) {
+        // Flight assist: trim relative to the operator's latched sticks, so the
+        // takeover starts from where their hands are (bumpless), not from neutral.
+        ch[0] = addDelta(baseline_[0], cmd.roll);
+        ch[1] = addDelta(baseline_[1], cmd.pitch);
+        ch[2] = addDelta(baseline_[2], cmd.throttle);
+        ch[3] = addDelta(baseline_[3], cmd.yaw);
+        for (int i = 4; i < 8; ++i) ch[i] = baseline_[i];   // operator AUX passes through
+    } else {
+        // Total autonomy: absolute sticks from neutral; the OS is the source.
+        ch[0] = axisToUs(cmd.roll);
+        ch[1] = axisToUs(cmd.pitch);
+        ch[2] = thrToUs(cmd.throttle);
+        ch[3] = axisToUs(cmd.yaw);
+        for (int i = 4; i < 8; ++i) ch[i] = baselineValid_ ? baseline_[i] : 1000;
+    }
     uint8_t payload[16];
     for (int i = 0; i < 8; ++i) {
         payload[i * 2]     = (uint8_t)(ch[i] & 0xFF);
@@ -141,10 +169,11 @@ bool MspBackend::sendControl(const ControlCmd& cmd) {
 }
 
 void MspBackend::requestNextTelemetry() {
-    static const uint8_t ids[] = {MSP_ATTITUDE, MSP_ALTITUDE, MSP_RAW_GPS,
-                                  MSP_ATTITUDE, MSP_STATUS,   MSP_ANALOG};
-    // Attitude polled twice as often (fast-changing); GPS/status/analog slower.
-    sendV1(ids[pollIdx_ % 6], nullptr, 0);
+    static const uint8_t ids[] = {MSP_ATTITUDE, MSP_RC, MSP_ALTITUDE, MSP_ATTITUDE,
+                                  MSP_RC, MSP_RAW_GPS, MSP_STATUS, MSP_ANALOG};
+    // Attitude + RC polled often (fast-changing / needed for the assist latch);
+    // GPS/status/analog slower.
+    sendV1(ids[pollIdx_ % 8], nullptr, 0);
     ++pollIdx_;
 }
 
@@ -185,6 +214,10 @@ void MspBackend::drainRx() {
 
 void MspBackend::onMessage(uint8_t cmd, const std::vector<uint8_t>& p) {
     switch (cmd) {
+        case MSP_RC:                                      // operator/current RC, µs
+            rcCount_ = std::min((int)(p.size() / 2), 18);
+            for (int i = 0; i < rcCount_; ++i) rc_[i] = rdU16(p, i * 2);
+            break;
         case MSP_STATUS:
             if (p.size() >= 10) {
                 const uint32_t flags = (uint32_t)rdS32(p, 6);

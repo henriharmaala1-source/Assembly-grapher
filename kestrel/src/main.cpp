@@ -177,6 +177,7 @@ int main(int argc, char** argv) {
         "{fc-port        | /dev/ttyAMA0 | FC serial device }"
         "{fc-baud        | 115200 | FC serial baud }"
         "{allow-control  | false | actually SEND control to the FC (else dry-run) }"
+        "{assist         | false | flight-assist: trim from the operator's current sticks (else total autonomy from neutral) }"
         "{bench-test     | false | connect FC, print live telemetry table, then exit (no camera) }"
         "{feed-gps       | false | inject the fused estimate into iNAV as MSP2_SENSOR_GPS }"
         "{feed-gps-hz    | 10    | rate to inject synthetic GPS (Hz) }"
@@ -211,6 +212,7 @@ int main(int argc, char** argv) {
     bool       allowControl = parser.get<bool>("allow-control");
     const bool feedGps       = parser.get<bool>("feed-gps");
     const double feedPeriod  = 1.0 / std::max(1.0, (double)parser.get<float>("feed-gps-hz"));
+    const bool assistMode    = parser.get<bool>("assist");
 
     // ---- perception modules
     TrackModule    track(backend, parser.get<int>("size"));
@@ -239,6 +241,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[fc] --allow-control set but no FC link; staying dry-run\n");
         allowControl = false;
     }
+    if (fc) fc->setAssistMode(assistMode);   // total autonomy vs flight assist
 
     // ---- bench-test mode: live telemetry table, no camera, no vision pipeline
     if (parser.get<bool>("bench-test")) {
@@ -275,8 +278,9 @@ int main(int argc, char** argv) {
         cv::setMouseCallback(win, on_mouse, &click);
     }
 
-    long   frameId = 0;
-    double fps     = 30.0;
+    long   frameId   = 0;
+    double fps       = 30.0;
+    bool   wasAllow  = false;   // engage edge for the assist-baseline latch
     auto   tPrev   = std::chrono::steady_clock::now();
     auto   tLog    = tPrev;
 
@@ -355,6 +359,11 @@ int main(int argc, char** argv) {
         const Behavior beh = fsm.update(snap, op, dt, reason);
         ControlCmd cmd = controller.compute(snap, beh, frame.cols, frame.rows);
 
+        // On the dry→live engage edge in assist mode, latch the operator's
+        // current sticks so the takeover starts from their hands, not neutral.
+        if (allowControl && !wasAllow && assistMode && fc) fc->latchBaseline();
+        wasAllow = allowControl;
+
         bool sent = false;
         if (allowControl && fc && fc->linkUp() && cmd.valid)
             sent = fc->sendControl(cmd);
@@ -392,10 +401,11 @@ int main(int argc, char** argv) {
                 cv::arrowedLine(frame, {bx, frame.rows - 4}, tip,
                                 {80, 255, 80}, 2, cv::LINE_AA, 0, 0.25);
             }
+            const char* ctlStr = (allowControl && sent)
+                ? (assistMode ? "LIVE/assist" : "LIVE/total") : "dry";
             char hud[160];
             std::snprintf(hud, sizeof(hud), "%s  %s  ctl:%s  %.0ffps",
-                          behavior_name(beh), reason.c_str(),
-                          (allowControl && sent) ? "LIVE" : "dry", fps);
+                          behavior_name(beh), reason.c_str(), ctlStr, fps);
             cv::putText(frame, hud, {8, 22}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
                         {255, 255, 255}, 2);
 

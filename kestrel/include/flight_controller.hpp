@@ -43,4 +43,13 @@ public:
     // Inject a companion-computed position into the FC's navigation estimator.
     // MSP backend: MSP2_SENSOR_GPS (no ACK). Requires gps_provider=MSP on the FC.
     virtual bool feedExternalGps(const ExtGps& /*fix*/) { return false; }
+
+    // Control blending:
+    //   total autonomy (default) — sendControl() writes absolute sticks from
+    //     neutral; the OS is the stick source.
+    //   flight assist           — sendControl() trims relative to the operator's
+    //     sticks latched at engagement (bumpless takeover); call latchBaseline()
+    //     on the dry→live transition to capture the current operator input.
+    virtual void setAssistMode(bool /*on*/) {}
+    virtual void latchBaseline()            {}
 };

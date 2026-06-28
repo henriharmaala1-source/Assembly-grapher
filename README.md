@@ -1,24 +1,17 @@
-# Assembly-grapher — a small-drone autonomy stack
+# Assembly-grapher
 
-A cheap, open companion-computer autonomy stack for small drones: vision-based
-perception, GPS-denied state estimation, navigation, and flight-controller
-integration, built to run on a Raspberry Pi 5 alongside an iNAV (or PX4 /
-ArduPilot) flight controller.
-
-The repo is **two clearly separated parts** — the on-drone OS (runs on the Pi)
-and the desktop tool the perception is prototyped in (runs on a workstation):
+Two **independent** tools in one repo — they share no code and build separately:
 
 | Directory | What it is | Runs on | Language |
 |-----------|-----------|---------|----------|
-| **`kestrel/`** | **The drone OS / Pi files.** Capture → perception scheduler → world model → behaviour FSM → controller → flight-controller backend. Self-contained C++. | Raspberry Pi 5 | C++ (OpenCV) |
-| **`desktop/`** | **The desktop app.** DINOv2 + SAM 2 + CV lock-on tracker for developing and eyeballing the perception backends off the drone (`main.py` + the `tracker/` package). | workstation (GPU) | Python (PyTorch) |
+| **`onboard/`** | **The on-drone autonomy OS** (named *kestrel*): capture → perception scheduler → world model → behaviour FSM → controller → flight-controller backend. | Raspberry Pi 5, **on the aircraft** | C++ (OpenCV) |
+| **`desktop/`** | **A workstation app** for prototyping the perception backends off the drone: DINOv2 + SAM 2 + CV lock-on tracker (`main.py` + the `tracker/` package). | desktop / laptop, **never flies** | Python (PyTorch) |
 
-Nothing is shared at the repo root — each part is fully contained in its own
-directory with its own build/deps and its own README:
-[`kestrel/README.md`](kestrel/README.md) for the OS,
-[`desktop/README.md`](desktop/README.md) for the desktop app.
+`onboard/` is the Pi / on-drone system; `desktop/` is a development tool that
+stays on the ground. Each is self-contained with its own build, deps, and README:
+[`onboard/README.md`](onboard/README.md) and [`desktop/README.md`](desktop/README.md).
 
-## kestrel — the drone OS
+## onboard — the on-drone OS (kestrel)
 
 A modular real-time runtime (CPU-only, no ROS) that orchestrates the perception
 modules behind one compute-budgeted scheduler, maintains a shared world model,
@@ -35,7 +28,7 @@ fuses a state estimate, and drives the flight controller.
   verified AETR channel order + telemetry, MAVLink backend stubbed. Control is
   **dry-run by default**.
 
-See [`kestrel/README.md`](kestrel/README.md) for build, run, the bench-test mode,
+See [`onboard/README.md`](onboard/README.md) for build, run, the bench-test mode,
 and the state-estimator / synthetic-GPS details.
 
 ## Scope of the control layer
@@ -52,7 +45,7 @@ deliberately **not** part of this codebase.
 
 ```bash
 sudo apt install -y build-essential cmake libopencv-dev
-cd kestrel && cmake -B build && cmake --build build -j4
+cd onboard && cmake -B build && cmake --build build -j4
 
 # headless, prints world-state telemetry
 ./build/kestrel

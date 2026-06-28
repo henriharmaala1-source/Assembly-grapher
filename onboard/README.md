@@ -135,13 +135,13 @@ how a Pi running SLAM keeps the FC navigating GPS-denied. Injection is gated by
 
 ```bash
 sudo apt install -y build-essential cmake libopencv-dev
-cd kestrel
+cd onboard
 cmake -B build
 cmake --build build -j4
 ```
 
 Self-contained — all perception sources (lock-on tracker, depth nav, Kalman)
-live under `kestrel/` directly; there is no external project dependency.
+live under `onboard/` directly; there is no external project dependency.
 
 ## Run
 

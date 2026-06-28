@@ -4,7 +4,7 @@ Draw a box around any object in a webcam feed and the app locks on and tracks
 it. This is the **off-drone** research/visualisation tool: it's where the
 perception backends (DINOv2 re-ID, SAM 2, the CV trackers, depth/road analysis)
 are developed and eyeballed before the C++ equivalents go onto the drone OS
-(`../kestrel`). Self-contained — run it from this directory with `python main.py`
+(`../onboard`). Self-contained — run it from this directory with `python main.py`
 (the `tracker/` package is the implementation).
 
 Two interchangeable tracking **engines**:

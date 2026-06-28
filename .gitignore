@@ -16,5 +16,5 @@ models/
 Thumbs.db
 
 # Build
-kestrel/build/
+onboard/build/
 build/

@@ -125,8 +125,8 @@ cmake -B build
 cmake --build build -j4
 ```
 
-Reuses `../rpi5_tracker/src` directly — build that project's deps and this
-compiles too.
+Self-contained — all perception sources (lock-on tracker, depth nav, Kalman)
+live under `kestrel/` directly; there is no external project dependency.
 
 ## Run
 

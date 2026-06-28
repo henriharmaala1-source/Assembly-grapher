@@ -13,14 +13,13 @@ ControlCmd Controller::compute(const WorldState& s, Behavior beh,
 
     switch (beh) {
         case Behavior::TRACK: {
-            // Centre the target: x-offset → yaw, vertical bias → pitch; ease forward.
-            if (s.targetValid) {
-                const cv::Point ctr = (s.targetBox.tl() + s.targetBox.br()) / 2;
-                const float ex = (ctr.x - halfW) / halfW;       // [-1,1]
-                c.yaw   = clamp_(g_.kpYawTrack * ex);
-                c.pitch = clamp_(g_.kpPitchTrack * g_.cruise);  // pursue gently
-                c.valid = true;
-            }
+            // Observe-from-hover. Target tracking is a SENSING capability: the
+            // world model carries the target (s.targetBox) for a camera/gimbal to
+            // point at and for the operator to see, but the airframe deliberately
+            // does NOT translate or steer toward it. Driving the aircraft onto a
+            // tracked target is steer-to-target guidance and is intentionally not
+            // implemented here — TRACK holds a level hover and watches.
+            c.valid = true;   // all axes zero → stable hover while observing
             break;
         }
         case Behavior::NAVIGATE: {

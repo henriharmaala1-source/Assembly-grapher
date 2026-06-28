@@ -10,9 +10,6 @@ endif()
 find_package(OpenCV REQUIRED COMPONENTS
   core imgproc video videoio highgui tracking dnn)
 
-# Reuse the rpi5_tracker perception sources directly.
-set(RPI5 ${CMAKE_CURRENT_SOURCE_DIR}/../rpi5_tracker/src)
-
 add_executable(kestrel
   src/main.cpp
   src/world_model.cpp
@@ -24,13 +21,12 @@ add_executable(kestrel
   src/state_estimator.cpp
   src/serial_port.cpp
   src/msp_backend.cpp
-  ${RPI5}/lock_tracker.cpp
-  ${RPI5}/kalman_center.cpp
-  ${RPI5}/depth_nav.cpp)
+  src/lock_tracker.cpp
+  src/kalman_center.cpp
+  src/depth_nav.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${RPI5}
   ${OpenCV_INCLUDE_DIRS})
 
 target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS})

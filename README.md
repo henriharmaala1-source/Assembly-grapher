@@ -5,16 +5,18 @@ perception, GPS-denied state estimation, navigation, and flight-controller
 integration, built to run on a Raspberry Pi 5 alongside an iNAV (or PX4 /
 ArduPilot) flight controller.
 
-The repo is two pieces — the on-drone OS and the desktop tool the perception is
-prototyped in:
+The repo is **two clearly separated parts** — the on-drone OS (runs on the Pi)
+and the desktop tool the perception is prototyped in (runs on a workstation):
 
-| Path | What it is | Language |
-|------|-----------|----------|
-| **`kestrel/`** | **The drone OS.** Capture → perception scheduler → world model → behaviour FSM → controller → flight-controller backend. Runs on the Pi. | C++ (OpenCV) |
-| **`tracker/`** + `main.py` | **Desktop perception / dev tool.** DINOv2 + SAM 2 + CV lock-on tracker for developing and eyeballing the perception backends off the drone. | Python (PyTorch) |
+| Directory | What it is | Runs on | Language |
+|-----------|-----------|---------|----------|
+| **`kestrel/`** | **The drone OS / Pi files.** Capture → perception scheduler → world model → behaviour FSM → controller → flight-controller backend. Self-contained C++. | Raspberry Pi 5 | C++ (OpenCV) |
+| **`desktop/`** | **The desktop app.** DINOv2 + SAM 2 + CV lock-on tracker for developing and eyeballing the perception backends off the drone (`main.py` + the `tracker/` package). | workstation (GPU) | Python (PyTorch) |
 
-Each has its own README: [`kestrel/README.md`](kestrel/README.md) for the OS,
-[`tracker/README.md`](tracker/README.md) for the desktop tool.
+Nothing is shared at the repo root — each part is fully contained in its own
+directory with its own build/deps and its own README:
+[`kestrel/README.md`](kestrel/README.md) for the OS,
+[`desktop/README.md`](desktop/README.md) for the desktop app.
 
 ## kestrel — the drone OS
 
@@ -58,4 +60,12 @@ cd kestrel && cmake -B build && cmake --build build -j4
 ./build/kestrel --depth-model=models/midas_small.onnx --display
 # talk to an iNAV FC (dry-run until --allow-control)
 ./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --display
+```
+
+## Run (desktop app)
+
+```bash
+cd desktop
+pip install -r requirements.txt
+python main.py            # engines, CUDA, and SAM 2 setup: see desktop/README.md
 ```

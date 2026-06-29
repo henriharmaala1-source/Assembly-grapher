@@ -94,24 +94,7 @@ bool DepthNav::update(const cv::Mat& frame) {
     return true;
 }
 
-// ----------------------------------------------------- corridor scoring
-
-void DepthNav::buildBias(const cv::Size& sz) {
-    // Radial falloff from centre: 1.0 at centre → (1 − BIAS_K) at the corners.
-    // Multiplying the clearance field by this makes straight-ahead win ties.
-    bias_.create(sz, CV_32F);
-    const float cx = sz.width  / 2.f;
-    const float cy = sz.height / 2.f;
-    const float rmax = std::sqrt(cx * cx + cy * cy);
-    for (int y = 0; y < sz.height; ++y) {
-        float* row = bias_.ptr<float>(y);
-        for (int x = 0; x < sz.width; ++x) {
-            const float dx = x - cx, dy = y - cy;
-            const float r  = std::sqrt(dx * dx + dy * dy) / rmax;
-            row[x] = 1.f - BIAS_K * r;
-        }
-    }
-}
+// ----------------------------------------------------- corridor scoring (VFH+)
 
 void DepthNav::computeTraverse(const cv::Size& frameSize) {
     // Work on a small copy — corridor scoring doesn't need full resolution.
@@ -125,29 +108,79 @@ void DepthNav::computeTraverse(const cv::Size& frameSize) {
     cv::Mat clear;
     cv::GaussianBlur(small, clear, {k, k}, 0);
 
-    // 2. Forward bias: prefer straight-ahead when corridors tie.
-    if (bias_.size() != clear.size()) buildBias(clear.size());
-    cv::Mat steer = clear.mul(bias_);
+    // 2. VFH+ : collapse the clearance field to a 1-D polar openness histogram
+    //    over headings. Use a horizon band so the (near) floor and ceiling don't
+    //    blanket every column as blocked. openCol[x] = mean openness at heading x,
+    //    bestRow[x] = the most-open height there (for the arrow tip).
+    const int r0 = WORK_H / 5, r1 = WORK_H - WORK_H / 5;   // middle 60% band
+    std::vector<float> openCol(WORK_W, 0.f);
+    std::vector<int>   bestRow(WORK_W, WORK_H / 2);
+    float maxO = 1e-6f, meanO = 0.f;
+    for (int x = 0; x < WORK_W; ++x) {
+        float sum = 0.f, best = -1.f; int br = WORK_H / 2;
+        for (int y = r0; y < r1; ++y) {
+            const float v = clear.at<float>(y, x);
+            sum += v;
+            if (v > best) { best = v; br = y; }
+        }
+        openCol[x] = sum / (r1 - r0);
+        bestRow[x] = br;
+        meanO += openCol[x];
+        if (openCol[x] > maxO) maxO = openCol[x];
+    }
+    meanO /= WORK_W;
 
-    double mn, mx;
-    cv::Point mxLoc;
-    cv::minMaxLoc(steer, &mn, &mx, nullptr, &mxLoc);
-    const float meanS = (float)cv::mean(steer)[0];
+    // 3. Binary histogram with hysteresis (free/blocked thresholds relative to
+    //    the frame's own max openness) so a heading doesn't flicker open/closed.
+    if ((int)blocked_.size() != WORK_W) blocked_.assign(WORK_W, 0);
+    const float tauFree  = VFH_FREE_FRAC  * maxO;
+    const float tauBlock = VFH_BLOCK_FRAC * maxO;
+    std::vector<uint8_t> blk(WORK_W);
+    for (int x = 0; x < WORK_W; ++x) {
+        if      (openCol[x] >= tauFree)  blk[x] = 0;
+        else if (openCol[x] <= tauBlock) blk[x] = 1;
+        else                             blk[x] = blocked_[x];   // hold (hysteresis)
+    }
+    blocked_ = blk;   // store un-widened state for next frame's hysteresis
 
-    // Map the peak back to frame coordinates (cell centre).
+    // 4. Vehicle-width compensation: widen blocked sectors by half a body so the
+    //    chosen valley is actually wide enough to fly through.
+    std::vector<uint8_t> blkW(blk);
+    const int half = std::max(1, WORK_W / 16);
+    for (int x = 0; x < WORK_W; ++x)
+        if (blk[x])
+            for (int d = -half; d <= half; ++d) {
+                const int xx = x + d;
+                if (xx >= 0 && xx < WORK_W) blkW[xx] = 1;
+            }
+
+    // 5. Pick the free heading nearest straight-ahead and the previous heading.
+    const float ctr = (WORK_W - 1) * 0.5f;
+    int   bestX = -1;
+    float bestCost = 1e9f;
+    for (int x = 0; x < WORK_W; ++x) {
+        if (blkW[x]) continue;
+        const float cost = VFH_W_FWD  * std::abs(x - ctr) +
+                           VFH_W_PREV * std::abs(x - prevCol_);
+        if (cost < bestCost) { bestCost = cost; bestX = x; }
+    }
+    const bool decisive = bestX >= 0;
+    if (!decisive) bestX = (int)std::lround(ctr);   // fully blocked → hold centre
+    prevCol_ = (float)bestX;
+
     const cv::Point2f raw(
-        (mxLoc.x + 0.5f) / WORK_W * frameSize.width,
-        (mxLoc.y + 0.5f) / WORK_H * frameSize.height);
+        (bestX + 0.5f) / WORK_W * frameSize.width,
+        (bestRow[bestX] + 0.5f) / WORK_H * frameSize.height);
 
-    // 3. Temporal smoothing through the shared Kalman filter.
+    // 6. Temporal smoothing through the shared Kalman filter.
     if (!steerKalman_.initialized()) steerKalman_.init(raw);
     steerKalman_.predict();
     const cv::Point2f smooth = steerKalman_.correct(raw);
 
     traverse_.raw      = raw;
     traverse_.point    = smooth;
-    traverse_.openness = clear.at<float>(mxLoc);  // clearance at peak
-    traverse_.margin   = (float)(mx - meanS);     // decisiveness
+    traverse_.openness = openCol[bestX];
+    traverse_.margin   = decisive ? std::max(0.f, openCol[bestX] - meanO) : 0.f;
     traverse_.valid    = true;
 }
 

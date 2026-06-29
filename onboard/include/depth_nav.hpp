@@ -2,7 +2,9 @@
 
 #include <opencv2/core.hpp>
 #include <opencv2/dnn.hpp>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "kalman_center.hpp"
 
@@ -19,10 +21,14 @@ const char* depth_backend_name(DepthBackend b);
 //   1. Clearance field  = Gaussian-blur(depth, kernel ~ vehicle width).
 //      An isolated far pixel (needle gap between branches) is blurred away;
 //      only a far region with open margin around it survives.
-//   2. Forward bias     = radial falloff from image centre, so straight-ahead
-//      wins when two corridors tie (less control effort, no flip-flopping).
-//   3. Kalman smoothing = the peak is filtered through KalmanCenter so the
-//      steer arrow glides and coasts through a single noisy frame.
+//   2. VFH+ steering    = collapse the clearance field to a 1-D polar openness
+//      histogram over headings, threshold it to free/blocked with hysteresis,
+//      widen blocked sectors by the vehicle half-width, then pick the free
+//      heading nearest straight-ahead and the previous heading. The hysteresis
+//      and previous-heading cost stop the steer flapping at open doorways
+//      (the failure mode of a plain argmax-of-the-clearance-field).
+//   3. Kalman smoothing = the chosen heading is filtered through KalmanCenter so
+//      the steer arrow glides and coasts through a single noisy frame.
 //
 // A 3×3 sector grid is still computed for the optional heat overlay.
 class DepthNav {
@@ -59,8 +65,14 @@ private:
     // Corridor scoring is done on a small working map for speed.
     static constexpr int   WORK_W   = 96;
     static constexpr int   WORK_H   = 72;
-    static constexpr float BIAS_K   = 0.40f;  // forward-bias strength
     static constexpr float MIN_MARGIN = 0.04f; // below this → "scanning"
+    // VFH+ steering: hysteresis thresholds (as a fraction of the frame's max
+    // openness) and the cost weights toward straight-ahead and the previous
+    // heading. The previous-heading term is what stops the steer oscillating.
+    static constexpr float VFH_FREE_FRAC  = 0.75f;  // openness ≥ this·max → free
+    static constexpr float VFH_BLOCK_FRAC = 0.55f;  // openness ≤ this·max → blocked
+    static constexpr float VFH_W_FWD      = 1.0f;   // prefer straight ahead
+    static constexpr float VFH_W_PREV     = 1.5f;   // prefer last heading (hysteresis)
 
     cv::dnn::Net net_;
     DepthBackend backend_     = DepthBackend::MIDAS_SMALL;
@@ -68,13 +80,13 @@ private:
     cv::Size     inputSize_;
 
     cv::Mat      depthMap_;     // normalised [0,1] float32, frame-sized
-    cv::Mat      bias_;         // cached radial forward-bias (WORK_W×WORK_H)
     SectorMap    sectors_;
     Traverse     traverse_;
     KalmanCenter steerKalman_;  // temporal smoothing of the steer target
+    std::vector<uint8_t> blocked_;                 // VFH+ histogram (hysteresis state)
+    float                prevCol_ = WORK_W * 0.5f; // last chosen heading column
 
     cv::Mat preprocess(const cv::Mat& frame) const;
     void    computeSectors(const cv::Size& frameSize);
     void    computeTraverse(const cv::Size& frameSize);
-    void    buildBias(const cv::Size& sz);
 };

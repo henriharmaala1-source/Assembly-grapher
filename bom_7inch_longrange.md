@@ -1,109 +1,120 @@
-# BOM: 7" Long Range Drone — Analog / ELRS 2.4GHz (Kehitys)
+# BOM: 7" Long Range / Freestyle Drone — Analog + ELRS 2.4GHz + AI Companion
 
-**Tarkoitus:** Long-range kehitysdrone — Betaflight / iNav / PX4  
-**Budjetti:** ~350–420 € (ilman lähetintä ja latureita)  
-**Päivätty:** 2026-06-11
-
----
-
-## Komponenttilista
-
-| # | Komponentti | Malli / Vaihtoehto | Hinta (€) | Huomiot |
-|---|-------------|-------------------|-----------|---------|
-| 1 | **Frame** | GEPRC GEP-MK5 7" | ~40 | Kevyt, hyvä kamerapaikka, 30×30 + 20×20 mount |
-| 2 | **Flight Controller** | Matek H743-WING v2 | ~40 | ✅ BF + iNav + **PX4**, 7× UART, Barometer, OSD |
-| 3 | **ESC 4-in-1** | SpeedyBee BLS 55A 4-in-1 | ~35 | 6S-yhteensopiva, BLHeli_32, DSHOT600 |
-| 4 | **Moottorit × 4** | BrotherHobby Returner R5 2207 1750KV | ~60 | Sopii 4S/6S, vakaa LR-käyttöön |
-| 5 | **Potkurit** | HQProp 7×4×3 V1S (pari pakkauksia) | ~10 | Tehokas + pitkä lento-aika |
-| 6 | **Analog VTX** | Rush Tank Solo V2 (25–800 mW) | ~25 | SmartAudio, hyvä kantama |
-| 7 | **FPV-kamera** | Caddx Ratel 2 Micro | ~20 | Hyvä low-light, 1/1.8" sensori |
-| 8 | **Vastaanotin (RX)** | RadioMaster RP2 ELRS 2.4GHz | ~9 | UART-yhteys, diversity-antennit |
-| 9 | **GPS-moduuli** | Matek M10-L-4.11 (M10 GPS + kompassi) | ~25 | iNav/PX4 tuettu, nopea fix |
-| 10 | **Akku × 2** | CNHL 6S 3000mAh 60C | ~90 (2 kpl) | 6S → enemmän teho + kantama |
-| 11 | **VTX-antenni** | Foxeer Lollipop 4 RHCP 5.8GHz | ~8 | SMA, kestävä |
-| 12 | **Kondensaattori** | 1500µF 35V low-ESR | ~3 | Jännitepiikit poikki |
-| 13 | **Sekalaista** | XT60-liitin, johdot, standoffit | ~10 | Kytkentätarvikkeet |
+**Tarkoitus:** Kehitysalusta — Betaflight (OSD-fork) + AI companion computer (RPi 5)
+**Akku:** 6S · **Video:** Analog FPV · **Budjetti:** ~480 €
+**Päivitetty:** 2026-06-29
 
 ---
 
-## Yhteishinta (arvio)
+## Arkkitehtuuri lyhyesti
+
+Analoginen FPV-ketju pysyy koskemattomana (nollaviive laseihin). RPi 5 kaappaa saman
+videosignaalin splitterin kautta, ajaa CV:n, ja piirtää tulokset FC:n omaan
+AT7456E-OSD:hen forkatun Betaflightin MSP-laajennuksen kautta. Ei erillistä
+OSD-moduulia, ei erillistä CV-kameraa, ei HDMI→composite-muunnosta.
+
+```
+[Ratel Pro] ──→ [FC: BF-fork + AT7456E OSD] ──→ [TX500] ──→ Lasit
+                         ↑
+                  UART / MSP (custom OSD-komento)
+                         │
+        [RPi 5: CV] ←── [USB CVBS capture] ←── [splitteri]
+```
+
+---
+
+## Komponenttilista — drone
+
+| # | Komponentti | Malli | Hinta (€) | Huomiot |
+|---|-------------|-------|-----------|---------|
+| 1 | **Frame** | GEPRC GEP-MK5 7" | ~40 | 30×30 + 20×20 mount |
+| 2 | **Flight Controller** | Matek H743-SLIM v4 | ~40 | BF · iNav · ArduPilot · 7× UART · AT7456E OSD · dual ICM42688P |
+| 3 | **ESC 4-in-1** | SpeedyBee BLS 60A | ~32 | 6S · BLHeli_S → **flashaa Bluejay** (bidir DSHOT + RPM-filter) |
+| 4 | **Moottorit × 4** | iFlight XING2 2207 1900KV | ~55 | Velox V2207.5 loppu varastosta; 1900KV = lisää nopeutta, 6S-yhteensopiva |
+| 5 | **Potkurit** | HQProp 7040 (7×4×3) 3-blade | ~12 | 5mm akseli · 2 settiä |
+| 6 | **VTX** | SpeedyBee TX500 | ~20 | Max 400 mW · SmartAudio |
+| 7 | **FPV-kamera** | Caddx Ratel Pro | ~30 | 1/1.8" Starvis · terävämpi + vähemmän vääristymää → parempi CV-syöte |
+| 8 | **Vastaanotin** | RadioMaster RP2 ELRS 2.4 | ~9 | Diversity · UART |
+| 9 | **GPS** | HGLRC M100-5883 (M10) | ~20 | u-blox M10 + QMC5883L kompassi |
+| 10 | **Akku × 2** | CNHL 6S 3000mAh 60C | ~90 | |
+| 11 | **VTX-antenni** | Foxeer Lollipop 4 RHCP | ~8 | SMA |
+| 12 | **Kondensaattori** | 50V 1000µF low-ESR | ~3 | 50V pakollinen 6S:lle (25.2V) |
+| 13 | **BEC** | Matek UBEC DUO (4A/5V + 4A/adj.) | ~15 | RPi 5 + VTX virransyöttö |
+| 14 | **Sekalaista** | XT60 · johdot · standoffit | ~10 | |
+
+**Drone yhteensä: ~384 €**
+
+## Komponenttilista — AI companion
+
+| # | Komponentti | Malli | Hinta (€) | Huomiot |
+|---|-------------|-------|-----------|---------|
+| 15 | **Companion computer** | Raspberry Pi 5 (4GB) | ~80 | CV-laskenta · MSP/UART → FC |
+| 16 | **Video-splitteri** | Passiivinen CVBS-splitteri | ~5 | Yksi haara FC:lle/VTX:lle, toinen RPi:lle |
+| 17 | **Capture** | USB CVBS -dongle (UVC) | ~8 | Analoginen kuva → RPi V4L2 |
+| 18 | **USB-C power** | USB-C breakout + 5.1kΩ CC | ~3 | UBEC → RPi 5 (CC-vastukset pakollisia) |
+
+**Companion yhteensä: ~96 €**
+
+---
+
+## Kokonaishinta
 
 | Kategoria | Hinta |
 |-----------|-------|
-| Rakenne (frame, moottorit, potkurit) | ~110 € |
-| Elektroniikka (FC, ESC) | ~75 € |
-| Video (VTX, kamera, antenni) | ~53 € |
-| Radio (ELRS RX) | ~9 € |
-| GPS | ~25 € |
-| Akut (2 kpl) | ~90 € |
-| Muut | ~13 € |
-| **Yhteensä** | **~375 €** |
+| Drone | ~384 € |
+| AI companion | ~96 € |
+| **Yhteensä** | **~480 €** |
+
+*Ei sisällä: lähetintä, latureita, laseja.*
 
 ---
 
-## FC: Matek H743-WING v2 — UARTs ja pinout
-
-Kehityskäyttöön kriittinen valinta. Ominaisuudet:
-
-- **MCU:** STM32H743 (480 MHz)
-- **UART-portit:** 7 kpl (UART1–7)
-- **Firmware-tuki:** Betaflight ✅ · iNav ✅ · **PX4** ✅
-- **Barometri:** onboard (BMP280)
-- **OSD:** AT7456E
-- **I2C, SPI, CAN:** kyllä
-- **Virransyöttö:** 2–6S suoraan
-
-### Suositeltu UART-jako
+## FC: Matek H743-SLIM v4 — UART-jako
 
 | UART | Käyttö |
 |------|--------|
-| UART1 | ELRS 2.4GHz vastaanotin (RadioMaster RP2) |
-| UART2 | GPS (Matek M10) |
-| UART3 | VTX SmartAudio (Rush Tank Solo) |
-| UART4 | Telemetria (MAVLink / vapaa kehitykseen) |
-| UART5 | Vapaa (LiDAR, rangefinder, companion computer) |
-| UART6 | Vapaa (toinen GPS, optical flow) |
-| UART7 | Vapaa / MSP-debug |
+| UART1 | ELRS 2.4GHz (RadioMaster RP2) |
+| UART2 | GPS (HGLRC M100) |
+| UART3 | VTX SmartAudio (TX500) |
+| UART4 | RPi 5 → MSP (custom OSD-komento) |
+| UART5 | Telemetria / GCS |
+| UART6 | Vapaa (optical flow, LiDAR) |
+| UART7 | Vapaa / debug |
 
 ---
 
-## Firmware-suositukset
+## Virransyöttö
 
-| Tarkoitus | Firmware | Huomiot |
-|-----------|----------|---------|
-| Akrobatia / testaus | **Betaflight 4.5** | Nopea setup, DSHOT, RPM-filter |
-| Autonominen lento / waypoint | **iNav 8.x** | GPS-navigointi, RTH, loiter |
-| Kehitys / ROS2 / MAVSDK | **PX4 1.14+** | MAVLink, full offboard-tuki |
-
----
-
-## Lisäosat kehityskäyttöön (valinnainen)
-
-| Komponentti | Malli | Hinta | Käyttö |
-|-------------|-------|-------|--------|
-| Companion computer liitäntä | USB-UART adapteri | ~5 € | Raspberry Pi / Jetson Nano |
-| Optical flow | Matek 3901-L0X | ~25 € | Sisätilapositiointi |
-| Lidar / rangefinder | TFmini-S | ~25 € | Korkeusmittaus |
-| Telemetria-radio | SiK 433MHz 100mW | ~15 € | GCS-yhteys maassa |
+```
+6S Akku (max 25.2V)
+    │
+    ├──→ ESC (suoraan) → Moottorit
+    │
+    ├──→ [50V 1000µF kondensaattori]
+    │
+    └──→ [Matek UBEC DUO]
+              ├──→ 5V / 4A → USB-C breakout → RPi 5
+              └──→ adj. / 4A → VTX TX500
+```
 
 ---
 
-## Rakennushuomiot
+## Ostohuomiot
 
-1. **Kapasaattori** suoraan ESC:n tuloon — tärkeä 6S:llä jännitepiikeille
-2. **GPS-maston** korkeus vähintään 30 mm FC:stä — kompassin häiriöt
-3. **VTX-virta** suoraan akusta LC-suotimella (ei ESC:n 5V)
-4. **ELRS RP2** kiinnitetään kauemmaksi FC:stä — 2.4 GHz häiriöherkkyys
-5. **PX4-setup:** tarvitset MAVLink-telemetrian debuggaukseen → UART4 GCS:lle
+1. **FC vain viralliselta myyjältä** — [MATEKSYS Official Store](https://mateksys.aliexpress.com/store/1102413620). Tarkista että target raportoi `MATEKH743` Configuratorissa.
+2. **ESC on BLHeli_S** (BLS) — flashaa Bluejay saadaksesi RPM-filterin Betaflightiin.
+3. **UBEC DUO max tulo 26V** — 6S täydellä (25.2V) tiukka marginaali, tarkkaile lämpöä.
+4. **USB-C CC-vastukset** (2× 5.1kΩ) pakollisia, muuten RPi 5 rajoittaa virran.
+5. **Kapasitanssi 50V**, ei 35V.
 
 ---
 
-## Vaihtoehtoinen FC (jos PX4 ei kriittinen)
+## Nopeus / suorituskyky (arvio)
 
-| FC | Firmware | UARTs | Hinta |
-|----|----------|-------|-------|
-| SpeedyBee F7 V3 | BF + iNav | 7 | ~35 € |
-| Matek F405-CTR | BF + iNav | 6 | ~30 € |
-| Holybro Kakute H7 v2 | BF + iNav + **PX4** | 6 | ~45 € |
+| | Arvio |
+|--|-------|
+| Max nopeus (syöksy) | ~140–160 km/h |
+| Lentoaika (cruise) | ~14–17 min |
+| AUW (arvio) | ~850–950 g |
 
-Matek H743-WING v2 pysyy suosituksena — hinta/ominaisuus-suhde paras kehityskäyttöön.
+*7" runko rajoittaa huippunopeuden ~160 km/h:iin riippumatta moottoreista — 200 km/h vaatisi 5" speed buildin.*

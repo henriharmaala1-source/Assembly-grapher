@@ -40,7 +40,7 @@
 
     <section id="bom">
       <h2><span class="accent">#</span> Bill of Materials</h2>
-      <p class="section-desc">Budjetti ~510 € · 7" frame · 6S · ELRS 2.4GHz · Analog FPV</p>
+      <p class="section-desc">Budjetti ~480 € · 7" frame · 6S · ELRS 2.4GHz · Analog FPV</p>
 
       <h3>Drone-runko</h3>
       <table>
@@ -50,13 +50,13 @@
         <tbody>
           <tr><td>1</td><td><strong>Frame</strong></td><td>GEPRC GEP-MK5 7"</td><td>~40 €</td><td>30×30 + 20×20 mount</td></tr>
           <tr><td>2</td><td><strong>Flight Controller</strong></td><td>Matek H743-SLIM v4</td><td>~40 €</td><td>BF · iNav · ArduPilot · 7× UART · dual ICM42688P · CAN</td></tr>
-          <tr><td>3</td><td><strong>ESC 4-in-1</strong></td><td>SpeedyBee BLS 55A</td><td>~35 €</td><td>6S · BLHeli_32 · DSHOT600</td></tr>
-          <tr><td>4</td><td><strong>Moottorit × 4</strong></td><td>BrotherHobby R5 2207 1750KV</td><td>~60 €</td><td>4S/6S · LR-optimoitu</td></tr>
-          <tr><td>5</td><td><strong>Potkurit</strong></td><td>HQProp 7×4×3 V1S</td><td>~10 €</td><td>Pari pakkausta</td></tr>
+          <tr><td>3</td><td><strong>ESC 4-in-1</strong></td><td>SpeedyBee BLS 60A</td><td>~32 €</td><td>6S · BLHeli_S → flashaa Bluejay (RPM-filter)</td></tr>
+          <tr><td>4</td><td><strong>Moottorit × 4</strong></td><td>iFlight XING2 2207 1900KV</td><td>~55 €</td><td>1900KV = lisää nopeutta · 6S</td></tr>
+          <tr><td>5</td><td><strong>Potkurit</strong></td><td>HQProp 7040 (7×4×3) 3-blade</td><td>~12 €</td><td>5mm akseli · 2 settiä</td></tr>
           <tr><td>6</td><td><strong>VTX</strong></td><td>SpeedyBee TX500</td><td>~20 €</td><td>Max 400 mW · SmartAudio</td></tr>
-          <tr><td>7</td><td><strong>FPV-kamera</strong></td><td>Caddx Ratel 2 Micro</td><td>~20 €</td><td>1/1.8" sensori · low-light</td></tr>
+          <tr><td>7</td><td><strong>FPV-kamera</strong></td><td>Caddx Ratel Pro</td><td>~30 €</td><td>1/1.8" Starvis · terävä → parempi CV-syöte</td></tr>
           <tr><td>8</td><td><strong>Vastaanotin</strong></td><td>RadioMaster RP2 ELRS 2.4</td><td>~9 €</td><td>Diversity · UART</td></tr>
-          <tr><td>9</td><td><strong>GPS</strong></td><td>Matek M10-L-4.11</td><td>~25 €</td><td>iNav · ArduPilot · nopea fix</td></tr>
+          <tr><td>9</td><td><strong>GPS</strong></td><td>HGLRC M100-5883 (M10)</td><td>~20 €</td><td>u-blox M10 + QMC5883L kompassi</td></tr>
           <tr><td>10</td><td><strong>Akku × 2</strong></td><td>CNHL 6S 3000mAh 60C</td><td>~90 €</td><td></td></tr>
           <tr><td>11</td><td><strong>VTX-antenni</strong></td><td>Foxeer Lollipop 4 RHCP</td><td>~8 €</td><td>SMA</td></tr>
           <tr><td>12</td><td><strong>Kondensaattori</strong></td><td>50V 1000µF low-ESR</td><td>~3 €</td><td>50V pakollinen 6S:lle</td></tr>
@@ -65,55 +65,56 @@
         </tbody>
       </table>
 
-      <h3>Kaveritietokone</h3>
+      <h3>AI companion</h3>
       <table>
         <thead>
           <tr><th>#</th><th>Komponentti</th><th>Malli</th><th>Hinta</th><th>Huomiot</th></tr>
         </thead>
         <tbody>
           <tr><td>15</td><td><strong>Companion computer</strong></td><td>Raspberry Pi 5 (4GB)</td><td>~80 €</td><td>CV-laskenta · MSP/UART → FC</td></tr>
-          <tr><td>16</td><td><strong>CV-kamera</strong></td><td>RPi Camera Module 3</td><td>~25 €</td><td>CSI · digitaalinen</td></tr>
-          <tr><td>17</td><td><strong>Video-adapteri</strong></td><td>HDMI → Composite</td><td>~8 €</td><td>RPi 5 HDMI → VTX analog</td></tr>
-          <tr><td>18</td><td><strong>Dev-capture</strong></td><td>USB CVBS -dongle</td><td>~8 €</td><td>Kehitysvaiheen analogikapture</td></tr>
-          <tr><td>19</td><td><strong>USB-C power</strong></td><td>USB-C breakout + 5.1kΩ CC</td><td>~3 €</td><td>UBEC → RPi 5</td></tr>
+          <tr><td>16</td><td><strong>Video-splitteri</strong></td><td>Passiivinen CVBS-splitteri</td><td>~5 €</td><td>Haara FC:lle + haara RPi:lle</td></tr>
+          <tr><td>17</td><td><strong>Capture</strong></td><td>USB CVBS -dongle (UVC)</td><td>~8 €</td><td>Analoginen kuva → RPi V4L2</td></tr>
+          <tr><td>18</td><td><strong>USB-C power</strong></td><td>USB-C breakout + 5.1kΩ CC</td><td>~3 €</td><td>UBEC → RPi 5</td></tr>
         </tbody>
       </table>
 
       <div class="total-box">
-        <div class="total-row"><span>Drone-runko</span><span>~385 €</span></div>
-        <div class="total-row"><span>Kaveritietokone + video</span><span>~124 €</span></div>
-        <div class="total-row total"><span>Yhteensä</span><span>~509 €</span></div>
-        <p class="total-note">Ei sisällä: lähettintä, latureita, laseja</p>
+        <div class="total-row"><span>Drone</span><span>~384 €</span></div>
+        <div class="total-row"><span>AI companion</span><span>~96 €</span></div>
+        <div class="total-row total"><span>Yhteensä</span><span>~480 €</span></div>
+        <p class="total-note">Ei sisällä: lähetintä, latureita, laseja</p>
       </div>
     </section>
 
     <section id="pipeline">
       <h2><span class="accent">#</span> Video-pipeline</h2>
-      <p>Projektin ydinidea: yksi digitaalinen kamera syöttää kuvaa sekä CV-pipelineen että pilotin laseihin — ilman parallaksiongelmaa.</p>
+      <p>Analoginen FPV-ketju pysyy koskemattomana — kuva laseihin ilman viivettä. RPi 5 kaappaa saman signaalin splitterin kautta, ajaa CV:n, ja piirtää tulokset FC:n omaan OSD-piiriin (AT7456E) forkatun Betaflightin MSP-laajennuksen kautta.</p>
 
       <div class="pipeline-diagram">
-        <div class="pipeline-box cam">RPi Camera Module 3</div>
-        <div class="pipeline-arrow">CSI ↓</div>
-        <div class="pipeline-box rpi">Raspberry Pi 5<br><small>C++ / Python / OpenCV</small></div>
+        <div class="pipeline-box cam">Caddx Ratel Pro</div>
+        <div class="pipeline-arrow">CVBS ↓</div>
+        <div class="pipeline-box conv">Splitteri</div>
         <div class="pipeline-split">
           <div class="split-branch">
-            <div class="pipeline-arrow">UART/MSP ↓</div>
-            <div class="pipeline-box fc">FC (H743-SLIM v4)<br><small>OSD overlay</small></div>
+            <div class="pipeline-arrow">↓</div>
+            <div class="pipeline-box fc">FC (H743-SLIM v4)<br><small>BF-fork · AT7456E OSD</small></div>
+            <div class="pipeline-arrow">↑ MSP</div>
+            <div class="pipeline-box rpi">RPi 5<br><small>CV → OSD-komennot</small></div>
           </div>
           <div class="split-branch">
-            <div class="pipeline-arrow">HDMI ↓</div>
-            <div class="pipeline-box conv">HDMI → Composite</div>
+            <div class="pipeline-arrow">↓ USB</div>
+            <div class="pipeline-box cam">CVBS capture → RPi</div>
           </div>
         </div>
-        <div class="pipeline-arrow">↓</div>
+        <div class="pipeline-arrow">FC ↓</div>
         <div class="pipeline-box vtx">SpeedyBee TX500 → Lasit</div>
       </div>
 
       <ul class="notes">
-        <li>Kehitysvaiheessa: USB CVBS -dongle siirtää analogikuvan RPi:lle testikäyttöön</li>
-        <li>CV-overlay renderöidään suoraan videovirralle ennen lähetystä</li>
-        <li>Latenssi: ~80–130ms FPV-kuvaan — ok kehitys- ja autonomiselle dronelle</li>
-        <li>Ei parallaksia: yksi kamera → bounding boxit täsmäävät täydellisesti</li>
+        <li>Videoketju pysyy analogisena alusta loppuun — nollaviive laseihin</li>
+        <li>CV-tulokset piirtyvät FC:n OSD-piiriin MSP:n yli — ei erillistä OSD-moduulia</li>
+        <li>Ei parallaksia: sama kamera CV:lle ja pilotille → koordinaatit täsmäävät 1:1</li>
+        <li>Rajoite: AT7456E on 30×16 merkkiruudukko — kohteen osoitus omilla glyyfeillä, ei pikselintarkkaa boksia</li>
       </ul>
     </section>
 

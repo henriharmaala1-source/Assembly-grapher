@@ -30,13 +30,19 @@ void MissionController::enable(bool on) {
     haveWp_  = false;
 }
 
-// Commit a waypoint one step ahead, in the direction the corridor says is open.
-// corridorOffset is normalised [-1,1] (L..R); turn it into a bearing relative to
-// the current heading, then a point in the local ENU frame.
+// Commit a waypoint one step ahead. Head toward the OPERATOR'S GOAL bearing, but
+// deflect toward the open corridor when the direct path is blocked, so it goes
+// AROUND obstacles while trending toward the goal. The goal is clamped to the
+// sensor FoV (can only verify "open" within it) so the drone turns toward a
+// side/behind goal gradually, sensing as it goes.
 void MissionController::commitWaypoint_(const WorldState& s) {
-    const float relBearing = s.corridorOffset * (p_.hFovDeg * 0.5f);      // deg
-    const float bearing    = s.vehYawDeg + relBearing;                    // deg, 0=N
-    const float b          = bearing * kPi / 180.f;
+    const float goalRel     = wrap180(s.missionGoalBearing - s.vehYawDeg);
+    const float goalClamped = clampf(goalRel, -p_.hFovDeg * 0.5f, p_.hFovDeg * 0.5f);
+    const float corridorRel = s.corridorOffset * (p_.hFovDeg * 0.5f);
+    const float blocked     = clampf(1.f - s.corridorOpen, 0.f, 1.f);
+    const float relBearing  = (1.f - blocked) * goalClamped + blocked * corridorRel;
+    const float bearing     = s.vehYawDeg + relBearing;                   // deg, 0=N
+    const float b           = bearing * kPi / 180.f;
     wpE_    = s.estPe + p_.stepM * std::sin(b);   // ENU east
     wpN_    = s.estPn + p_.stepM * std::cos(b);   // ENU north
     haveWp_ = true;
@@ -53,6 +59,14 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
         phase_ = Phase::SETTLE; tPhase_ = 0.f;
         s.missionPhase = "SETTLE(no-est)";
         return c;                   // all-zero = hover
+    }
+
+    // Armed but waiting for the operator to press GO — hover in place. Toggling
+    // GO off mid-leg drops straight back to a hover here too.
+    if (!s.missionGo) {
+        phase_ = Phase::SETTLE; tPhase_ = 0.f;
+        s.missionPhase = "ARMED";
+        return c;                   // hover until GO
     }
 
     switch (phase_) {

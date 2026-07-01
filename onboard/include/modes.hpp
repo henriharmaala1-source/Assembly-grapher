@@ -72,8 +72,12 @@ public:
     const char* name() const override { return "AUTONOMY"; }
     bool        isMotion() const override { return true; }
     Behavior    heatBehavior() const override { return Behavior::NAVIGATE; }
-    void        onEnter(WorldState&) override { mission_.enable(true); }
-    void        onExit(WorldState&)  override { mission_.enable(false); }
+    void onEnter(WorldState& s) override {
+        mission_.enable(true);
+        s.missionGoalBearing = s.vehYawDeg;   // default: straight ahead
+        s.missionGo = false;                  // armed, waiting for GO
+    }
+    void onExit(WorldState& s) override { mission_.enable(false); s.missionGo = false; }
     ControlCmd  update(WorldState& s, const ControlCtx& c) override {
         return mission_.update(s, c.dt);
     }

@@ -15,6 +15,7 @@
 // Keys (with --display):
 //   click = lock target      1/2/3/4 = track backend (CSRT/KCF/FLOW/MOSSE)
 //   modes: f=FLY s=ASSIST k=LOCK_ON o=FOLLOW_ROAD w=WAYPOINT a=AUTONOMY h=HOLD
+//   AUTONOMY: ← → (or , .) steer the goal direction, g = GO / STOP (hover)
 //   x = abort -> iNAV RTH     space = arm/disarm control     r = reset  q/ESC = quit
 //
 // Bench-test (--bench-test): no camera; connects to the FC and prints a live
@@ -473,8 +474,34 @@ int main(int argc, char** argv) {
                                {200, 200, 200}, cv::MARKER_CROSS, 18, 1, cv::LINE_AA);
             }
 
+            if (snap.missionActive) {   // AUTONOMY goal-direction arrow (rel. to nose)
+                float gr = snap.missionGoalBearing - snap.vehYawDeg;
+                while (gr > 180.f) gr -= 360.f; while (gr <= -180.f) gr += 360.f;
+                const float a = gr * kDeg2Rad;
+                const cv::Point c0(frame.cols / 2, frame.rows / 2);
+                const cv::Point tip(c0.x + (int)(70 * std::sin(a)),
+                                    c0.y - (int)(70 * std::cos(a)));
+                const cv::Scalar gcol = snap.missionGo ? cv::Scalar(80, 255, 80)
+                                                       : cv::Scalar(60, 180, 255);
+                cv::arrowedLine(frame, c0, tip, gcol, 3, cv::LINE_AA, 0, 0.3);
+                cv::putText(frame, snap.missionGo ? "GO" : "ARMED (g=go , .=steer)",
+                            {c0.x + 10, c0.y}, cv::FONT_HERSHEY_SIMPLEX, 0.45, gcol, 1);
+            }
+
             cv::imshow(win, frame);
-            const int k = cv::waitKey(1) & 0xFF;
+            const int kx = cv::waitKeyEx(1);          // full code (keeps arrows)
+            const int k  = kx & 0xFF;                 // letter keys
+
+            // AUTONOMY steering: pick a direction (arrows or , . ), press GO (g).
+            // Any command source could set these — here it's the keyboard.
+            const int kLeft = 65361, kUp = 65362, kRight = 65363;  // GTK arrow codes
+            if (kx == kLeft  || k == ',') wm.with([&](WorldState& s){ s.missionGoalBearing -= 15.f; });
+            if (kx == kRight || k == '.') wm.with([&](WorldState& s){ s.missionGoalBearing += 15.f; });
+            if (kx == kUp)                wm.with([&](WorldState& s){ s.missionGoalBearing = s.vehYawDeg; });
+            if (k == 'g') { wm.with([&](WorldState& s){ s.missionGo = !s.missionGo; });
+                            std::printf("[auto] %s\n",
+                                        wm.snapshot().missionGo ? "GO" : "STOP (hover)"); }
+
             if (k == 27 || k == 'q') break;
             if (k == 'r') track.reset();
             if (k == '1') track.setBackend(Backend::CSRT);

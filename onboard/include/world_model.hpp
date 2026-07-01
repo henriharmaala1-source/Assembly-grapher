@@ -59,8 +59,11 @@ struct WorldState {
 
     // --- Mission: move-stop-sense autonomous cycle ---
     bool        missionActive = false;
-    std::string missionPhase;         // SETTLE / THINK / MOVE / ARRIVE
+    std::string missionPhase;         // ARMED / SETTLE / THINK / MOVE / ARRIVE
     float       missionWpE = 0.f, missionWpN = 0.f;  // committed waypoint (ENU, m)
+    // Operator inputs (set by keys / RC AUX / any command source):
+    float       missionGoalBearing = 0.f;  // desired direction, deg (0 = North)
+    bool        missionGo = false;         // "go" latch — cycle waits for this
 
     // --- Detect ---
     std::vector<Detection> detections;

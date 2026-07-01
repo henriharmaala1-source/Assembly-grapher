@@ -36,8 +36,10 @@ and a watchdog keeps the reactive layer flying if the LLM stalls.
 | Detect module (YOLOv8 ONNX via OpenCV DNN) | `perception.cpp` | ✅ |
 | Road-follow module (CIELab appearance, no NN) | `road_follow.*` | ✅ |
 | Compute-budgeted scheduler | `scheduler.*` | ✅ |
-| Behaviour FSM (hysteretic modes) | `fsm.*` | ✅ |
+| Mode arbiter + pluggable control modes (`IControlMode`) | `control_mode.*`, `modes.hpp` | ✅ |
 | Controller (behaviour → normalised command) | `controller.*` | ✅ |
+| Two-tier threading (fly loop + Deliberator think thread) | `deliberator.*`, `frame_bus.hpp` | ✅ |
+| Autonomous move-stop-sense cycle | `mission.*` | ✅ |
 | Flight-controller abstraction | `flight_controller.hpp` | ✅ |
 | MSP backend (iNAV, verified AETR + telemetry) | `msp_backend.*`, `serial_port.*` | ✅ |
 | MSP bench-test mode (live telemetry table) | `main.cpp --bench-test` | ✅ |
@@ -66,6 +68,8 @@ Standard set (keys `f s k o w a h`, `x` = abort→RTH):
 the obstacle reflex stops it and detection runs in the deliberator.
 
 ## Extending the OS — four plugin interfaces
+
+> **Full step-by-step guide for control modes:** [`docs/adding-a-control-mode.md`](docs/adding-a-control-mode.md).
 
 Adding capability is "implement an interface + register it," never editing a
 switch. The four extension points:

@@ -19,6 +19,8 @@
 //
 // Bench-test (--bench-test): no camera; connects to the FC and prints a live
 // telemetry table + DRY-RUN RC channel map every 500 ms. Ctrl+C to exit.
+// Use --fc=sim to run it (and the whole OS) with a SIMULATED FC — no hardware:
+// the sim responds to control, so GPS/attitude/battery evolve like a real link.
 
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -38,6 +40,7 @@
 #include "fsm.hpp"
 #include "mavlink_backend.hpp"
 #include "msp_backend.hpp"
+#include "sim_fc_backend.hpp"
 #include "perception.hpp"
 #include "road_follow.hpp"
 #include "scheduler.hpp"
@@ -180,7 +183,7 @@ int main(int argc, char** argv) {
         "{detect-model   |       | ONNX YOLOv8 model (enables detect) }"
         "{detect-labels  | drone,bird | comma-separated class labels }"
         "{road           | true  | enable appearance road-follow module }"
-        "{fc             | none  | flight controller: none|msp|mavlink }"
+        "{fc             | none  | flight controller: none|msp|mavlink|sim }"
         "{fc-port        | /dev/ttyAMA0 | FC serial device }"
         "{fc-baud        | 115200 | FC serial baud }"
         "{allow-control  | false | actually SEND control to the FC (else dry-run) }"
@@ -241,6 +244,7 @@ int main(int argc, char** argv) {
     const std::string fcSel = parser.get<std::string>("fc");
     if (fcSel == "msp")     fc = std::make_unique<MspBackend>();
     if (fcSel == "mavlink") fc = std::make_unique<MavlinkBackend>();
+    if (fcSel == "sim")     fc = std::make_unique<SimFcBackend>();
     if (fc && !fc->connect(parser.get<std::string>("fc-port"),
                            parser.get<int>("fc-baud"))) {
         std::fprintf(stderr, "[fc] %s connect failed — running FC-less\n", fcSel.c_str());

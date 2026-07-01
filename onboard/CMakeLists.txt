@@ -26,7 +26,8 @@ add_executable(kestrel
   src/depth_nav.cpp
   src/i2c_hal.cpp
   src/vl53_tof_source.cpp
-  src/mcu_tof_source.cpp)
+  src/mcu_tof_source.cpp
+  src/sim_fc_backend.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include

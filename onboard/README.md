@@ -92,6 +92,12 @@ for partial override (`receiver_type = SERIAL` + `msp_override_channels`) so
 
 # bench-test: live MSP telemetry table + dry-run RC channel map, no camera
 ./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --bench-test
+
+# NO HARDWARE: --fc=sim gives a software-in-the-loop FC that responds to control
+# (GPS/attitude/battery evolve like a real link). Works with --bench-test or the
+# full loop — test the FSM, controller, estimator and modes on the desktop.
+./build/kestrel --fc=sim --bench-test
+./build/kestrel --fc=sim --allow-control --display   # full loop, simulated FC
 ```
 
 ## State estimator + synthetic-GPS feedback

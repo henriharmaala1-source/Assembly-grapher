@@ -30,7 +30,7 @@ add_executable(kestrel
   src/sim_fc_backend.cpp
   src/deliberator.cpp
   src/mission.cpp
-  src/mode.cpp)
+  src/control_mode.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include

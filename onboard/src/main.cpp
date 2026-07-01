@@ -41,8 +41,7 @@
 #include "flight_controller.hpp"
 #include "frame_bus.hpp"
 #include "mavlink_backend.hpp"
-#include "mission.hpp"
-#include "mode.hpp"
+#include "modes.hpp"
 #include "msp_backend.hpp"
 #include "sim_fc_backend.hpp"
 #include "perception.hpp"
@@ -277,11 +276,11 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    Controller        controller;
-    StateEstimator    est;
-    MissionController  mission;
-    ModeArbiter        arbiter;
-    arbiter.setMode(parser.get<bool>("auto") ? Mode::AUTONOMY : Mode::FLY, mission);
+    Controller     controller;
+    StateEstimator est;
+    ModeManager    modes;
+    register_standard_modes(modes);   // FLY ASSIST LOCK_ON HOLD FOLLOW_ROAD WAYPOINT AUTONOMY ...
+    const bool     autoStart = parser.get<bool>("auto");
     auto           tFeed = std::chrono::steady_clock::now();
 
     // ---- camera
@@ -308,6 +307,7 @@ int main(int argc, char** argv) {
     auto   tPrev   = std::chrono::steady_clock::now();
     auto   tLog    = tPrev;
 
+    wm.with([&](WorldState& s){ modes.select(autoStart ? "AUTONOMY" : "FLY", s); });
     deliberator.start(frameBus, wm);   // heavy perception on its own thread
 
     cv::Mat frame;
@@ -395,14 +395,14 @@ int main(int argc, char** argv) {
         });
 
         // Single control arbiter: safety layers (failsafe → iNAV RTH; obstacle →
-        // HOLD) then the active operator mode. Writes opMode/behavior/modeReason
+        // HOLD) then the active mode module. Writes opMode/behavior/modeReason
         // into the world model itself.
         bool       rthTrigger = false;
         ControlCmd cmd;
-        wm.with([&](WorldState& s) {
-            cmd = arbiter.tick(s, controller, mission, frame.cols, frame.rows,
-                               (float)dt, rthTrigger);
-        });
+        ControlCtx cctx;
+        cctx.controller = &controller;
+        cctx.frameW = frame.cols; cctx.frameH = frame.rows; cctx.dt = (float)dt;
+        wm.with([&](WorldState& s) { cmd = modes.tick(s, cctx, rthTrigger); });
         if (rthTrigger && fc) fc->setMode(FcMode::RTL);   // hand off to iNAV RTH
 
         // On the dry→live engage edge in assist mode, latch the operator's
@@ -481,17 +481,18 @@ int main(int argc, char** argv) {
             if (k == '2') track.setBackend(Backend::KCF);
             if (k == '3') track.setBackend(Backend::FLOW);
             if (k == '4') track.setBackend(Backend::MOSSE);
-            // Mode selection (single arbiter). x = abort → iNAV RTH.
-            auto setm = [&](Mode m, const char* n){ arbiter.setMode(m, mission);
-                        std::printf("[mode] %s\n", n); };
-            if (k == 'f') setm(Mode::FLY,         "FLY");
-            if (k == 's') setm(Mode::ASSIST,      "ASSIST");
-            if (k == 'k') setm(Mode::LOCK_ON,     "LOCK_ON");
-            if (k == 'o') setm(Mode::FOLLOW_ROAD, "FOLLOW_ROAD");
-            if (k == 'w') setm(Mode::WAYPOINT,    "WAYPOINT");
-            if (k == 'a') setm(Mode::AUTONOMY,    "AUTONOMY");
-            if (k == 'h') setm(Mode::HOLD,        "HOLD");
-            if (k == 'x') { arbiter.requestAbort(); std::printf("[mode] ABORT → RTH\n"); }
+            // Mode selection by name (registry). x = abort → iNAV RTH.
+            auto setm = [&](const char* n){
+                wm.with([&](WorldState& s){ modes.select(n, s); });
+                std::printf("[mode] %s\n", n); };
+            if (k == 'f') setm("FLY");
+            if (k == 's') setm("ASSIST");
+            if (k == 'k') setm("LOCK_ON");
+            if (k == 'o') setm("FOLLOW_ROAD");
+            if (k == 'w') setm("WAYPOINT");
+            if (k == 'a') setm("AUTONOMY");
+            if (k == 'h') setm("HOLD");
+            if (k == 'x') { modes.requestAbort(); std::printf("[mode] ABORT -> RTH\n"); }
             if (k == ' ') {
                 allowControl = !allowControl && fc != nullptr;
                 std::printf("[ctl] %s\n", allowControl ? "LIVE — sending control"

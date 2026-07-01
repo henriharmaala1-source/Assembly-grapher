@@ -48,13 +48,51 @@ and a watchdog keeps the reactive layer flying if the LLM stalls.
 | Ground UI / telemetry viz | — | ⬜ P4 |
 | Localization (VIO/SLAM + image-to-map + EKF) | — | ⬜ P5 |
 
-## Modes (behaviour FSM)
+## Modes
 
-`MANUAL · IDLE · NAVIGATE · ROAD_FOLLOW · TRACK · SEARCH · EVADE · HOLD · RTL`
+Modes are **pluggable control modules** (`IControlMode`), registered with the
+`ModeManager` and selected by name. One is active at a time; two **safety layers**
+in the manager sit under all of them:
 
-Priority, highest first: **failsafe** (low battery / lost FC link → RTL or HOLD)
-→ **operator** latch (`m`/`h`/`g` keys) → **autonomy** ladder (TRACK > EVADE >
-ROAD_FOLLOW > NAVIGATE > SEARCH). Debounce counters stop the mode flapping.
+```
+1. failsafe : low battery / operator abort  →  iNAV RTH (release + fc->setMode(RTL))
+2. reflex   : imminent obstacle in a motion mode  →  HOLD (stop)
+3. else     : the active mode module drives control
+```
+
+Standard set (keys `f s k o w a h`, `x` = abort→RTH):
+`FLY · ASSIST · LOCK_ON · FOLLOW_ROAD · WAYPOINT · AUTONOMY · HOLD · FOLLOW_SUBJECT`.
+`WAYPOINT` releases control (iNAV flies the GPS route) while the OS supervises —
+the obstacle reflex stops it and detection runs in the deliberator.
+
+## Extending the OS — four plugin interfaces
+
+Adding capability is "implement an interface + register it," never editing a
+switch. The four extension points:
+
+| Add a… | Interface | Register / wire | Does |
+| ------ | --------- | --------------- | ---- |
+| **control mode** | `IControlMode` (`control_mode.hpp`) | `ModeManager::add()` (see `modes.hpp`) | `update(state,ctx)→ControlCmd`; `isMotion()` opts into the obstacle reflex |
+| **perception module** | `IPerceptionModule` (`perception.hpp`) | `Deliberator::scheduler().add()` (heavy) or run in the fly loop (cheap) | `run(frame,wm)` → writes findings into the world model |
+| **flight controller** | `IFlightController` (`flight_controller.hpp`) | `--fc=<name>` in `main.cpp` | `tick/poll/sendControl` — MSP, sim, MAVLink(stub) |
+| **depth sensor** | `ITofSource` (`tof_source.hpp`) | into a `TofNavigateModule` | `read()→metric grid`; VL53L9/L5CX/MCU-hub/OAK/sim |
+
+Two tiers keep it real-time: the **fly loop** (fast, control-critical) and the
+**Deliberator** thread (heavy perception / SLAM / planning), sharing the
+thread-safe `WorldModel` — so a slow module can never stall control.
+
+A new mode, in full:
+
+```cpp
+class MyMode : public IControlMode {
+    const char* name() const override { return "MYMODE"; }
+    bool isMotion() const override { return true; }        // get the obstacle reflex
+    ControlCmd update(WorldState& s, const ControlCtx& c) override {
+        return c.controller->compute(s, Behavior::HOLD, c.frameW, c.frameH); // or your own
+    }
+};
+// register:  mgr.add(std::make_unique<MyMode>());  — done, selectable by name.
+```
 
 ## Flight-controller control
 

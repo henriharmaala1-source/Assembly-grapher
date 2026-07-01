@@ -36,7 +36,9 @@
 #include <thread>
 
 #include "controller.hpp"
+#include "deliberator.hpp"
 #include "flight_controller.hpp"
+#include "frame_bus.hpp"
 #include "fsm.hpp"
 #include "mavlink_backend.hpp"
 #include "msp_backend.hpp"
@@ -232,12 +234,15 @@ int main(int argc, char** argv) {
     DetectModule   detect(parser.get<std::string>("detect-model"), labels);
     RoadFollowModule road;
 
-    PerceptionScheduler sched;
-    sched.setBudgetMs(parser.get<float>("budget"));
-    sched.add({&track,    /*alwaysOn*/ true});
-    sched.add({&navigate, false, 12, 3, Behavior::NAVIGATE});
-    sched.add({&detect,   false, 10, 4, Behavior::SEARCH});
-    if (roadOn) sched.add({&road, false, 6, 2, Behavior::ROAD_FOLLOW});
+    // Separate thinking from flying: the cheap, control-relevant modules (track,
+    // road-follow) run in the fast fly loop; the heavy ones (depth/navigate,
+    // detect — and later SLAM/planner) run on the Deliberator's own thread so a
+    // slow update can never stall control. Both share the thread-safe WorldModel.
+    FrameBus    frameBus;
+    Deliberator deliberator;
+    deliberator.scheduler().setBudgetMs(parser.get<float>("budget"));
+    deliberator.scheduler().add({&navigate, false, 12, 3, Behavior::NAVIGATE});
+    deliberator.scheduler().add({&detect,   false, 10, 4, Behavior::SEARCH});
 
     // ---- flight controller backend
     std::unique_ptr<IFlightController> fc;
@@ -298,6 +303,8 @@ int main(int argc, char** argv) {
     auto   tPrev   = std::chrono::steady_clock::now();
     auto   tLog    = tPrev;
 
+    deliberator.start(frameBus, wm);   // heavy perception on its own thread
+
     cv::Mat frame;
     while (true) {
         if (!cap.read(frame) || frame.empty()) {
@@ -337,9 +344,13 @@ int main(int argc, char** argv) {
             auxWasHigh = hi;
         }
 
-        // ---- perception
-        const Behavior prevBeh = fsm.current();
-        sched.tick(frame, wm, frameId, prevBeh);
+        // ---- perception. FLY here (cheap, control-relevant): the tracker and
+        // road-follow run every fast tick. THINK on the Deliberator's thread:
+        // hand it the newest frame; it runs depth/detect/SLAM/planning at its own
+        // pace and publishes into the world model without stalling this loop.
+        frameBus.publish(frame);
+        track.run(frame, wm);
+        if (roadOn) road.run(frame, wm);
 
         // ---- behaviour + control
         const auto   tNow = std::chrono::steady_clock::now();
@@ -405,9 +416,17 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
 
-        // ---- display
+        // ---- display. Reads ONLY the thread-safe world-model snapshot — never
+        // the think-tier modules' internals (which another thread is writing).
         if (display) {
-            if (navigate.isReady()) navigate.nav().drawOverlay(frame);
+            if (snap.corridorValid) {   // corridor steer target from the think tier
+                const cv::Point ctr(frame.cols / 2, frame.rows / 2);
+                const cv::Point tgt((int)snap.corridorHeading.x, (int)snap.corridorHeading.y);
+                const cv::Scalar col = snap.corridorDecisive ? cv::Scalar(0, 255, 128)
+                                                             : cv::Scalar(0, 200, 255);
+                cv::arrowedLine(frame, ctr, tgt, col, 2, cv::LINE_AA, 0, 0.25);
+                cv::circle(frame, tgt, 6, col, snap.corridorDecisive ? 2 : 1, cv::LINE_AA);
+            }
             if (snap.targetValid) {
                 const cv::Scalar col = snap.targetLocked
                     ? (snap.targetCoast ? cv::Scalar(60, 180, 255) : cv::Scalar(80, 220, 80))
@@ -461,6 +480,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    deliberator.stop();          // join the think thread before tearing down
     if (fc) fc->disconnect();
     return 0;
 }

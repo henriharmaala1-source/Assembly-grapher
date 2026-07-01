@@ -7,6 +7,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS
   core imgproc video videoio highgui tracking dnn)
 
@@ -27,13 +28,14 @@ add_executable(kestrel
   src/i2c_hal.cpp
   src/vl53_tof_source.cpp
   src/mcu_tof_source.cpp
-  src/sim_fc_backend.cpp)
+  src/sim_fc_backend.cpp
+  src/deliberator.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${OpenCV_INCLUDE_DIRS})
 
-target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS})
+target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} Threads::Threads)
 
 # Cortex-A76 tuning when building natively on the Pi 5.
 include(CheckCXXCompilerFlag)

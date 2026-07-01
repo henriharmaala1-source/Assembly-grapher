@@ -99,7 +99,8 @@ struct WorldState {
     // --- Control (what the OS wants the FC to do) ---
     ControlCmd  control;              // last computed command
     bool        controlActive = false;// true once actually sent to the FC
-    std::string modeReason;           // why the FSM chose the current behaviour
+    std::string opMode;               // top-level operator mode (ModeArbiter)
+    std::string modeReason;           // why control is what it is (pre-empt etc.)
 
     std::string brief() const;        // one-line scene state (LLM input)
 };

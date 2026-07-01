@@ -14,8 +14,8 @@
 //
 // Keys (with --display):
 //   click = lock target      1/2/3/4 = track backend (CSRT/KCF/FLOW/MOSSE)
-//   m = MANUAL    h = HOLD    g = resume autonomy    space = arm/disarm control
-//   r = reset     q/ESC = quit
+//   modes: f=FLY s=ASSIST k=LOCK_ON o=FOLLOW_ROAD w=WAYPOINT a=AUTONOMY h=HOLD
+//   x = abort -> iNAV RTH     space = arm/disarm control     r = reset  q/ESC = quit
 //
 // Bench-test (--bench-test): no camera; connects to the FC and prints a live
 // telemetry table + DRY-RUN RC channel map every 500 ms. Ctrl+C to exit.
@@ -40,9 +40,9 @@
 #include "deliberator.hpp"
 #include "flight_controller.hpp"
 #include "frame_bus.hpp"
-#include "fsm.hpp"
 #include "mavlink_backend.hpp"
 #include "mission.hpp"
+#include "mode.hpp"
 #include "msp_backend.hpp"
 #include "sim_fc_backend.hpp"
 #include "perception.hpp"
@@ -277,11 +277,11 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    BehaviorFsm       fsm;
     Controller        controller;
     StateEstimator    est;
-    MissionController mission;
-    mission.enable(parser.get<bool>("auto"));
+    MissionController  mission;
+    ModeArbiter        arbiter;
+    arbiter.setMode(parser.get<bool>("auto") ? Mode::AUTONOMY : Mode::FLY, mission);
     auto           tFeed = std::chrono::steady_clock::now();
 
     // ---- camera
@@ -338,7 +338,6 @@ int main(int argc, char** argv) {
         // The AUX switch locks onto whatever is at the centre of the view — the
         // in-flight equivalent of a click, for designating a subject to the
         // tracker (a sensing output; TRACK observes from hover, see controller).
-        OperatorCmd op;
         if (click.pending) { click.pending = false; track.requestLock(click.pt); }
         if (lockAux >= 0 && haveTel && lockAux < t.rcCount) {
             const bool hi = t.rc[lockAux] >= lockAuxUs;
@@ -395,23 +394,16 @@ int main(int argc, char** argv) {
             s.estGpsDenied = es.gpsDenied; s.estFeedingFc = feeding;
         });
 
-        std::string reason;
-        const WorldState snap = wm.snapshot();
-        const Behavior beh = fsm.update(snap, op, dt, reason);
-
-        // Control source: the autonomous move-stop-sense cycle drives when it's
-        // enabled — EXCEPT a failsafe/operator behaviour (RTL / HOLD / MANUAL)
-        // from the FSM always wins. Otherwise the reactive controller maps the
-        // FSM behaviour to a command as before.
-        const bool failsafe = beh == Behavior::RTL || beh == Behavior::HOLD ||
-                              beh == Behavior::MANUAL;
+        // Single control arbiter: safety layers (failsafe → iNAV RTH; obstacle →
+        // HOLD) then the active operator mode. Writes opMode/behavior/modeReason
+        // into the world model itself.
+        bool       rthTrigger = false;
         ControlCmd cmd;
-        if (mission.enabled() && !failsafe) {
-            wm.with([&](WorldState& s) { cmd = mission.update(s, (float)dt); });
-        } else {
-            cmd = controller.compute(snap, beh, frame.cols, frame.rows);
-            wm.with([&](WorldState& s) { s.missionActive = false; });
-        }
+        wm.with([&](WorldState& s) {
+            cmd = arbiter.tick(s, controller, mission, frame.cols, frame.rows,
+                               (float)dt, rthTrigger);
+        });
+        if (rthTrigger && fc) fc->setMode(FcMode::RTL);   // hand off to iNAV RTH
 
         // On the dry→live engage edge in assist mode, latch the operator's
         // current sticks so the takeover starts from their hands, not neutral.
@@ -423,14 +415,15 @@ int main(int argc, char** argv) {
             sent = fc->sendControl(cmd);
 
         wm.with([&](WorldState& s) {
-            s.behavior = beh; s.modeReason = reason; s.fps = fps; s.frameId = frameId;
+            s.fps = fps; s.frameId = frameId;
             s.control = cmd;  s.controlActive = sent;
         });
+        const WorldState snap = wm.snapshot();   // post-arbiter, for display/telemetry
 
         // ---- telemetry line ~2x/sec (LLM scene-state input)
         if (std::chrono::duration<double>(tNow - tLog).count() >= 0.5) {
             tLog = tNow;
-            std::printf("%s | %s\n", wm.snapshot().brief().c_str(), reason.c_str());
+            std::printf("%s\n", wm.snapshot().brief().c_str());
             std::fflush(stdout);
         }
 
@@ -470,7 +463,7 @@ int main(int argc, char** argv) {
                 ? (assistMode ? "LIVE/assist" : "LIVE/total") : "dry";
             char hud[160];
             std::snprintf(hud, sizeof(hud), "%s  %s  ctl:%s  %.0ffps",
-                          behavior_name(beh), reason.c_str(), ctlStr, fps);
+                          snap.opMode.c_str(), snap.modeReason.c_str(), ctlStr, fps);
             if (autohud[0]) std::strncat(hud, autohud, sizeof(hud)-std::strlen(hud)-1);
             cv::putText(frame, hud, {8, 22}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
                         {255, 255, 255}, 2);
@@ -488,15 +481,17 @@ int main(int argc, char** argv) {
             if (k == '2') track.setBackend(Backend::KCF);
             if (k == '3') track.setBackend(Backend::FLOW);
             if (k == '4') track.setBackend(Backend::MOSSE);
-            if (k == 'm') { op.type = OperatorCmd::SET_MODE; op.mode = Behavior::MANUAL;
-                            fsm.update(wm.snapshot(), op, 0, reason); }
-            if (k == 'h') { op.type = OperatorCmd::SET_MODE; op.mode = Behavior::HOLD;
-                            fsm.update(wm.snapshot(), op, 0, reason); }
-            if (k == 'g') { op.type = OperatorCmd::SET_MODE; op.mode = Behavior::IDLE;
-                            fsm.update(wm.snapshot(), op, 0, reason); }
-            if (k == 'a') { mission.enable(!mission.enabled());
-                            std::printf("[auto] move-stop-sense %s\n",
-                                        mission.enabled() ? "ON" : "OFF"); }
+            // Mode selection (single arbiter). x = abort → iNAV RTH.
+            auto setm = [&](Mode m, const char* n){ arbiter.setMode(m, mission);
+                        std::printf("[mode] %s\n", n); };
+            if (k == 'f') setm(Mode::FLY,         "FLY");
+            if (k == 's') setm(Mode::ASSIST,      "ASSIST");
+            if (k == 'k') setm(Mode::LOCK_ON,     "LOCK_ON");
+            if (k == 'o') setm(Mode::FOLLOW_ROAD, "FOLLOW_ROAD");
+            if (k == 'w') setm(Mode::WAYPOINT,    "WAYPOINT");
+            if (k == 'a') setm(Mode::AUTONOMY,    "AUTONOMY");
+            if (k == 'h') setm(Mode::HOLD,        "HOLD");
+            if (k == 'x') { arbiter.requestAbort(); std::printf("[mode] ABORT → RTH\n"); }
             if (k == ' ') {
                 allowControl = !allowControl && fc != nullptr;
                 std::printf("[ctl] %s\n", allowControl ? "LIVE — sending control"

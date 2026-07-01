@@ -19,7 +19,8 @@ const char* behavior_name(Behavior b) {
 
 std::string WorldState::brief() const {
     std::ostringstream os;
-    os << "beh=" << behavior_name(behavior);
+    os << "mode=" << (opMode.empty() ? behavior_name(behavior) : opMode.c_str());
+    if (!modeReason.empty()) os << "(" << modeReason << ")";
 
     os << " trk=";
     if (!targetValid) {

@@ -17,7 +17,6 @@ add_executable(kestrel
   src/perception.cpp
   src/scheduler.cpp
   src/road_follow.cpp
-  src/fsm.cpp
   src/controller.cpp
   src/state_estimator.cpp
   src/serial_port.cpp
@@ -30,7 +29,8 @@ add_executable(kestrel
   src/mcu_tof_source.cpp
   src/sim_fc_backend.cpp
   src/deliberator.cpp
-  src/mission.cpp)
+  src/mission.cpp
+  src/mode.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include

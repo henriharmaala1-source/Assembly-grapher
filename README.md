@@ -1,10 +1,14 @@
 # Assembly-grapher
 
+> **Working on this codebase (human or AI)? Start with [`AGENTS.md`](AGENTS.md)** —
+> the full architecture, control/data flow, plugin interfaces, invariants, and
+> design scope in one place.
+
 Two **independent** tools in one repo — they share no code and build separately:
 
 | Directory | What it is | Runs on | Language |
 |-----------|-----------|---------|----------|
-| **`onboard/`** | **The on-drone autonomy OS** (named *kestrel*): capture → perception scheduler → world model → behaviour FSM → controller → flight-controller backend. | Raspberry Pi 5, **on the aircraft** | C++ (OpenCV) |
+| **`onboard/`** | **The on-drone autonomy OS** (named *kestrel*): capture → perception → world model → mode arbiter → controller → flight-controller backend. | Raspberry Pi 5, **on the aircraft** | C++ (OpenCV) |
 | **`desktop/`** | **A workstation app** for prototyping the perception backends off the drone: DINOv2 + SAM 2 + CV lock-on tracker (`main.py` + the `tracker/` package). | desktop / laptop, **never flies** | Python (PyTorch) |
 
 `onboard/` is the Pi / on-drone system; `desktop/` is a development tool that

@@ -136,6 +136,20 @@ void DepthNav::computeTraverse(const cv::Size& frameSize) {
     cv::Mat clear;
     cv::GaussianBlur(small, clear, {k, k}, 0);
 
+    // 1b. Ego-motion de-rotation: undo the airframe's roll (rotate the map by
+    //     -roll) and pitch (shift it vertically), so the horizon band below is
+    //     WORLD-level forward regardless of how the drone is banked/pitched.
+    //     Yaw needs no compensation here — VFH+ output is a heading relative to
+    //     the current frame centre, so yaw is absorbed downstream. BORDER_REPLICATE
+    //     extends edge openness rather than injecting black (= false obstacles).
+    if (haveAtt_ && (std::fabs(roll_) > 0.5f || std::fabs(pitch_) > 0.5f)) {
+        cv::Mat M = cv::getRotationMatrix2D(
+            {WORK_W / 2.f, WORK_H / 2.f}, -roll_, 1.0);       // de-roll
+        M.at<double>(1, 2) += (pitch_ / vFovDeg_) * WORK_H;  // de-pitch (vertical)
+        cv::warpAffine(clear, clear, M, clear.size(),
+                       cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+    }
+
     // 2. VFH+ : collapse the clearance field to a 1-D polar openness histogram
     //    over headings. Use a horizon band so the (near) floor and ceiling don't
     //    blanket every column as blocked. openCol[x] = mean openness at heading x,

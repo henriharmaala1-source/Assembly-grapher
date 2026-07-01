@@ -55,6 +55,17 @@ public:
     void enableTof() { tofReady_ = true; } // depth from a ToF/stereo grid, no ONNX
     bool isReady() const { return !net_.empty() || tofReady_; }
 
+    // Ego-motion de-rotation: give the FC's current roll/pitch (deg) and the
+    // camera/sensor vertical FoV, and the corridor analysis is stabilised to
+    // WORLD-LEVEL before VFH+ runs — so the drone banking or pitching doesn't
+    // tilt the horizon band into ground/sky and doesn't masquerade as the scene
+    // moving. Call once per frame before update()/updateFromGrid(); if never
+    // called, de-rotation is simply off (identical to the un-stabilised path).
+    void setAttitude(float rollDeg, float pitchDeg) {
+        roll_ = rollDeg; pitch_ = pitchDeg; haveAtt_ = true;
+    }
+    void setVerticalFov(float deg) { vFovDeg_ = deg > 1.f ? deg : vFovDeg_; }
+
     bool update(const cv::Mat& frame);
 
     // Sensor-agnostic depth entry point: feed a metric depth grid (metres,
@@ -89,6 +100,11 @@ private:
     bool         invertDepth_ = false;
     bool         tofReady_    = false;   // depth from a ToF/stereo grid, not ONNX
     cv::Size     inputSize_;
+
+    // Ego-motion de-rotation state (attitude in degrees; off until setAttitude).
+    float        roll_ = 0.f, pitch_ = 0.f;
+    bool         haveAtt_  = false;
+    float        vFovDeg_  = 50.f;       // camera/sensor vertical FoV (VL53L9 ≈ 42)
 
     cv::Mat      depthMap_;     // normalised [0,1] float32, frame-sized
     SectorMap    sectors_;

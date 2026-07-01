@@ -60,6 +60,7 @@ NavigateModule::NavigateModule(const std::string& model, DepthBackend backend) {
 
 void NavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
     if (!ready_) return;
+    { const auto s = wm.snapshot(); nav_.setAttitude(s.vehRollDeg, s.vehPitchDeg); }
     nav_.update(frame);
     const auto& t = nav_.traverse();
 
@@ -85,6 +86,7 @@ TofNavigateModule::TofNavigateModule(std::unique_ptr<ITofSource> src)
 void TofNavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
     if (!src_ || !src_->read(grid_)) return;   // no fresh ToF frame this tick
 
+    { const auto s = wm.snapshot(); nav_.setAttitude(s.vehRollDeg, s.vehPitchDeg); }
     nav_.updateFromGrid(grid_, frame.size(), src_->maxRangeM());
     const auto& t = nav_.traverse();
 

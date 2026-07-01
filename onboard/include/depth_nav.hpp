@@ -12,11 +12,13 @@ enum class DepthBackend { DEPTH_ANYTHING_V2, MIDAS_SMALL };
 
 const char* depth_backend_name(DepthBackend b);
 
-// Monocular depth-based traverse-direction analyser.
+// Depth-based traverse-direction analyser.
 //
-// Runs a lightweight depth model (Depth Anything v2 Small or MiDaS Small) via
-// OpenCV DNN (CPU), then computes the best direction of traverse using
-// navigable-corridor scoring rather than a naive furthest-point search:
+// Depth comes from EITHER a lightweight monocular model (Depth Anything v2 Small
+// or MiDaS Small) via OpenCV DNN (CPU) — `update(frame)` — OR a metric depth grid
+// from a ToF/stereo sensor (VL53L5CX/VL53L9/OAK-D) — `updateFromGrid(...)`. Both
+// feed the SAME navigable-corridor scoring; the ToF path is metric and needs no
+// model or GPU. From the depth map it computes the best direction of traverse:
 //
 //   1. Clearance field  = Gaussian-blur(depth, kernel ~ vehicle width).
 //      An isolated far pixel (needle gap between branches) is blurred away;
@@ -50,9 +52,17 @@ public:
     };
 
     bool init(const std::string& modelPath, DepthBackend backend);
-    bool isReady() const { return !net_.empty(); }
+    void enableTof() { tofReady_ = true; } // depth from a ToF/stereo grid, no ONNX
+    bool isReady() const { return !net_.empty() || tofReady_; }
 
     bool update(const cv::Mat& frame);
+
+    // Sensor-agnostic depth entry point: feed a metric depth grid (metres,
+    // higher = farther, <= 0 = invalid/no-return) from a ToF/stereo sensor
+    // instead of the ONNX model, and run the same sector + VFH+ pipeline. Any
+    // grid size works — VL53L5CX 8×8, VL53L9 54×42, an OAK-D depth map.
+    bool updateFromGrid(const cv::Mat& metricGrid, const cv::Size& frameSize,
+                        float maxRangeM);
 
     const SectorMap& sectors()  const { return sectors_; }
     const Traverse&  traverse() const { return traverse_; }
@@ -77,6 +87,7 @@ private:
     cv::dnn::Net net_;
     DepthBackend backend_     = DepthBackend::MIDAS_SMALL;
     bool         invertDepth_ = false;
+    bool         tofReady_    = false;   // depth from a ToF/stereo grid, not ONNX
     cv::Size     inputSize_;
 
     cv::Mat      depthMap_;     // normalised [0,1] float32, frame-sized

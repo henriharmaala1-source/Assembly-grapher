@@ -94,6 +94,34 @@ bool DepthNav::update(const cv::Mat& frame) {
     return true;
 }
 
+// ------------------------------------------------ metric depth grid (ToF/stereo)
+
+bool DepthNav::updateFromGrid(const cv::Mat& metricGrid, const cv::Size& frameSize,
+                              float maxRangeM) {
+    if (metricGrid.empty() || maxRangeM <= 0.f) return false;
+
+    // Convert metres (higher = farther) → the internal openness map [0,1]
+    // (higher = farther/more open), the same convention the DNN path produces.
+    // A zone with no valid return (<= 0) is treated as BLOCKED (openness 0) so
+    // the drone won't fly into unknown space — conservative by design.
+    cv::Mat grid;
+    metricGrid.convertTo(grid, CV_32F);
+    cv::Mat openGrid(grid.size(), CV_32F);
+    for (int y = 0; y < grid.rows; ++y) {
+        const float* d = grid.ptr<float>(y);
+        float*       o = openGrid.ptr<float>(y);
+        for (int x = 0; x < grid.cols; ++x)
+            o[x] = (d[x] > 0.f) ? std::min(1.f, d[x] / maxRangeM) : 0.f;
+    }
+
+    // Upsample the coarse grid (e.g. 54×42 VL53L9, 8×8 VL53L5) to frame size so
+    // the sector overlay and VFH+ pipeline are identical to the DNN path.
+    cv::resize(openGrid, depthMap_, frameSize, 0, 0, cv::INTER_LINEAR);
+    computeSectors(frameSize);
+    computeTraverse(frameSize);
+    return true;
+}
+
 // ----------------------------------------------------- corridor scoring (VFH+)
 
 void DepthNav::computeTraverse(const cv::Size& frameSize) {

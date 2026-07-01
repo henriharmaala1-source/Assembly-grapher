@@ -23,7 +23,9 @@ add_executable(kestrel
   src/msp_backend.cpp
   src/lock_tracker.cpp
   src/kalman_center.cpp
-  src/depth_nav.cpp)
+  src/depth_nav.cpp
+  src/i2c_hal.cpp
+  src/vl53_tof_source.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include

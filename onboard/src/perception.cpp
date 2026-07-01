@@ -72,6 +72,31 @@ void NavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
     });
 }
 
+// ========================================================= TofNavigateModule
+
+TofNavigateModule::TofNavigateModule(std::unique_ptr<ITofSource> src)
+    : src_(std::move(src)) {
+    nav_.enableTof();
+    if (src_)
+        std::printf("[tof-navigate] source: %s (max %.1fm)\n",
+                    src_->name(), src_->maxRangeM());
+}
+
+void TofNavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
+    if (!src_ || !src_->read(grid_)) return;   // no fresh ToF frame this tick
+
+    nav_.updateFromGrid(grid_, frame.size(), src_->maxRangeM());
+    const auto& t = nav_.traverse();
+
+    wm.with([&](WorldState& s) {
+        s.corridorValid    = t.valid;
+        s.corridorDecisive = t.valid && t.margin >= 0.04f;
+        s.corridorHeading  = t.point;
+        s.corridorOpen     = t.openness;
+        s.corridorMargin   = t.margin;
+    });
+}
+
 // =========================================================== DetectModule
 
 DetectModule::DetectModule(const std::string& model,

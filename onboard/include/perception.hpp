@@ -9,6 +9,7 @@
 #include "world_model.hpp"
 #include "lock_tracker.hpp"   // rpi5_tracker/src
 #include "depth_nav.hpp"      // rpi5_tracker/src
+#include "tof_source.hpp"
 
 // A perception module reads the current frame and writes its findings into the
 // WorldModel. The scheduler decides which modules run on a given tick based on
@@ -61,6 +62,29 @@ public:
 private:
     DepthNav nav_;
     bool     ready_ = false;
+};
+
+// ------------------------------------------------------------------ tof-nav
+// Same navigable-corridor output as NavigateModule (writes s.corridor*), but
+// depth comes from a metric ToF/stereo grid (ITofSource) instead of an ONNX
+// model — no GPU/CPU inference cost, and the depth is real metres. Drop-in
+// swap at the scheduler.add() call site; see vl53_tof_source.hpp for backends
+// (VL53L9CX, VL53L5CX, or SimTofSource for zero-hardware development).
+class TofNavigateModule : public IPerceptionModule {
+public:
+    explicit TofNavigateModule(std::unique_ptr<ITofSource> src);
+
+    const char* name()   const override { return "tof-navigate"; }
+    float       costMs() const override { return 2.f; }   // no model inference
+    bool        isReady() const override { return (bool)src_; }
+    void        run(const cv::Mat& frame, WorldModel& wm) override;
+
+    DepthNav& nav() { return nav_; }     // for the optional display overlay
+
+private:
+    std::unique_ptr<ITofSource> src_;
+    DepthNav                    nav_;
+    cv::Mat                     grid_;
 };
 
 // ------------------------------------------------------------------ detect

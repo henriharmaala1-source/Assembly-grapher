@@ -68,6 +68,7 @@ void NavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.corridorValid    = t.valid;
         s.corridorDecisive = t.valid && t.margin >= 0.04f;
         s.corridorHeading  = t.point;
+        s.corridorOffset   = (t.point.x - frame.cols * 0.5f) / (frame.cols * 0.5f);
         s.corridorOpen     = t.openness;
         s.corridorMargin   = t.margin;
     });
@@ -94,6 +95,7 @@ void TofNavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.corridorValid    = t.valid;
         s.corridorDecisive = t.valid && t.margin >= 0.04f;
         s.corridorHeading  = t.point;
+        s.corridorOffset   = (t.point.x - frame.cols * 0.5f) / (frame.cols * 0.5f);
         s.corridorOpen     = t.openness;
         s.corridorMargin   = t.margin;
     });

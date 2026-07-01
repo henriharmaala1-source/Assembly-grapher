@@ -31,6 +31,7 @@
 #include <cmath>
 #include <csignal>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
@@ -41,6 +42,7 @@
 #include "frame_bus.hpp"
 #include "fsm.hpp"
 #include "mavlink_backend.hpp"
+#include "mission.hpp"
 #include "msp_backend.hpp"
 #include "sim_fc_backend.hpp"
 #include "perception.hpp"
@@ -188,6 +190,7 @@ int main(int argc, char** argv) {
         "{fc             | none  | flight controller: none|msp|mavlink|sim }"
         "{fc-port        | /dev/ttyAMA0 | FC serial device }"
         "{fc-baud        | 115200 | FC serial baud }"
+        "{auto           | false | autonomous move-stop-sense cycle (hover→think→plan→move) }"
         "{allow-control  | false | actually SEND control to the FC (else dry-run) }"
         "{assist         | false | flight-assist: trim from the operator's current sticks (else total autonomy from neutral) }"
         "{bench-test     | false | connect FC, print live telemetry table, then exit (no camera) }"
@@ -274,9 +277,11 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    BehaviorFsm    fsm;
-    Controller     controller;
-    StateEstimator est;
+    BehaviorFsm       fsm;
+    Controller        controller;
+    StateEstimator    est;
+    MissionController mission;
+    mission.enable(parser.get<bool>("auto"));
     auto           tFeed = std::chrono::steady_clock::now();
 
     // ---- camera
@@ -393,7 +398,20 @@ int main(int argc, char** argv) {
         std::string reason;
         const WorldState snap = wm.snapshot();
         const Behavior beh = fsm.update(snap, op, dt, reason);
-        ControlCmd cmd = controller.compute(snap, beh, frame.cols, frame.rows);
+
+        // Control source: the autonomous move-stop-sense cycle drives when it's
+        // enabled — EXCEPT a failsafe/operator behaviour (RTL / HOLD / MANUAL)
+        // from the FSM always wins. Otherwise the reactive controller maps the
+        // FSM behaviour to a command as before.
+        const bool failsafe = beh == Behavior::RTL || beh == Behavior::HOLD ||
+                              beh == Behavior::MANUAL;
+        ControlCmd cmd;
+        if (mission.enabled() && !failsafe) {
+            wm.with([&](WorldState& s) { cmd = mission.update(s, (float)dt); });
+        } else {
+            cmd = controller.compute(snap, beh, frame.cols, frame.rows);
+            wm.with([&](WorldState& s) { s.missionActive = false; });
+        }
 
         // On the dry→live engage edge in assist mode, latch the operator's
         // current sticks so the takeover starts from their hands, not neutral.
@@ -445,11 +463,15 @@ int main(int argc, char** argv) {
                 cv::arrowedLine(frame, {bx, frame.rows - 4}, tip,
                                 {80, 255, 80}, 2, cv::LINE_AA, 0, 0.25);
             }
+            char autohud[48] = "";
+            if (snap.missionActive)
+                std::snprintf(autohud, sizeof(autohud), "  AUTO:%s", snap.missionPhase.c_str());
             const char* ctlStr = (allowControl && sent)
                 ? (assistMode ? "LIVE/assist" : "LIVE/total") : "dry";
             char hud[160];
             std::snprintf(hud, sizeof(hud), "%s  %s  ctl:%s  %.0ffps",
                           behavior_name(beh), reason.c_str(), ctlStr, fps);
+            if (autohud[0]) std::strncat(hud, autohud, sizeof(hud)-std::strlen(hud)-1);
             cv::putText(frame, hud, {8, 22}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
                         {255, 255, 255}, 2);
 
@@ -472,6 +494,9 @@ int main(int argc, char** argv) {
                             fsm.update(wm.snapshot(), op, 0, reason); }
             if (k == 'g') { op.type = OperatorCmd::SET_MODE; op.mode = Behavior::IDLE;
                             fsm.update(wm.snapshot(), op, 0, reason); }
+            if (k == 'a') { mission.enable(!mission.enabled());
+                            std::printf("[auto] move-stop-sense %s\n",
+                                        mission.enabled() ? "ON" : "OFF"); }
             if (k == ' ') {
                 allowControl = !allowControl && fc != nullptr;
                 std::printf("[ctl] %s\n", allowControl ? "LIVE — sending control"

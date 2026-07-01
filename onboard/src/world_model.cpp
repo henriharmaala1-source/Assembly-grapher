@@ -58,6 +58,9 @@ std::string WorldState::brief() const {
         os << ")";
     }
 
+    if (missionActive)
+        os << " auto=" << missionPhase;
+
     if (control.valid)
         os << " ctl(r" << int(control.roll * 100) << ",p" << int(control.pitch * 100)
            << ",y" << int(control.yaw * 100) << ",t" << int(control.throttle * 100)

@@ -53,8 +53,14 @@ struct WorldState {
     bool        corridorValid    = false;
     bool        corridorDecisive = false;
     cv::Point2f corridorHeading;      // steer target, frame px
+    float       corridorOffset = 0.f; // steer target, normalised [-1,1] (L..R)
     float       corridorOpen   = 0.f; // clearance at heading [0,1]
     float       corridorMargin = 0.f; // decisiveness [0,1]
+
+    // --- Mission: move-stop-sense autonomous cycle ---
+    bool        missionActive = false;
+    std::string missionPhase;         // SETTLE / THINK / MOVE / ARRIVE
+    float       missionWpE = 0.f, missionWpN = 0.f;  // committed waypoint (ENU, m)
 
     // --- Detect ---
     std::vector<Detection> detections;

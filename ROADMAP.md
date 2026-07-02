@@ -18,9 +18,12 @@ Effort key: S ≈ hours, M ≈ 1–2 days, L ≈ 3days+.
 
 **Status (2026-07):** ✅ **Track F (F1–F8) and P2 (P2.1–P2.3) are DONE** — all
 landed on `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (7 tests,
-all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, SITL). Next up:
-**P2.4** (assist field checklist), then **P4a** (recorder/replay). Items below
-are marked ✅ where complete.
+all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, SITL). Two Pi-CPU
+performance items were added after: **F9** (real-time scheduling for the
+fly-loop/FcLink threads — small, do soon) and **F10** (CPU inference runtime
+swap — scoped, not urgent until perception budget is the actual bottleneck).
+Next up: **F9**, then **P2.4** (assist field checklist), then **P4a**
+(recorder/replay). Items below are marked ✅ where complete.
 
 ---
 
@@ -97,6 +100,52 @@ means recompiling.
 - Tiny `key=value` parser (no new deps), `--config=kestrel.conf`, overrides
   those structs + scheduler cadences; `--dump-config` prints effective values.
 - **Accept:** parser unit test; SITL runs with a modified config.
+
+### F9 — Real-time scheduling for the fly loop + FcLink (S)
+The two/three-tier split (fly loop / Deliberator / FcLink, F2) exists so
+inference can never stall control — but that guarantee is currently **soft**
+(separate threads, default OS fair scheduling), not **hard**. Under real CPU
+pressure (a depth model running full-tilt on the Deliberator thread), the
+kernel scheduler can still starve the fly loop or FcLink. F2 solved the
+camera-blocking case; this closes the general CPU-contention case the same
+gap represents.
+- `pthread_setschedparam(SCHED_FIFO, elevated)` on the fly-loop and FcLink
+  threads so inference threads cannot preempt them.
+- `pthread_setaffinity_np` pinning fly-loop + FcLink to one core, Deliberator
+  to the rest; document (not code-enforce) an optional `isolcpus=` boot
+  parameter to reserve that core from general kernel scheduling too.
+- Pi-side prerequisites to verify/document alongside this: official 27W PD
+  supply + active cooling (undervoltage/thermal throttling — check via
+  `vcgencmd get_throttled` — silently defeats any of this), headless Lite OS.
+- **Accept:** unit test asserting the scheduling policy/affinity got set
+  (skips gracefully without CAP_SYS_NICE, e.g. in CI); a loaded-Deliberator
+  SITL/bench run showing fly-loop tick jitter stays bounded under synthetic
+  CPU load on the other threads.
+
+### F10 — CPU inference runtime swap (NCNN / ONNX Runtime+XNNPACK) (L, scoped)
+`perception.cpp` pins every model to `cv::dnn::DNN_BACKEND_OPENCV` /
+`DNN_TARGET_CPU` — convenient (native `cv::Mat` I/O) but not the fastest CPU
+inference path on ARM. `NavigateModule` (~110ms) and `DetectModule` (~90ms)
+against a 60ms/tick budget (`PerceptionScheduler::budgetMs_`) is the actual
+ceiling on "how much perception can run per tick" — this is the one change
+that raises the ceiling rather than approaching it more efficiently.
+- NCNN (built for ARM mobile/embedded) or ONNX Runtime + XNNPACK typically
+  beat OpenCV DNN 2–3× on Cortex-A76-class hardware for the same model, with
+  real INT8 quantization support.
+- New inference backend behind the existing `IPerceptionModule` interface
+  (no architecture change) + model reconversion for both the depth and
+  detect models.
+- **Not urgent today** — it becomes the forcing function once perception
+  budget is actually the bottleneck, most likely when P5b's occupancy-grid
+  module needs to run alongside depth/detect on the same tick budget. Revisit
+  then, or sooner if field testing shows the scheduler is starving modules.
+- Cheaper interim wins in the same direction, worth doing regardless: verify
+  the apt `libopencv-dev` isn't leaving NEON kernels on the table (a
+  from-source build with `-DCPU_BASELINE=NEON` is a known win); confirm
+  `DepthNav`'s `WORK_W/WORK_H` downsample and the model's own input
+  resolution are as small as accuracy tolerates; add `-flto` to the build.
+- **Accept:** same-model latency benchmark, OpenCV DNN vs the new backend, on
+  real Pi 5 hardware; SITL/bench regression stays green after the swap.
 
 ---
 

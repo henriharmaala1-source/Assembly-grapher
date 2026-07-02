@@ -102,8 +102,14 @@ release the sticks and hope.
 - `MspBackend::setMode(RTL)`: drive a configured AUX channel
   (`rth-aux`, `rth-aux-us` in config) in every RC frame, sticky until cleared;
   matches an iNAV "Nav RTH" mode range set in the configurator.
+- **Failsafe policy is estimator-aware:** RTH flown on a degraded position
+  estimate is worse than not flying home (field report: hackathon teams hit
+  exactly this as indoor "return-to-launch drift"). When `estEphM` is past the
+  gate (or GPS-denied on synthetic GPS), failsafe commands **LAND**, not RTH —
+  descending needs no position.
 - **Accept:** bench vs the iNAV modes tab (mode goes active); SITL asserts the
-  failsafe path sets the AUX value.
+  failsafe path sets the AUX value, and selects LAND when the estimate is
+  degraded.
 
 ### P2.2 — RC AUX command source (M)
 Make the drone flyable without a laptop: the world model was designed for
@@ -181,6 +187,11 @@ already exists.
 - Sparse LK optical flow (fly-loop frames), de-rotated with FC attitude
   (already available, fresher after F5), scaled by height (baro/ToF) →
   body-frame velocity → EKF.
+- **De-risk in hardware first:** an FC-side optical-flow module (Matek
+  3901-L0X, flow+ToF into iNAV directly) gives indoor position hold with zero
+  Pi involvement — field-proven pattern (PixRacer+flow at the UltraHack
+  demos). SETTLE's "the FC must actually hover" requirement then holds
+  indoors before any Pi VIO exists; Pi-side VIO remains the estimator's win.
 - **Accept:** SITL with synthetic flow → GPS cut → `estEphM` stays bounded;
   hand-carry bench test against tape-measure ground truth.
 
@@ -191,6 +202,12 @@ are the acceptance gate — they exist today and fail by design.
   corridor/ToF rays — built during SETTLE (move-stop-sense already buys the
   compute window). Runs as a think-tier `IPerceptionModule` writing
   `planBearing/planValid` into the world model.
+- **Unknown ≠ free.** Cells with no return / low-confidence depth carry a
+  traversal cost, never "open" — every ranging modality has an invisible
+  obstacle class (LiDAR and nets/wires, famously: an UltraHack team flew into
+  a net LiDAR couldn't see; monocular depth has the same blind spot). Our
+  structural mitigations stay in place: low cruise speed scaled by openness,
+  and stopping to sense.
 - Wavefront/A* on the grid → next-leg bearing; `MissionController` consumes
   `planBearing` when valid, falls back to the reactive goal+corridor blend
   when not.
@@ -204,12 +221,20 @@ prove out.
 ## P6 — mission capability (all within the §7 boundary)
 
 - **P6.1** COCO person/vehicle detector swap (model + labels via config). (S)
+  **Validate against the domain it will fly in** — models trained on one
+  domain silently fail in another (UltraHack: a fire detector trained on real
+  fires didn't recognise artificial demo flames). Runtime open-vocabulary
+  models don't fit a Pi 5 CPU; our equivalent is the desktop DINOv2/SAM2
+  pipeline as an offline auto-labeler → fine-tune the small onboard YOLO on
+  demo-domain footage.
 - **P6.2** Detection supervision: person/vehicle proximity during
   WAYPOINT/AUTONOMY → alert + optional auto-HOLD (config). (M)
-- **P6.3** FOLLOW_SUBJECT: **standoff-keeping only** — hold a range band +
-  bearing on a tracked subject (yaw + gentle lateral), never closing; needs a
-  range estimate (box-size heuristic or ToF). Explicitly scope-checked
-  against §7. (L)
+- **P6.3** FOLLOW_SUBJECT + ORBIT_INSPECT: **standoff-keeping only** — hold a
+  range band + bearing on a tracked subject (yaw + gentle lateral), and an
+  orbit-scan variant (circle the subject at a FIXED standoff radius, camera
+  facing it — the inspect pattern). Approach is *to the standoff radius*,
+  never onto the subject; needs a range estimate (box-size heuristic or ToF).
+  Explicitly scope-checked against §7. (L)
 - **P6.4** Multi-goal missions: ordered ENU/GPS goal list sequenced above
   `missionGoalBearing`; set from ground view (P4b) or RC. (M)
 - **P6.5** Geofence + max range/altitude enforced in `ModeManager` as a third

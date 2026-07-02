@@ -1,316 +1,338 @@
-# kestrel — an introduction
+# kestrel — architecture and design rationale
 
-**What this is, in one sentence:** kestrel is a cheap companion computer for a
-small analog FPV drone — a Raspberry Pi that watches the world through a
-camera and helps the aircraft avoid obstacles, fly a route, or hold position,
-without replacing or fighting the flight controller that already keeps it
-stable in the air.
+**Summary:** kestrel is a companion-computer runtime for an analog FPV
+multirotor. It runs on a Raspberry Pi 5, consumes the aircraft's existing
+video signal, and issues normalized control commands to the flight
+controller over MSP — functionally equivalent to pilot stick input — to
+provide obstacle-avoidance corridor steering, GPS-denied position hold
+support, and a small set of semi-autonomous flight modes, without modifying
+the flight controller's own attitude-control loop.
 
-This document explains the shape of the software: what each piece does, and
-— more importantly — *why* it's built that way instead of some other way. It
-assumes you know what an FPV drone and an analog video link are, and nothing
-else about this project.
+This document covers system architecture and the engineering rationale
+behind it. It assumes familiarity with FPV multirotor concepts (flight
+controller, ESC, VTX, analog video link) and general software engineering,
+but no prior context on this specific codebase.
 
 ---
 
-## The problem this solves
+## Problem statement
 
-A cheap FPV drone already flies well. Its flight controller (the FC) — a
-tiny board running firmware like iNAV — reads the gyro and accelerometer
-hundreds of times a second and keeps the aircraft level, stable, and
-responsive to the sticks. That loop is fast, proven, and not something you
-want a Raspberry Pi anywhere near.
+An FPV flight controller (FC) — firmware such as iNAV, running on an
+STM32-class MCU — closes the inner attitude-control loop at several hundred
+Hz: IMU sampling, sensor fusion, PID computation, motor mixing. This loop is
+proven, latency-critical, and out of scope for modification.
 
-What the FC *can't* do on its own is see. It has no idea whether there's a
-tree ahead, whether the operator meant "left" as "left relative to the
-drone" or "left relative to the world," or how to hold a GPS position
-indoors where there's no GPS. Those are camera problems and reasoning
-problems — slow, computationally heavy, and exactly what a Raspberry Pi is
-good at.
+What the FC does not provide is exteroceptive sensing or world-frame
+reasoning: obstacle detection, semantic understanding of the environment, or
+position hold in the absence of GPS. These are the problems a companion
+computer is suited to, and the ones kestrel addresses — without touching the
+FC's own control loop. The FC receives normalized stick commands from
+kestrel exactly as it would from the pilot's receiver; there is no
+distinction at the protocol level between an operator input and a
+kestrel-generated one. kestrel therefore implements no attitude control,
+motor mixing, or gain tuning of its own — it only ever emits the same class
+of setpoint a human pilot would, and the FC's existing control loop consumes
+it unchanged.
 
-kestrel's job is to sit next to the FC, watch the camera, think about what
-it sees, and *hand the FC ordinary stick inputs* — the same kind of signal
-the pilot's radio already sends. The FC never knows the difference between a
-human on the sticks and kestrel on the sticks. That's the whole trick: kestrel
-doesn't need to understand attitude control, motor mixing, or PID tuning,
-because it never touches any of that. It only ever says "more forward," "turn
-right a bit," or "do nothing" — and the FC's own, already-trusted control
-loop does the rest.
+## Design constraint: cost and mass budget
 
-## Why cheap hardware, and what that choice costs
+The hardware budget is a fixed, deliberate constraint, not an incidental
+limitation. It bounds every downstream design decision in this project and
+is worth stating explicitly before anything else.
 
-This is the load-bearing decision of the whole project, so it's worth
-stating plainly before anything else: **the hardware budget is small on
-purpose, and that deliberately caps how autonomous this drone can be.** This
-isn't a limitation the project ran into and is working around — it's the
-starting constraint everything else was designed against.
+The alternative architecture — a Jetson-class SoC with GPU-accelerated
+inference, LiDAR, stereo depth, a full ROS stack — is what most funded
+autonomous-UAV platforms (Skydio, most companion-computer research
+platforms) use, and it is a reasonable architecture. It is also
+incompatible with the target platform here: an analog FPV airframe, where
+added mass and cost scale directly against flight characteristics and
+accessibility. The constraint adopted instead is: the companion-computer
+subsystem must be addable to an existing, already-flying FPV quad without
+airframe changes, at a cost on the order of the aircraft itself, not a
+multiple of it. See [`bom.md`](bom.md) for the actual parts list — the
+companion-computer subsystem (compute plus the video/power interface) is
+approximately €100 on top of the airframe; the full platform, including the
+aircraft, is approximately €476.
 
-The obvious alternative is a Jetson-class board with a real GPU, running a
-full ROS stack with LiDAR and stereo cameras. That's what well-funded
-autonomous-drone research and companies (Skydio, most companion-computer
-research platforms) actually do, and it works — but it costs hundreds of
-dollars in compute alone, weighs enough to need a bigger airframe to carry
-it, and turns a lightweight FPV quad into a different category of aircraft.
+This constraint is causally upstream of most other design decisions in the
+system:
 
-The goal here is different: stay cheap enough that anyone already flying
-analog FPV could add this, stay light enough that the airframe doesn't need
-to change, **stay an FPV drone** — the pilot still flies it, still watches a
-normal analog video link, and the companion-computer add-on itself (the Pi,
-plus how it taps into the video and power) costs under €100 on top of an
-FPV quad that was getting built anyway. See [`bom.md`](bom.md) for the exact
-parts and the full platform cost — around €476 for everything, airframe
-included. That number is the ceiling this project chose to build inside of.
+- **No GPU.** The Raspberry Pi 5's GPU is a display/video-decode block with
+  no general-purpose ML inference path — no CUDA-equivalent runtime is
+  available. Every inference workload runs on the CPU (`DNN_BACKEND_OPENCV`
+  / `DNN_TARGET_CPU`), which bounds model size (small variants: MiDaS-small,
+  DepthAnything-v2-Small) and inference cadence (not every frame — see
+  scheduling, below).
+- **No LiDAR, no dedicated stereo rig.** Depth is estimated from a single
+  monocular feed by default, with a plugin interface (`ITofSource`) for a
+  time-of-flight sensor if one is added later. Obstacle sensing is
+  consequently a short-range, forward-looking corridor estimate, not a
+  dense 3D reconstruction.
+- **No onboard SLAM or continuous replanning, currently.** Maintaining and
+  querying an occupancy map at flight rate exceeds the available CPU budget
+  under this constraint. The system instead uses a stop/sense/move cycle
+  (see Motion Planning, below), trading path efficiency for compute cost.
 
-Every "why isn't it smarter yet" question in this document has the same
-underlying answer: **that would cost more compute, more sensors, or more
-money than the budget allows, and the budget is the point, not an
-oversight.** Concretely, this cheap-hardware choice is *why*:
+None of these are permanent architectural ceilings — the plugin interfaces
+(`IPerceptionModule`, `ITofSource`, `IFlightController`) exist specifically
+so a faster inference backend, an added sensor, or an NPU accelerator can be
+integrated without a redesign, and this is tracked explicitly (`ROADMAP.md`,
+items F10, P5a–b). But the current system should be read as an
+engineering demonstration of what is achievable within a fixed, low
+hardware budget — not as the most capable system that could be built on
+this airframe class. That trade-off (accessibility and mass budget vs.
+maximum capability) is deliberate and informs every section that follows.
 
-- there's no GPU, so every model runs on the Pi's CPU — which is *why* the
-  depth models have to be small and can't run every frame (see below);
-- there's no LiDAR and no dedicated stereo rig by default — a single
-  camera plus, optionally, a cheap time-of-flight sensor stand in for them,
-  which is *why* obstacle sensing is a short-range, camera-shaped estimate
-  rather than a dense 3D map;
-- there's no onboard SLAM or continuous path-planning yet — building and
-  updating a real map costs compute this budget doesn't have to spare,
-  which is *why* the drone uses the stop-think-move pattern explained
-  further down, instead of thinking and flying at the same time.
+## System architecture: threading model
 
-None of that is a permanent ceiling — the architecture has clear places to
-plug in more capability later (a cheap NPU add-on board, a better sensor, a
-faster inference backend) without a redesign, and the project tracks exactly
-which upgrades unlock what. But today, on this budget, the honest framing is:
-**this is a demonstrator of what's achievable on cheap hardware, not the
-most autonomous drone that could be built.** That trade-off — accessible and
-FPV-weight versus maximally capable — was chosen deliberately, and it's the
-right way to understand every design decision that follows.
-
-## Why no GPU, specifically
-
-The Pi 5's GPU exists for video decode and display, not machine-learning
-inference — there's no CUDA-equivalent, so every model the software runs, it
-runs on the CPU. That shapes almost every other decision in the project:
-which depth models are usable (small ones — MiDaS-small,
-DepthAnything-v2-small), how often they can run (not every frame), and why a
-lot of engineering effort has gone into making sure a slow camera-side
-computation can never be allowed to affect the fast, safety-critical parts
-of the system. That last point is the architecture's central idea, covered
-next.
-
-## The central idea: two brains, one fast, one slow
-
-Everything in kestrel hangs off one architectural decision: **split the
-software into a fast loop and a slow loop, and never let the slow one block
-the fast one.**
-
-Think of it like a driver. Your reflexes — braking when something appears in
-the road — have to be instant, and they can't wait for you to finish
-thinking about the best route to the airport. Route-planning is valuable,
-but it must never compete with the reflex for attention at the moment a
-reflex is needed.
-
-kestrel is built the same way, as two threads sharing one Raspberry Pi:
+The runtime is partitioned into three threads around one invariant: **a
+slow perception computation must never increase the latency of the control
+path.**
 
 ```
-   camera ──► frame handoff ──────────► THINK  (best-effort, can be slow)
-     │                                    heavy perception: depth model,
-     │                                    object detection
-     ▼                                    │
-   FLY  (fast, every frame, guaranteed)   │
-     capture → cheap perception →         │
-     state estimate → pick a mode →       │
-     send a command                       │
-     ▲                                    │
-     └──────────── shared notebook ───────┘
+   video ──► frame handoff ──────────► DELIBERATOR  (best-effort thread)
+     │                                   heavy perception: monocular depth,
+     │                                   object detection
+     ▼                                   │
+   FLY LOOP  (bounded latency, per-frame) │
+     capture → cheap perception →        │
+     state estimate → mode arbitration → │
+     command                             │
+     ▲                                   │
+     └──────────── WorldModel ───────────┘
+
+   FC LINK (independent ~50 Hz thread): owns the flight-controller serial
+   link; services it on its own schedule regardless of video-frame timing.
 ```
 
-The **fly loop** runs every camera frame: read the flight controller's
-telemetry, run only the *cheap* vision (a lock-on tracker, an appearance-
-based road detector — both a few milliseconds), update the position
-estimate, decide what to do, and send a command. It never waits on anything
-slow.
+- **Fly loop** (main thread): executes once per captured frame. Reads FC
+  telemetry (via `FcLink`), runs only bounded-cost perception (lock-on
+  tracker, appearance-based road classifier — single-digit milliseconds
+  each), updates the state estimator, evaluates the active control mode,
+  and issues a command. No blocking calls to perception modules with
+  unbounded runtime.
+- **Deliberator** (separate thread): runs the CPU-bound perception modules
+  — the monocular depth model, object detector — via a
+  `PerceptionScheduler` that allocates a fixed millisecond budget per tick
+  and adjusts cadence per module based on which behavior is active. If a
+  depth-model inference takes on the order of 100 ms against a ~33 ms frame
+  interval, the fly loop continues operating on the most recent completed
+  result rather than blocking.
+- **FcLink** (separate thread, added after field testing surfaced the
+  requirement): owns the `IFlightController` backend exclusively and
+  services it at a fixed ~50 Hz independent of camera timing. This exists
+  because iNAV's MSP-RC failsafe triggers below approximately 5 Hz command
+  rate; coupling FC I/O to camera read latency risks spurious failsafe
+  activation on a transient capture stall. Both the fly loop and `FcLink`
+  run at elevated (`SCHED_FIFO`) scheduling priority relative to the
+  Deliberator, so CPU-bound inference cannot preempt either control-path
+  thread under load.
 
-The **think thread** runs the *expensive* vision — the depth model, the
-object detector — at whatever pace the Pi's CPU can sustain, which might be
-every third or fourth frame, not every frame. If a depth model takes 100
-milliseconds and a fresh frame arrives every 33 milliseconds, the fly loop
-simply keeps flying on the *last* result the think thread produced, rather
-than waiting for a new one.
+## Shared state: the world model
 
-There's also a third thread, added once real hardware testing surfaced the
-need for it: an **I/O thread that owns the connection to the flight
-controller** on its own schedule, independent of the camera. If the camera
-ever stalls — a USB hiccup, a bad frame — the flight controller still gets
-its stick updates on time. Skipping this would risk the FC's own failsafe
-triggering over what should have been a harmless camera glitch.
+Cross-thread communication is through a single mutex-guarded struct
+(`WorldState`, held by `WorldModel`) — a blackboard architecture. Each
+perception module writes its findings (e.g. corridor heading, openness
+score, per-field write timestamp) under lock; the control path reads the
+current snapshot under the same lock. No module holds a reference to
+another module's internal state, and no data crosses threads by any other
+path.
 
-## The shared notebook
+The blackboard also carries per-field monotonic write timestamps, since a
+perception result is a *latch*, not a heartbeat — a stalled Deliberator
+thread leaves the last-written value in place indefinitely. Consumers on
+the control path check field freshness (`corridorFresh()`, et al.) against
+a configurable staleness threshold rather than trusting a validity flag
+alone; a stale-but-valid corridor is treated identically to no corridor.
 
-The three threads need to share information — the camera-side perception
-needs to tell the control side what it saw — without corrupting each
-other's data or blocking each other. The answer is a single shared struct,
-protected by one lock, that everybody reads from and writes to: the *world
-model*. Perception writes what it currently believes ("the open direction
-is 15° left, and I'm 80% confident"); the control side reads that belief
-and turns it into a command; nothing is ever passed directly from one
-thread's internals to another's.
+## Perception pipeline
 
-This is a well-known pattern in robotics — sometimes called a *blackboard*
-architecture — chosen specifically because it keeps every module honest
-about what it does and doesn't know, and because a new module can be added
-by writing to the blackboard, without every other module needing to know it
-exists.
+kestrel does not use LiDAR or a dedicated stereo pair, and in the current
+build it has no dedicated camera at all. The video input is a **USB CVBS
+capture device** reading the same analog composite signal already routed
+from the FPV camera to the video transmitter — the identical feed the pilot
+sees in the goggles, digitized by an inexpensive capture dongle presenting
+as a standard V4L2 device. The pilot's signal path (camera → VTX → RF →
+goggles) is unmodified and remains fully analog; the capture device is a
+passive secondary tap, not an inline component, so the perception pipeline
+adds no latency to the pilot's video. This is the literal implementation of
+using an existing analog FPV link as an autonomy sensor: no additional
+camera hardware, no digital video pipeline on the aircraft side, a signal
+tap.
 
-## How the drone sees
+From that captured frame:
 
-kestrel doesn't use LiDAR or a dedicated stereo camera — and in the current
-build it doesn't use a dedicated camera at all. The "camera feed" kestrel
-actually processes is the same analog video signal already going to the
-pilot's FPV goggles, tapped off with a cheap USB video-capture dongle
-plugged straight into the Pi. The pilot's own path — camera to video
-transmitter to goggles — stays untouched and purely analog, so the AI side
-adds no latency to what the pilot sees flying; it's a passive second
-listener on the same signal, not something sitting inline in it. This is
-the concrete shape of "analog FPV video is enough for autonomy": no extra
-camera, no digital video pipeline, just a tap into what's already there
-(see [`bom.md`](bom.md) for the exact part).
+- A monocular depth model (MiDaS-small or DepthAnything-v2-Small, via
+  OpenCV DNN) produces a per-pixel relative depth estimate. This is reduced
+  to a single steering direction using **VFH+** (Vector Field Histogram
+  Plus): the depth map is collapsed to a one-dimensional polar openness
+  histogram, thresholded into free/blocked sectors with hysteresis, and the
+  free sector closest to both the current heading and the previous chosen
+  heading is selected. The hysteresis term (weighted toward the prior
+  heading) is what prevents oscillation between two similarly-open sectors.
+- The `ITofSource` interface allows a metric time-of-flight sensor to
+  supply the same VFH+ pipeline with a real distance grid in place of the
+  monocular estimate. No such sensor is in the current build (see
+  `bom.md`); the interface exists so one can be added without modifying the
+  steering algorithm.
+- Two additional, independent perception modules run in the fly loop: an
+  appearance-based road/line follower (CIELab color-space clustering, no
+  neural network, low enough cost to run every frame), and a lock-on
+  tracker (CSRT/KCF/optical-flow/MOSSE, Kalman-filtered) that maintains a
+  bounding box on an operator- or detector-designated subject.
 
-From that captured feed, a small monocular depth model estimates roughly
-how far away everything in the frame is. That depth estimate is turned into
-a steering decision using an algorithm called **VFH+** (Vector Field
-Histogram Plus): collapse the depth image into a one-dimensional "how open
-is each direction" profile, and pick the most open direction that is still
-close to where the drone was already heading — the "close to where it was
-already heading" part is what stops the steering from flapping back and
-forth between two similarly-open gaps.
+## State estimation
 
-The software has a second, ready-made path for depth: a cheap time-of-flight
-distance sensor, if one is ever added, can feed the exact same VFH+ pipeline
-instead of the depth model — the algorithm doesn't care whether "how far is
-that" came from a neural network or a laser, only that it gets a distance
-grid. That sensor isn't part of the current build; the point is that adding
-one later is a plug-in, not a redesign.
+GPS provides an absolute position fix outdoors; it is unavailable or
+degraded indoors, which is a known gap for FC-native position hold on this
+class of hardware.
 
-Two other, independent vision modules exist alongside the depth pipeline: an
-appearance-based road/line follower (no neural network — it clusters color
-in the image, cheap enough to run every frame), and a lock-on tracker that
-keeps a bounding box on a designated subject once the operator (or an
-automatic detector) points at one.
+kestrel runs a loosely-coupled Kalman filter (`StateEstimator`) fusing GPS,
+barometric altitude, and FC attitude, with hooks for visual-odometry
+velocity and pose (`updateVisionVelocity`, `updateVisionPose`) — the
+integration points for a future VIO front-end (`ROADMAP.md`, P5a). Roll,
+pitch, and yaw are taken directly from the FC's own AHRS rather than
+re-estimated, on the basis that the FC's Mahony/Madgwick filter output is
+more reliable than an independently derived estimate from the same raw
+sensors.
 
-## Where am I?
+The estimator's output is fed back into the flight controller as a
+synthetic GPS fix (`MSP2_SENSOR_GPS`), subject to iNAV's own glitch-radius
+and fix-age gating. This means kestrel does not reimplement position hold,
+loiter, or waypoint navigation — the FC's existing, already-tuned
+navigation firmware consumes the synthetic fix exactly as it would consume
+a real one. The estimator's role is limited to producing a fix when the
+real GPS cannot.
 
-Outdoors, GPS answers "where am I." Indoors, or anywhere GPS is degraded,
-it doesn't — and this is a common gap in cheap FPV setups, since the flight
-controller's own position-hold logic assumes GPS is available.
+## Control mode arbitration
 
-kestrel runs its own lightweight position filter (a Kalman filter, a
-standard way of blending several noisy measurements into one best estimate)
-that combines GPS, barometric altitude, and — once a camera-based motion
-estimate exists — visual motion, into a single smoothed position. That part
-is fairly ordinary. The less ordinary part is what happens next: kestrel
-feeds its own estimate *back into the flight controller* as a synthetic GPS
-signal, using a message the FC firmware already understands. The FC's own,
-already-tuned navigation logic then works exactly as it would with a real
-GPS fix — kestrel never has to reimplement position-hold or waypoint-flying
-itself; it just gives the FC a position to use when the real GPS can't
-provide one.
+The system is in exactly one control mode at a time, selected from a
+registered set (`IControlMode` implementations, added via
+`ModeManager::add()` — no central switch statement). Each mode implements
+`update(WorldState&, ControlCtx&) → ControlCmd`, and may return an invalid
+command to explicitly release control to the pilot or to the FC's own
+navigation firmware.
 
-## What should I do right now?
+Two safety layers are applied by `ModeManager::tick()` above whichever mode
+is active, independent of which mode that is:
 
-The drone can be in exactly one "mode" at a time — fly under the pilot's
-sticks, hold a hover, follow a road, fly a GPS route the FC already knows
-how to fly while kestrel watches for obstacles, or run a fully autonomous
-cycle. Each mode is a small, self-contained piece of code with one job:
-given everything currently known (the shared notebook), produce a command,
-or explicitly hand control back to the pilot or the flight controller.
+1. **Failsafe** — low battery or an operator abort releases control and
+   triggers RTH (driven via a configured AUX channel on the MSP backend, or
+   the FC's own RC-loss failsafe if none is configured).
+2. **Obstacle reflex** — a motion-capable mode (`isMotion() == true`) flying
+   toward a corridor reading below the openness threshold is overridden to
+   HOLD. A mode may opt out (`ownsObstacleAvoidance() == true`) only if it
+   implements its own avoidance logic; the default assumption is that it
+   does not.
 
-New modes are added by writing a new one of these and registering it — never
-by editing a growing `if / else` chain that every other mode also has to
-thread through. Two safety checks sit *above* every mode, regardless of
-which one is active and regardless of who wrote it: a low-battery or
-operator-abort check that hands the aircraft to the FC's own return-to-home,
-and an obstacle check that overrides any mode trying to fly forward into
-something close. A mode can only opt out of the obstacle check by proving it
-handles obstacles better itself — the default assumes it doesn't.
+One mode is a specific answer to pre-flight validation of the autonomy
+stack: **SHADOW**. The pilot retains control (SHADOW always releases, like
+FLY); underneath, the full `MissionController` cycle executes and computes
+— but does not transmit — the command it would issue, publishing it to the
+world model for HUD overlay. This allows the autonomy's output to be
+observed against real flight data with zero risk before it is given
+authority.
 
-One mode is worth calling out specifically, because it's the answer to "how
-do you trust this before you trust it": a **shadow mode**, where the pilot
-flies normally and kestrel computes — but never sends — what it *would* have
-done, drawing that intent on the video feed. It's a way to watch the
-autonomy's judgment in real flight with zero risk before ever letting it
-touch the sticks.
+## Motion planning: move-stop-sense
 
-## Moving without a full map yet
+Maintaining a queryable environment map while also flying exceeds the
+compute budget available under the design constraint above. Rather than
+attempt continuous mapping and replanning concurrently, `MissionController`
+implements a stop/sense/move cycle — structurally the same approach used by
+early Mars rover autonomy (Curiosity-era "stop and think" navigation,
+prior to Perseverance's move to continuous replanning once onboard compute
+allowed it).
 
-Building a real map of the surroundings — the kind a self-driving car or a
-research drone builds — is expensive, and the Pi doesn't have the compute
-to do it continuously while also flying. So instead of trying to think and
-move at the same time, kestrel does what several real robots facing the
-same compute limit have done before it (early Mars rovers being the most
-famous example): **stop, think, move a short distance, stop again.**
+The cycle (`SETTLE → THINK → MOVE → ARRIVE`, with a `SCAN` branch):
 
-Concretely: the drone hovers in place (the flight controller's own hover-
-hold is doing the actual holding — kestrel just refrains from pushing the
-sticks), looks at what's ahead, commits to a short leg in a direction that
-balances "toward the operator's chosen goal" against "actually open, as far
-as the camera can currently tell," flies that leg while continuously
-re-checking that the way ahead is still open, and then stops and repeats.
-If the way ahead closes off entirely — boxed in on all sides visible from
-where it's hovering — it rotates in place to look around before deciding
-where to go next, rather than guessing.
+- **SETTLE** — commands zero (the FC's own position-hold mode maintains a
+  hover); waits for velocity to converge and a minimum dwell time to elapse.
+- **THINK** — evaluates the current corridor reading. If openness exceeds
+  threshold, commits a waypoint one step ahead, blending the operator's goal
+  bearing with the vetted-open corridor direction (weighted toward the
+  corridor as its deflection from center increases, with a hard clamp
+  preventing the goal term from steering back into an occluded sector).
+  Otherwise transitions to SCAN.
+- **SCAN** — rotates in place (no translation) to bring an occluded escape
+  route into the field of view, continuing in the direction of the current
+  avoidance maneuver rather than reversing, to avoid oscillating at a
+  concave obstacle boundary.
+- **MOVE** — flies the committed leg, re-evaluating the corridor and
+  estimator health continuously; a stale corridor, a degraded position
+  estimate (`estEphM` above threshold), or the leg's fixed distance ends the
+  leg and returns to SETTLE.
 
-This is a real, known trade-off, not a limitation anyone's pretending
-doesn't exist: stopping to think is slow, and a drone that can only plan
-while stationary will occasionally back itself into a dead end that a
-continuously-replanning system wouldn't. That's the same lesson the Mars
-rover program learned — and solved, later, once more onboard compute became
-available, by moving to continuous replanning instead of stop-and-go. The
-same upgrade is the natural next step here too, once it's worth the added
-complexity.
+This is a known, accepted trade-off, not an oversight: a system that only
+plans while stationary can enter local minima a continuously-replanning
+system would not — verified directly in this codebase's SITL suite, where
+an obstacle positioned on the direct path to the goal reliably produces a
+stall (standoff is maintained; the goal is not reached). Closing this is
+the next planned capability step (`ROADMAP.md`, P5b — an accumulated
+occupancy grid with global planning, built during the SETTLE dwell so it
+does not compete with the move-cycle compute budget).
 
-## Talking to the flight controller
+## Flight-controller interface
 
-kestrel talks to iNAV over **MSP**, the same lightweight serial protocol
-iNAV's own configurator tool uses — not MAVLink, which is what most
-companion-computer tooling (ROS, the PX4 ecosystem) expects. That's a
-deliberate choice, not an oversight: iNAV is what a huge share of existing
-FPV analog aircraft already run, it doesn't need companion-computer-class
-hardware just to fly, and choosing it means the companion computer is a
-genuinely optional add-on riding on top of an aircraft that already works
-completely on its own — pull the Pi off, and it's just a normal FPV drone
-again.
+kestrel communicates with iNAV over **MSP**, the protocol iNAV's own
+configurator uses — not MAVLink, which is the default assumption of most
+companion-computer tooling (ROS, MAVROS, the PX4-adjacent ecosystem). This
+is a deliberate protocol choice: iNAV is widely deployed on existing analog
+FPV airframes, requires no companion-computer-class hardware to operate
+standalone, and choosing it means the companion-computer subsystem is
+strictly additive — the aircraft is fully flight-capable with the Pi
+removed. The cost of this choice is that the MAVLink-oriented tooling
+ecosystem (PX4-Avoidance, MAVROS, most published companion-computer
+reference architectures) is not directly applicable; the MSP integration
+(control framing, telemetry parsing, synthetic-GPS injection, RTH-AUX
+triggering) is implemented directly against the protocol.
 
-Every control command kestrel computes is **dry-run by default** — printed
-and logged, but not actually sent to the flight controller — until
-explicitly armed for live control. That's a deliberate piece of engineering
-culture reflected directly in the software's default state, not just a
-policy written down somewhere: the safest version of a bug is one that never
-reaches the motors.
+Every computed `ControlCmd` is **dry-run by default** — computed, logged,
+and not transmitted — until control is explicitly armed. This is a default
+system state, not a runtime check that can be bypassed by omission.
 
-## How this gets tested without a battery in it
+## Verification: software-in-the-loop testing
 
-Most of the interesting failure modes here — what happens if GPS drops out
-mid-flight, what happens if the camera perception stalls, whether the
-failsafe actually engages return-to-home — are exactly the kind of thing
-you'd rather not discover for the first time in the air. So there's a
-simulated flight controller that responds to commands with plausible,
-evolving telemetry (it actually "flies," in the sense that commanding
-forward pitch moves its simulated GPS position), and a suite of automated
-scenarios that fly a simulated goal around simulated obstacles and assert
-the drone stays a safe distance away in every one of them, plus a set of
-smaller tests exercising the position filter, the mode-safety logic, and
-the wire protocol to the flight controller. All of it runs on a laptop, in
-about two seconds, with no hardware attached — the same discipline major
-open-source flight-controller projects use for their own testing.
+The failure modes most worth catching before flight — position-estimate
+degradation mid-leg, perception-thread stall, failsafe activation — are
+exercised in an automated test suite requiring no flight hardware:
 
-## Where to go next
+- `SimFcBackend` — a kinematic flight-controller model that responds to
+  commanded input (commanded pitch produces simulated GPS displacement,
+  battery drains, auto-arms after a fixed delay), used both for interactive
+  bench testing and for headless SITL runs.
+- `sim_autonomy` — a scenario suite driving the real `MissionController`,
+  `StateEstimator`, and `SimFcBackend` against synthetic obstacle fields and
+  fault injection (perception dropout, GPS loss mid-leg), asserting minimum
+  standoff distance is maintained in every scenario and goal completion in
+  the scenarios the reactive layer is designed to handle.
+- Seven additional unit-test binaries covering the estimator (glitch
+  gating, re-acquisition, uncertainty growth), the mode-arbitration safety
+  layers, MSP wire-protocol framing (verified against a PTY-attached
+  simulated FC), the config parser, the RC command source, the FC I/O
+  thread's stale-command handling, and real-time scheduling.
 
-This document is the "why." For the actual hardware and what it costs, see
-[`bom.md`](bom.md) — the physical drone platform this software runs on. For
-"where is everything and how do I change it," see `AGENTS.md` in the
-repository root — written for the level of completeness a developer (or an
-AI assistant) making changes needs, rather than for a first read.
-`onboard/docs/adding-a-control-mode.md` walks through adding a new mode end
-to end. `ROADMAP.md` tracks what's built, what's next, and why it's
-sequenced the way it is.
+The full suite (eight CTest targets) runs in under three seconds with no
+attached hardware — the same discipline ArduPilot and PX4 apply to their
+own SITL-based CI.
+
+## Where "kestrel" comes from
+
+There is no recorded naming rationale in this repository's history — the
+name was already in use by the first commit that introduced the runtime.
+One observation, offered as a plausible connection rather than a documented
+fact: the common kestrel (*Falco tinnunculus* and relatives) is
+distinguished among raptors by wind-hovering — holding a fixed position in
+the air while visually scanning the ground, then committing to a single
+targeted stoop. That behavior — hold position, observe, commit to one
+motion, repeat — maps closely onto the SETTLE/THINK/MOVE cycle described
+above. Whether that connection motivated the name or is coincidental is not
+established; it is a reasonable mnemonic regardless.
+
+## References
+
+For the physical hardware and its cost, see [`bom.md`](bom.md). For
+complete file-level architecture, invariants, and the plugin-interface
+contracts, see `AGENTS.md` (repository root) — written for implementation
+work rather than a first read. For adding a new control mode end to end,
+see `onboard/docs/adding-a-control-mode.md`. For planned work and its
+sequencing rationale, see `ROADMAP.md`.

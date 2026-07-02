@@ -1,7 +1,7 @@
 # kestrel — Pi 5 drone-vision runtime
 
-> New to the project? [`docs/introduction.md`](docs/introduction.md) explains
-> what this is and why it's built this way, in plain language.
+> New to the project? [`docs/introduction.md`](docs/introduction.md) covers
+> the architecture and the design rationale behind it.
 
 A modular real-time runtime that orchestrates the vision modules in this repo
 behind a single compute-budgeted scheduler, maintains a shared world model, and

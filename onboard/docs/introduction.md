@@ -276,17 +276,6 @@ culture reflected directly in the software's default state, not just a
 policy written down somewhere: the safest version of a bug is one that never
 reaches the motors.
 
-## What this deliberately does not do
-
-kestrel can detect and track a subject in view, and it can hold that
-subject centered for the operator or a camera gimbal to use. It will not
-fly the aircraft *toward* a tracked subject. That boundary is enforced in
-the control logic itself — the code path from "here's where the tracked
-box is" to "here's the flight command" simply does not exist — not left as
-a convention for whoever writes the next feature. Detecting and tracking
-something is a sensing problem; steering an aircraft onto it is a different
-problem, deliberately out of scope here.
-
 ## How this gets tested without a battery in it
 
 Most of the interesting failure modes here — what happens if GPS drops out

@@ -55,10 +55,11 @@ it, and turns a lightweight FPV quad into a different category of aircraft.
 The goal here is different: stay cheap enough that anyone already flying
 analog FPV could add this, stay light enough that the airframe doesn't need
 to change, **stay an FPV drone** — the pilot still flies it, still watches a
-normal video link, and the whole companion-computer add-on (compute plus
-every sensor — see [`bom.md`](bom.md) for the actual list and prices) comes
-in under €200 on top of a quad that already flies. That number is the
-ceiling this project chose to build inside of.
+normal analog video link, and the companion-computer add-on itself (the Pi,
+plus how it taps into the video and power) costs under €100 on top of an
+FPV quad that was getting built anyway. See [`bom.md`](bom.md) for the exact
+parts and the full platform cost — around €476 for everything, airframe
+included. That number is the ceiling this project chose to build inside of.
 
 Every "why isn't it smarter yet" question in this document has the same
 underlying answer: **that would cost more compute, more sensors, or more
@@ -163,22 +164,33 @@ exists.
 
 ## How the drone sees
 
-kestrel doesn't use LiDAR or a stereo camera — a single, ordinary camera
-feed is the primary sensor, for the same cost-and-weight reason there's no
-GPU. From that single feed, a small monocular depth model estimates
-roughly how far away everything in the frame is. That depth estimate is
-turned into a steering decision using an algorithm called **VFH+** (Vector
-Field Histogram Plus): collapse the depth image into a one-dimensional
-"how open is each direction" profile, and pick the most open direction that
-is still close to where the drone was already heading — the "close to where
-it was already heading" part is what stops the steering from flapping back
-and forth between two similarly-open gaps.
+kestrel doesn't use LiDAR or a dedicated stereo camera — and in the current
+build it doesn't use a dedicated camera at all. The "camera feed" kestrel
+actually processes is the same analog video signal already going to the
+pilot's FPV goggles, tapped off with a cheap USB video-capture dongle
+plugged straight into the Pi. The pilot's own path — camera to video
+transmitter to goggles — stays untouched and purely analog, so the AI side
+adds no latency to what the pilot sees flying; it's a passive second
+listener on the same signal, not something sitting inline in it. This is
+the concrete shape of "analog FPV video is enough for autonomy": no extra
+camera, no digital video pipeline, just a tap into what's already there
+(see [`bom.md`](bom.md) for the exact part).
 
-A cheap time-of-flight distance sensor (a few dollars, effectively free on
-the CPU budget) can feed the exact same VFH+ pipeline instead of the depth
-model, when one is fitted — the algorithm doesn't care whether "how far is
+From that captured feed, a small monocular depth model estimates roughly
+how far away everything in the frame is. That depth estimate is turned into
+a steering decision using an algorithm called **VFH+** (Vector Field
+Histogram Plus): collapse the depth image into a one-dimensional "how open
+is each direction" profile, and pick the most open direction that is still
+close to where the drone was already heading — the "close to where it was
+already heading" part is what stops the steering from flapping back and
+forth between two similarly-open gaps.
+
+The software has a second, ready-made path for depth: a cheap time-of-flight
+distance sensor, if one is ever added, can feed the exact same VFH+ pipeline
+instead of the depth model — the algorithm doesn't care whether "how far is
 that" came from a neural network or a laser, only that it gets a distance
-grid.
+grid. That sensor isn't part of the current build; the point is that adding
+one later is a plug-in, not a redesign.
 
 Two other, independent vision modules exist alongside the depth pipeline: an
 appearance-based road/line follower (no neural network — it clusters color

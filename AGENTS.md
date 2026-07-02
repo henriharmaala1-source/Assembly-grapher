@@ -47,6 +47,12 @@ sharing a **thread-safe `WorldModel`** (a blackboard). This exists so slow
 - **Handoff is only through `WorldModel`.** Never read another thread's module
   internals directly — that's a data race (this is why the display reads
   `snapshot()`, not `navigate.nav()`).
+- **A third thread, `FcLink`, owns the flight controller.** It services the FC
+  at ~50 Hz (RC + telemetry) so a slow/hung `cap.read()` can't drop RC below
+  iNAV's ~5 Hz failsafe floor. The fly loop only touches `FcLink`'s thread-safe
+  intent (`command`/`commandRth`/`feedGps`/`telemetry`); the backend is never
+  called from two threads. If the fly loop stalls, `FcLink` keeps RC alive but
+  substitutes a NEUTRAL hover — it never repeats a stale motion command.
 
 This split is also the substrate for the **move-stop-sense** paradigm: the
 AUTONOMY mode (`MissionController`) cycles `SETTLE`(hover) → `THINK`(commit a
@@ -153,6 +159,7 @@ in-flight validation of the autonomy.
 | `state_estimator.*` | `StateEstimator` — loosely-coupled ENU KF (GPS+baro+VIO hooks), synthetic-GPS out |
 | `flight_controller.hpp` | `IFlightController` abstraction, `FcMode` |
 | `msp_backend.*` | iNAV MSP backend (telemetry poll, `MSP_SET_RAW_RC`, `MSP2_SENSOR_GPS`, assist/total, MSP_RC) |
+| `fc_link.*` | `FcLink` — FC serviced on its OWN thread; the fly loop hands it intent (thread-safe), so a hung camera can't stall RC; neutralises a stale command |
 | `sim_fc_backend.*` | `SimFcBackend` — software-in-the-loop FC (responds to control) for hardware-free testing |
 | `mavlink_backend.hpp` | ArduPilot MAVLink backend — documented stub |
 | `serial_port.*` | POSIX termios serial |

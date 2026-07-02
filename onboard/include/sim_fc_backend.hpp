@@ -34,6 +34,7 @@ public:
     void advance(float dt);
 
     bool feedExternalGps(const ExtGps&) override { return connected_; }  // accept, no-op
+    bool setMode(FcMode m) override { mode_ = m; return connected_; }     // accept
     void setAssistMode(bool) override {}
     void latchBaseline() override {}
 
@@ -52,6 +53,7 @@ private:
     float  yaw_  = 90.f;                       // facing East
     float  velN_ = 0.f, velE_ = 0.f;
     float  battV_ = 16.8f;                     // 4S full
+    FcMode mode_  = FcMode::ANGLE;             // last commanded FC mode
 
     FcTelemetry tel_{};
 };

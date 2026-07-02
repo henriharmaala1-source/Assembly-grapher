@@ -32,7 +32,8 @@ add_executable(kestrel
   src/mission.cpp
   src/control_mode.cpp
   src/config.cpp
-  src/rc_command.cpp)
+  src/rc_command.cpp
+  src/fc_link.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -87,4 +88,6 @@ if(BUILD_TESTS)
                src/rc_command.cpp)
   kestrel_test(test_rc src/rc_command.cpp src/control_mode.cpp
                src/controller.cpp src/mission.cpp src/world_model.cpp)
+  kestrel_test(test_fc_link src/fc_link.cpp src/sim_fc_backend.cpp
+               src/world_model.cpp)
 endif()

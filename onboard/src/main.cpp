@@ -41,6 +41,7 @@
 #include "config.hpp"
 #include "controller.hpp"
 #include "deliberator.hpp"
+#include "fc_link.hpp"
 #include "rc_command.hpp"
 #include "flight_controller.hpp"
 #include "frame_bus.hpp"
@@ -276,12 +277,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[fc] --allow-control set but no FC link; staying dry-run\n");
         allowControl = false;
     }
-    if (fc) {
-        fc->setAssistMode(assistMode);       // total autonomy vs flight assist
-        fc->setRthChannel(tune.rthAuxIdx, tune.rthAuxUs);   // failsafe RTH AUX (P2.1)
-    }
-
     // ---- bench-test mode: live telemetry table, no camera, no vision pipeline
+    // (uses the raw FC directly, before it's handed to the I/O thread).
     if (parser.get<bool>("bench-test")) {
         if (!fc) {
             std::fprintf(stderr,
@@ -294,6 +291,12 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // Hand the FC to its own I/O thread so a slow/hung camera can't stall RC
+    // (iNAV failsafes below ~5 Hz). From here the fly loop talks only to fcLink.
+    FcLink fcLink(std::move(fc));
+    fcLink.configure(assistMode, tune.rthAuxIdx, tune.rthAuxUs);
+    fcLink.start();
+
     Controller       controller(tune.gains);
     StateEstimator   est;
     ModeManager      modes(tune.mode);
@@ -304,13 +307,20 @@ int main(int argc, char** argv) {
     auto           tFeed = std::chrono::steady_clock::now();
 
     // ---- camera
-    cv::VideoCapture cap(parser.get<int>("camera"), cv::CAP_V4L2);
-    cap.set(cv::CAP_PROP_FRAME_WIDTH,  parser.get<int>("width"));
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, parser.get<int>("height"));
-    if (!cap.isOpened()) {
-        std::fprintf(stderr, "Cannot open camera %d\n", parser.get<int>("camera"));
+    const int camIndex = parser.get<int>("camera");
+    const int camW = parser.get<int>("width"), camH = parser.get<int>("height");
+    auto openCam = [&](cv::VideoCapture& c) {
+        c.open(camIndex, cv::CAP_V4L2);
+        c.set(cv::CAP_PROP_FRAME_WIDTH,  camW);
+        c.set(cv::CAP_PROP_FRAME_HEIGHT, camH);
+        return c.isOpened();
+    };
+    cv::VideoCapture cap;
+    if (!openCam(cap)) {
+        std::fprintf(stderr, "Cannot open camera %d\n", camIndex);
         return 1;
     }
+    auto tCamRetry = std::chrono::steady_clock::now();
 
     WorldModel wm;
     ClickState click;
@@ -333,8 +343,24 @@ int main(int argc, char** argv) {
     cv::Mat frame;
     while (true) {
         if (!cap.read(frame) || frame.empty()) {
-            std::fprintf(stderr, "Camera read failed\n");
-            break;
+            // Camera lost — do NOT exit the process. Command a safe HOLD (the
+            // I/O thread keeps RC alive on its own; this just makes the intent
+            // an explicit hover rather than the last motion command), and retry
+            // opening the camera every 2 s. iNAV doesn't failsafe on a USB hiccup.
+            if (fcLink.haveFc()) {
+                ControlCmd hold; hold.valid = true;
+                fcLink.command(hold, allowControl);
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (now - tCamRetry > std::chrono::seconds(2)) {
+                tCamRetry = now;
+                std::fprintf(stderr, "[camera] read failed — releasing control, retrying open\n");
+                cap.release();
+                openCam(cap);
+            }
+            if (display && (cv::waitKey(1) & 0xFF) == 'q') break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));  // ~50 Hz FC service
+            continue;
         }
         ++frameId;
 
@@ -342,12 +368,12 @@ int main(int argc, char** argv) {
         // checks (corridorFresh() etc.) compare their write-stamps against.
         wm.with([&](WorldState& s) { s.tickMonoS = monoNowS(); });
 
-        // ---- flight-controller telemetry
+        // ---- flight-controller telemetry (snapshot from the I/O thread)
         FcTelemetry t;
         bool        haveTel = false;
-        if (fc) {
-            fc->tick();
-            haveTel = fc->poll(t);
+        if (fcLink.haveFc()) {
+            t = fcLink.telemetry();
+            haveTel = t.linkUp;
             wm.with([&](WorldState& s) {
                 s.vehArmed = t.armed; s.vehBattery = t.battPct; s.vehBattV = t.battV;
                 s.vehAltM = t.altM;   s.vehRollDeg = t.rollDeg; s.vehPitchDeg = t.pitchDeg;
@@ -408,10 +434,10 @@ int main(int argc, char** argv) {
             est.updateBaro(t.baroAltM);
 
             // Inject the fused estimate back as synthetic GPS, rate-limited.
-            if (feedGps && fc && est.hasOrigin() &&
+            if (feedGps && fcLink.haveFc() && est.hasOrigin() &&
                 std::chrono::duration<double>(tNow - tFeed).count() >= feedPeriod) {
                 ExtGps g;
-                if (est.makeExtGps(g)) feeding = fc->feedExternalGps(g);
+                if (est.makeExtGps(g)) { fcLink.feedGps(g); feeding = true; }
                 tFeed = tNow;
             }
         }
@@ -436,23 +462,18 @@ int main(int argc, char** argv) {
 
         // On the dry→live engage edge in assist mode, latch the operator's
         // current sticks so the takeover starts from their hands, not neutral.
-        if (allowControl && !wasAllow && assistMode && fc) fc->latchBaseline();
+        if (allowControl && !wasAllow && assistMode && fcLink.haveFc()) fcLink.latchBaseline();
         wasAllow = allowControl;
 
-        bool sent = false;
-        if (rthTrigger && fc) {
-            // Failsafe: command the FC's return-to-home. With an RTH AUX channel
-            // configured, keep RC flowing with neutral sticks so the backend
-            // drives that channel high (iNAV NAV RTH). Without one, send nothing —
-            // the FC's own RC-loss failsafe takes over after its timeout.
-            const bool cmdingRth = fc->setMode(FcMode::RTL);
-            if (cmdingRth && allowControl && fc->linkUp()) {
-                ControlCmd hold; hold.valid = true;   // neutral; backend adds the AUX
-                sent = fc->sendControl(hold);
-            }
-        } else if (allowControl && fc && fc->linkUp() && cmd.valid) {
-            sent = fc->sendControl(cmd);
+        // Hand intent to the I/O thread. Failsafe → RTH; a released command
+        // (valid=false, e.g. FLY/SHADOW) is passed as not-live so the thread
+        // sends nothing (operator/iNAV flies); an active command sends live.
+        if (rthTrigger && fcLink.haveFc()) {
+            fcLink.commandRth(allowControl);
+        } else if (fcLink.haveFc()) {
+            fcLink.command(cmd, allowControl && cmd.valid);
         }
+        const bool sent = allowControl && fcLink.linkUp() && (rthTrigger || cmd.valid);
 
         wm.with([&](WorldState& s) {
             s.fps = fps; s.frameId = frameId;
@@ -583,7 +604,7 @@ int main(int argc, char** argv) {
             if (k == 'h') setm("HOLD");
             if (k == 'x') { modes.requestAbort(); std::printf("[mode] ABORT -> RTH\n"); }
             if (k == ' ') {
-                allowControl = !allowControl && fc != nullptr;
+                allowControl = !allowControl && fcLink.haveFc();
                 std::printf("[ctl] %s\n", allowControl ? "LIVE — sending control"
                                                        : "dry-run");
             }
@@ -591,6 +612,6 @@ int main(int argc, char** argv) {
     }
 
     deliberator.stop();          // join the think thread before tearing down
-    if (fc) fc->disconnect();
+    fcLink.stop();               // join the FC I/O thread + disconnect
     return 0;
 }

@@ -230,3 +230,6 @@ cd onboard && cmake -B build && cmake --build build -j4
   awaits the vendor driver; MAVLink backend is a stub.
 
 When you change something, keep this section and the README's tables honest.
+
+The forward plan — hardening fixes (Track F) and phases P2–P6, with acceptance
+criteria and ordering — lives in [`ROADMAP.md`](ROADMAP.md).

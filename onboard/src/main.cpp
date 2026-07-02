@@ -274,7 +274,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[fc] --allow-control set but no FC link; staying dry-run\n");
         allowControl = false;
     }
-    if (fc) fc->setAssistMode(assistMode);   // total autonomy vs flight assist
+    if (fc) {
+        fc->setAssistMode(assistMode);       // total autonomy vs flight assist
+        fc->setRthChannel(tune.rthAuxIdx, tune.rthAuxUs);   // failsafe RTH AUX (P2.1)
+    }
 
     // ---- bench-test mode: live telemetry table, no camera, no vision pipeline
     if (parser.get<bool>("bench-test")) {
@@ -420,7 +423,6 @@ int main(int argc, char** argv) {
         cctx.controller = &controller;
         cctx.frameW = frame.cols; cctx.frameH = frame.rows; cctx.dt = (float)dt;
         wm.with([&](WorldState& s) { cmd = modes.tick(s, cctx, rthTrigger); });
-        if (rthTrigger && fc) fc->setMode(FcMode::RTL);   // hand off to iNAV RTH
 
         // On the dry→live engage edge in assist mode, latch the operator's
         // current sticks so the takeover starts from their hands, not neutral.
@@ -428,8 +430,19 @@ int main(int argc, char** argv) {
         wasAllow = allowControl;
 
         bool sent = false;
-        if (allowControl && fc && fc->linkUp() && cmd.valid)
+        if (rthTrigger && fc) {
+            // Failsafe: command the FC's return-to-home. With an RTH AUX channel
+            // configured, keep RC flowing with neutral sticks so the backend
+            // drives that channel high (iNAV NAV RTH). Without one, send nothing —
+            // the FC's own RC-loss failsafe takes over after its timeout.
+            const bool cmdingRth = fc->setMode(FcMode::RTL);
+            if (cmdingRth && allowControl && fc->linkUp()) {
+                ControlCmd hold; hold.valid = true;   // neutral; backend adds the AUX
+                sent = fc->sendControl(hold);
+            }
+        } else if (allowControl && fc && fc->linkUp() && cmd.valid) {
             sent = fc->sendControl(cmd);
+        }
 
         wm.with([&](WorldState& s) {
             s.fps = fps; s.frameId = frameId;

@@ -122,6 +122,35 @@ int main() {
         CHECK(attitude * 2 >= (int)cmds.size() - 1);       // ~every other slot
     }
 
+    { // P2.1: RTH via AUX — setMode(RTL) latches the channel high in RC frames
+        drainMaster(mfd);
+        CHECK(!fc.setMode(FcMode::RTL));             // unconfigured → false (release)
+
+        fc.setRthChannel(6, 1850);                   // AUX3 = channel index 6
+        CHECK(fc.setMode(FcMode::RTL));              // now latches
+        ControlCmd hold; hold.valid = true;          // neutral sticks
+        CHECK(fc.sendControl(hold));
+        {
+            const auto b = drainMaster(mfd);
+            CHECK(b.size() == 22);
+            if (b.size() == 22) {
+                auto ch = [&](int i) { return (uint16_t)(b[5 + 2 * i] | (b[6 + 2 * i] << 8)); };
+                CHECK(ch(0) == 1500 && ch(1) == 1500);   // sticks neutral
+                CHECK(ch(6) == 1850);                    // RTH AUX driven high
+                CHECK(ch(4) == 1000 && ch(5) == 1000);   // other AUX untouched
+            }
+        }
+        CHECK(fc.setMode(FcMode::ANGLE));            // any other mode releases it
+        CHECK(fc.sendControl(hold));
+        {
+            const auto b = drainMaster(mfd);
+            if (b.size() == 22) {
+                auto ch = [&](int i) { return (uint16_t)(b[5 + 2 * i] | (b[6 + 2 * i] << 8)); };
+                CHECK(ch(6) == 1000);                    // back to baseline low
+            }
+        }
+    }
+
     fc.disconnect();
     close(mfd); close(sfd);
 

@@ -101,8 +101,10 @@ switch/enum. This is the most important thing to know before adding features.
 control arbiter. It applies two **safety layers** over the active mode:
 
 ```
-1. failsafe : low battery / operator abort  → release control, rthTrigger=true
-              (main then calls fc->setMode(RTL) — iNAV flies the return)
+1. failsafe : low battery / operator abort  → rthTrigger=true. main calls
+              fc->setMode(RTL): the MSP backend drives the configured RTH AUX
+              channel high (iNAV NAV RTH) while neutral sticks keep RC alive;
+              with no AUX configured it releases → the FC's own RC-loss failsafe.
 2. reflex   : active mode isMotion() AND corridor ahead blocked → HOLD (stop)
               (suppressed when the mode ownsObstacleAvoidance() — e.g. AUTONOMY
                keeps its own standoff and must move at low openness to round)
@@ -232,9 +234,13 @@ cd onboard && cmake -B build && cmake --build build -j4
   (never breaches standoff) and completes clear/off-path/grazing goals, but it
   can stall in **local minima** on an obstacle sitting on the path — real
   SLAM/occupancy-grid/global planner are the P5 step that fixes that.
-  `MspBackend::setMode(RTL)` (RTH trigger) is not yet wired to an AUX channel;
   `FOLLOW_SUBJECT` releases (control TODO); the VL53L9 backend's ranging protocol
   awaits the vendor driver; MAVLink backend is a stub.
+- **Recently hardened (Track F / P2):** perception staleness stamps + freshness
+  gating + think-tier watchdog; mission gated on estimator health (`estEphM`);
+  ATTITUDE-priority MSP polling; runtime config (`--config`/`--dump-config`);
+  in-tree CTest suite (estimator, modes, MSP-over-PTY, config, SITL); failsafe
+  RTH wired to an iNAV AUX channel (`failsafe.rth_aux`). See `ROADMAP.md`.
 
 When you change something, keep this section and the README's tables honest.
 

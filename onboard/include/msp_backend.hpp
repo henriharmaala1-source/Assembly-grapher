@@ -32,6 +32,12 @@ public:
     void setAssistMode(bool on) override { assist_ = on; }
     void latchBaseline() override;
 
+    // RTH via AUX: setMode(RTL) latches the channel HIGH in every subsequent RC
+    // frame (iNAV flies NAV RTH); any other mode releases it. Returns false — so
+    // the caller can fall back to release — when no RTH channel is configured.
+    void setRthChannel(int idx, int us) override { rthAuxIdx_ = idx; rthAuxUs_ = us; }
+    bool setMode(FcMode m) override;
+
 private:
     // MSP v1 message IDs (decimal).
     enum : uint8_t { MSP_RC = 105, MSP_STATUS = 101, MSP_RAW_GPS = 106,
@@ -61,6 +67,13 @@ private:
     uint16_t baseline_[8]{};
     uint16_t rc_[18]{};
     int      rcCount_       = 0;
+
+    // Failsafe RTH-via-AUX (P2.1). While rthActive_, sendControl forces the
+    // configured channel high so iNAV enters NAV RTH; the arm channel is left at
+    // baseline so the aircraft stays armed for the return.
+    int      rthAuxIdx_ = -1;      // raw RC channel index (AUX1 = 4); <0 = off
+    int      rthAuxUs_  = 1800;    // µs written to it when RTH is active
+    bool     rthActive_ = false;
 
     // RX parser state machine.
     enum class St { DOLLAR, M, DIR, SIZE, CMD, DATA, CRC } st_ = St::DOLLAR;

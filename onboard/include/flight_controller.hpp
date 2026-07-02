@@ -40,6 +40,13 @@ public:
     virtual bool arm(bool /*force*/) { return false; }
     virtual bool disarm()         { return false; }
 
+    // Configure which channel commands the FC's return-to-home, for backends
+    // that trigger RTH by driving an AUX/mode channel (MSP RC override). idx is
+    // the raw channel index in the RC frame (AUX1 = 4); idx<0 disables, and the
+    // backend's setMode(RTL) then does nothing (caller falls back to release →
+    // the FC's own RC-loss failsafe). No-op on backends with a real mode API.
+    virtual void setRthChannel(int /*idx*/, int /*us*/) {}
+
     // Inject a companion-computed position into the FC's navigation estimator.
     // MSP backend: MSP2_SENSOR_GPS (no ACK). Requires gps_provider=MSP on the FC.
     virtual bool feedExternalGps(const ExtGps& /*fix*/) { return false; }

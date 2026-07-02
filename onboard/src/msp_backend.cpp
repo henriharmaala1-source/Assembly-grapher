@@ -139,6 +139,16 @@ void MspBackend::latchBaseline() {
     }
 }
 
+bool MspBackend::setMode(FcMode m) {
+    if (m == FcMode::RTL) {
+        if (rthAuxIdx_ < 0) return false;   // unconfigured → caller falls back
+        rthActive_ = true;
+        return true;
+    }
+    rthActive_ = false;                     // any other mode releases the latch
+    return true;
+}
+
 bool MspBackend::sendControl(const ControlCmd& cmd) {
     if (!connected_ || !cmd.valid) return false;
     // AETR: [Roll, Pitch, Throttle, Yaw, AUX1..AUX4]. Throttle is index 2.
@@ -159,6 +169,12 @@ bool MspBackend::sendControl(const ControlCmd& cmd) {
         ch[3] = axisToUs(cmd.yaw);
         for (int i = 4; i < 8; ++i) ch[i] = baselineValid_ ? baseline_[i] : 1000;
     }
+    // Failsafe RTH overlay: drive the configured AUX channel high so iNAV enters
+    // NAV RTH. Sticks are left as commanded (the caller sends neutral); the arm
+    // channel is untouched so the aircraft stays armed for the return.
+    if (rthActive_ && rthAuxIdx_ >= 4 && rthAuxIdx_ < 8)
+        ch[rthAuxIdx_] = (uint16_t)std::max(1000, std::min(2000, rthAuxUs_));
+
     uint8_t payload[16];
     for (int i = 0; i < 8; ++i) {
         payload[i * 2]     = (uint8_t)(ch[i] & 0xFF);

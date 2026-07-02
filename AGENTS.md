@@ -48,8 +48,18 @@ sharing a **thread-safe `WorldModel`** (a blackboard). This exists so slow
   internals directly — that's a data race (this is why the display reads
   `snapshot()`, not `navigate.nav()`).
 
-This split is also the substrate for the **move-stop-sense** paradigm (hover →
-think → move → repeat): the AUTONOMY mode hovers while the think tier plans.
+This split is also the substrate for the **move-stop-sense** paradigm: the
+AUTONOMY mode (`MissionController`) cycles `SETTLE`(hover) → `THINK`(commit a
+leg) → `MOVE`(fly it, *re-steering live* to the goal+corridor blend) → `ARRIVE`
+→ repeat, with a `SCAN` branch that rotates in place to look around when boxed
+in. It keeps its own obstacle standoff, so it opts out of the manager's blanket
+reflex (`ownsObstacleAvoidance()`). Validate it headless with the SITL harness:
+`cmake -B build -DBUILD_TESTS=ON && cmake --build build && ctest --test-dir build`
+(`onboard/test/sim_autonomy.cpp` — real sim-FC + estimator + mission vs a
+synthetic obstacle field). It confirms the loop, GO-gating, goal-seeking, and
+**standoff safety**; goal *completion* around an on-path obstacle is a known
+reactive-planner limit (local minima) awaiting the deferred occupancy-grid +
+global planner — see §6/§7.
 
 ---
 
@@ -94,6 +104,8 @@ control arbiter. It applies two **safety layers** over the active mode:
 1. failsafe : low battery / operator abort  → release control, rthTrigger=true
               (main then calls fc->setMode(RTL) — iNAV flies the return)
 2. reflex   : active mode isMotion() AND corridor ahead blocked → HOLD (stop)
+              (suppressed when the mode ownsObstacleAvoidance() — e.g. AUTONOMY
+               keeps its own standoff and must move at low openness to round)
 3. else     : active mode's update() → the command
 ```
 
@@ -120,7 +132,8 @@ releases) while the OS *supervises* (obstacle reflex stops it; detection runs).
 | `control_types.hpp` | `ControlCmd`, `FcTelemetry`, `ExtGps` (dependency-free shared types) |
 | `control_mode.*` | `IControlMode`, `ControlCtx`, `ModeManager` (registry + safety layers) |
 | `modes.hpp` | The concrete modes + `register_standard_modes()` |
-| `mission.*` | `MissionController` — the move-stop-sense cycle (AUTONOMY's engine) |
+| `mission.*` | `MissionController` — the move-stop-sense cycle (AUTONOMY's engine): `SETTLE/THINK/SCAN/MOVE/ARRIVE`, live-reactive steering, own standoff |
+| `test/sim_autonomy.cpp` | Headless SITL validation of AUTONOMY (built with `-DBUILD_TESTS=ON`, run via `ctest`) |
 | `controller.*` | `Controller` — reactive `Behavior → ControlCmd` math (hover/road/corridor) |
 | `deliberator.*` | The think thread: runs the heavy `PerceptionScheduler` |
 | `frame_bus.hpp` | Thread-safe latest-frame handoff (fly → think) |
@@ -206,8 +219,12 @@ cd onboard && cmake -B build && cmake --build build -j4
   controller, VFH+ depth corridor + ego-motion de-rotation + `updateFromGrid`,
   lock-on tracker, road-follow, detector, state estimator + synthetic-GPS,
   MSP backend (telemetry/control/assist), sim FC, sim ToF.
-- **Skeleton / needs work:** AUTONOMY's SLAM+planner (the mission commits a
-  corridor-direction waypoint — real SLAM/occupancy-grid/planner are the P5 step);
+- **Skeleton / needs work:** AUTONOMY's SLAM+planner. The mission is a *reactive*
+  goal-biased move-stop-sense loop (commit a leg along the goal+corridor blend,
+  fly it re-steering live, stop/scan/round obstacles). SITL-validated safe
+  (never breaches standoff) and completes clear/off-path/grazing goals, but it
+  can stall in **local minima** on an obstacle sitting on the path — real
+  SLAM/occupancy-grid/global planner are the P5 step that fixes that.
   `MspBackend::setMode(RTL)` (RTH trigger) is not yet wired to an AUX channel;
   `FOLLOW_SUBJECT` releases (control TODO); the VL53L9 backend's ranging protocol
   awaits the vendor driver; MAVLink backend is a stub.

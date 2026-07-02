@@ -44,3 +44,25 @@ check_cxx_compiler_flag("-mcpu=cortex-a76" HAS_A76)
 if(HAS_A76 AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
   target_compile_options(kestrel PRIVATE -mcpu=cortex-a76)
 endif()
+
+# ---------------------------------------------------------------------------
+# Headless software-in-the-loop validation of AUTONOMY (pick-a-direction, GO).
+# Compiles the REAL sim FC + estimator + mission against a synthetic obstacle
+# field and asserts the drone stays safe (never breaches its standoff) and
+# reaches the goal in the scenarios the reactive layer is designed for.
+#   cmake -B build -DBUILD_TESTS=ON && cmake --build build && ctest --test-dir build
+# ---------------------------------------------------------------------------
+option(BUILD_TESTS "Build the SITL validation harness" OFF)
+if(BUILD_TESTS)
+  enable_testing()
+  add_executable(sim_autonomy
+    test/sim_autonomy.cpp
+    src/sim_fc_backend.cpp
+    src/state_estimator.cpp
+    src/mission.cpp
+    src/world_model.cpp)
+  target_include_directories(sim_autonomy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(sim_autonomy PRIVATE ${OpenCV_LIBS} Threads::Threads)
+  add_test(NAME autonomy_sitl COMMAND sim_autonomy)
+endif()

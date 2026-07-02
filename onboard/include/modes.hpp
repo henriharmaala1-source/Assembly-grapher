@@ -71,6 +71,7 @@ class AutonomyMode : public IControlMode {
 public:
     const char* name() const override { return "AUTONOMY"; }
     bool        isMotion() const override { return true; }
+    bool        ownsObstacleAvoidance() const override { return true; }  // stop/scan/round
     Behavior    heatBehavior() const override { return Behavior::NAVIGATE; }
     void onEnter(WorldState& s) override {
         mission_.enable(true);

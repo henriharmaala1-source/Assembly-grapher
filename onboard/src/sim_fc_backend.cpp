@@ -17,6 +17,7 @@ inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi 
 bool SimFcBackend::connect(const std::string&, int) {
     connected_ = true;
     t0_ = tLast_ = clock::now();
+    simTime_ = 0.f;
     battV_ = 16.8f;
     std::printf("[sim-fc] simulated FC connected — no hardware; responds to control\n");
     return true;
@@ -31,8 +32,16 @@ void SimFcBackend::tick() {
     integrate_(dt);
 }
 
+void SimFcBackend::advance(float dt) {
+    if (!connected_) return;
+    if (dt < 0.f)    dt = 0.f;
+    if (dt > 0.5f)   dt = 0.5f;
+    integrate_(dt);
+}
+
 void SimFcBackend::integrate_(float dt) {
-    const float elapsed = std::chrono::duration<float>(clock::now() - t0_).count();
+    simTime_ += dt;                                     // model time (wall- or sim-driven)
+    const float elapsed = simTime_;
     const bool  armed   = elapsed > 2.0f;               // auto-arm after 2 s
 
     // Attitude follows the sticks, with a tiny idle wobble so the dashboard is

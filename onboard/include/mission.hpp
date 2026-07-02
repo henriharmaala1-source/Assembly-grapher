@@ -25,18 +25,28 @@
 // the FC's hold; it just refrains from commanding motion during SETTLE/THINK.
 class MissionController {
 public:
-    enum class Phase { SETTLE, THINK, MOVE, ARRIVE };
+    // SCAN — cornered: nothing ahead is open enough to move into, so rotate in
+    // place (yaw only, no translation) to bring open space into the camera FoV,
+    // then re-plan. A forward-facing narrow-FoV camera cannot see a lateral
+    // escape around an obstacle wider than its FoV without first turning to look.
+    enum class Phase { SETTLE, THINK, SCAN, MOVE, ARRIVE };
 
     struct Params {
         float settleSec      = 1.5f;   // min hover time before committing a leg
         float settleSpeedMs  = 0.4f;   // "stopped" below this ground speed
-        float stepM          = 4.0f;   // waypoint distance committed per leg
-        float arriveRadiusM  = 0.8f;   // reached-waypoint threshold
+        float stepM          = 4.0f;   // distance flown per leg before re-SLAM
         float moveTimeoutSec = 12.f;   // abort a leg that stalls
         float cruise         = 0.25f;  // forward pitch while moving
         float kpYaw          = 1.2f;   // heading error -> yaw
         float hFovDeg        = 60.f;   // camera h-FoV: corridor offset -> bearing
-        float minOpenToMove  = 0.35f;  // corridor openness below this -> re-think
+        float minOpenToMove  = 0.12f;  // openness needed to START a leg
+        float minOpenToKeep  = 0.06f;  // openness needed to CONTINUE a leg
+                                       // (hysteresis: start > keep, no chatter).
+                                       // Low because obstacles are already
+                                       // inflated by the vehicle+margin radius,
+                                       // so skimming the inflated edge is safe.
+        float scanYawRate    = 0.4f;   // yaw stick while scanning ([-1,1])
+        float scanTimeoutSec = 9.f;    // give up scanning after ~a full rotation
     };
 
     MissionController() = default;
@@ -54,12 +64,20 @@ public:
     ControlCmd update(WorldState& s, float dt);
 
 private:
-    void commitWaypoint_(const WorldState& s);
+    // Absolute heading (deg, 0=N) to steer this tick: the operator's goal bearing
+    // blended with the vetted-open corridor. Used both to commit a leg target and
+    // to RE-STEER live while moving (reactive avoidance, not a blind waypoint run).
+    float desiredBearing_(const WorldState& s) const;
+    void  commitWaypoint_(const WorldState& s);
 
     Params p_;
     bool   enabled_ = false;
     Phase  phase_   = Phase::SETTLE;
     float  tPhase_  = 0.f;
-    float  wpE_ = 0.f, wpN_ = 0.f;
+    float  wpE_ = 0.f, wpN_ = 0.f;      // committed leg target (ENU, for display)
+    float  legE_ = 0.f, legN_ = 0.f;    // leg start position (ENU) — leg length gate
+    float  roundSign_ = 0.f;            // which way we're rounding an obstacle
+                                        // (-1 left / +1 right / 0 none) — steers
+                                        // the scan out of a concave dead-end
     bool   haveWp_  = false;
 };

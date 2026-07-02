@@ -41,6 +41,12 @@ public:
     // reflex (imminent-obstacle → HOLD) applied by the manager.
     virtual bool isMotion() const { return false; }
 
+    // Does this mode run its OWN obstacle avoidance? If so, the manager's blanket
+    // reflex (open<blockedOpen → HOLD) is suppressed for it — the mode is trusted
+    // to keep its own standoff (e.g. AUTONOMY: stop/scan/round). Default false:
+    // the crude reflex protects the "dumb" motion modes that just release control.
+    virtual bool ownsObstacleAvoidance() const { return false; }
+
     // Behaviour to advertise for the deliberator's hot-module cadence + display.
     virtual Behavior heatBehavior() const { return Behavior::MANUAL; }
 

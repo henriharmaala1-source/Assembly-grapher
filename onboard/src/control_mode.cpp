@@ -43,8 +43,10 @@ ControlCmd ModeManager::tick(WorldState& s, const ControlCtx& ctx, bool& rthTrig
     if (!active_) { s.opMode = "none"; ControlCmd c; c.valid = false; return c; }
 
     // ---- safety layer 2: obstacle reflex for motion modes → HOLD (stop) ----
+    // Suppressed for modes that run their own avoidance (they keep their own
+    // standoff and must be free to move at low openness to round obstacles).
     const bool obstacle = s.corridorValid && s.corridorOpen < p_.blockedOpen;
-    if (active_->isMotion() && obstacle) {
+    if (active_->isMotion() && obstacle && !active_->ownsObstacleAvoidance()) {
         s.opMode     = active_->name();
         s.behavior   = Behavior::HOLD;
         s.modeReason = "obstacle -> HOLD";

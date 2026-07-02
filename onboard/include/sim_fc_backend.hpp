@@ -27,6 +27,12 @@ public:
     bool poll(FcTelemetry& out) override;
     bool sendControl(const ControlCmd& cmd) override;
 
+    // Advance the model by an EXPLICIT dt (seconds) instead of the wall clock.
+    // For deterministic, faster-than-real-time headless simulation (SITL tests):
+    // the production tick() paces off steady_clock, which only makes sense when
+    // the loop actually runs at real time.
+    void advance(float dt);
+
     bool feedExternalGps(const ExtGps&) override { return connected_; }  // accept, no-op
     void setAssistMode(bool) override {}
     void latchBaseline() override {}
@@ -37,6 +43,7 @@ private:
 
     bool              connected_ = false;
     clock::time_point t0_{}, tLast_{};
+    float             simTime_ = 0.f;         // accumulated model time (s)
     ControlCmd        cmd_{};                 // last commanded control
 
     // Model state.

@@ -9,6 +9,7 @@
 #include "controller.hpp"
 #include "control_mode.hpp"
 #include "mission.hpp"
+#include "rc_command.hpp"
 
 // Runtime configuration — flat `key = value` text, no dependencies.
 //
@@ -58,6 +59,8 @@ struct Tunables {
     // Failsafe → iNAV RTH via an AUX channel (consumed by the MSP backend, P2.1).
     int  rthAuxIdx = -1;    // 0-based AUX index to drive on RTH; <0 = disabled
     int  rthAuxUs  = 1800;  // µs to write on that channel when RTH is active
+
+    RcConfig rc;           // radio-as-command-source (P2.2)
 };
 
 // Read every tunable key out of `c` into a Tunables (also populates the dump /

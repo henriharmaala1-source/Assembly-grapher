@@ -130,5 +130,19 @@ Tunables load_tunables(Config& c) {
     t.rthAuxIdx = c.i("failsafe.rth_aux",    t.rthAuxIdx);
     t.rthAuxUs  = c.i("failsafe.rth_aux_us", t.rthAuxUs);
 
+    // --- RC command source (P2.2) ---
+    t.rc.modeAux        = c.i("rc.mode_aux",         t.rc.modeAux);
+    t.rc.goAux          = c.i("rc.go_aux",           t.rc.goAux);
+    t.rc.goUs           = c.i("rc.go_us",            t.rc.goUs);
+    t.rc.steerAux       = c.i("rc.steer_aux",        t.rc.steerAux);
+    t.rc.steerRateDps   = c.f("rc.steer_rate_dps",   t.rc.steerRateDps);
+    t.rc.steerDeadbandUs = c.i("rc.steer_deadband_us", t.rc.steerDeadbandUs);
+    // mode_map: comma-separated mode names, low→high band order.
+    const std::string map = c.s("rc.mode_map", "FLY,ASSIST,WAYPOINT,AUTONOMY,SHADOW,HOLD");
+    { std::string cur; for (char ch : map) {
+        if (ch == ',') { if (!cur.empty()) t.rc.modeMap.push_back(cur); cur.clear(); }
+        else if (ch != ' ') cur += ch; }
+      if (!cur.empty()) t.rc.modeMap.push_back(cur); }
+
     return t;
 }

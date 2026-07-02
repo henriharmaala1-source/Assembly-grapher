@@ -41,6 +41,7 @@
 #include "config.hpp"
 #include "controller.hpp"
 #include "deliberator.hpp"
+#include "rc_command.hpp"
 #include "flight_controller.hpp"
 #include "frame_bus.hpp"
 #include "mavlink_backend.hpp"
@@ -293,9 +294,11 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    Controller     controller(tune.gains);
-    StateEstimator est;
-    ModeManager    modes(tune.mode);
+    Controller       controller(tune.gains);
+    StateEstimator   est;
+    ModeManager      modes(tune.mode);
+    RcCommandSource  rc(tune.rc);   // radio as a command source (mode/GO/steer)
+    if (rc.enabled()) std::printf("[rc] command source active (mode/go/steer via AUX)\n");
     register_standard_modes(modes, tune.mission);   // FLY ASSIST LOCK_ON HOLD FOLLOW_ROAD WAYPOINT AUTONOMY ...
     const bool     autoStart = parser.get<bool>("auto");
     auto           tFeed = std::chrono::steady_clock::now();
@@ -382,6 +385,12 @@ int main(int argc, char** argv) {
         const double dt   = std::chrono::duration<double>(tNow - tPrev).count();
         tPrev = tNow;
         fps   = 0.9 * fps + 0.1 / std::max(dt, 1e-6);
+
+        // ---- RC command source: the radio drives mode / GO / goal-steer (the
+        // same world-model surfaces as the keyboard), so the drone is flyable
+        // with no laptop. Runs before the arbiter so inputs take effect this tick.
+        if (rc.enabled() && haveTel)
+            wm.with([&](WorldState& s) { rc.update(t, modes, s, (float)dt); });
 
         // ---- state estimator (Pi-side EKF): predict, then fuse FC data.
         // Vision-odometry / SLAM fixes plug in here via est.updateVisionVelocity()

@@ -135,7 +135,8 @@ in-flight validation of the autonomy.
 | `main.cpp` | Entry point, CLI, the fly loop, wiring, key handling, `--bench-test` |
 | `world_model.*` | The blackboard (`WorldState`, `WorldModel`, `brief()`, `Behavior` enum, `behavior_name`) |
 | `control_types.hpp` | `ControlCmd`, `FcTelemetry`, `ExtGps` (dependency-free shared types) |
-| `config.*` | `Config` key=value loader + `Tunables` (gains/mission/safety); `--config`, `--dump-config`. Sample: `kestrel.conf.sample` |
+| `config.*` | `Config` key=value loader + `Tunables` (gains/mission/safety/rc); `--config`, `--dump-config`. Sample: `kestrel.conf.sample` |
+| `rc_command.*` | `RcCommandSource` — the radio as a command source (mode select / GO / goal-steer from AUX channels) |
 | `control_mode.*` | `IControlMode`, `ControlCtx`, `ModeManager` (registry + safety layers) |
 | `modes.hpp` | The concrete modes + `register_standard_modes()` |
 | `mission.*` | `MissionController` — the move-stop-sense cycle (AUTONOMY's engine): `SETTLE/THINK/SCAN/MOVE/ARRIVE`, live-reactive steering, own standoff |

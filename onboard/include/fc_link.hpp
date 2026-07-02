@@ -39,6 +39,10 @@ public:
         fc_->setRthChannel(rthAuxIdx, rthAuxUs);
     }
 
+    // Real-time scheduling for the I/O thread (F9); applied when the thread
+    // starts. prio<=0 leaves normal priority; cpu>=0 pins. Call before start().
+    void setRealtime(int prio, int cpu) { rtPrio_ = prio; rtCpu_ = cpu; }
+
     void start();
     void stop();
 
@@ -57,6 +61,7 @@ private:
 
     std::unique_ptr<IFlightController> fc_;
     float staleCmdSec_;
+    int   rtPrio_ = 0, rtCpu_ = -1;   // RT scheduling for loop_ (F9)
 
     mutable std::mutex mu_;
     ControlCmd cmd_{};

@@ -53,6 +53,11 @@ sharing a **thread-safe `WorldModel`** (a blackboard). This exists so slow
   intent (`command`/`commandRth`/`feedGps`/`telemetry`); the backend is never
   called from two threads. If the fly loop stalls, `FcLink` keeps RC alive but
   substitutes a NEUTRAL hover — it never repeats a stale motion command.
+- **The fly loop and `FcLink` run on `SCHED_FIFO`** (`realtime.hpp`, F9) so the
+  Deliberator's CPU-heavy inference (`SCHED_OTHER`) can never preempt control.
+  Priorities/pinning are config (`rt.*`); it degrades to normal priority without
+  `CAP_SYS_NICE`. Keep both control threads *yielding* (they block on camera
+  read / a 20 ms sleep) — a FIFO thread that busy-loops can starve its core.
 
 This split is also the substrate for the **move-stop-sense** paradigm: the
 AUTONOMY mode (`MissionController`) cycles `SETTLE`(hover) → `THINK`(commit a
@@ -143,6 +148,7 @@ in-flight validation of the autonomy.
 | `control_types.hpp` | `ControlCmd`, `FcTelemetry`, `ExtGps` (dependency-free shared types) |
 | `config.*` | `Config` key=value loader + `Tunables` (gains/mission/safety/rc); `--config`, `--dump-config`. Sample: `kestrel.conf.sample` |
 | `rc_command.*` | `RcCommandSource` — the radio as a command source (mode select / GO / goal-steer from AUX channels) |
+| `realtime.*` | `rt::make_realtime` — put a thread on SCHED_FIFO (+ optional CPU pin); used for the fly loop + FcLink so inference can't preempt control |
 | `control_mode.*` | `IControlMode`, `ControlCtx`, `ModeManager` (registry + safety layers) |
 | `modes.hpp` | The concrete modes + `register_standard_modes()` |
 | `mission.*` | `MissionController` — the move-stop-sense cycle (AUTONOMY's engine): `SETTLE/THINK/SCAN/MOVE/ARRIVE`, live-reactive steering, own standoff |

@@ -16,14 +16,12 @@ has a ready-made failing acceptance test in the SITL suite; the LLM supervisor
 
 Effort key: S ≈ hours, M ≈ 1–2 days, L ≈ 3days+.
 
-**Status (2026-07):** ✅ **Track F (F1–F8) and P2 (P2.1–P2.3) are DONE** — all
-landed on `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (7 tests,
-all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, SITL). Two Pi-CPU
-performance items were added after: **F9** (real-time scheduling for the
-fly-loop/FcLink threads — small, do soon) and **F10** (CPU inference runtime
-swap — scoped, not urgent until perception budget is the actual bottleneck).
-Next up: **F9**, then **P2.4** (assist field checklist), then **P4a**
-(recorder/replay). Items below are marked ✅ where complete.
+**Status (2026-07):** ✅ **Track F (F1–F9) and P2 (P2.1–P2.3) are DONE** — all
+landed on `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (8 tests,
+all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, realtime, SITL).
+**F10** (CPU inference runtime swap) remains scoped/deferred until perception
+budget is the actual bottleneck. Next up: **P2.4** (assist field checklist),
+then **P4a** (recorder/replay). Items below are marked ✅ where complete.
 
 ---
 
@@ -101,7 +99,7 @@ means recompiling.
   those structs + scheduler cadences; `--dump-config` prints effective values.
 - **Accept:** parser unit test; SITL runs with a modified config.
 
-### F9 — Real-time scheduling for the fly loop + FcLink (S)
+### ✅ F9 — Real-time scheduling for the fly loop + FcLink — DONE (jitter bench = field step)
 The two/three-tier split (fly loop / Deliberator / FcLink, F2) exists so
 inference can never stall control — but that guarantee is currently **soft**
 (separate threads, default OS fair scheduling), not **hard**. Under real CPU

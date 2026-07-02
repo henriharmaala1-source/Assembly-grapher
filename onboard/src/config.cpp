@@ -144,5 +144,11 @@ Tunables load_tunables(Config& c) {
         else if (ch != ' ') cur += ch; }
       if (!cur.empty()) t.rc.modeMap.push_back(cur); }
 
+    // --- real-time scheduling of the control threads (F9) ---
+    t.rt.enable     = c.b("rt.enable",      t.rt.enable);
+    t.rt.flyPrio    = c.i("rt.fly_prio",    t.rt.flyPrio);
+    t.rt.fcLinkPrio = c.i("rt.fclink_prio", t.rt.fcLinkPrio);
+    t.rt.controlCpu = c.i("rt.control_cpu", t.rt.controlCpu);
+
     return t;
 }

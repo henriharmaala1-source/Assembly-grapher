@@ -34,3 +34,7 @@
 # rc.steer_rate_dps            = 45
 # rc.steer_deadband_us         = 40
 # rc.mode_map                  = FLY,ASSIST,WAYPOINT,AUTONOMY,SHADOW,HOLD
+# rt.enable                    = true
+# rt.fly_prio                  = 10
+# rt.fclink_prio               = 20
+# rt.control_cpu               = -1

@@ -2,6 +2,7 @@
 
 #include <chrono>
 
+#include "realtime.hpp"
 #include "world_model.hpp"   // monoNowS()
 
 void FcLink::start() {
@@ -48,6 +49,9 @@ void FcLink::latchBaseline() {
 
 void FcLink::loop_() {
     using namespace std::chrono;
+    // Elevate this thread so inference on the Deliberator can't delay RC — the
+    // hard deadline (iNAV failsafes below ~5 Hz). Non-fatal if not permitted.
+    if (rtPrio_ > 0 || rtCpu_ >= 0) rt::make_realtime("fclink", rtPrio_, rtCpu_);
     bool lastRth = false, rthCmding = false;
 
     while (run_.load()) {

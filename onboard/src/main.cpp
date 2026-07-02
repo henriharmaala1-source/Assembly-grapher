@@ -43,6 +43,7 @@
 #include "deliberator.hpp"
 #include "fc_link.hpp"
 #include "rc_command.hpp"
+#include "realtime.hpp"
 #include "flight_controller.hpp"
 #include "frame_bus.hpp"
 #include "mavlink_backend.hpp"
@@ -295,6 +296,7 @@ int main(int argc, char** argv) {
     // (iNAV failsafes below ~5 Hz). From here the fly loop talks only to fcLink.
     FcLink fcLink(std::move(fc));
     fcLink.configure(assistMode, tune.rthAuxIdx, tune.rthAuxUs);
+    if (tune.rt.enable) fcLink.setRealtime(tune.rt.fcLinkPrio, tune.rt.controlCpu);  // F9
     fcLink.start();
 
     Controller       controller(tune.gains);
@@ -338,7 +340,12 @@ int main(int argc, char** argv) {
     auto   tLog    = tPrev;
 
     wm.with([&](WorldState& s){ modes.select(autoStart ? "AUTONOMY" : "FLY", s); });
-    deliberator.start(frameBus, wm);   // heavy perception on its own thread
+    deliberator.start(frameBus, wm);   // heavy perception on its own thread (SCHED_OTHER)
+
+    // F9: put the fly loop on SCHED_FIFO so the Deliberator's inference can never
+    // preempt control. Do it AFTER starting the Deliberator (which stays normal
+    // priority and yields to us). Non-fatal if unprivileged.
+    if (tune.rt.enable) rt::make_realtime("fly", tune.rt.flyPrio, tune.rt.controlCpu);
 
     cv::Mat frame;
     while (true) {

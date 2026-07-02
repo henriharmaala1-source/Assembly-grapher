@@ -61,6 +61,12 @@ struct Tunables {
     int  rthAuxUs  = 1800;  // µs to write on that channel when RTH is active
 
     RcConfig rc;           // radio-as-command-source (P2.2)
+
+    // Real-time scheduling for the control threads (F9). SCHED_FIFO priorities
+    // (1..99, 0 = leave normal); FcLink higher — RC cadence is the hard deadline.
+    // controlCpu >= 0 pins fly+FcLink to that core (default off; see realtime.hpp).
+    struct Rt { bool enable = true; int flyPrio = 10; int fcLinkPrio = 20;
+                int controlCpu = -1; } rt;
 };
 
 // Read every tunable key out of `c` into a Tunables (also populates the dump /

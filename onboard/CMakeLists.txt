@@ -52,9 +52,18 @@ endif()
 # reaches the goal in the scenarios the reactive layer is designed for.
 #   cmake -B build -DBUILD_TESTS=ON && cmake --build build && ctest --test-dir build
 # ---------------------------------------------------------------------------
-option(BUILD_TESTS "Build the SITL validation harness" OFF)
+option(BUILD_TESTS "Build the SITL validation harness + unit tests" OFF)
 if(BUILD_TESTS)
   enable_testing()
+
+  function(kestrel_test name)                 # kestrel_test(<name> <extra srcs...>)
+    add_executable(${name} test/${name}.cpp ${ARGN})
+    target_include_directories(${name} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(${name} PRIVATE ${OpenCV_LIBS} Threads::Threads)
+    add_test(NAME ${name} COMMAND ${name})
+  endfunction()
+
   add_executable(sim_autonomy
     test/sim_autonomy.cpp
     src/sim_fc_backend.cpp
@@ -65,4 +74,10 @@ if(BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(sim_autonomy PRIVATE ${OpenCV_LIBS} Threads::Threads)
   add_test(NAME autonomy_sitl COMMAND sim_autonomy)
+
+  kestrel_test(test_estimator src/state_estimator.cpp)
+  kestrel_test(test_modes src/control_mode.cpp src/controller.cpp
+               src/mission.cpp src/world_model.cpp)
+  kestrel_test(test_msp src/msp_backend.cpp src/serial_port.cpp)
+  target_link_libraries(test_msp PRIVATE util)   # openpty
 endif()

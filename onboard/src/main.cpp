@@ -14,8 +14,9 @@
 //
 // Keys (with --display):
 //   click = lock target      1/2/3/4 = track backend (CSRT/KCF/FLOW/MOSSE)
-//   modes: f=FLY s=ASSIST k=LOCK_ON o=FOLLOW_ROAD w=WAYPOINT a=AUTONOMY h=HOLD
-//   AUTONOMY: ← → (or , .) steer the goal direction, g = GO / STOP (hover)
+//   modes: f=FLY s=ASSIST k=LOCK_ON o=FOLLOW_ROAD w=WAYPOINT a=AUTONOMY
+//          y=SHADOW (operator flies; autonomy intent drawn only) h=HOLD
+//   AUTONOMY/SHADOW: ← → (or , .) steer the goal direction, g = GO / STOP (hover)
 //   x = abort -> iNAV RTH     space = arm/disarm control     r = reset  q/ESC = quit
 //
 // Bench-test (--bench-test): no camera; connects to the FC and prints a live
@@ -496,7 +497,8 @@ int main(int argc, char** argv) {
             }
             char autohud[48] = "";
             if (snap.missionActive)
-                std::snprintf(autohud, sizeof(autohud), "  AUTO:%s", snap.missionPhase.c_str());
+                std::snprintf(autohud, sizeof(autohud), "  %s:%s",
+                              snap.shadowActive ? "SHADOW" : "AUTO", snap.missionPhase.c_str());
             const char* ctlStr = (allowControl && sent)
                 ? (assistMode ? "LIVE/assist" : "LIVE/total") : "dry";
             char hud[160];
@@ -523,6 +525,19 @@ int main(int argc, char** argv) {
                 cv::arrowedLine(frame, c0, tip, gcol, 3, cv::LINE_AA, 0, 0.3);
                 cv::putText(frame, snap.missionGo ? "GO" : "ARMED (g=go , .=steer)",
                             {c0.x + 10, c0.y}, cv::FONT_HERSHEY_SIMPLEX, 0.45, gcol, 1);
+            }
+
+            // SHADOW: draw the intended (dry-run) command the autonomy WOULD send
+            // — forward = pitch, lateral = yaw — in magenta so it can't be
+            // mistaken for live control. The operator is flying; this is advisory.
+            if (snap.shadowActive && snap.shadowCmd.valid) {
+                const cv::Point c0(frame.cols / 2, frame.rows * 2 / 3);
+                const cv::Point tip(c0.x + (int)(snap.shadowCmd.yaw   *  60.f),
+                                    c0.y - (int)(snap.shadowCmd.pitch * 120.f));
+                const cv::Scalar mag(230, 60, 230);
+                cv::arrowedLine(frame, c0, tip, mag, 2, cv::LINE_AA, 0, 0.3);
+                cv::putText(frame, "intent", {c0.x + 8, c0.y + 4},
+                            cv::FONT_HERSHEY_SIMPLEX, 0.4, mag, 1);
             }
 
             cv::imshow(win, frame);
@@ -555,6 +570,7 @@ int main(int argc, char** argv) {
             if (k == 'o') setm("FOLLOW_ROAD");
             if (k == 'w') setm("WAYPOINT");
             if (k == 'a') setm("AUTONOMY");
+            if (k == 'y') setm("SHADOW");
             if (k == 'h') setm("HOLD");
             if (k == 'x') { modes.requestAbort(); std::printf("[mode] ABORT -> RTH\n"); }
             if (k == ' ') {

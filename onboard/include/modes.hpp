@@ -87,6 +87,35 @@ private:
     MissionController mission_;
 };
 
+// SHADOW — advisory autonomy. The OPERATOR flies (this mode releases control,
+// like FLY); underneath, the full AUTONOMY cycle runs in dry-run and publishes
+// what it WOULD command into the world model for the HUD to draw. Zero-risk
+// in-flight validation of the autonomy before ever trusting it live. Not a
+// motion mode (it commands nothing), so no obstacle reflex applies to it.
+class ShadowMode : public IControlMode {
+public:
+    explicit ShadowMode(MissionController::Params p = {}) : mission_(p) {}
+    const char* name() const override { return "SHADOW"; }
+    Behavior    heatBehavior() const override { return Behavior::NAVIGATE; }
+    void onEnter(WorldState& s) override {
+        mission_.enable(true);
+        s.missionGoalBearing = s.vehYawDeg;   // same operator inputs as AUTONOMY
+        s.missionGo = false;
+        s.shadowActive = true;
+    }
+    void onExit(WorldState& s) override {
+        mission_.enable(false);
+        s.missionGo = false; s.missionActive = false; s.shadowActive = false;
+    }
+    ControlCmd update(WorldState& s, const ControlCtx& c) override {
+        s.shadowCmd    = mission_.update(s, c.dt);   // compute what we WOULD do…
+        s.shadowActive = true;
+        return {};                                   // …but never take control
+    }
+private:
+    MissionController mission_;
+};
+
 // FOLLOW_SUBJECT — standoff-follow a tracked subject. Control not built yet
 // (standoff-keeping only); releases for now so it's a safe placeholder.
 class FollowSubjectMode : public IControlMode {
@@ -107,5 +136,6 @@ inline void register_standard_modes(ModeManager& mgr,
     mgr.add(std::make_unique<RoadFollowMode>());
     mgr.add(std::make_unique<WaypointMode>());
     mgr.add(std::make_unique<AutonomyMode>(missionParams));
+    mgr.add(std::make_unique<ShadowMode>(missionParams));
     mgr.add(std::make_unique<FollowSubjectMode>());
 }

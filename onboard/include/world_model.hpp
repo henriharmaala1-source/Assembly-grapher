@@ -93,6 +93,11 @@ struct WorldState {
     float       missionGoalBearing = 0.f;  // desired direction, deg (0 = North)
     bool        missionGo = false;         // "go" latch — cycle waits for this
 
+    // --- Shadow: what AUTONOMY *would* command, computed but NOT sent (SHADOW
+    // mode — operator flies; the overlay is drawn on the feed for validation) ---
+    bool        shadowActive = false;
+    ControlCmd  shadowCmd;             // intended command (advisory only)
+
     // --- Detect ---
     std::vector<Detection> detections;
     double      detStampS = -1e9;     // monoNowS at last detector publish

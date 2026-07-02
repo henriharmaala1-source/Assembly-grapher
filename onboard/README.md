@@ -62,10 +62,12 @@ in the manager sit under all of them:
 3. else     : the active mode module drives control
 ```
 
-Standard set (keys `f s k o w a h`, `x` = abort→RTH):
-`FLY · ASSIST · LOCK_ON · FOLLOW_ROAD · WAYPOINT · AUTONOMY · HOLD · FOLLOW_SUBJECT`.
+Standard set (keys `f s k o w a y h`, `x` = abort→RTH):
+`FLY · ASSIST · LOCK_ON · FOLLOW_ROAD · WAYPOINT · AUTONOMY · SHADOW · HOLD · FOLLOW_SUBJECT`.
 `WAYPOINT` releases control (iNAV flies the GPS route) while the OS supervises —
 the obstacle reflex stops it and detection runs in the deliberator.
+`SHADOW` (key `y`) = the operator flies while the autonomy runs dry-run and draws
+its intended command on the feed — validate the autonomy airborne before trusting it.
 
 ## Extending the OS — four plugin interfaces
 

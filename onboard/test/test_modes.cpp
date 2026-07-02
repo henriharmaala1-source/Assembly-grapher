@@ -10,6 +10,7 @@
 
 #include "control_mode.hpp"
 #include "mission.hpp"
+#include "modes.hpp"
 
 static int fails = 0;
 #define CHECK(cond) do { if (!(cond)) { \
@@ -144,6 +145,33 @@ int main() {
         }
         CHECK(c.pitch == 0.f);                 // no forward motion while blind
         CHECK(s.missionPhase != "MOVE");
+    }
+
+    { // SHADOW (P2.3): runs the full cycle but NEVER takes control
+        ShadowMode sh;
+        ControlCtx sctx; sctx.controller = &ctl; sctx.frameW = 640; sctx.frameH = 480;
+        sctx.dt = 0.02f;
+        WorldState s = healthyState();
+        sh.onEnter(s);
+        CHECK(s.shadowActive);
+
+        // GO + fresh open corridor: in AUTONOMY this reaches a MOVE that commands
+        // forward pitch. SHADOW must still release, every single tick.
+        s.estValid = true; s.estEphM = 1.f; s.missionGo = true;
+        s.corridorValid = true; s.corridorOpen = 1.f; s.corridorOffset = 0.f;
+        ControlCmd c;
+        bool everValid = false;
+        for (int i = 0; i < 250; ++i) {
+            s.tickMonoS += 0.02; s.corridorStampS = s.tickMonoS;
+            c = sh.update(s, sctx);
+            everValid = everValid || c.valid;
+        }
+        CHECK(!everValid);                     // NEVER commands the airframe
+        CHECK(s.missionPhase == "MOVE");       // …though the cycle really ran
+        CHECK(s.shadowCmd.valid);              // …and published its intent
+        CHECK(s.shadowCmd.pitch > 0.f);        // (forward, as a MOVE leg would)
+        sh.onExit(s);
+        CHECK(!s.shadowActive);
     }
 
     std::printf("test_modes: %s (%d failures)\n", fails ? "FAIL" : "OK", fails);

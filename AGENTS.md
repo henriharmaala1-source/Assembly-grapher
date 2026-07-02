@@ -120,8 +120,11 @@ control arbiter. It applies two **safety layers** over the active mode:
   RC µs (`MSP_SET_RAW_RC`, **AETR** order) and clamps authority.
 
 Standard modes (`modes.hpp`): `FLY, ASSIST, LOCK_ON, HOLD, FOLLOW_ROAD,
-WAYPOINT, AUTONOMY, FOLLOW_SUBJECT`. **WAYPOINT** = iNAV flies the GPS route (OS
-releases) while the OS *supervises* (obstacle reflex stops it; detection runs).
+WAYPOINT, AUTONOMY, SHADOW, FOLLOW_SUBJECT`. **WAYPOINT** = iNAV flies the GPS
+route (OS releases) while the OS *supervises* (obstacle reflex stops it;
+detection runs). **SHADOW** = operator flies (releases like FLY) while AUTONOMY
+runs dry-run underneath and draws its intended command on the feed — zero-risk
+in-flight validation of the autonomy.
 
 ---
 

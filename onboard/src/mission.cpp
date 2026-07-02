@@ -83,6 +83,15 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
         return c;                   // all-zero = hover
     }
 
+    // Valid-but-degraded is not flyable either: the filter keeps estValid while
+    // coasting GPS-denied and its uncertainty grows without bound. Legs are
+    // flown on this position, so gate on the uncertainty itself.
+    if (s.estEphM > p_.maxEphM) {
+        phase_ = Phase::SETTLE; tPhase_ = 0.f;
+        s.missionPhase = "SETTLE(est-degraded)";
+        return c;                   // hover until the estimate recovers
+    }
+
     // Armed but waiting for the operator to press GO — hover in place. Toggling
     // GO off mid-leg drops straight back to a hover here too.
     if (!s.missionGo) {

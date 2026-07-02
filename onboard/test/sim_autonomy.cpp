@@ -123,7 +123,20 @@ struct Scenario {
     bool                  expectReach;         // require goal completion to pass?
     float                 dropPerceptionAtS = -1.f;  // >=0: stop perception at t
                                                // (values stay LATCHED, stamps age)
+    float                 dropGpsAtS = -1.f;   // >=0: stop GPS updates at t (the
+                                               // EKF coasts, estEphM inflates)
 };
+
+// True ENU position from the sim FC's telemetry (origin = SimFcBackend's
+// start). The estimator COASTS through a GPS cut — its position keeps
+// integrating stale velocity — so "did the drone stop" must be judged on
+// truth, not on the estimate.
+void truthEnu(const FcTelemetry& tel, float& e, float& n) {
+    constexpr double kLat0 = 60.1699, kLon0 = 24.9384;   // sim FC origin
+    constexpr double kR = 6378137.0, kD2R = 3.14159265358979323846 / 180.0;
+    e = (float)((tel.lon - kLon0) * kD2R * kR * std::cos(kLat0 * kD2R));
+    n = (float)((tel.lat - kLat0) * kD2R * kR);
+}
 
 struct Result {
     bool  reached; float minObsEdge; float finalGoalDist; float simTime;
@@ -151,16 +164,19 @@ Result runScenario(const Scenario& sc, bool verbose) {
 
         est.predict(dt);
         est.setHeading(tel.yawDeg);
-        est.updateGps(tel.lat, tel.lon, tel.altM, tel.fixType,
-                      true, tel.groundspeedMs * std::cos(tel.groundCourseDeg * kPi / 180.f),
-                      tel.groundspeedMs * std::sin(tel.groundCourseDeg * kPi / 180.f), 0.f,
-                      1.0f, 1.5f);
+        const bool gpsUp = sc.dropGpsAtS < 0.f || t < sc.dropGpsAtS;
+        if (gpsUp)
+            est.updateGps(tel.lat, tel.lon, tel.altM, tel.fixType,
+                          true, tel.groundspeedMs * std::cos(tel.groundCourseDeg * kPi / 180.f),
+                          tel.groundspeedMs * std::sin(tel.groundCourseDeg * kPi / 180.f), 0.f,
+                          1.0f, 1.5f);
         auto e = est.state();
 
         s.tickMonoS = t;   // sim time drives the staleness timebase
         s.vehYawDeg = tel.yawDeg; s.vehArmed = tel.armed; s.estValid = e.valid;
         s.estPe = e.pe; s.estPn = e.pn; s.estPu = e.pu;
         s.estVe = e.ve; s.estVn = e.vn; s.estSpeed = e.speedMs;
+        s.estEphM = e.ephM; s.estGpsDenied = e.gpsDenied;
 
         if (e.valid)
             s.missionGoalBearing = std::atan2(sc.goalE - e.pe, sc.goalN - e.pn) * 180.f / kPi;
@@ -178,15 +194,24 @@ Result runScenario(const Scenario& sc, bool verbose) {
         fc.sendControl(mission.update(s, dt));
 
         if (e.valid) {
+            // All pass/fail metrics are judged on TRUTH (sim FC position) — the
+            // estimator coasts through a GPS cut and its position is fiction
+            // there, "reaching" goals the airframe never moved toward.
+            float te, tn; truthEnu(tel, te, tn);
             for (const auto& o : sc.obs)
-                minObsEdge = std::min(minObsEdge, std::hypot(e.pe - o.e, e.pn - o.n) - o.r);
-            dg = std::hypot(sc.goalE - e.pe, sc.goalN - e.pn);
+                minObsEdge = std::min(minObsEdge, std::hypot(te - o.e, tn - o.n) - o.r);
+            dg = std::hypot(sc.goalE - te, sc.goalN - tn);
             if (dg <= 2.0f) reached = true;
 
-            if (sc.dropPerceptionAtS >= 0.f && t >= sc.dropPerceptionAtS + 3.f) {
-                if (!haveDropRef) { dropRefE = e.pe; dropRefN = e.pn; haveDropRef = true; }
+            // Drift-after-drop: measured on TRUTH, from a grace period after the
+            // cut (the estimator legitimately keeps flying briefly while its
+            // uncertainty inflates past the gate).
+            const float dropAt = std::max(sc.dropPerceptionAtS, sc.dropGpsAtS);
+            if (dropAt >= 0.f && t >= dropAt + 6.f) {
+                float te, tn; truthEnu(tel, te, tn);
+                if (!haveDropRef) { dropRefE = te; dropRefN = tn; haveDropRef = true; }
                 driftAfterDrop = std::max(driftAfterDrop,
-                                          std::hypot(e.pe - dropRefE, e.pn - dropRefN));
+                                          std::hypot(te - dropRefE, tn - dropRefN));
             }
             if (verbose && step % 50 == 0)
                 std::printf("   t=%5.1f pos=(%6.2f,%6.2f) yaw=%5.1f phase=%-6s dGoal=%5.2f dObs=%5.2f\n",
@@ -210,6 +235,10 @@ int main() {
         // Staleness gate (F1): perception dies mid-leg, corridor stays latched
         // valid with an aging stamp — the drone must STOP, not cruise on blind.
         { "perception dropout mid-leg",       {},                    25.f, 0.f, false, 6.f },
+        // Estimator gate (F3): GPS dies mid-leg, the EKF coasts with estValid
+        // still true while estEphM inflates — the drone must settle, not fly
+        // legs on a runaway estimate.
+        { "GPS cut mid-leg (est degraded)",   {},                    25.f, 0.f, false, -1.f, 6.f },
     };
 
     std::printf("=== AUTONOMY SITL VALIDATION (pick-a-direction, press-GO) ===\n");
@@ -224,7 +253,7 @@ int main() {
         std::printf("[%-32s] reached=%-3s  minObstacleEdge=%5.2fm  finalGoalDist=%5.2fm  t=%4.0fs  %s",
                     sc.name, r.reached ? "YES" : "no", r.minObsEdge, r.finalGoalDist, r.simTime,
                     safe ? "SAFE" : "*** UNSAFE ***");
-        if (sc.dropPerceptionAtS >= 0.f) {
+        if (sc.dropPerceptionAtS >= 0.f || sc.dropGpsAtS >= 0.f) {
             const bool stopped = r.driftAfterDropM < 1.0f;   // blind → must hold
             std::printf("  driftAfterDrop=%.2fm %s", r.driftAfterDropM,
                         stopped ? "(STOPPED)" : "*** KEPT FLYING BLIND ***");

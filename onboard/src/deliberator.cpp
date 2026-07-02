@@ -18,6 +18,7 @@ void Deliberator::loop_(FrameBus* bus, WorldModel* wm) {
     uint64_t lastSeq = 0;
     long     frameId = 0;
     while (run_.load()) {
+        lastTickS_.store(monoNowS());   // liveness stamp — every pass, even idle
         // Take only the newest frame; skip if nothing new yet (don't busy-spin).
         if (!bus->latest(frame, &lastSeq) || frame.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));

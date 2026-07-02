@@ -319,6 +319,10 @@ int main(int argc, char** argv) {
         }
         ++frameId;
 
+        // Stamp "now" for this tick — the timebase the perception staleness
+        // checks (corridorFresh() etc.) compare their write-stamps against.
+        wm.with([&](WorldState& s) { s.tickMonoS = monoNowS(); });
+
         // ---- flight-controller telemetry
         FcTelemetry t;
         bool        haveTel = false;
@@ -425,13 +429,21 @@ int main(int argc, char** argv) {
         if (std::chrono::duration<double>(tNow - tLog).count() >= 0.5) {
             tLog = tNow;
             std::printf("%s\n", wm.snapshot().brief().c_str());
+            // Think-tier watchdog: the deliberator stamps every loop pass, so a
+            // large age means a module has it wedged — its outputs are going
+            // stale (the freshness gates are already ignoring them).
+            if (deliberator.running() && deliberator.lastTickAgeS() > 2.0)
+                std::fprintf(stderr, "[think] WARNING: deliberator stalled %.1fs — "
+                             "perception outputs stale\n", deliberator.lastTickAgeS());
             std::fflush(stdout);
         }
 
         // ---- display. Reads ONLY the thread-safe world-model snapshot — never
         // the think-tier modules' internals (which another thread is writing).
         if (display) {
-            if (snap.corridorValid) {   // corridor steer target from the think tier
+            // Overlays only draw FRESH data — a stale arrow looks live and
+            // invites trusting a corridor nobody is computing anymore.
+            if (snap.corridorFresh(0.7f)) {   // corridor steer target (think tier)
                 const cv::Point ctr(frame.cols / 2, frame.rows / 2);
                 const cv::Point tgt((int)snap.corridorHeading.x, (int)snap.corridorHeading.y);
                 const cv::Scalar col = snap.corridorDecisive ? cv::Scalar(0, 255, 128)
@@ -450,7 +462,7 @@ int main(int argc, char** argv) {
                 cv::putText(frame, d.label, d.box.tl() + cv::Point(0, -4),
                             cv::FONT_HERSHEY_SIMPLEX, 0.5, {0, 200, 255}, 1);
             }
-            if (snap.roadValid) {   // road centreline arrow from bottom centre
+            if (snap.roadFresh(1.0f)) {   // road centreline arrow, bottom centre
                 const int bx = frame.cols / 2;
                 const cv::Point tip(bx + (int)(snap.roadOffset * frame.cols / 2),
                                     frame.rows / 3);

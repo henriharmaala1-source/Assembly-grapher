@@ -1,6 +1,12 @@
 #include "world_model.hpp"
 
+#include <chrono>
 #include <sstream>
+
+double monoNowS() {
+    return std::chrono::duration<double>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 const char* behavior_name(Behavior b) {
     switch (b) {
@@ -38,6 +44,7 @@ std::string WorldState::brief() const {
         os << (corridorDecisive ? "TRAVERSE" : "SCAN")
            << "(open" << int(corridorOpen * 100) << "%,hdg"
            << int(corridorHeading.x) << "," << int(corridorHeading.y) << ")";
+        if ((tickMonoS - corridorStampS) > 1.0) os << "!STALE";
     }
 
     os << " road=";

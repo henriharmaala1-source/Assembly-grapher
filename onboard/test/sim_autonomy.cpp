@@ -112,6 +112,7 @@ void synthPerception(WorldState& s, const std::vector<Obstacle>& obs,
     s.corridorOffset = clampf(bestRel / half, -1.f, 1.f);
     s.corridorOpen   = clampf(clearFwd / maxRange, 0.f, 1.f);
     s.corridorMargin = s.corridorOpen;
+    s.corridorStampS = s.tickMonoS;   // stamp with sim time (staleness timebase)
 }
 }  // namespace
 
@@ -119,10 +120,15 @@ struct Scenario {
     const char*           name;
     std::vector<Obstacle> obs;
     float                 goalE, goalN;
-    bool                  expectReach;   // do we require goal completion to pass?
+    bool                  expectReach;         // require goal completion to pass?
+    float                 dropPerceptionAtS = -1.f;  // >=0: stop perception at t
+                                               // (values stay LATCHED, stamps age)
 };
 
-struct Result { bool reached; float minObsEdge; float finalGoalDist; float simTime; };
+struct Result {
+    bool  reached; float minObsEdge; float finalGoalDist; float simTime;
+    float driftAfterDropM = 0.f;               // travel after dropout + grace
+};
 
 // Run one scenario headless through the REAL loop; returns metrics.
 Result runScenario(const Scenario& sc, bool verbose) {
@@ -134,6 +140,10 @@ Result runScenario(const Scenario& sc, bool verbose) {
     WorldState s; s.missionGo = true;
     float prevRel = 0.f, t = 0.f, minObsEdge = 1e9f, dg = std::hypot(sc.goalE, sc.goalN);
     bool  reached = false;
+    // Perception-dropout metrics: position at (dropout + 3 s grace), then track
+    // how far it travels afterwards — a blind drone must stop, not cruise on.
+    bool  haveDropRef = false;
+    float dropRefE = 0.f, dropRefN = 0.f, driftAfterDrop = 0.f;
 
     for (int step = 0; step < 8000 && !reached; ++step) {
         fc.advance(dt);
@@ -147,6 +157,7 @@ Result runScenario(const Scenario& sc, bool verbose) {
                       1.0f, 1.5f);
         auto e = est.state();
 
+        s.tickMonoS = t;   // sim time drives the staleness timebase
         s.vehYawDeg = tel.yawDeg; s.vehArmed = tel.armed; s.estValid = e.valid;
         s.estPe = e.pe; s.estPn = e.pn; s.estPu = e.pu;
         s.estVe = e.ve; s.estVn = e.vn; s.estSpeed = e.speedMs;
@@ -155,8 +166,14 @@ Result runScenario(const Scenario& sc, bool verbose) {
             s.missionGoalBearing = std::atan2(sc.goalE - e.pe, sc.goalN - e.pn) * 180.f / kPi;
         s.missionGo = true;
 
-        const float goalRel = wrap180(s.missionGoalBearing - s.vehYawDeg);
-        synthPerception(s, sc.obs, hFovDeg, maxRange, rBot, goalRel, prevRel);
+        // Perception dropout: past the cut time the module never runs again —
+        // corridor fields stay latched at their last values while stamps age,
+        // exactly what a wedged think thread looks like to the fly loop.
+        const bool perceptionUp = sc.dropPerceptionAtS < 0.f || t < sc.dropPerceptionAtS;
+        if (perceptionUp) {
+            const float goalRel = wrap180(s.missionGoalBearing - s.vehYawDeg);
+            synthPerception(s, sc.obs, hFovDeg, maxRange, rBot, goalRel, prevRel);
+        }
 
         fc.sendControl(mission.update(s, dt));
 
@@ -165,6 +182,12 @@ Result runScenario(const Scenario& sc, bool verbose) {
                 minObsEdge = std::min(minObsEdge, std::hypot(e.pe - o.e, e.pn - o.n) - o.r);
             dg = std::hypot(sc.goalE - e.pe, sc.goalN - e.pn);
             if (dg <= 2.0f) reached = true;
+
+            if (sc.dropPerceptionAtS >= 0.f && t >= sc.dropPerceptionAtS + 3.f) {
+                if (!haveDropRef) { dropRefE = e.pe; dropRefN = e.pn; haveDropRef = true; }
+                driftAfterDrop = std::max(driftAfterDrop,
+                                          std::hypot(e.pe - dropRefE, e.pn - dropRefN));
+            }
             if (verbose && step % 50 == 0)
                 std::printf("   t=%5.1f pos=(%6.2f,%6.2f) yaw=%5.1f phase=%-6s dGoal=%5.2f dObs=%5.2f\n",
                             t, e.pe, e.pn, tel.yawDeg, s.missionPhase.c_str(), dg,
@@ -172,7 +195,7 @@ Result runScenario(const Scenario& sc, bool verbose) {
         }
         t += dt;
     }
-    return { reached, sc.obs.empty() ? 99.f : minObsEdge, dg, t };
+    return { reached, sc.obs.empty() ? 99.f : minObsEdge, dg, t, driftAfterDrop };
 }
 
 int main() {
@@ -184,6 +207,9 @@ int main() {
         { "obstacle grazing the path",        {{12.f, 4.2f, 2.0f}},  25.f, 0.f, true  },
         { "obstacle partly blocking path",    {{12.f, 3.2f, 2.0f}},  25.f, 0.f, false },
         { "obstacle dead-centre on path",     {{12.f, 0.f, 3.0f}},   25.f, 0.f, false },
+        // Staleness gate (F1): perception dies mid-leg, corridor stays latched
+        // valid with an aging stamp — the drone must STOP, not cruise on blind.
+        { "perception dropout mid-leg",       {},                    25.f, 0.f, false, 6.f },
     };
 
     std::printf("=== AUTONOMY SITL VALIDATION (pick-a-direction, press-GO) ===\n");
@@ -191,13 +217,20 @@ int main() {
                 "goal-aware VFH* perception -> MissionController -> FC.\n\n");
 
     int loopOk = 0, reachOk = 0, safeOk = 0, reachExpected = 0;
+    int stopOk = 0, stopExpected = 0;
     for (const auto& sc : suite) {
         Result r = runScenario(sc, true);
         const bool safe = r.minObsEdge > 0.5f;              // never breached standoff
-        std::printf("[%-32s] reached=%-3s  minObstacleEdge=%5.2fm  finalGoalDist=%5.2fm  t=%4.0fs  %s\n",
+        std::printf("[%-32s] reached=%-3s  minObstacleEdge=%5.2fm  finalGoalDist=%5.2fm  t=%4.0fs  %s",
                     sc.name, r.reached ? "YES" : "no", r.minObsEdge, r.finalGoalDist, r.simTime,
                     safe ? "SAFE" : "*** UNSAFE ***");
-        std::printf("\n");
+        if (sc.dropPerceptionAtS >= 0.f) {
+            const bool stopped = r.driftAfterDropM < 1.0f;   // blind → must hold
+            std::printf("  driftAfterDrop=%.2fm %s", r.driftAfterDropM,
+                        stopped ? "(STOPPED)" : "*** KEPT FLYING BLIND ***");
+            stopExpected++; if (stopped) stopOk++;
+        }
+        std::printf("\n\n");
         loopOk++;                                            // loop ran end-to-end
         if (safe) safeOk++;
         if (sc.expectReach) { reachExpected++; if (r.reached) reachOk++; }
@@ -207,12 +240,14 @@ int main() {
     std::printf("Loop closed (all real components) : %d/%zu scenarios\n", loopOk, suite.size());
     std::printf("Safety standoff never breached    : %d/%zu scenarios\n", safeOk, suite.size());
     std::printf("Goal reached where expected       : %d/%d scenarios\n", reachOk, reachExpected);
+    std::printf("Stopped on perception loss        : %d/%d scenarios\n", stopOk, stopExpected);
     std::printf("\nInterpretation: the SITL loop, arming/GO gating, move-stop-sense cycle,\n"
                 "goal-seeking, and obstacle STANDOFF are validated. Goal COMPLETION around an\n"
                 "obstacle sitting on the path is NOT guaranteed by the reactive layer (local\n"
                 "minima) — that needs the roadmap's deferred occupancy-grid + global planner.\n");
 
-    const bool pass = (safeOk == (int)suite.size()) && (reachOk == reachExpected);
+    const bool pass = (safeOk == (int)suite.size()) && (reachOk == reachExpected)
+                   && (stopOk == stopExpected);
     std::printf("\nVERDICT: %s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
 }

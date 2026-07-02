@@ -43,10 +43,14 @@ ControlCmd ModeManager::tick(WorldState& s, const ControlCtx& ctx, bool& rthTrig
     if (!active_) { s.opMode = "none"; ControlCmd c; c.valid = false; return c; }
 
     // ---- safety layer 2: obstacle reflex for motion modes → HOLD (stop) ----
-    // Suppressed for modes that run their own avoidance (they keep their own
-    // standoff and must be free to move at low openness to round obstacles).
-    const bool obstacle = s.corridorValid && s.corridorOpen < p_.blockedOpen;
-    if (active_->isMotion() && obstacle && !active_->ownsObstacleAvoidance()) {
+    // Freshness, not just validity: a corridor latched by a stalled/dead think
+    // thread must not count as perception. Suppressed for modes that run their
+    // own avoidance (they keep their own standoff and must be free to move at
+    // low openness to round obstacles).
+    const bool fresh       = s.corridorFresh(p_.corridorStaleSec);
+    const bool obstacle    = fresh && s.corridorOpen < p_.blockedOpen;
+    const bool wantsReflex = active_->isMotion() && !active_->ownsObstacleAvoidance();
+    if (wantsReflex && obstacle) {
         s.opMode     = active_->name();
         s.behavior   = Behavior::HOLD;
         s.modeReason = "obstacle -> HOLD";
@@ -56,6 +60,8 @@ ControlCmd ModeManager::tick(WorldState& s, const ControlCtx& ctx, bool& rthTrig
     // ---- active mode --------------------------------------------------------
     s.opMode   = active_->name();
     s.behavior = active_->heatBehavior();
-    s.modeReason.clear();
+    // A motion mode flying with no (or stale) obstacle perception has NO reflex
+    // protecting it — surface that instead of failing silent.
+    s.modeReason = (wantsReflex && !fresh) ? "no obstacle perception" : "";
     return active_->update(s, ctx);
 }

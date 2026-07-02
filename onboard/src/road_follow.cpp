@@ -157,5 +157,6 @@ void RoadFollowModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.roadOffset  = patch.roadOffset;
         s.roadHeading = patch.roadHeading;
         s.roadConf    = patch.roadConf;
+        s.roadStampS  = monoNowS();
     });
 }

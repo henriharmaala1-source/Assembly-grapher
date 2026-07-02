@@ -101,23 +101,30 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             break;                  // hover (all-zero)
         }
         case Phase::THINK: {
-            // Read the (think-tier) plan and commit a leg. If the way ahead is
-            // open enough, move; if we have a reading but it's blocked, rotate in
-            // place to look for a way around; if there's no reading, keep hovering.
-            if (s.corridorValid && s.corridorOpen >= p_.minOpenToMove) {
+            // Read the (think-tier) plan and commit a leg. A FRESH corridor is
+            // required to do anything but hover: valid-but-stale is a latched
+            // value from a stalled perception tier, not a plan. Fresh + open →
+            // move; fresh + blocked → rotate to look around; stale/none → settle.
+            const bool fresh = s.corridorFresh(p_.corridorStaleSec);
+            if (fresh && s.corridorOpen >= p_.minOpenToMove) {
                 commitWaypoint_(s);
                 phase_ = Phase::MOVE; tPhase_ = 0.f;
-            } else if (s.corridorValid) {
+            } else if (fresh) {
                 phase_ = Phase::SCAN; tPhase_ = 0.f;     // cornered -> turn to look
             } else {
-                phase_ = Phase::SETTLE; tPhase_ = 0.f;   // no data -> re-settle
+                phase_ = Phase::SETTLE; tPhase_ = 0.f;   // no live data -> re-settle
             }
             break;                  // hover this tick
         }
         case Phase::SCAN: {
             // Rotate in place (no translation) toward the openest side until a
             // corridor opens up ahead, then re-plan. Give up after ~a full turn.
-            if (s.corridorValid && s.corridorOpen >= p_.minOpenToMove) {
+            // Scanning blind is pointless — stale perception drops us to SETTLE.
+            if (!s.corridorFresh(p_.corridorStaleSec)) {
+                phase_ = Phase::SETTLE; tPhase_ = 0.f;
+                break;
+            }
+            if (s.corridorOpen >= p_.minOpenToMove) {
                 phase_ = Phase::THINK; tPhase_ = 0.f;    // opening found -> commit
                 break;                                   // hover this tick
             }
@@ -137,12 +144,15 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             break;                  // yaw only, no pitch
         }
         case Phase::MOVE: {
-            // Leg ends after stepM travelled (then stop & re-SLAM), on timeout, or
-            // when the way ahead closes below the keep threshold.
+            // Leg ends after stepM travelled (then stop & re-SLAM), on timeout,
+            // when the way ahead closes below the keep threshold — or when the
+            // corridor goes STALE mid-leg (perception died: flying blind → stop).
             const float legDist = std::hypot(s.estPe - legE_, s.estPn - legN_);
-            const bool  blocked = s.corridorValid && s.corridorOpen < p_.minOpenToKeep;
+            const bool  fresh   = s.corridorFresh(p_.corridorStaleSec);
+            const bool  blocked = fresh && s.corridorOpen < p_.minOpenToKeep;
+            const bool  blind   = !fresh;
 
-            if (legDist >= p_.stepM || tPhase_ >= p_.moveTimeoutSec || blocked) {
+            if (legDist >= p_.stepM || tPhase_ >= p_.moveTimeoutSec || blocked || blind) {
                 phase_ = Phase::ARRIVE; tPhase_ = 0.f;
                 break;              // hover this tick
             }

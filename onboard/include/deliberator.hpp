@@ -32,6 +32,11 @@ public:
     bool running()          const { return run_.load(); }
     long framesProcessed()  const { return frames_.load(); }
 
+    // Liveness: seconds since the think loop last completed an iteration (it
+    // stamps every pass, including no-new-frame sleeps). Grows without bound if
+    // the thread is wedged in a module — the fly loop watchdogs on this.
+    double lastTickAgeS() const { return monoNowS() - lastTickS_.load(); }
+
 private:
     void loop_(FrameBus* bus, WorldModel* wm);
 
@@ -39,4 +44,5 @@ private:
     std::thread         thr_;
     std::atomic<bool>   run_{false};
     std::atomic<long>   frames_{0};
+    std::atomic<double> lastTickS_{-1e9};
 };

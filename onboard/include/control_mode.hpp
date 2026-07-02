@@ -62,6 +62,7 @@ public:
     struct Params {
         float rtlBattPct  = 0.15f;   // battery fraction below which → failsafe RTH
         float blockedOpen = 0.30f;   // corridor openness below which → obstacle
+        float corridorStaleSec = 0.7f; // corridor older than this = no perception
     };
     ModeManager() = default;
     explicit ModeManager(Params p) : p_(p) {}

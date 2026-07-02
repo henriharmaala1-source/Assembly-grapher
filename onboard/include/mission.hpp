@@ -39,6 +39,7 @@ public:
         float cruise         = 0.25f;  // forward pitch while moving
         float kpYaw          = 1.2f;   // heading error -> yaw
         float hFovDeg        = 60.f;   // camera h-FoV: corridor offset -> bearing
+        float corridorStaleSec = 0.8f; // corridor older than this = blind (stop)
         float minOpenToMove  = 0.12f;  // openness needed to START a leg
         float minOpenToKeep  = 0.06f;  // openness needed to CONTINUE a leg
                                        // (hysteresis: start > keep, no chatter).

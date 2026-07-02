@@ -21,6 +21,13 @@ enum class Behavior { MANUAL, IDLE, NAVIGATE, ROAD_FOLLOW, TRACK,
                       SEARCH, EVADE, HOLD, RTL };
 const char* behavior_name(Behavior b);
 
+// Monotonic time in seconds (steady_clock) — the shared timebase for the
+// perception staleness stamps below. Writers stamp with monoNowS() when they
+// publish; the fly loop copies monoNowS() into WorldState::tickMonoS once per
+// tick; consumers compare the two. Headless sims drive BOTH with sim time, so
+// staleness logic is testable faster than real time.
+double monoNowS();
+
 // ---------------------------------------------------------------- detections
 struct Detection {
     std::string label;
@@ -37,6 +44,12 @@ struct WorldState {
     long   frameId = 0;
     double fps     = 0.0;
 
+    // "Now" for this tick (monoNowS timebase), set once per fly-loop tick.
+    // Perception results are LATCHES — a crashed think thread leaves them set —
+    // so consumers must judge them by AGE against this, via the *Fresh() helpers,
+    // never by the valid flags alone.
+    double tickMonoS = 0.0;
+
     Behavior behavior = Behavior::IDLE;
 
     // --- Track (lock-on) ---
@@ -48,6 +61,7 @@ struct WorldState {
     float       targetConf   = 0.f;
     long        targetAge    = 0;
     int         targetLosses = 0;
+    double      targetStampS = -1e9;  // monoNowS at last tracker publish
 
     // --- Navigate (monocular corridor) ---
     bool        corridorValid    = false;
@@ -56,6 +70,20 @@ struct WorldState {
     float       corridorOffset = 0.f; // steer target, normalised [-1,1] (L..R)
     float       corridorOpen   = 0.f; // clearance at heading [0,1]
     float       corridorMargin = 0.f; // decisiveness [0,1]
+    double      corridorStampS = -1e9;// monoNowS at last corridor publish
+
+    // Freshness — valid AND recently written. This is what control-side
+    // consumers (reflex, mission) must use; a bare `corridorValid` cannot tell
+    // a live corridor from one latched by a dead think thread.
+    bool corridorFresh(float maxAgeS) const {
+        return corridorValid && (tickMonoS - corridorStampS) <= maxAgeS;
+    }
+    bool roadFresh(float maxAgeS) const {
+        return roadValid && (tickMonoS - roadStampS) <= maxAgeS;
+    }
+    bool targetFresh(float maxAgeS) const {
+        return targetValid && (tickMonoS - targetStampS) <= maxAgeS;
+    }
 
     // --- Mission: move-stop-sense autonomous cycle ---
     bool        missionActive = false;
@@ -67,12 +95,14 @@ struct WorldState {
 
     // --- Detect ---
     std::vector<Detection> detections;
+    double      detStampS = -1e9;     // monoNowS at last detector publish
 
     // --- Road follow (appearance-based; pairs with the depth corridor) ---
     bool        roadValid   = false;
     float       roadOffset  = 0.f;    // lateral centreline offset [-1,1]
     float       roadHeading = 0.f;    // near→far bend [-1,1]
     float       roadConf    = 0.f;    // [0,1]
+    double      roadStampS  = -1e9;   // monoNowS at last road publish
 
     // --- Vehicle telemetry (filled by the flight-controller backend) ---
     bool        vehArmed     = false;

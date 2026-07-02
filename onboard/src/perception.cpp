@@ -44,6 +44,7 @@ void TrackModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.targetConf   = trk_.confidence();
         s.targetAge    = trk_.age();
         s.targetLosses = trk_.totalLosses();
+        s.targetStampS = monoNowS();
     });
 }
 
@@ -71,6 +72,7 @@ void NavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.corridorOffset   = (t.point.x - frame.cols * 0.5f) / (frame.cols * 0.5f);
         s.corridorOpen     = t.openness;
         s.corridorMargin   = t.margin;
+        s.corridorStampS   = monoNowS();
     });
 }
 
@@ -98,6 +100,7 @@ void TofNavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.corridorOffset   = (t.point.x - frame.cols * 0.5f) / (frame.cols * 0.5f);
         s.corridorOpen     = t.openness;
         s.corridorMargin   = t.margin;
+        s.corridorStampS   = monoNowS();
     });
 }
 
@@ -175,5 +178,8 @@ void DetectModule::run(const cv::Mat& frame, WorldModel& wm) {
         result.push_back(std::move(d));
     }
 
-    wm.with([&](WorldState& s) { s.detections = std::move(result); });
+    wm.with([&](WorldState& s) {
+        s.detections = std::move(result);
+        s.detStampS  = monoNowS();
+    });
 }

@@ -30,7 +30,8 @@ add_executable(kestrel
   src/sim_fc_backend.cpp
   src/deliberator.cpp
   src/mission.cpp
-  src/control_mode.cpp)
+  src/control_mode.cpp
+  src/config.cpp)
 
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -80,4 +81,6 @@ if(BUILD_TESTS)
                src/mission.cpp src/world_model.cpp)
   kestrel_test(test_msp src/msp_backend.cpp src/serial_port.cpp)
   target_link_libraries(test_msp PRIVATE util)   # openpty
+  kestrel_test(test_config src/config.cpp src/controller.cpp
+               src/mission.cpp src/control_mode.cpp src/world_model.cpp)
 endif()

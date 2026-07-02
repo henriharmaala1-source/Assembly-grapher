@@ -69,6 +69,7 @@ public:
 // disabling it is tied to entering/leaving the mode.
 class AutonomyMode : public IControlMode {
 public:
+    explicit AutonomyMode(MissionController::Params p = {}) : mission_(p) {}
     const char* name() const override { return "AUTONOMY"; }
     bool        isMotion() const override { return true; }
     bool        ownsObstacleAvoidance() const override { return true; }  // stop/scan/round
@@ -96,13 +97,15 @@ public:
 };
 
 // Register the standard demonstrator set. The FIRST added (FLY) is the default.
-inline void register_standard_modes(ModeManager& mgr) {
+// missionParams tunes the AUTONOMY cycle (from the config file; defaults if none).
+inline void register_standard_modes(ModeManager& mgr,
+                                    const MissionController::Params& missionParams = {}) {
     mgr.add(std::make_unique<FlyMode>());
     mgr.add(std::make_unique<AssistMode>());
     mgr.add(std::make_unique<LockOnMode>());
     mgr.add(std::make_unique<HoldMode>());
     mgr.add(std::make_unique<RoadFollowMode>());
     mgr.add(std::make_unique<WaypointMode>());
-    mgr.add(std::make_unique<AutonomyMode>());
+    mgr.add(std::make_unique<AutonomyMode>(missionParams));
     mgr.add(std::make_unique<FollowSubjectMode>());
 }

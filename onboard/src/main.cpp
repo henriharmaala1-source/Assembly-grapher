@@ -37,6 +37,7 @@
 #include <string>
 #include <thread>
 
+#include "config.hpp"
 #include "controller.hpp"
 #include "deliberator.hpp"
 #include "flight_controller.hpp"
@@ -197,10 +198,21 @@ int main(int argc, char** argv) {
         "{feed-gps       | false | inject the fused estimate into iNAV as MSP2_SENSOR_GPS }"
         "{feed-gps-hz    | 10    | rate to inject synthetic GPS (Hz) }"
         "{budget         | 60    | per-tick CPU budget ms }"
+        "{config         |       | key=value tuning file (gains/mission/safety) }"
+        "{dump-config    | false | print effective config (defaults+overrides) and exit }"
         "{display        | false | show the video window (desk testing) }";
 
     cv::CommandLineParser parser(argc, argv, keys);
     if (parser.has("help")) { parser.printMessage(); return 0; }
+
+    // ---- runtime config: load (if given), resolve all tunables. --dump-config
+    // prints the effective values and exits — the canonical knob reference.
+    Config   cfg;
+    if (!parser.get<std::string>("config").empty())
+        cfg.load(parser.get<std::string>("config"));
+    const Tunables tune = load_tunables(cfg);
+    cfg.warnUnused();
+    if (parser.get<bool>("dump-config")) { cfg.dump(); return 0; }
 
     Backend backend = Backend::MOSSE;
     const std::string be = parser.get<std::string>("backend");
@@ -277,10 +289,10 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    Controller     controller;
+    Controller     controller(tune.gains);
     StateEstimator est;
-    ModeManager    modes;
-    register_standard_modes(modes);   // FLY ASSIST LOCK_ON HOLD FOLLOW_ROAD WAYPOINT AUTONOMY ...
+    ModeManager    modes(tune.mode);
+    register_standard_modes(modes, tune.mission);   // FLY ASSIST LOCK_ON HOLD FOLLOW_ROAD WAYPOINT AUTONOMY ...
     const bool     autoStart = parser.get<bool>("auto");
     auto           tFeed = std::chrono::steady_clock::now();
 

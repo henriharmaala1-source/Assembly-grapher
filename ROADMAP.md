@@ -16,11 +16,17 @@ has a ready-made failing acceptance test in the SITL suite; the LLM supervisor
 
 Effort key: S ≈ hours, M ≈ 1–2 days, L ≈ 3days+.
 
+**Status (2026-07):** ✅ **Track F (F1–F8) and P2 (P2.1–P2.3) are DONE** — all
+landed on `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (7 tests,
+all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, SITL). Next up:
+**P2.4** (assist field checklist), then **P4a** (recorder/replay). Items below
+are marked ✅ where complete.
+
 ---
 
 ## Track F — hardening fixes (pre-flight)
 
-### F1 — Blackboard staleness + think-tier watchdog (M) — *highest priority*
+### ✅ F1 — Blackboard staleness + think-tier watchdog (M) — DONE
 `corridorValid` (and road/target/detections) are latches, not heartbeats: if the
 think thread dies or the depth model stalls, consumers keep acting on frozen
 perception forever.
@@ -34,7 +40,7 @@ perception forever.
 - **Accept:** unit test with fabricated stale state; new SITL scenario
   "perception dropout mid-leg" → drone settles to hover, never cruises blind.
 
-### F2 — Decouple FC keep-alive from the camera; camera-loss degrade (M/L)
+### ✅ F2 — Decouple FC keep-alive from the camera; camera-loss degrade — DONE
 `cap.read()` blocks at the top of the fly loop and `fc->tick()`/`sendControl`
 sit below it; a >200 ms camera stall breaks iNAV's ≥5 Hz MSP-RC requirement →
 FC failsafe. Camera read failure currently **exits the process** while live.
@@ -46,14 +52,14 @@ FC failsafe. Camera read failure currently **exits the process** while live.
 - **Accept:** stall/unplug the (sim) camera → RC frame cadence stays ≥5 Hz
   (counter in `MspBackend`), process survives and recovers.
 
-### F3 — Estimator-health gating in the mission (S)
+### ✅ F3 — Estimator-health gating in the mission — DONE
 The EKF stays `estValid` while coasting GPS-denied with `estEphM` growing
 unbounded; MOVE legs fly on that position.
 - `Mission::Params::maxEphM` (~3 m): `estEphM` above it (or `estGpsDenied`
   persisting) → end leg, SETTLE, `missionPhase="SETTLE(est-degraded)"`.
 - **Accept:** SITL scenario — cut GPS mid-leg → drone settles.
 
-### F4 — Surface "motion mode without obstacle perception" (S)
+### ✅ F4 — Surface "motion mode without obstacle perception" — DONE (with F1)
 With no depth model loaded, ASSIST/WAYPOINT get **no** reflex protection,
 silently (`control_mode.cpp` reflex requires `corridorValid`).
 - If `isMotion() && !ownsObstacleAvoidance()` and corridor invalid/stale →
@@ -61,14 +67,14 @@ silently (`control_mode.cpp` reflex requires `corridorValid`).
   to refuse motion modes entirely).
 - **Accept:** unit test + HUD shows the reason.
 
-### F5 — ATTITUDE poll priority in the MSP backend (S)
+### ✅ F5 — ATTITUDE poll priority in the MSP backend — DONE
 Round-robin polling refreshes attitude at ~5 Hz; `DepthNav::setAttitude()`
 de-rotation consumes it — tens of degrees stale during a maneuver.
 - `requestNextTelemetry()`: ATTITUDE every cycle, others interleaved
   (A,X,A,Y,A,Z…).
 - **Accept:** bench-test reports per-message refresh rates.
 
-### F6 — Write down the altitude-authority invariant (S, decision)
+### ✅ F6 — Write down the altitude-authority invariant — DONE
 `throttle ∈ [0,1] → [1500,2000] µs` means the OS can climb/hold but never
 command descent — a deliberate delegation to iNAV ALTHOLD/POSHOLD that is
 currently implicit in `thrToUs()`.
@@ -76,7 +82,7 @@ currently implicit in `thrToUs()`.
   FC's hold mode; throttle is a climb bias with 0 = hold.* (Signed throttle
   rejected for now — leaning on the FC hold is safer.)
 
-### F7 — Bring the test suite in-tree (M)
+### ✅ F7 — Bring the test suite in-tree — DONE
 AGENTS §8 references validation tests that lived in discarded scratch dirs;
 only `sim_autonomy` survives.
 - Port under `onboard/test/` + `BUILD_TESTS`/CTest: estimator (glitch gate,
@@ -84,7 +90,7 @@ only `sim_autonomy` survives.
   VFH+ hysteresis, mission-cycle unit, MSP framing over a PTY.
 - **Accept:** `ctest` green, no camera or hardware needed (CI-able).
 
-### F8 — Runtime config file (S/M)
+### ✅ F8 — Runtime config file — DONE
 Gains/params/cadences are compile-time (`Controller::Gains`,
 `Mission::Params`, `ModeManager::Params`, scheduler slots) — field tuning
 means recompiling.
@@ -96,22 +102,22 @@ means recompiling.
 
 ## P2 — close out the FC / command layer
 
-### P2.1 — Wire the RTH failsafe for real (S) — *the highest-value 30 lines*
-`rthTrigger → fc->setMode(RTL)` currently hits the default no-op; failsafe =
-release the sticks and hope.
-- `MspBackend::setMode(RTL)`: drive a configured AUX channel
-  (`rth-aux`, `rth-aux-us` in config) in every RC frame, sticky until cleared;
-  matches an iNAV "Nav RTH" mode range set in the configurator.
-- **Failsafe policy is estimator-aware:** RTH flown on a degraded position
-  estimate is worse than not flying home (field report: hackathon teams hit
-  exactly this as indoor "return-to-launch drift"). When `estEphM` is past the
-  gate (or GPS-denied on synthetic GPS), failsafe commands **LAND**, not RTH —
-  descending needs no position.
-- **Accept:** bench vs the iNAV modes tab (mode goes active); SITL asserts the
-  failsafe path sets the AUX value, and selects LAND when the estimate is
-  degraded.
+### ✅ P2.1 — Wire the RTH failsafe for real — DONE (LAND-on-degraded deferred)
+`rthTrigger → fc->setMode(RTL)` hit the default no-op; failsafe was release the
+sticks and hope. **Done:**
+- `MspBackend::setMode(RTL)` drives a configured AUX channel
+  (`failsafe.rth_aux` / `rth_aux_us`) high in every RC frame while neutral
+  sticks keep RC alive; any other mode releases it. Unconfigured → returns
+  false and the caller falls back to the FC's own RC-loss failsafe.
+  Covered by `test_msp`.
+- **Deferred → P2.1b: estimator-aware LAND.** RTH flown on a degraded position
+  estimate is worse than not flying home (field report: hackathon indoor
+  "return-to-launch drift"). When `estEphM` is past the gate (or GPS-denied on
+  synthetic GPS), failsafe should command **LAND**, not RTH — descending needs
+  no position. Needs a second AUX (or a NAV-mode select) + the ModeManager
+  failsafe reading `estEphM`. Not yet implemented.
 
-### P2.2 — RC AUX command source (M)
+### ✅ P2.2 — RC AUX command source — DONE
 Make the drone flyable without a laptop: the world model was designed for
 "any command source" — add the radio as one.
 - Small `RcCommandSource` in the fly loop reading `FcTelemetry.rc[]`:
@@ -119,7 +125,7 @@ Make the drone flyable without a laptop: the world model was designed for
   (left/right momentary or a pot), GO/STOP latch — mirroring the keyboard block.
 - **Accept:** bench with sim FC (synthetic RC) + real radio props-off.
 
-### P2.3 — SHADOW mode: advisory autonomy overlay (S/M)
+### ✅ P2.3 — SHADOW mode: advisory autonomy overlay — DONE
 Test autonomy in real flight with zero risk: the **operator flies** (mode
 always releases control, like FLY), while the full AUTONOMY stack runs
 underneath in dry-run and draws what it *would* do on the feed.

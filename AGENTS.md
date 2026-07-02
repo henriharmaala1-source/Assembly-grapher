@@ -164,6 +164,12 @@ releases) while the OS *supervises* (obstacle reflex stops it; detection runs).
   wants NED; convert only at the MSP boundary.
 - **Control axes normalised** `[-1,1]` (throttle `[0,1]`, 0 = hover-hold);
   clamped to gentle authority in the backend.
+- **The OS never commands descent — altitude authority is the FC's.** Throttle
+  maps `[0,1] → [1500,2000] µs` (`thrToUs`): 0 = hold, 1 = full climb, no down
+  range. This is deliberate: the FC must fly in an altitude-hold-capable mode
+  (iNAV ALTHOLD/POSHOLD), and the OS only ever biases climb. Do not "fix" the
+  mapping to signed throttle without revisiting every hover assumption
+  (SETTLE/HOLD assume zero-command = hold position, not descend).
 - **Depth/openness convention:** `1 = far/open`, `0 = near/blocked`. ToF grids
   are metres (higher = farther, `<=0` = invalid). Corridor `openness∈[0,1]`.
 - **Dry-run is the default.** Nothing reaches the FC without `--allow-control`.

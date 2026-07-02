@@ -169,18 +169,22 @@ bool MspBackend::sendControl(const ControlCmd& cmd) {
 }
 
 void MspBackend::requestNextTelemetry() {
-    static const uint8_t ids[] = {MSP_ATTITUDE, MSP_RC, MSP_ALTITUDE, MSP_ATTITUDE,
-                                  MSP_RC, MSP_RAW_GPS, MSP_STATUS, MSP_ANALOG};
-    // Attitude + RC polled often (fast-changing / needed for the assist latch);
-    // GPS/status/analog slower.
-    sendV1(ids[pollIdx_ % 8], nullptr, 0);
+    // ATTITUDE in every other slot (~25 Hz at the 50 Hz poll cadence): roll/
+    // pitch feed the depth-corridor de-rotation, which is off by a whole
+    // maneuver if attitude is 200 ms stale. Everything else interleaves in the
+    // odd slots — RC and GPS twice per cycle (assist latch / estimator),
+    // altitude/status/analog once (~3.5 Hz each).
+    static const uint8_t others[] = {MSP_RC, MSP_RAW_GPS, MSP_ALTITUDE, MSP_RC,
+                                     MSP_RAW_GPS, MSP_STATUS, MSP_ANALOG};
+    if (pollIdx_ % 2 == 0) sendV1(MSP_ATTITUDE, nullptr, 0);
+    else                   sendV1(others[(pollIdx_ / 2) % 7], nullptr, 0);
     ++pollIdx_;
 }
 
 void MspBackend::tick() {
     if (!connected_) return;
     drainRx();
-    // Poll telemetry ~50 Hz spread across the 4 messages (~12 Hz each).
+    // Poll telemetry at ~50 Hz, ATTITUDE-priority interleave (see above).
     const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
                            clock::now() - lastPoll_).count();
     if (since >= 20) { requestNextTelemetry(); lastPoll_ = clock::now(); }

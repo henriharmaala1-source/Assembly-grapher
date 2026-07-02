@@ -113,11 +113,32 @@ Make the drone flyable without a laptop: the world model was designed for
   (left/right momentary or a pot), GO/STOP latch — mirroring the keyboard block.
 - **Accept:** bench with sim FC (synthetic RC) + real radio props-off.
 
-### P2.3 — Assist-mode field checklist (S)
+### P2.3 — SHADOW mode: advisory autonomy overlay (S/M)
+Test autonomy in real flight with zero risk: the **operator flies** (mode
+always releases control, like FLY), while the full AUTONOMY stack runs
+underneath in dry-run and draws what it *would* do on the feed.
+- New `ShadowMode` (`IControlMode`): owns a `MissionController` like
+  AUTONOMY (same onEnter/onExit, goal steer + GO keys work), calls
+  `mission_.update()` every tick but **discards the command** and returns
+  `{valid=false}` — release, unconditionally. `isMotion()=false` (no reflex
+  needed; nothing moves on its account).
+- HUD (already draws the goal arrow + corridor arrow when `missionActive`):
+  add an "intended-command" arrow/marker — the yaw/pitch the discarded
+  command would have applied — plus the phase tag (`SHADOW:MOVE` etc.), in a
+  distinct colour so it can't be mistaken for live control.
+- Publish the intended command into `s.control` with `controlActive=false`
+  (the plumbing already distinguishes computed-vs-sent), so the recorder
+  (P4a) captures "what autonomy wanted vs what the pilot did" for tuning.
+- **Accept:** unit test — SHADOW never returns `valid=true` regardless of
+  world state (including GO latched, failsafe-adjacent states); SITL run
+  shows mission phases advancing while the sim FC receives no commands;
+  props-off field pass comparing arrows to pilot judgement.
+
+### P2.4 — Assist-mode field checklist (S)
 Bumpless-takeover (baseline latch) validated bench + props-off; written
 procedure in `onboard/docs/`.
 
-### P2.4 — MAVLink minimal backend (L, **deferred**)
+### P2.5 — MAVLink minimal backend (L, **deferred**)
 HEARTBEAT + RC_CHANNELS_OVERRIDE + GPS_INPUT only. Pull the trigger only if an
 ArduPilot airframe actually materialises.
 

@@ -37,27 +37,65 @@ because it never touches any of that. It only ever says "more forward," "turn
 right a bit," or "do nothing" — and the FC's own, already-trusted control
 loop does the rest.
 
-## Why a Raspberry Pi, and why no GPU
+## Why cheap hardware, and what that choice costs
+
+This is the load-bearing decision of the whole project, so it's worth
+stating plainly before anything else: **the hardware budget is small on
+purpose, and that deliberately caps how autonomous this drone can be.** This
+isn't a limitation the project ran into and is working around — it's the
+starting constraint everything else was designed against.
 
 The obvious alternative is a Jetson-class board with a real GPU, running a
 full ROS stack with LiDAR and stereo cameras. That's what well-funded
-autonomous-drone projects (Skydio, most companion-computer research
-platforms) actually do — and it works, but it costs hundreds of dollars,
-weighs a lot, and turns a lightweight FPV airframe into something else
-entirely.
+autonomous-drone research and companies (Skydio, most companion-computer
+research platforms) actually do, and it works — but it costs hundreds of
+dollars in compute alone, weighs enough to need a bigger airframe to carry
+it, and turns a lightweight FPV quad into a different category of aircraft.
 
-The constraint here is different: stay cheap, stay light, **stay an FPV
-drone** — the pilot still flies it, still watches an analog or digital video
-link, the airframe doesn't balloon in size or cost to carry the compute.
-That constraint rules out a GPU. The Pi 5's GPU exists for video decode and
-display, not machine-learning inference — there's no CUDA-equivalent, so
-every model the software runs, it runs on the CPU. That shapes almost every
-other decision in the project: which depth models are usable (small ones —
-MiDaS-small, DepthAnything-v2-small), how often they can run (not every
-frame), and why a lot of engineering effort has gone into making sure a slow
-camera-side computation can never be allowed to affect the fast, safety-
-critical parts of the system. That last point is the architecture's central
-idea, covered next.
+The goal here is different: stay cheap enough that anyone already flying
+analog FPV could add this, stay light enough that the airframe doesn't need
+to change, **stay an FPV drone** — the pilot still flies it, still watches a
+normal video link, and the whole companion-computer add-on (compute plus
+every sensor — see [`bom.md`](bom.md) for the actual list and prices) comes
+in under €200 on top of a quad that already flies. That number is the
+ceiling this project chose to build inside of.
+
+Every "why isn't it smarter yet" question in this document has the same
+underlying answer: **that would cost more compute, more sensors, or more
+money than the budget allows, and the budget is the point, not an
+oversight.** Concretely, this cheap-hardware choice is *why*:
+
+- there's no GPU, so every model runs on the Pi's CPU — which is *why* the
+  depth models have to be small and can't run every frame (see below);
+- there's no LiDAR and no dedicated stereo rig by default — a single
+  camera plus, optionally, a cheap time-of-flight sensor stand in for them,
+  which is *why* obstacle sensing is a short-range, camera-shaped estimate
+  rather than a dense 3D map;
+- there's no onboard SLAM or continuous path-planning yet — building and
+  updating a real map costs compute this budget doesn't have to spare,
+  which is *why* the drone uses the stop-think-move pattern explained
+  further down, instead of thinking and flying at the same time.
+
+None of that is a permanent ceiling — the architecture has clear places to
+plug in more capability later (a cheap NPU add-on board, a better sensor, a
+faster inference backend) without a redesign, and the project tracks exactly
+which upgrades unlock what. But today, on this budget, the honest framing is:
+**this is a demonstrator of what's achievable on cheap hardware, not the
+most autonomous drone that could be built.** That trade-off — accessible and
+FPV-weight versus maximally capable — was chosen deliberately, and it's the
+right way to understand every design decision that follows.
+
+## Why no GPU, specifically
+
+The Pi 5's GPU exists for video decode and display, not machine-learning
+inference — there's no CUDA-equivalent, so every model the software runs, it
+runs on the CPU. That shapes almost every other decision in the project:
+which depth models are usable (small ones — MiDaS-small,
+DepthAnything-v2-small), how often they can run (not every frame), and why a
+lot of engineering effort has gone into making sure a slow camera-side
+computation can never be allowed to affect the fast, safety-critical parts
+of the system. That last point is the architecture's central idea, covered
+next.
 
 ## The central idea: two brains, one fast, one slow
 
@@ -267,9 +305,11 @@ open-source flight-controller projects use for their own testing.
 
 ## Where to go next
 
-This document is the "why." For "where is everything and how do I change
-it," see `AGENTS.md` in the repository root — written for the level of
-completeness a developer (or an AI assistant) making changes needs, rather
-than for a first read. `onboard/docs/adding-a-control-mode.md` walks through
-adding a new mode end to end. `ROADMAP.md` tracks what's built, what's
-next, and why it's sequenced the way it is.
+This document is the "why." For the actual hardware and what it costs, see
+[`bom.md`](bom.md) — the physical drone platform this software runs on. For
+"where is everything and how do I change it," see `AGENTS.md` in the
+repository root — written for the level of completeness a developer (or an
+AI assistant) making changes needs, rather than for a first read.
+`onboard/docs/adding-a-control-mode.md` walks through adding a new mode end
+to end. `ROADMAP.md` tracks what's built, what's next, and why it's
+sequenced the way it is.

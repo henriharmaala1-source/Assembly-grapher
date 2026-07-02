@@ -1,5 +1,9 @@
 # Assembly-grapher
 
+> **New here? Start with [`onboard/docs/introduction.md`](onboard/docs/introduction.md)** —
+> a plain-language walkthrough of what this is and why it's built this way,
+> assuming only that you know what an FPV drone is.
+>
 > **Working on this codebase (human or AI)? Start with [`AGENTS.md`](AGENTS.md)** —
 > the full architecture, control/data flow, plugin interfaces, invariants, and
 > design scope in one place.

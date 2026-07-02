@@ -1,7 +1,8 @@
 # AGENTS.md — orientation for AI working on this repo
 
 This is the mental model to load before changing anything. Read it fully; it is
-written to be complete rather than short.
+written to be complete rather than short. (For a plain-language "why" walkthrough
+aimed at people, not AI, see [`onboard/docs/introduction.md`](onboard/docs/introduction.md).)
 
 ---
 

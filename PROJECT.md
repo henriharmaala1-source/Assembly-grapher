@@ -364,6 +364,37 @@ undifferentiated pass, split into two tracks:
 
 ---
 
+## Key challenges and solutions
+
+### Software / autonomy-stack challenges
+
+| Challenge | Solution | Status |
+|---|---|---|
+| CPU-bound perception (depth inference, detection) could stall the control loop if run on the same thread as flight control | Two/three-tier threading (fly loop / Deliberator / FcLink) + `SCHED_FIFO` real-time scheduling so inference physically cannot preempt the control-critical threads | Built, SITL-tested |
+| A camera capture stall could silently starve the flight-controller command rate below its failsafe floor | Dedicated `FcLink` thread owns the FC connection exclusively at a fixed ~50Hz, independent of camera timing; substitutes a neutral hover rather than repeating a stale command | Built, unit-tested |
+| A purely reactive obstacle-avoidance layer forgets an obstacle once it leaves the field of view — stalls on anything sitting on the direct path (a known local-minimum failure mode) | Rolling occupancy grid + wavefront planner layered as a goal-bias term over the existing reactive blend — required two non-obvious fixes (wider planning inflation than the live safety margin; snap-to-nearest-free-cell when the vehicle's own position falls inside that margin) | Built, SITL-tested (previously-stalling scenarios now reach goal) |
+| A stalled perception thread could leave stale data trusted indefinitely by the control path | Every blackboard field is timestamped and checked against a staleness threshold, not just a validity flag | Built, tested |
+| Monocular depth has no absolute scale, which corrupts a *metric* occupancy grid | Committed a forward time-of-flight sensor as the primary obstacle source (metric, geometrically sound); monocular kept as a nominal-scale fallback | Designed and integrated; awaiting hardware to validate the ToF path for real |
+| The FPV camera's fixed up-tilt (for horizon-centering in forward flight) points at the sky during a hover, which would corrupt grid observations | Feed effective (attitude + mount-tilt) elevation into de-rotation; suppress grid writes outside a usable elevation window | Built; relevant only to the monocular fallback path — moot on the forward-fixed ToF sensor |
+| Sequential, single-threaded perception dispatch leaves idle CPU cores unused during stationary mission phases | Identified opportunity (core rescheduling during SETTLE/THINK/SCAN) — see *Perception scheduling*, above | **Not built** — on the roadmap (F11), not yet implemented |
+| No MAVLink-centric tooling (MAVROS, PX4-Avoidance) applies to a Betaflight/iNAV airframe | Built the MSP protocol integration from the wire spec up | Built, tested against a PTY-simulated FC |
+
+### Drone / airframe architecture challenges
+
+| Challenge | Solution | Status |
+|---|---|---|
+| A Pi 5 draws real continuous power (~8–12W typical under load) from the same 6S flight battery — a direct trade against flight endurance | Accepted explicitly as a cost of the design (no GPU, CPU-only, minimal added electrical load); not eliminated, stated as a trade-off | Open, stated as a known cost rather than solved |
+| Sustained CPU load under inference risks thermal throttling on a Pi 5, which would silently defeat the real-time scheduling guarantees (`vcgencmd get_throttled` can show this happening with no other symptom) | Official 27W PD supply + active cooling specified as a hardware prerequisite alongside F9's scheduling work | Documented requirement; **not yet validated on real hardware** |
+| Added mass (Pi 5, capture dongle, power breakout, ToF/GPS modules) changes a freestyle airframe's thrust-to-weight and flight characteristics | Minimized by design: no GPU, no dedicated camera (passive analog tap instead), COTS lightweight components only | Designed for; real added mass not yet measured on the assembled airframe |
+| FPV airframes vibrate significantly at motor/prop harmonics — risk to capture quality and any vibration-sensitive sensor | Attitude is taken directly from the FC's own already-filtered AHRS rather than a second onboard IMU, avoiding a second vibration-sensitive sensing path; physical mount damping is a build-phase task, not yet done | Partially designed around; physical isolation not yet built/tested |
+| Tapping the analog composite video signal into a Pi 5 has no proper commercial solution — consumer USB analog-capture dongles are not built or validated for this use, and ARM/Pi 5 driver support for any given chipset is inconsistent and largely undocumented | No clean fix exists yet, so none is claimed: the approach is to trial available capture dongles now, during testing, to find one that works well enough to validate the rest of the pipeline — and revisit the analog-capture problem properly, on its own, once the rest of the product is otherwise finished, rather than block on solving it upfront | **Open, deliberately deferred** — not solved, not designed around, explicitly revisited later |
+| Limited UART availability on a compact flight controller (Matek H743-SLIM V4) shared across GPS, VTX telemetry, ELRS receiver, and the companion-computer MSP link | UART budget planned against the FC's actual port count in the BOM; MSP given a dedicated port | Planned; not yet wired on real hardware |
+| GPS/compass magnetic interference from nearby ESC current and VTX transmission on a compact 7" frame | Physical placement (mast/offset) planned in the BOM; software-side, the loosely-coupled estimator gates out degraded fixes rather than trusting a single reading blindly | Software mitigation built; physical placement not yet validated |
+| A forward-fixed ToF sensor (chosen specifically to dodge the camera-tilt problem) has a narrower field of view than a gimbaled or wider sensor would — it only sees what's directly ahead | Accepted as a scope trade-off: matches the corridor-steering use case (forward obstacle avoidance), not full-surround sensing | Stated as a design trade-off, not a gap to hide |
+| A hobbyist freestyle frame isn't designed for a companion-computer payload — mounting, connector strain relief, and crash survivability of wiring are unsolved for this specific build | Not yet solved — this is a physical build task waiting on the parts that are on order | **Open**, honestly unaddressed until the physical build happens |
+
+---
+
 ## Leadership and how AI was used
 
 This project is directed by its author, who owns every architectural and

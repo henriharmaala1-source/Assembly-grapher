@@ -17,6 +17,46 @@ covered here)
 
 ---
 
+## Prologue
+
+Early February 2026, a reconnaissance variant of the Russian Geran/Shahed
+strike-drone line was recovered and taken apart. Open-source technical
+breakdowns of the wreckage found a **Raspberry Pi 5** on board, running video
+processing, alongside a Windows mini-PC handling other functions. Not a
+custom board built to a military spec. A single-board computer anyone can
+order for a few hundred euros, doing onboard video AI on a live combat
+airframe.
+
+That single find is the whole premise of this project stated back at it in
+hardware: cheap, general-purpose embedded compute doing real-time onboard
+perception is no longer a hobbyist compromise. It's what's actually being
+found in the field, on both sides of an active war, being iterated on faster
+than most defense-procurement cycles can track.
+
+It isn't isolated. On the other side of the same conflict, Ukraine's
+**Hornet** — a fixed-wing strike drone built by the American firm Perennial
+Autonomy, in service since March 2026 and used to cut Russian logistics 50–150
+km behind the front — navigates primarily by **optical flow**: a downward
+camera and a processor tracking terrain motion beneath it, GPS reduced to an
+occasional cross-check rather than the primary reference, specifically
+because satellite navigation is the first thing a contested electromagnetic
+environment takes away. It costs roughly **$5,000** a unit. And on the
+Russian side, the production Geran-2 MS variant now carries an **Nvidia
+Jetson Orin** module for onboard AI object recognition, correcting its own
+terminal-phase trajectory against a moving target from its own video feed —
+manufactured at a reported 5,000+ units a month.
+
+Three different programs, two opposing sides, and the same conclusion,
+arrived at independently: when the radio link and the satellite fix are the
+first casualties of contact, the airframe has to be able to see and decide
+for itself, on hardware cheap enough to be attritable. That isn't a future
+requirement being planned for. It's the observed, present-tense state of
+drone warfare, and it's the ground this project starts from — at a fraction
+of even Hornet's budget, and with a scope boundary this document states
+plainly and holds to (see *ANV-17* and *Design decisions*, below).
+
+---
+
 ## ANV-17
 
 *Product name for the system this document describes end to end; internally, the

@@ -1,5 +1,9 @@
 # kestrel — a companion-computer autonomy stack for analog FPV drones
 
+**Status: waiting for parts.** The full software stack is built and validated
+in software-in-the-loop (see *Current status*, below) — the sensor suite is on
+order to validate it end to end on real hardware.
+
 *Project demonstration. This is a working technical demonstrator built to explore
 what's achievable on cheap, CPU-only hardware — not a certified or commercially
 flown product. Scope and current validation status are stated explicitly

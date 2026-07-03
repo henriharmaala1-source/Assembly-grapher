@@ -312,8 +312,15 @@ design decision described in this document — hardware selection, the
 CPU-only/analog-FPV cost constraint, the safety and scope boundaries, what
 gets built next and in what order. AI (Claude) was used throughout as a
 resource multiplier on top of that direction, not as an independent author.
-Concretely, across four recurring roles:
+Concretely, across five recurring roles:
 
+- **Implementation.** Writing the codebase itself — the threading model, the
+  plugin interfaces, the estimator, the occupancy-grid planner, the
+  flight-controller integration, and the test suite — from the author's
+  specification and under continuous direction: architecture and design
+  decisions set by the author, execution carried out by AI, the same
+  resource-multiplier role as the other four below, applied to code instead
+  of research.
 - **Market research.** Surveying the competitive landscape for drone
   companion computers and autonomy bridges — comparable products, their
   architectures, and their price points — to sanity-check where this project
@@ -506,9 +513,10 @@ filter · Raspberry Pi 5 (target deployment platform, CPU-only)
 
 ## What this project demonstrates
 
-The author did not write the code — see *Leadership and how AI was used*,
-above. What this project demonstrates is the set of skills required to direct
-work like this at all, independent of who typed the implementation:
+Implementation was one of the five AI-executed roles described in
+*Leadership and how AI was used*, above. What this project demonstrates
+alongside that is the set of skills required to direct, scope, and validate
+work like this end to end:
 
 - **Project management.** Turning an ambiguous, hardware-constrained problem
   into a phased, trackable backlog (`ROADMAP.md`), sequencing work so each

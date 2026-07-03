@@ -224,15 +224,44 @@ adversarial, fault-injecting testing described above.
 
 ---
 
-## Current status (honest accounting)
+## Current status (checkup, re-verified against the live repo)
 
-**Validated in software-in-the-loop, with no flight hardware required:**
-two/three-tier threading and real-time scheduling; the blackboard and
-staleness gating; the mode-arbitration safety layers; the state estimator's
-GPS glitch/re-acquire behavior and uncertainty growth under signal loss; the
-MSP wire protocol; the occupancy-grid planner and its fix for the
-local-minimum failure mode; the full autonomous mission cycle against
-synthetic obstacle fields, including fault injection.
+The project tracks its own backlog against named, numbered phases
+(`ROADMAP.md`). This section states exactly what's built and tested today,
+re-confirmed by rebuilding and re-running the full suite rather than quoted
+from memory.
+
+**Done and currently green — 9/9 tests, 0 failures, full suite under 10 seconds,
+no camera or flight hardware attached:**
+
+| Area | What's built |
+|---|---|
+| Operational hardening (8 items) | Perception-staleness gating + think-tier watchdog; the flight-controller link on its own thread, decoupled from camera timing; mission legs gated on estimator health; ATTITUDE-priority telemetry polling; the altitude-authority invariant written down as an explicit contract, not an implicit assumption; the full test suite itself, brought in-tree; a runtime config file so tuning doesn't require a rebuild; `SCHED_FIFO` real-time scheduling for the two control-critical threads |
+| Command layer (4 items) | Failsafe return-to-home wired to a real flight-controller AUX channel (not a no-op); a radio-based command source, so the aircraft is flyable without a laptop; an advisory "shadow" mode that runs the autonomy live and shows its intended commands without ever sending them — a zero-risk way to build trust in the autonomy before arming it; a written, props-off validation procedure for bumpless manual-to-assisted control handoff |
+| Autonomous navigation | The occupancy-grid planner (above), plus the FPV-specific camera-tilt handling and the decision to commit a metric ranging sensor as the primary obstacle source rather than depending on monocular depth alone |
+
+**Software-in-the-loop scenario results, from the current build:**
+
+| Scenario | Result |
+|---|---|
+| Clear field, obstacle off-path, obstacle grazing path | Goal reached, obstacle standoff maintained |
+| Obstacle partly blocking the direct path | Goal reached (39 s) — previously stalled before the planner fix |
+| Obstacle dead-centre on the direct path | Goal reached (42 s) — previously stalled before the planner fix |
+| Perception dropout mid-leg | Aircraft holds position (0.00 m drift after the fault), does not fly blind |
+| GPS loss mid-leg | Aircraft holds position, does not fly on a degraded estimate |
+
+7/7 scenarios keep the obstacle standoff distance; 5/5 of the scenarios
+designed to reach a goal do so; both fault-injection scenarios correctly stop
+rather than continue.
+
+**Deliberately not yet built**, in the order the project intends to take them
+next: a faster on-device inference backend (scoped, deferred until it's
+actually the bottleneck); a flight data recorder and replay tool; visual
+odometry for better GPS-denied velocity; an on-device advisory LLM supervisor,
+constrained to a whitelisted command schema and never in the control loop;
+a ground-station view; and mission-capability extensions (a broader object
+detector, standoff-only subject following, multi-goal missions, a geofence).
+None of these are represented as built anywhere in this document.
 
 **Not yet flight-tested.** This is the honest boundary: hardware for the
 sensor suite (forward time-of-flight sensor, GPS/compass module) is on order
@@ -241,9 +270,7 @@ the software-in-the-loop suite actually exercises. Everything above is stated
 at the level of confidence the tests support — no more.
 
 **Explicitly out of scope for this document:** the `desktop/` Python
-perception-prototyping tool, and forward roadmap items (an on-device
-supervisory LLM, a flight data recorder, visual-inertial odometry) that exist
-as scoped, sequenced backlog items but are not built.
+perception-prototyping tool.
 
 ---
 

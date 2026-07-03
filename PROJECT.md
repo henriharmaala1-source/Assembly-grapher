@@ -1,4 +1,4 @@
-# kestrel — a companion-computer autonomy stack for analog FPV drones
+# A companion-computer autonomy stack for analog FPV drones
 
 **Status: waiting for parts.** The full software stack is built and validated
 in software-in-the-loop (see *Current status*, below) — the sensor suite is on

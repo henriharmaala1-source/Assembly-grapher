@@ -153,7 +153,8 @@ in-flight validation of the autonomy.
 | `realtime.*` | `rt::make_realtime` — put a thread on SCHED_FIFO (+ optional CPU pin); used for the fly loop + FcLink so inference can't preempt control |
 | `control_mode.*` | `IControlMode`, `ControlCtx`, `ModeManager` (registry + safety layers) |
 | `modes.hpp` | The concrete modes + `register_standard_modes()` |
-| `mission.*` | `MissionController` — the move-stop-sense cycle (AUTONOMY's engine): `SETTLE/THINK/SCAN/MOVE/ARRIVE`, live-reactive steering, own standoff |
+| `mission.*` | `MissionController` — the move-stop-sense cycle (AUTONOMY's engine): `SETTLE/THINK/SCAN/MOVE/ARRIVE`, live-reactive steering, own standoff; owns the P5b `LocalMap` (plan → goal bearing) |
+| `nav_map.*` | `LocalMap` — occupancy grid (log-odds) + wavefront planner (P5b): routes around obstacles the live FoV forgot; the grid is metric only on the ToF path, nominal-scale on monocular |
 | `test/sim_autonomy.cpp` | Headless SITL validation of AUTONOMY (built with `-DBUILD_TESTS=ON`, run via `ctest`) |
 | `controller.*` | `Controller` — reactive `Behavior → ControlCmd` math (hover/road/corridor) |
 | `deliberator.*` | The think thread: runs the heavy `PerceptionScheduler` |
@@ -247,12 +248,16 @@ cd onboard && cmake -B build && cmake --build build -j4
   controller, VFH+ depth corridor + ego-motion de-rotation + `updateFromGrid`,
   lock-on tracker, road-follow, detector, state estimator + synthetic-GPS,
   MSP backend (telemetry/control/assist), sim FC, sim ToF.
-- **Skeleton / needs work:** AUTONOMY's SLAM+planner. The mission is a *reactive*
+- **Skeleton / needs work:** AUTONOMY's SLAM+planner. The mission is a
   goal-biased move-stop-sense loop (commit a leg along the goal+corridor blend,
-  fly it re-steering live, stop/scan/round obstacles). SITL-validated safe
-  (never breaches standoff) and completes clear/off-path/grazing goals, but it
-  can stall in **local minima** on an obstacle sitting on the path — real
-  SLAM/occupancy-grid/global planner are the P5 step that fixes that.
+  fly it re-steering live, stop/scan/round obstacles) **now backed by a P5b
+  local occupancy grid + wavefront planner** (`nav_map.*`) that routes around
+  obstacles the live FoV forgot — SITL-validated to complete the on-path /
+  dead-centre cases that trapped the pure-reactive layer, standoff safety
+  unchanged. **Caveat:** the grid is metric-sound only on the ToF/stereo path;
+  on monocular-only (the current BOM) it runs at a NOMINAL scale — approximate,
+  disable with `nav.use_map=false` if it misbehaves until a ranging sensor
+  lands. Full P5 SLAM/global localization is still future.
   `FOLLOW_SUBJECT` releases (control TODO); the VL53L9 backend's ranging protocol
   awaits the vendor driver; MAVLink backend is a stub.
 - **Recently hardened (Track F / P2):** perception staleness stamps + freshness

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control_types.hpp"
+#include "nav_map.hpp"
 #include "world_model.hpp"
 
 // Move-stop-sense autonomous cycle — the paradigm for a compute-limited drone:
@@ -51,6 +52,19 @@ public:
                                        // so skimming the inflated edge is safe.
         float scanYawRate    = 0.4f;   // yaw stick while scanning ([-1,1])
         float scanTimeoutSec = 9.f;    // give up scanning after ~a full rotation
+
+        // P5b — local occupancy grid + wavefront planner. When enabled and a
+        // route exists, the grid gives the GLOBAL direction (routing around
+        // obstacles it has seen but the live FoV has forgotten); the live
+        // corridor still governs speed and the stop reflex. Disabled → pure
+        // reactive (the goal+corridor blend).
+        bool           useMap = true;
+        // Plan berth — the planner inflates obstacles by MORE than the live
+        // safety margin so the routed path stands off the obstacle and the drone
+        // flows around it at high openness instead of skimming the edge (which
+        // crawls). Applied to map.robotR in enable().
+        float          planBerthM = 3.5f;
+        LocalMap::Params map;
     };
 
     MissionController() = default;
@@ -74,7 +88,10 @@ private:
     float desiredBearing_(const WorldState& s) const;
     void  commitWaypoint_(const WorldState& s);
 
-    Params p_;
+    void  updateMap_(WorldState& s);   // integrate the scan + (re)plan (P5b)
+
+    Params  p_;
+    LocalMap map_;
     bool   enabled_ = false;
     Phase  phase_   = Phase::SETTLE;
     float  tPhase_  = 0.f;

@@ -79,6 +79,18 @@ public:
     const Traverse&  traverse() const { return traverse_; }
     const cv::Mat&   depthMap() const { return depthMap_; }
 
+    // Horizontal FoV the openness histogram spans (for the occupancy grid scan).
+    void  setHFov(float deg) { if (deg > 1.f) hFovDeg_ = deg; }
+    float hFovDeg() const { return hFovDeg_; }
+
+    // Polar openness histogram → a metric-ish clearance scan for the P5b
+    // occupancy grid. Each bin is openness×maxRange (metres). METRIC ONLY on the
+    // ToF/stereo path (updateFromGrid sets a real maxRange); on the monocular
+    // path it is a NOMINAL scale (relative openness × scanMaxNominalM) — good
+    // enough to bias routing, not a true map, until a ranging sensor exists.
+    const std::vector<float>& openHist() const { return openHist_; }  // [0,1] per col
+    float scanMaxM() const { return scanMaxM_; }
+
     // Draw heat grid + smoothed corridor arrow onto frame (in-place).
     void drawOverlay(cv::Mat& frame) const;
 
@@ -106,9 +118,15 @@ private:
     bool         haveAtt_  = false;
     float        vFovDeg_  = 50.f;       // camera/sensor vertical FoV (VL53L9 ≈ 42)
 
+    float        hFovDeg_  = 60.f;       // camera/sensor horizontal FoV
+    float        scanMaxM_ = 8.f;        // openness→metres scale (nominal on mono,
+                                         // real maxRange on the ToF path)
+    static constexpr float SCAN_MAX_NOMINAL_M = 8.f;   // mono nominal range
+
     cv::Mat      depthMap_;     // normalised [0,1] float32, frame-sized
     SectorMap    sectors_;
     Traverse     traverse_;
+    std::vector<float>   openHist_;                // per-column openness [0,1] (the scan)
     KalmanCenter steerKalman_;  // temporal smoothing of the steer target
     std::vector<uint8_t> blocked_;                 // VFH+ histogram (hysteresis state)
     float                prevCol_ = WORK_W * 0.5f; // last chosen heading column

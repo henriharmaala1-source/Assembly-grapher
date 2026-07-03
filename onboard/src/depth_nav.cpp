@@ -99,6 +99,7 @@ bool DepthNav::update(const cv::Mat& frame) {
 bool DepthNav::updateFromGrid(const cv::Mat& metricGrid, const cv::Size& frameSize,
                               float maxRangeM) {
     if (metricGrid.empty() || maxRangeM <= 0.f) return false;
+    scanMaxM_ = maxRangeM;   // METRIC scan on the ToF/stereo path (P5b grid)
 
     // Convert metres (higher = farther) → the internal openness map [0,1]
     // (higher = farther/more open), the same convention the DNN path produces.
@@ -171,6 +172,7 @@ void DepthNav::computeTraverse(const cv::Size& frameSize) {
         if (openCol[x] > maxO) maxO = openCol[x];
     }
     meanO /= WORK_W;
+    openHist_ = openCol;   // publish the openness histogram (P5b grid scan)
 
     // 3. Binary histogram with hysteresis (free/blocked thresholds relative to
     //    the frame's own max openness) so a heading doesn't flicker open/closed.

@@ -113,6 +113,23 @@ void synthPerception(WorldState& s, const std::vector<Obstacle>& obs,
     s.corridorOpen   = clampf(clearFwd / maxRange, 0.f, 1.f);
     s.corridorMargin = s.corridorOpen;
     s.corridorStampS = s.tickMonoS;   // stamp with sim time (staleness timebase)
+
+    // Publish a RAW polar depth scan (clearance to the TRUE obstacles, no
+    // inflation — a real depth sensor measures where the obstacle actually is;
+    // the occupancy grid inflates by the vehicle radius itself). This is the
+    // P5b grid's input.
+    const int M = std::min(N, WorldState::kScanMax);
+    for (int i = 0; i < M; ++i) {
+        const float rel = -half + (2.f * half) * i / (M - 1);
+        const float b   = (s.vehYawDeg + rel) * kPi / 180.f;
+        float clr = maxRange;
+        for (const auto& o : obs)   // RAW obstacles, not `infl`
+            clr = std::min(clr, rayClearance(s.estPe, s.estPn, std::sin(b), std::cos(b), o, maxRange));
+        s.corridorScan[i] = clr;
+    }
+    s.corridorScanN      = M;
+    s.corridorScanFovDeg = hFovDeg;
+    s.corridorScanMaxM   = maxRange;
 }
 }  // namespace
 
@@ -214,9 +231,10 @@ Result runScenario(const Scenario& sc, bool verbose) {
                                           std::hypot(te - dropRefE, tn - dropRefN));
             }
             if (verbose && step % 50 == 0)
-                std::printf("   t=%5.1f pos=(%6.2f,%6.2f) yaw=%5.1f phase=%-6s dGoal=%5.2f dObs=%5.2f\n",
+                std::printf("   t=%5.1f pos=(%6.2f,%6.2f) yaw=%5.1f phase=%-6s dGoal=%5.2f "
+                            "open=%.2f plan=%d/%5.1f\n",
                             t, e.pe, e.pn, tel.yawDeg, s.missionPhase.c_str(), dg,
-                            sc.obs.empty() ? 99.f : minObsEdge);
+                            s.corridorOpen, (int)s.planValid, s.planBearing);
         }
         t += dt;
     }
@@ -230,8 +248,8 @@ int main() {
         { "clear field (no obstacle)",        {},                    25.f, 0.f, true  },
         { "obstacle well off the path",       {{12.f, 8.f, 2.0f}},   25.f, 0.f, true  },
         { "obstacle grazing the path",        {{12.f, 4.2f, 2.0f}},  25.f, 0.f, true  },
-        { "obstacle partly blocking path",    {{12.f, 3.2f, 2.0f}},  25.f, 0.f, false },
-        { "obstacle dead-centre on path",     {{12.f, 0.f, 3.0f}},   25.f, 0.f, false },
+        { "obstacle partly blocking path",    {{12.f, 3.2f, 2.0f}},  25.f, 0.f, true  },
+        { "obstacle dead-centre on path",     {{12.f, 0.f, 3.0f}},   25.f, 0.f, true  },
         // Staleness gate (F1): perception dies mid-leg, corridor stays latched
         // valid with an aging stamp — the drone must STOP, not cruise on blind.
         { "perception dropout mid-leg",       {},                    25.f, 0.f, false, 6.f },
@@ -271,9 +289,11 @@ int main() {
     std::printf("Goal reached where expected       : %d/%d scenarios\n", reachOk, reachExpected);
     std::printf("Stopped on perception loss        : %d/%d scenarios\n", stopOk, stopExpected);
     std::printf("\nInterpretation: the SITL loop, arming/GO gating, move-stop-sense cycle,\n"
-                "goal-seeking, and obstacle STANDOFF are validated. Goal COMPLETION around an\n"
-                "obstacle sitting on the path is NOT guaranteed by the reactive layer (local\n"
-                "minima) — that needs the roadmap's deferred occupancy-grid + global planner.\n");
+                "goal-seeking, and obstacle STANDOFF are validated. With the P5b occupancy\n"
+                "grid + wavefront planner, goal COMPLETION now also holds for an obstacle\n"
+                "sitting ON the direct path (partly-blocking and dead-centre) — the grid\n"
+                "remembers what the live FoV forgets, so the planner routes around where the\n"
+                "pure-reactive layer trapped in a local minimum.\n");
 
     const bool pass = (safeOk == (int)suite.size()) && (reachOk == reachExpected)
                    && (stopOk == stopExpected);

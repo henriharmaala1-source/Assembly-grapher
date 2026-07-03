@@ -30,6 +30,29 @@ void MissionController::enable(bool on) {
     tPhase_  = 0.f;
     haveWp_  = false;
     roundSign_ = 0.f;
+    if (on) {                          // fresh occupancy grid per mission (P5b)
+        p_.map.robotR = p_.planBerthM; // route with a wider berth than live safety
+        map_ = LocalMap(p_.map);
+    }
+}
+
+// P5b — integrate the live corridor scan into the occupancy grid and (re)plan a
+// global route toward the goal bearing. The grid remembers obstacles the live
+// FoV has forgotten, so the planner routes AROUND one sitting on the direct
+// path (the reactive layer's local-minimum failure). Only runs on a fresh
+// scan; a stale scan would pollute the map with observations from a dead
+// perception tier. Sets s.planValid / s.planBearing for the steering + display.
+void MissionController::updateMap_(WorldState& s) {
+    s.planValid = false;
+    if (!p_.useMap || s.corridorScanN < 1) return;
+    if (!s.corridorFresh(p_.corridorStaleSec)) return;
+    map_.integrate(s.estPe, s.estPn, s.vehYawDeg, s.corridorScan,
+                   s.corridorScanN, s.corridorScanFovDeg, s.corridorScanMaxM);
+    float b;
+    if (map_.plan(s.estPe, s.estPn, s.missionGoalBearing, b)) {
+        s.planValid   = true;
+        s.planBearing = b;
+    }
 }
 
 // Commit a waypoint one step ahead. Head toward the OPERATOR'S GOAL bearing, but
@@ -38,7 +61,14 @@ void MissionController::enable(bool on) {
 // sensor FoV (can only verify "open" within it) so the drone turns toward a
 // side/behind goal gradually, sensing as it goes.
 float MissionController::desiredBearing_(const WorldState& s) const {
-    const float goalRel     = wrap180(s.missionGoalBearing - s.vehYawDeg);
+    // P5b: the occupancy-grid planner supplies a smarter GOAL bearing — routed
+    // around obstacles the grid has seen but the live FoV has forgotten, so the
+    // goal term no longer pulls back through an obstacle on the direct path (the
+    // reactive local-minimum). The live corridor blend below still handles local
+    // avoidance around what's actually in front right now.
+    const float goalBearing = (p_.useMap && s.planValid) ? s.planBearing
+                                                         : s.missionGoalBearing;
+    const float goalRel     = wrap180(goalBearing - s.vehYawDeg);
     const float goalClamped = clampf(goalRel, -p_.hFovDeg * 0.5f, p_.hFovDeg * 0.5f);
     const float corridorRel = s.corridorOffset * (p_.hFovDeg * 0.5f);   // vetted-open dir
     const float deflect     = clampf(std::fabs(s.corridorOffset), 0.f, 1.f);
@@ -100,6 +130,8 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
         return c;                   // hover until GO
     }
 
+    updateMap_(s);   // P5b: accumulate the grid + (re)plan the global route
+
     switch (phase_) {
         case Phase::SETTLE: {
             // Hover; leave once settled AND a minimum think window has elapsed.
@@ -141,14 +173,22 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
                 phase_ = Phase::SETTLE; tPhase_ = 0.f;   // dead end -> settle & retry
                 break;
             }
-            // Choose a turn direction. While rounding an obstacle, KEEP turning
-            // that same way (wall-follow) so the escape — which can lie outside
-            // the forward FoV — sweeps into view; the openest ray inside a boxed
-            // FoV is noise and must not override it. With no go-around committed,
-            // steer toward whichever side reads more open (default left).
-            const float dir = (roundSign_ != 0.f)         ? roundSign_
-                            : (s.corridorOffset > 0.02f)  ?  1.f
-                            : (s.corridorOffset < -0.02f) ? -1.f : -1.f;
+            // Choose a turn direction. WITH a grid route, turn toward it — the
+            // planner knows from memory where the opening is, even when it lies
+            // well outside the blocked forward FoV (that's the whole point of the
+            // map). WITHOUT one, fall back to the reactive wall-follow: keep
+            // turning the way we're rounding the obstacle (the openest ray in a
+            // boxed FoV is noise), defaulting to a fixed side.
+            float dir;
+            if (p_.useMap && s.planValid) {
+                const float e = wrap180(s.planBearing - s.vehYawDeg);
+                dir = (std::fabs(e) < 3.f) ? (roundSign_ != 0.f ? roundSign_ : -1.f)
+                                           : (e >= 0.f ? 1.f : -1.f);
+            } else {
+                dir = (roundSign_ != 0.f)         ? roundSign_
+                    : (s.corridorOffset > 0.02f)  ?  1.f
+                    : (s.corridorOffset < -0.02f) ? -1.f : -1.f;
+            }
             c.yaw = dir * p_.scanYawRate;
             break;                  // yaw only, no pitch
         }

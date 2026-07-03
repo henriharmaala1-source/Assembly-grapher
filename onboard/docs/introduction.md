@@ -262,14 +262,31 @@ The cycle (`SETTLE → THINK → MOVE → ARRIVE`, with a `SCAN` branch):
   estimate (`estEphM` above threshold), or the leg's fixed distance ends the
   leg and returns to SETTLE.
 
-This is a known, accepted trade-off, not an oversight: a system that only
-plans while stationary can enter local minima a continuously-replanning
-system would not — verified directly in this codebase's SITL suite, where
-an obstacle positioned on the direct path to the goal reliably produces a
-stall (standoff is maintained; the goal is not reached). Closing this is
-the next planned capability step (`ROADMAP.md`, P5b — an accumulated
-occupancy grid with global planning, built during the SETTLE dwell so it
-does not compete with the move-cycle compute budget).
+A purely reactive version of this cycle — steering only on what the camera
+currently sees — has a known failure mode: it can enter a local minimum on
+an obstacle sitting directly between the drone and the goal, because it
+forgets the obstacle the moment it leaves the field of view and re-approaches
+it. To close that, the mission accumulates observations into a **local
+occupancy grid** (a log-odds map in the local ENU frame) and runs a wavefront
+planner over it, which routes around obstacles the grid remembers even after
+the live camera has forgotten them. The plan supplies a smarter goal
+direction into the reactive blend; the live camera still governs speed and
+the stop reflex, so a stale or wrong map can never drive the aircraft into
+something the live sensor sees. This is validated in the SITL suite: the
+on-path and dead-centre obstacle cases that stall the pure-reactive layer are
+now completed, with the obstacle standoff never breached.
+
+One honest limitation remains: an occupancy grid is only geometrically sound
+if its input distances are metric, which they are on a ranging sensor
+(time-of-flight or stereo) but only *approximately* so on a monocular depth
+model, which has no absolute scale. On the current camera-only configuration
+the grid runs at a nominal scale — good enough to bias routing, not a true
+metric map — and can be disabled in config until a ranging sensor is fitted.
+This mirrors the real evolution of compute-limited autonomy (early Mars
+rovers moved from stop-and-think to continuous replanning only once better
+onboard sensing and compute allowed it); the grid is the first step in that
+direction here, bounded by the same sensor-and-compute budget as everything
+else.
 
 ## Flight-controller interface
 

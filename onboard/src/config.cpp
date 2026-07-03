@@ -121,6 +121,12 @@ Tunables load_tunables(Config& c) {
     t.mission.scanYawRate      = c.f("mission.scan_yaw_rate",      t.mission.scanYawRate);
     t.mission.scanTimeoutSec   = c.f("mission.scan_timeout_sec",   t.mission.scanTimeoutSec);
 
+    // P5b occupancy grid + planner
+    t.mission.useMap           = c.b("nav.use_map",        t.mission.useMap);
+    t.mission.planBerthM       = c.f("nav.plan_berth_m",   t.mission.planBerthM);
+    t.mission.map.sizeM        = c.f("nav.grid_size_m",    t.mission.map.sizeM);
+    t.mission.map.cellM        = c.f("nav.grid_cell_m",    t.mission.map.cellM);
+
     // --- mode-manager safety layers ---
     t.mode.rtlBattPct       = c.f("safety.rtl_batt_pct",        t.mode.rtlBattPct);
     t.mode.blockedOpen      = c.f("safety.blocked_open",        t.mode.blockedOpen);

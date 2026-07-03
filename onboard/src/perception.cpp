@@ -4,6 +4,26 @@
 #include <algorithm>
 #include <cstdio>
 
+namespace {
+// Publish DepthNav's openness histogram as the metric-ish polar scan the P5b
+// occupancy grid integrates (openness×maxRange = clearance in metres; a bin at
+// maxRange is a miss). Metric on the ToF path, nominal-scale on monocular.
+void publishScan(WorldState& s, DepthNav& nav) {
+    const auto& h = nav.openHist();
+    if (h.empty()) { s.corridorScanN = 0; return; }
+    const int n  = std::min((int)h.size(), WorldState::kScanMax);
+    const float mx = nav.scanMaxM();
+    for (int i = 0; i < n; ++i) {
+        const int src = (n == 1) ? 0
+            : (int)((float)i * (h.size() - 1) / (n - 1) + 0.5f);
+        s.corridorScan[i] = std::max(0.f, std::min(1.f, h[src])) * mx;
+    }
+    s.corridorScanN      = n;
+    s.corridorScanFovDeg = nav.hFovDeg();
+    s.corridorScanMaxM   = mx;
+}
+}  // namespace
+
 // =========================================================== TrackModule
 
 TrackModule::TrackModule(Backend backend, int boxSize)
@@ -73,6 +93,7 @@ void NavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.corridorOpen     = t.openness;
         s.corridorMargin   = t.margin;
         s.corridorStampS   = monoNowS();
+        publishScan(s, nav_);
     });
 }
 
@@ -101,6 +122,7 @@ void TofNavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.corridorOpen     = t.openness;
         s.corridorMargin   = t.margin;
         s.corridorStampS   = monoNowS();
+        publishScan(s, nav_);
     });
 }
 

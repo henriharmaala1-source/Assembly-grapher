@@ -16,12 +16,14 @@ has a ready-made failing acceptance test in the SITL suite; the LLM supervisor
 
 Effort key: S ≈ hours, M ≈ 1–2 days, L ≈ 3days+.
 
-**Status (2026-07):** ✅ **Track F (F1–F9) and P2 (P2.1–P2.3) are DONE** — all
-landed on `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (8 tests,
-all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, realtime, SITL).
-**F10** (CPU inference runtime swap) remains scoped/deferred until perception
-budget is the actual bottleneck. Next up: **P2.4** (assist field checklist),
-then **P4a** (recorder/replay). Items below are marked ✅ where complete.
+**Status (2026-07):** ✅ **Track F (F1–F9), P2 (P2.1–P2.4), and P5b are DONE** —
+all on `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (9 tests,
+all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, realtime,
+nav_map, SITL). The SITL suite now completes the on-path / dead-centre obstacle
+cases (P5b grid+planner) that previously stalled. **F10** (inference runtime
+swap) stays deferred until perception budget is the bottleneck. Recommended
+next: **P4a** (recorder/replay), then **P5a** (VIO — also unblocks a *metric*
+P5b grid on the mono BOM). Items below are marked ✅ where complete.
 
 ---
 
@@ -248,24 +250,32 @@ already exists.
 - **Accept:** SITL with synthetic flow → GPS cut → `estEphM` stays bounded;
   hand-carry bench test against tape-measure ground truth.
 
-### P5b — Occupancy grid + global planner (L) — *fixes the known stall*
+### ✅ P5b — Occupancy grid + global planner — DONE (metric on ToF; nominal on mono)
 The SITL suite's two expected-stall scenarios (obstacle on-path / dead-centre)
-are the acceptance gate — they exist today and fail by design.
-- Rolling local grid (~40×40 m, 0.5 m cells, log-odds) accumulated from
-  corridor/ToF rays — built during SETTLE (move-stop-sense already buys the
-  compute window). Runs as a think-tier `IPerceptionModule` writing
-  `planBearing/planValid` into the world model.
-- **Unknown ≠ free.** Cells with no return / low-confidence depth carry a
-  traversal cost, never "open" — every ranging modality has an invisible
-  obstacle class (LiDAR and nets/wires, famously: an UltraHack team flew into
-  a net LiDAR couldn't see; monocular depth has the same blind spot). Our
-  structural mitigations stay in place: low cruise speed scaled by openness,
-  and stopping to sense.
-- Wavefront/A* on the grid → next-leg bearing; `MissionController` consumes
-  `planBearing` when valid, falls back to the reactive goal+corridor blend
-  when not.
-- **Accept:** flip both stall scenarios to `expectReach=true` in
-  `sim_autonomy.cpp` and pass; standoff safety invariant unchanged (5/5).
+were the acceptance gate — they now PASS. **Done:**
+- `LocalMap` (`nav_map.*`): rolling log-odds grid (80×80 m / 0.5 m cells)
+  accumulated from the corridor polar scan; wavefront BFS from a goal cell
+  projected along the goal bearing, inflated by a plan berth wider than the
+  live safety margin so the routed path flows instead of skimming; gradient
+  descent → next bearing. Robust to the drone sitting inside the berth (snaps
+  the descent start to the nearest free cell).
+- `MissionController` integrates the scan + replans each active tick; the plan
+  supplies a smarter GOAL bearing into the existing reactive blend (routes
+  around obstacles the FoV forgot) and steers SCAN toward the remembered
+  opening. The live corridor still governs speed + the stop reflex, so a
+  stale/wrong grid can't drive into something the live sensor sees.
+- Perception publishes the scan (`DepthNav::openHist` → `corridorScan`):
+  metric on the ToF path, NOMINAL scale on monocular. Config: `nav.use_map`,
+  `nav.plan_berth_m`, `nav.grid_size_m/cell_m`.
+- **Result:** SITL 5/5 goal-completion (both hard cases reach in ~40 s), 7/7
+  standoff safety, 2/2 stop-on-loss. `test_nav_map` covers the grid+planner
+  standalone. ctest 9/9.
+- **Caveat / remaining:** the grid is geometrically sound only with metric
+  depth (ToF/stereo — not in the current mono-only BOM); on monocular it's a
+  nominal-scale approximation. "Unknown = free" optimistic replanning means it
+  relies on the live reflex for the invisible-obstacle class (nets/wires);
+  that structural mitigation (low cruise scaled by openness, stop-to-sense)
+  stays. Full P5 SLAM / global localization is still future.
 
 ### P5c — Absolute vision fixes (deferred)
 Canopy/image-to-map localization → `updateVisionPose()`. Only after P5a/P5b

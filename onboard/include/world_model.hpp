@@ -85,6 +85,21 @@ struct WorldState {
         return targetValid && (tickMonoS - targetStampS) <= maxAgeS;
     }
 
+    // --- Corridor polar depth scan (P5b input to the occupancy grid) ---
+    // Metric clearance (m) per ray across the FoV, centred on vehicle heading,
+    // ray 0 at yaw−fov/2. corridorScanN=0 means "not provided". A ray at
+    // corridorScanMaxM is a miss (no obstacle along it). Perception fills this;
+    // the mission's LocalMap integrates it.
+    static constexpr int kScanMax = 41;
+    float       corridorScan[kScanMax] = {};
+    int         corridorScanN    = 0;
+    float       corridorScanFovDeg = 0.f;
+    float       corridorScanMaxM = 0.f;
+
+    // --- Planner output (LocalMap wavefront; P5b) ---
+    bool        planValid   = false;  // a grid route exists this cycle
+    float       planBearing = 0.f;    // routed direction, deg (0 = North)
+
     // --- Mission: move-stop-sense autonomous cycle ---
     bool        missionActive = false;
     std::string missionPhase;         // ARMED / SETTLE / THINK / MOVE / ARRIVE

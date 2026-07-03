@@ -48,19 +48,15 @@ Jetson Orin** module for onboard AI object recognition, correcting its own
 terminal-phase trajectory against a moving target from its own video feed —
 manufactured at a reported 5,000+ units a month.
 
-A fourth data point is the one most directly relevant to this project's own
-scope line. Since 2025, a commercial category of **AI lock-on add-on modules
-for FPV airframes** has gone from prototype to mass-fielded — **TFL-1**, from
-the firm The Fourth Law, chief among them, reportedly around **$442** a unit.
-Strapped onto an otherwise ordinary FPV, it takes over final-approach
-guidance: detecting, tracking, and closing on a target independent of the
-radio link. One Ukrainian brigade using it reported hit rate going from 20%
-to 80%. This isn't a research paper or a demo — it's a live commercial
-market, at a price point in the same neighborhood as this project's own BOM,
-already doing exactly what `LOCK_ON` in this project's mode table (see
-*Control modes*, below) deliberately does not: closing the loop from "target
-found" to "target struck." That gap is not an oversight. It's the line
-stated plainly in *Design decisions*, below, and held on purpose.
+A fourth data point: since 2025, a commercial category of **AI lock-on
+add-on modules for FPV airframes** has gone from prototype to mass-fielded —
+**TFL-1**, from the firm The Fourth Law, chief among them, reportedly around
+**$442** a unit. Strapped onto an otherwise ordinary FPV, it takes over
+final-approach guidance: detecting, tracking, and closing on a target
+independent of the radio link. One Ukrainian brigade using it reported hit
+rate going from 20% to 80%. This isn't a research paper or a demo — it's a
+live commercial market, at a price point in the same neighborhood as this
+project's own BOM.
 
 Four data points, not three, and not confined to one side of the war: when
 the radio link and the satellite fix are the first casualties of contact,

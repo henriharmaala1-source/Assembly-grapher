@@ -254,6 +254,18 @@ inspection. This project sits at the extreme low-cost end of that market and
 was not built to compete commercially in it — the comparison below exists to
 show where the design choices land, not to claim traction.
 
+**The specific gap this project targets:** a cheap companion computer, built
+from deliberately limited (CPU-only, no GPU) hardware, integrated directly
+onto an existing analog FPV airframe. Every comparison point below misses
+that gap in a different direction — ModalAI and Auterion are onboard, but at
+10x+ the cost and with GPU-class compute assumed; Droneforge is cheap and
+matches the analog-FPV premise, but moves the compute off the aircraft
+entirely onto a ground PC. Nothing in the table is both cheap *and* onboard
+*and* built to run on hardware this constrained — that combination is the
+gap, and it's the reason the CPU-only constraint in *Problem*, above, is
+treated as a first-class design input rather than a limitation to route
+around.
+
 **A separate, larger market underlies the hardware this project is built
 from**, even though the software targets development/defense-research use
 rather than that market directly: the hobbyist/DIY FPV drone market itself.
@@ -387,16 +399,33 @@ implemented directly) · I²C (Linux `i2c-dev`) sensor backends · a hand-rolled
 log-odds occupancy grid and wavefront planner · a loosely-coupled Kalman
 filter · Raspberry Pi 5 (target deployment platform, CPU-only)
 
-## Skills this project demonstrates
+## What this project demonstrates
 
-Real-time systems design under a hard control-latency constraint · concurrent
-programming with explicit thread-safety guarantees (not just "it hasn't
-crashed yet") · sensor fusion and state estimation · control-systems tuning
-(VFH+ hysteresis, EKF gating) · algorithm design and debugging (the occupancy
-planner's two non-obvious fixes were found by instrumenting a reproducible
-failing test case, not by guessing) · safety-critical software practices
-(dry-run-by-default, layered failsafes, fail-safe-not-fail-silent staleness
-handling) · protocol-level embedded integration (MSP, verified against real
-firmware behavior) · test-first development without target hardware · and
-technical documentation written to be both a working reference and an honest
-account of what is and isn't proven.
+The author did not write the code — see *Leadership and how AI was used*,
+above. What this project demonstrates is the set of skills required to direct
+work like this at all, independent of who typed the implementation:
+
+- **Project management.** Turning an ambiguous, hardware-constrained problem
+  into a phased, trackable backlog (`ROADMAP.md`), sequencing work so each
+  phase is independently testable without the target hardware, and adjusting
+  scope in response to what testing actually found (the P5b local-minimum fix
+  was scheduled and prioritized after the SITL suite surfaced it, not before).
+- **Product management.** Defining and holding a scope boundary under real
+  pressure to let it creep — the target-homing exclusion (see *Design
+  decisions*, above) is a product call, not a technical limitation, revisited
+  and deliberately held. Same for the cost constraint itself: treating "cheap,
+  CPU-only, attaches to an existing airframe" as a non-negotiable requirement
+  that shapes every downstream decision, rather than an aspiration abandoned
+  the first time it became inconvenient.
+- **Autonomy and machine-vision research.** Directing the literature and
+  prior-art sweep across depth estimation, VIO/SLAM, local and global
+  planning, and sensor fusion (see *Method research*, above), and rating each
+  option for feasibility on this specific hardware budget rather than
+  accepting vendor or paper claims at face value.
+- **Research testing and validation methodology.** Designing the validation
+  strategy itself: what a hardware-free software-in-the-loop suite needs to
+  prove before hardware is trusted with it, what fault conditions are worth
+  deliberately injecting (perception dropout, GPS loss), and what counts as
+  sufficient evidence versus an unverified claim — the standard this document
+  itself was held to throughout (see the corrections noted under *Idea
+  validation*, above).

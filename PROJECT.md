@@ -118,6 +118,37 @@ context*, below) for cost reasons.
 
 ## Architecture
 
+### Pipelines
+
+Three pipelines run concurrently and share state only through the
+blackboard (below) — no pipeline calls into another's internals directly:
+
+```
+video capture ──► cheap perception (fly loop, every frame) ───┐
+                                                                 ├─► WorldModel ─► mode arbiter ─► ControlCmd ─► FC backend
+video capture ──► FrameBus ─► heavy perception (Deliberator) ──┘         ▲
+                                                                          │
+FC telemetry (GPS, baro, attitude) ─► state estimator (EKF) ─────────────┤─► synthetic GPS ─► FC
+                                                                          │
+perception corridor scan ─► occupancy grid ─► wavefront planner ─► goal bearing
+```
+
+- **Perception pipeline.** A cheap tier (the lock-on tracker, road-follow)
+  runs every frame in the fly loop; a heavy tier (monocular depth inference,
+  object detection) runs on the Deliberator thread against a per-tick
+  compute budget. Both write findings into the blackboard; nothing downstream
+  cares which tier produced a given field, only how fresh it is.
+- **State-estimation pipeline.** Flight-controller telemetry (GPS, baro,
+  attitude) feeds a loosely-coupled Kalman filter producing a local ENU
+  position/velocity estimate, which is fed back to the flight controller as
+  a synthetic GPS fix — gated by the FC's own glitch-radius and fix-age
+  checks, so a bad estimate can't silently take over.
+- **Navigation/planning pipeline.** The perception module's corridor scan
+  accumulates into a rolling log-odds occupancy grid; a wavefront planner
+  turns that into a goal bearing; that bearing is blended with (not
+  substituted for) the live reactive corridor steering, so an out-of-date
+  map can never override what the live sensor currently sees.
+
 ### Real-time threading model
 
 The runtime is split across three threads around one invariant: **a slow
@@ -186,7 +217,7 @@ never by editing a central switch statement:
 |---|---|---|
 | `IControlMode` | A control policy: given world state, emit a command or release control | 9 modes — manual passthrough, assisted (bumpless trim), autonomous move-stop-sense, GPS-route supervision, hold, road-follow, lock-on (sensing only), advisory shadow mode, standoff-follow (placeholder) |
 | `IPerceptionModule` | Reads a frame, writes findings into the blackboard | Monocular depth corridor, ToF corridor, appearance road-follow, object detector, lock-on tracker |
-| `IFlightController` | Abstracts the FC link | MSP (iNAV) — implemented and verified against firmware; a kinematic simulator for hardware-free testing; MAVLink — stubbed |
+| `IFlightController` | Abstracts the FC link | MSP (iNAV) — implemented, tested against a PTY-attached simulated FC; a kinematic simulator for hardware-free testing; MAVLink — stubbed |
 | `ITofSource` | A metric depth sensor | VL53L5CX/L9CX I²C backends, a serial-framed MCU sensor-hub backend, a simulated source |
 
 Two safety layers are applied uniformly above whichever mode is active:
@@ -302,6 +333,34 @@ itself. The fix — giving the FC link its own thread and, subsequently, its
 own elevated OS scheduling priority — is the kind of failure mode that's easy
 to miss in a synchronous prototype and only shows up under the kind of
 adversarial, fault-injecting testing described above.
+
+### Execution plan
+
+Work ran against a living, numbered backlog (`ROADMAP.md`), not a single
+undifferentiated pass, split into two tracks:
+
+- **Track F — operational hardening, done first.** Closing real failure
+  modes surfaced by testing — blackboard staleness gating, decoupling the
+  FC link from camera timing, gating mission legs on estimator health,
+  real-time scheduling for the two control-critical threads — before adding
+  any new capability on top of them. Safety before capability, deliberately.
+- **P2 — closing out the command layer.** Wiring the failsafe RTH to a real
+  AUX channel, a radio-based command source (flyable without a laptop), the
+  SHADOW advisory mode, and the props-off bench checklist: the minimum
+  needed to fly and stop safely before trusting autonomy with more.
+- **Planned order beyond that:** P2 → P4a (flight recorder/replay) → P5a
+  (VIO) → P5b (occupancy-grid planner) → P3 (LLM supervisor) → P4b (ground
+  view) → P6 (mission capability) — again, safety and observability ahead
+  of capability. P5b jumped that queue ahead of the recorder and VIO because
+  the SITL suite already had a concrete failing test case ready for it (the
+  on-path obstacle scenario) — a fix with a ready acceptance test moved up
+  the plan rather than waiting on it.
+- **Still queued, in the order the backlog states it:** a flight data
+  recorder/replay tool, visual-inertial odometry for GPS-denied velocity, an
+  advisory LLM supervisor constrained to a whitelisted command schema (never
+  in the control loop), a ground-station view, and mission-capability
+  extensions (broader object detection, standoff-only subject following,
+  multi-goal missions, a geofence).
 
 ---
 
@@ -480,7 +539,7 @@ a ground-station view; and mission-capability extensions (a broader object
 detector, standoff-only subject following, multi-goal missions, a geofence).
 None of these are represented as built anywhere in this document.
 
-**Core computer-vision algorithms were validated separately, on a desktop
+**Core computer-vision algorithms were tested separately, on a desktop
 workstation, before this integration existed.** Two lines of that work: the
 onboard tracker (CSRT/KCF/optical-flow/MOSSE + Kalman-filtered lock-on) was
 originally built and iterated as its own standalone C++ tool, run against
@@ -488,7 +547,7 @@ live camera input, before being wrapped as the runtime's tracking module; and
 the `desktop/` app is a separate, parallel perception-prototyping line that
 evaluates heavier backends (DINOv2 + SAM 2) against real video off the
 aircraft, deliberately kept independent so perception ideas can be tested
-without needing the drone. That's real, separate validation from the
+without needing the drone. That's real, separate testing, distinct from the
 software-in-the-loop suite above — the tracking algorithms have been run
 against live video; the *onboard integration* (threading, the mode arbiter,
 the estimator, the planner, the flight-controller link, all running

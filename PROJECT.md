@@ -303,14 +303,20 @@ depending on a ground link at all.
 
 ## Design decisions, stated as trade-offs
 
-- **iNAV over MAVLink/PX4.** iNAV is already the dominant firmware on
-  low-cost analog FPV airframes and requires no companion-computer-class
-  hardware to fly standalone; MSP (its native protocol) was implemented
-  directly rather than adopting the MAVLink-centric tooling ecosystem
-  (MAVROS, PX4-Avoidance) most companion-computer references assume. Cost:
-  none of that tooling is directly reusable — the MSP integration (control
-  framing, telemetry parsing, synthetic-GPS injection, failsafe triggering)
-  was built from the protocol up.
+- **iNAV over MAVLink/PX4.** Betaflight is the dominant firmware on low-cost
+  analog FPV airframes, but it's flight-mode-only — no GPS navigation, no
+  position hold beyond what its own limited modes offer. iNAV sits between
+  Betaflight and ArduPilot: it keeps the FPV-native flight modes and requires
+  no companion-computer-class hardware to fly standalone, while adding the
+  GPS/nav layer (RTH, position hold, waypoint capability) that Betaflight
+  doesn't have — which is exactly the layer this project's synthetic-GPS
+  feedback and mode arbitration hook into. MSP (its native protocol) was
+  implemented directly rather than adopting the MAVLink-centric tooling
+  ecosystem (MAVROS, PX4-Avoidance) most companion-computer references
+  assume, which targets ArduPilot/PX4, not Betaflight/iNAV. Cost: none of
+  that tooling is directly reusable — the MSP integration (control framing,
+  telemetry parsing, synthetic-GPS injection, failsafe triggering) was built
+  from the protocol up.
 - **Monocular + optional ToF over LiDAR/stereo.** Matches the cost and mass
   budget; the trade-off is an occupancy grid that's only *geometrically*
   sound with metric input, so the monocular path runs at a documented nominal

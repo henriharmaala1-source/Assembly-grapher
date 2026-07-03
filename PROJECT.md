@@ -6,8 +6,10 @@ flown product. Scope and current validation status are stated explicitly
 throughout.*
 
 **Repository:** [`henriharmaala1-source/Assembly-grapher`](https://github.com/henriharmaala1-source/Assembly-grapher)
-(`onboard/` — the C++ runtime described below; `desktop/` — a Python
-perception-prototyping tool, out of scope for this document)
+(`onboard/` — the C++ runtime this document describes in detail; `desktop/` —
+a separate Python perception-prototyping tool, referenced below for its role
+in validating computer-vision algorithms off the aircraft, not otherwise
+covered here)
 
 ---
 
@@ -196,6 +198,75 @@ adversarial, fault-injecting testing described above.
 
 ---
 
+## Leadership and how AI was used
+
+This project is directed by its author, who owns every architectural and
+design decision described in this document — hardware selection, the
+CPU-only/analog-FPV cost constraint, the safety and scope boundaries, what
+gets built next and in what order. AI (Claude) was used throughout as a
+resource multiplier on top of that direction, not as an independent author.
+Concretely, across four recurring roles:
+
+- **Market research.** Surveying the competitive landscape for drone
+  companion computers and autonomy bridges — comparable products, their
+  architectures, and their price points — to sanity-check where this project
+  sits (see *Market context*, below).
+- **Method research.** Literature and prior-art sweeps across the specific
+  algorithm families this project touches — monocular and metric depth
+  estimation, visual-inertial odometry, local and global path planning,
+  edge-CPU object detection, sensor fusion — rated for feasibility on this
+  exact hardware rather than accepted at face value, to separate "worth
+  trying now" from "watch, don't build yet."
+- **Idea validation.** Using the test suite adversarially: fault-injecting
+  scenarios that reproduced a real design flaw (the move-stop-sense local
+  minimum) before it was fixed, so the fix had a concrete failing case to
+  satisfy rather than a hoped-for improvement. The same scrutiny was applied
+  to this document itself — an incorrect duration estimate and a factually
+  backwards description of the FC-link failure behavior were both caught and
+  corrected during drafting, not left in because they sounded plausible.
+- **Cross-referencing against past and current solutions.** Checking design
+  choices against precedent before committing to them — the move-stop-sense
+  cycle against how Mars rover autonomy evolved from stop-and-think to
+  continuous replanning, the VFH+ steering algorithm against its use in
+  established open-source obstacle-avoidance systems, and the overall
+  reactive/deliberative thread split against the classical three-layer
+  architecture pattern it descends from — so decisions were made with
+  awareness of who else has solved adjacent problems, and how.
+
+---
+
+## Market context
+
+**Independent market-research estimates** (360iResearch; ResearchAndMarkets)
+put the global drone onboard-computer market at roughly **$340–450M in 2025**,
+projected to grow at a **13–15% CAGR** to **$890M–970M by 2032**, driven by
+demand for AI-enabled autonomy, sensor fusion, and GPS-denied/BVLOS-capable
+operation across defense, public safety, agriculture, and infrastructure
+inspection. This project sits at the extreme low-cost end of that market and
+was not built to compete commercially in it — the comparison below exists to
+show where the design choices land, not to claim traction.
+
+| | This project | ModalAI VOXL 2 | Auterion Skynode | Droneforge Nimbus |
+|---|---|---|---|---|
+| Approach | Onboard companion computer, CPU-only | Onboard companion computer + autopilot | Onboard flight-controller-integrated compute | **Ground-based** — compute stays off the aircraft entirely |
+| List price | ~€100 add-on (~€476 full platform, airframe included) | **$1,199.99** | Not publicly listed | Not publicly listed (hardware bridges an existing FPV drone) |
+| Target buyer | Hobbyist/prosumer analog FPV airframes | Commercial/defense integrators | Commercial/defense OEMs building on AuterionOS | Developers building on existing FPV hardware |
+| Funding/stage | Personal demonstrator project | Established commercial product | Established commercial product | $2.5M pre-seed (2026) |
+
+The market's commercial players (ModalAI, Auterion) target integrators who
+are already buying purpose-built compute at the $1,000+ price point — a
+segment this project doesn't compete in and isn't trying to. Droneforge is
+the closer conceptual peer: it validates the same underlying premise this
+project relies on — that an analog FPV video/telemetry link carries enough
+information for real autonomy — but resolves the cost/mass constraint by
+moving compute to the ground instead of onto the airframe. This project's
+distinct bet is the opposite one: keep the compute onboard, at roughly
+**1/12th the cost of a single VOXL 2 unit**, accepting a CPU-only ceiling on
+what's achievable in exchange for an aircraft that's autonomous without
+depending on a ground link at all.
+
+---
+
 ## Design decisions, stated as trade-offs
 
 - **iNAV over MAVLink/PX4.** iNAV is already the dominant firmware on
@@ -263,14 +334,26 @@ a ground-station view; and mission-capability extensions (a broader object
 detector, standoff-only subject following, multi-goal missions, a geofence).
 None of these are represented as built anywhere in this document.
 
-**Not yet flight-tested.** This is the honest boundary: hardware for the
-sensor suite (forward time-of-flight sensor, GPS/compass module) is on order
-at the time of writing, and no claim is made here about behavior beyond what
-the software-in-the-loop suite actually exercises. Everything above is stated
-at the level of confidence the tests support — no more.
+**Core computer-vision algorithms were validated separately, on a desktop
+workstation, before this integration existed.** Two lines of that work: the
+onboard tracker (CSRT/KCF/optical-flow/MOSSE + Kalman-filtered lock-on) was
+originally built and iterated as its own standalone C++ tool, run against
+live camera input, before being wrapped as the runtime's tracking module; and
+the `desktop/` app is a separate, parallel perception-prototyping line that
+evaluates heavier backends (DINOv2 + SAM 2) against real video off the
+aircraft, deliberately kept independent so perception ideas can be tested
+without needing the drone. That's real, separate validation from the
+software-in-the-loop suite above — the tracking algorithms have been run
+against live video; the *onboard integration* (threading, the mode arbiter,
+the estimator, the planner, the flight-controller link, all running
+together) has not yet been run against real hardware.
 
-**Explicitly out of scope for this document:** the `desktop/` Python
-perception-prototyping tool.
+**Not yet flight-tested.** This is the honest boundary that remains: the
+project is currently waiting on parts — the sensor suite (forward
+time-of-flight sensor, GPS/compass module) is on order at the time of
+writing — to validate the full onboard integration end to end. No claim is
+made here about behavior beyond what the software-in-the-loop suite and the
+desktop-validated algorithms actually support.
 
 ---
 

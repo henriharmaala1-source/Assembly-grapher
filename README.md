@@ -7,6 +7,10 @@
 > **Working on this codebase (human or AI)? Start with [`AGENTS.md`](AGENTS.md)** —
 > the full architecture, control/data flow, plugin interfaces, invariants, and
 > design scope in one place.
+>
+> **Evaluating this as a portfolio piece? See [`PROJECT.md`](PROJECT.md)** —
+> problem, architecture, engineering process, and an honest account of what's
+> validated vs. not yet flight-tested.
 
 Two **independent** tools in one repo — they share no code and build separately:
 

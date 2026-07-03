@@ -174,6 +174,29 @@ control-path thread under load — a soft guarantee (separate threads) upgraded
 to a hard one (scheduler-enforced) once field testing showed the difference
 mattered.
 
+### Perception scheduling and compute budget
+
+Heavy perception (monocular depth inference, object detection) runs on the
+Deliberator thread behind a compute-budgeted scheduler: cheap, always-on
+modules first, then whichever heavy module is "hot" for the current
+behavior, then the rest — each gated against one flat per-tick millisecond
+budget, dispatched **sequentially**, one module completing before the next
+starts. Core pinning (the fly loop and FcLink confined to one core; the
+Deliberator left the remaining cores) exists to guarantee the control
+threads are never starved — but because the Deliberator is itself a single
+thread, it can only actively drive one of its allotted cores at a time,
+regardless of how many sit free. During the stationary phases of the
+move-stop-sense cycle (settle, think, scan) the control threads are doing
+almost nothing and several cores sit idle while depth and detection still
+run one after another instead of concurrently. That's a scheduling question,
+not a compute-budget one: the pieces needed to close it already exist in the
+architecture — a mutex-guarded blackboard that's already safe for concurrent
+writers, and a flight-phase signal the mission controller already computes —
+so the lever is to reschedule cores toward the workload actually present
+during a stationary phase, then revert to the flight-speed-safe topology
+before motion resumes, so a burst-mode worker can never be live during a
+control-critical moment.
+
 ### Shared state: a mutex-guarded blackboard
 
 Cross-thread communication goes through a single struct (`WorldState`) behind
@@ -202,6 +225,23 @@ low-battery/operator-abort → return-to-home (driven over a configured RC AUX
 channel), and an obstacle reflex that overrides a motion-capable mode to hold
 position when the sensed corridor closes — with an explicit opt-out for modes
 (like the autonomous cycle) that implement their own, better avoidance.
+
+### Control modes
+
+One arbiter, exactly one mode active at a time, both safety layers above
+wrapping all of them:
+
+| Mode | Function |
+|---|---|
+| `FLY` | Manual passthrough — pilot has full control (the default) |
+| `ASSIST` | Bumpless-trim assisted control, blended with pilot input |
+| `LOCK_ON` | Sensing only — tracks a subject and publishes a bearing/box for a gimbal or operator; no forward-pursuit control path exists (removed on purpose, see *Design decisions*, below) |
+| `HOLD` | Position hold |
+| `FOLLOW_ROAD` | Steers along the appearance-based (CIELab) road corridor |
+| `WAYPOINT` | The flight controller flies its own GPS route; the OS supervises rather than commands — the obstacle reflex and detection still run over it |
+| `AUTONOMY` | The move-stop-sense cycle (settle → think → scan → move → arrive), with the occupancy-grid planner as a goal-bias layer over the live reactive corridor |
+| `SHADOW` | Operator flies manually; `AUTONOMY` runs live underneath in dry-run and overlays its intended command on the video feed — zero-risk validation of the autonomy before arming it |
+| `FOLLOW_SUBJECT` | Standoff-keeping only, by design — never closes to impact. Registered and wired into the arbiter; the standoff-hold control logic itself is the one entry in this table not yet implemented, so it currently releases control rather than holding station |
 
 ### Perception
 

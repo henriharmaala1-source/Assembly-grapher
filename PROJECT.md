@@ -38,12 +38,14 @@ project holds to is one a live war has separately converged on too.
 It isn't isolated. On the other side of the same conflict, Ukraine's
 **Hornet** — a fixed-wing strike drone built by the American firm Perennial
 Autonomy, in service since March 2026 and used to cut Russian logistics 50–150
-km behind the front — navigates primarily by **optical flow**: a downward
-camera and a processor tracking terrain motion beneath it, GPS reduced to an
-occasional cross-check rather than the primary reference, specifically
-because satellite navigation is the first thing a contested electromagnetic
-environment takes away. It costs roughly **$5,000** a unit. And on the
-Russian side, the production Geran-2 MS variant now carries an **Nvidia
+km behind the front — is a complete aircraft system, not a module, so it
+isn't directly comparable to this project or the other data points here on
+cost or scope. What it does confirm is the same underlying navigation bet:
+it flies primarily by **optical flow** — a downward camera and a processor
+tracking terrain motion beneath it, GPS reduced to an occasional cross-check
+rather than the primary reference, specifically because satellite navigation
+is the first thing a contested electromagnetic environment takes away. And on
+the Russian side, the production Geran-2 MS variant now carries an **Nvidia
 Jetson Orin** module for onboard AI object recognition, correcting its own
 terminal-phase trajectory against a moving target from its own video feed —
 manufactured at a reported 5,000+ units a month.
@@ -66,9 +68,9 @@ module rather than built once per program. That isn't a future requirement
 this project is planning for — it's the ground this project already stood
 on, and the Geran wreckage, Hornet, and the TFL-1 category are each
 confirmation of it from a real, active-combat or active-market example, not
-the source of it. This project runs the same underlying bet at a fraction of
-even Hornet's budget, with a scope boundary this document states plainly and
-holds to (see *Design decisions*, below).
+the source of it. This project runs the same underlying bet at module scale
+rather than whole-aircraft scale, with a scope boundary this document states
+plainly and holds to (see *Design decisions*, below).
 
 ---
 

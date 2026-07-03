@@ -254,10 +254,12 @@ cd onboard && cmake -B build && cmake --build build -j4
   local occupancy grid + wavefront planner** (`nav_map.*`) that routes around
   obstacles the live FoV forgot — SITL-validated to complete the on-path /
   dead-centre cases that trapped the pure-reactive layer, standoff safety
-  unchanged. **Caveat:** the grid is metric-sound only on the ToF/stereo path;
-  on monocular-only (the current BOM) it runs at a NOMINAL scale — approximate,
-  disable with `nav.use_map=false` if it misbehaves until a ranging sensor
-  lands. Full P5 SLAM/global localization is still future.
+  unchanged. The **forward ToF sensor** (committed — see `bom.md`) is the
+  primary obstacle source: metric (grid is geometrically sound) and
+  forward-fixed (immune to the FPV camera up-tilt). The monocular path is a
+  supplementary fallback — nominal scale, and its grid scan is pitch-gated
+  (`camera.mount_tilt_deg` + `nav.scan_cam_*`) so hover sky-views don't pollute
+  the map. Full P5 SLAM/global localization is still future.
   `FOLLOW_SUBJECT` releases (control TODO); the VL53L9 backend's ranging protocol
   awaits the vendor driver; MAVLink backend is a stub.
 - **Recently hardened (Track F / P2):** perception staleness stamps + freshness

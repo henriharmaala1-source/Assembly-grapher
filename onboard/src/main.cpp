@@ -250,6 +250,8 @@ int main(int argc, char** argv) {
     // ---- perception modules
     TrackModule    track(backend, parser.get<int>("size"));
     NavigateModule navigate(parser.get<std::string>("depth-model"), db);
+    navigate.setCameraGeom(tune.cameraMountTiltDeg, tune.scanCamUpMaxDeg,
+                           tune.scanCamDownMaxDeg);   // FPV up-tilt handling
     DetectModule   detect(parser.get<std::string>("detect-model"), labels);
     RoadFollowModule road;
 

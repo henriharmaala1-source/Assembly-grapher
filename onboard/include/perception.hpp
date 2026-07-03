@@ -59,9 +59,25 @@ public:
 
     DepthNav& nav() { return nav_; }     // for the optional display overlay
 
+    // Camera geometry (FPV cameras are up-tilted so the horizon centres during
+    // fast forward flight). mountTilt = camera elevation above the airframe
+    // forward axis at zero airframe pitch (deg, + = up). The monocular corridor
+    // and its occupancy-grid scan are only trustworthy while the camera points
+    // roughly forward; when the effective elevation is outside [−camDownMax,
+    // camUpMax] (e.g. looking at sky while hovering with a big up-tilt), the
+    // grid scan is SUPPRESSED so it isn't polluted. This is a monocular-path
+    // mitigation; a forward-fixed ToF sensor (TofNavigateModule) is immune to
+    // camera tilt and is the robust obstacle source.
+    void setCameraGeom(float mountTiltDeg, float camUpMaxDeg, float camDownMaxDeg) {
+        mountTiltDeg_ = mountTiltDeg; camUpMaxDeg_ = camUpMaxDeg; camDownMaxDeg_ = camDownMaxDeg;
+    }
+
 private:
     DepthNav nav_;
     bool     ready_ = false;
+    float    mountTiltDeg_  = 0.f;
+    float    camUpMaxDeg_   = 12.f;
+    float    camDownMaxDeg_ = 40.f;
 };
 
 // ------------------------------------------------------------------ tof-nav

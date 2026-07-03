@@ -60,6 +60,12 @@ struct Tunables {
     int  rthAuxIdx = -1;    // 0-based AUX index to drive on RTH; <0 = disabled
     int  rthAuxUs  = 1800;  // µs to write on that channel when RTH is active
 
+    // Camera geometry — FPV cameras are up-tilted; the monocular corridor/grid
+    // scan is suppressed when the effective elevation leaves the usable window.
+    float cameraMountTiltDeg = 0.f;   // + = up vs airframe forward axis
+    float scanCamUpMaxDeg    = 12.f;  // suppress grid scan above this elevation
+    float scanCamDownMaxDeg  = 40.f;  // …and below this depression
+
     RcConfig rc;           // radio-as-command-source (P2.2)
 
     // Real-time scheduling for the control threads (F9). SCHED_FIFO priorities

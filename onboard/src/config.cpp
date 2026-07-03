@@ -136,6 +136,11 @@ Tunables load_tunables(Config& c) {
     t.rthAuxIdx = c.i("failsafe.rth_aux",    t.rthAuxIdx);
     t.rthAuxUs  = c.i("failsafe.rth_aux_us", t.rthAuxUs);
 
+    // --- camera geometry (monocular tilt handling) ---
+    t.cameraMountTiltDeg = c.f("camera.mount_tilt_deg",    t.cameraMountTiltDeg);
+    t.scanCamUpMaxDeg    = c.f("nav.scan_cam_up_max_deg",  t.scanCamUpMaxDeg);
+    t.scanCamDownMaxDeg  = c.f("nav.scan_cam_down_max_deg", t.scanCamDownMaxDeg);
+
     // --- RC command source (P2.2) ---
     t.rc.modeAux        = c.i("rc.mode_aux",         t.rc.modeAux);
     t.rc.goAux          = c.i("rc.go_aux",           t.rc.goAux);

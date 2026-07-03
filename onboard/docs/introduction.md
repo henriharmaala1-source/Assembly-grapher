@@ -162,19 +162,30 @@ tap.
 
 From that captured frame:
 
+- A **forward-facing time-of-flight sensor** (`ITofSource` → e.g. a VL53L5CX
+  or VL53L9) is the primary obstacle source: it produces a *metric* forward
+  depth grid, cheaply (no inference). Metric matters — the occupancy grid
+  below is only geometrically sound with real distances — and a
+  forward-fixed sensor is immune to the FPV camera's up-tilt (see the tilt
+  note below).
 - A monocular depth model (MiDaS-small or DepthAnything-v2-Small, via
-  OpenCV DNN) produces a per-pixel relative depth estimate. This is reduced
-  to a single steering direction using **VFH+** (Vector Field Histogram
-  Plus): the depth map is collapsed to a one-dimensional polar openness
-  histogram, thresholded into free/blocked sectors with hysteresis, and the
-  free sector closest to both the current heading and the previous chosen
-  heading is selected. The hysteresis term (weighted toward the prior
-  heading) is what prevents oscillation between two similarly-open sectors.
-- The `ITofSource` interface allows a metric time-of-flight sensor to
-  supply the same VFH+ pipeline with a real distance grid in place of the
-  monocular estimate. No such sensor is in the current build (see
-  `bom.md`); the interface exists so one can be added without modifying the
-  steering algorithm.
+  OpenCV DNN) is a supplementary/fallback depth source producing a per-pixel
+  *relative* depth estimate.
+- Either depth source feeds the same steering algorithm, **VFH+** (Vector
+  Field Histogram Plus): the depth map is collapsed to a one-dimensional
+  polar openness histogram, thresholded into free/blocked sectors with
+  hysteresis, and the free sector closest to both the current heading and the
+  previous chosen heading is selected. The hysteresis term (weighted toward
+  the prior heading) prevents oscillation between two similarly-open sectors.
+- **A note on camera tilt.** FPV cameras are mounted with an up-tilt (≥20°) so
+  the horizon centres during fast forward flight — which means at a hover the
+  camera points *up* at the sky, exactly when the stop-and-sense cycle wants a
+  forward view. The forward ToF sensor sidesteps this entirely (it's bolted to
+  the airframe, not tilted for the pilot). For the monocular fallback, the
+  effective camera pitch (airframe pitch plus the configured mount tilt) is
+  fed into the de-rotation, and observations taken while the camera points too
+  far off-forward are excluded from the occupancy grid rather than polluting
+  it with sky.
 - Two additional, independent perception modules run in the fly loop: an
   appearance-based road/line follower (CIELab color-space clustering, no
   neural network, low enough cost to run every frame), and a lock-on
@@ -276,17 +287,15 @@ something the live sensor sees. This is validated in the SITL suite: the
 on-path and dead-centre obstacle cases that stall the pure-reactive layer are
 now completed, with the obstacle standoff never breached.
 
-One honest limitation remains: an occupancy grid is only geometrically sound
-if its input distances are metric, which they are on a ranging sensor
-(time-of-flight or stereo) but only *approximately* so on a monocular depth
-model, which has no absolute scale. On the current camera-only configuration
-the grid runs at a nominal scale — good enough to bias routing, not a true
-metric map — and can be disabled in config until a ranging sensor is fitted.
-This mirrors the real evolution of compute-limited autonomy (early Mars
-rovers moved from stop-and-think to continuous replanning only once better
-onboard sensing and compute allowed it); the grid is the first step in that
-direction here, bounded by the same sensor-and-compute budget as everything
-else.
+An occupancy grid is only geometrically sound if its input distances are
+metric — which is exactly why the forward ToF sensor is the primary obstacle
+source: it makes the grid metric and tilt-immune. (On the monocular fallback
+alone the grid runs at a nominal scale — good enough to bias routing, not a
+true metric map — and can be disabled in config.) This mirrors the real
+evolution of compute-limited autonomy: early Mars rovers moved from
+stop-and-think to continuous replanning only once better onboard sensing and
+compute allowed it. The grid is the first step in that direction here,
+bounded by the same sensor-and-compute budget as everything else.
 
 ## Flight-controller interface
 

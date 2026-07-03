@@ -81,9 +81,22 @@ NavigateModule::NavigateModule(const std::string& model, DepthBackend backend) {
 
 void NavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
     if (!ready_) return;
-    { const auto s = wm.snapshot(); nav_.setAttitude(s.vehRollDeg, s.vehPitchDeg); }
+    float vehPitch = 0.f;
+    // Feed the EFFECTIVE camera pitch (airframe + static mount up-tilt) into the
+    // de-rotation, so the constant FPV up-tilt is compensated, not just dynamic
+    // airframe pitch.
+    { const auto s = wm.snapshot(); vehPitch = s.vehPitchDeg;
+      nav_.setAttitude(s.vehRollDeg, s.vehPitchDeg + mountTiltDeg_); }
     nav_.update(frame);
     const auto& t = nav_.traverse();
+
+    // Effective camera elevation above horizontal: up-tilt at hover, lowered as
+    // the airframe pitches nose-down to fly forward. (Assumes vehPitchDeg > 0 =
+    // nose-down/forward; flip the sign of camera.mount_tilt_deg if your FC
+    // reports the opposite.) Outside the usable window the mono view is sky/
+    // ground, not the forward obstacle field — suppress the grid scan.
+    const float camElev = mountTiltDeg_ - vehPitch;
+    const bool  scanUsable = (camElev <= camUpMaxDeg_) && (camElev >= -camDownMaxDeg_);
 
     wm.with([&](WorldState& s) {
         s.corridorValid    = t.valid;
@@ -93,7 +106,8 @@ void NavigateModule::run(const cv::Mat& frame, WorldModel& wm) {
         s.corridorOpen     = t.openness;
         s.corridorMargin   = t.margin;
         s.corridorStampS   = monoNowS();
-        publishScan(s, nav_);
+        if (scanUsable) publishScan(s, nav_);   // else leave the grid uninformed
+        else            s.corridorScanN = 0;
     });
 }
 

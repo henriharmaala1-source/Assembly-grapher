@@ -57,6 +57,35 @@ exist on this quad with or without a Raspberry Pi on it.
 
 **Total, excluding transmitter, chargers, and goggles: ~€476.**
 
+### Forward ToF sensor (committed — the obstacle sensor)
+
+| Component | Role | Connects to | ~€ |
+|---|---|---|---|
+| Forward time-of-flight sensor (VL53L5CX 8×8 / VL53L9 higher-res, via `ITofSource`) | Metric forward depth → the obstacle-avoidance corridor and the P5b occupancy grid | **Pi** I²C | ~18–45 |
+
+This is now part of the build, not a hypothetical upgrade. It matters for two
+reasons the monocular camera can't cover:
+
+1. **It's metric.** Monocular depth has no absolute scale, so the occupancy
+   grid built from it is only approximate. The ToF sensor measures true
+   distances, which makes the grid geometrically sound.
+2. **It's forward-fixed, so camera tilt doesn't affect it.** The FPV camera is
+   mounted at an up-tilt (≥20°) so the horizon centres during fast forward
+   flight — which means at a hover it points *up* at the sky, exactly when the
+   move-stop-sense cycle wants to sense forward obstacles. A ToF module bolted
+   to the airframe pointing forward is immune to that: it sees the forward
+   obstacle field whether the drone is hovering or moving.
+
+The software already has the plumbing (`ITofSource` → `TofNavigateModule` →
+the same VFH+ corridor and the P5b grid); adding the sensor is wiring, not a
+redesign. The monocular depth path remains as a supplementary/fallback source,
+with a camera-tilt mitigation (`camera.mount_tilt_deg` + grid-scan
+pitch-gating) for when it's used alone.
+
+All time-of-flight sensors lose range in bright sunlight — verify the real
+daylight range in your environment; for outdoor flight a stereo module
+(OAK-D Lite, USB) is the sun-proof alternative through the same interface.
+
 ### The one detail that matters most: there's no dedicated camera
 
 The Pi doesn't have its own camera. The "USB CVBS capture dongle" line above
@@ -82,25 +111,20 @@ number as a real constraint, not a rounding error.
 
 ---
 
-## Sensor upgrades the software already supports, but the build doesn't include
+## Optional additional sensor
 
-Earlier design discussion for this project scoped out a small forward-depth
-sensor (a VL53L5CX or similar time-of-flight breakout, ~€18, into the Pi)
-and an optical-flow/rangefinder module (a Matek 3901-L0X, ~€28, into the FC
-for GPS-denied position hold) as ways to close specific gaps — sunlight-
-independent short-range depth, and indoor position hold without GPS.
-**Neither is in the committed build above.** They're documented here because
-the software already has a ready slot for exactly this: `ITofSource` is a
-plugin interface a depth sensor drops into without touching the rest of the
-pipeline (see `AGENTS.md`), so this is a real, low-effort upgrade path if
-the €476 build ever needs forward depth beyond what the monocular model
-(reading the tapped analog video) already provides — not a redesign.
+- **Matek 3901-L0X** (PMW3901 optical flow + short-range ToF, ~€28, into the
+  FC) — gives iNAV GPS-denied *position hold* natively and a vertical-scale
+  anchor. Not committed, but a low-effort add through the FC (not the Pi); it
+  complements the forward ToF, which handles obstacle avoidance, not hold.
 
 ## What's not in this BOM at all
 
-- **No LiDAR** — cost; a usable one is multiples of this entire build.
-- **No stereo camera pair** — the monocular depth model does this job today,
-  reading the same analog feed described above.
+- **No LiDAR** — cost; a usable one is multiples of this entire build. The
+  forward ToF sensor covers short-range obstacle depth far more cheaply.
+- **No stereo camera pair** (indoor) — the forward ToF is the metric depth
+  source; stereo (OAK-D Lite) is the sun-proof option for outdoor flight,
+  through the same `ITofSource` interface.
 - **No dedicated Pi-side IMU** — the FC's own IMU is read over MSP telemetry
   instead. The planned path to better GPS-denied velocity (`ROADMAP.md`,
   P5a) is camera-based optical flow using the existing video tap and the

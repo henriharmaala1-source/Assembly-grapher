@@ -27,11 +27,13 @@ custom board built to a military spec. A single-board computer anyone can
 order for a few hundred euros, doing onboard video AI on a live combat
 airframe.
 
-That single find is the whole premise of this project stated back at it in
-hardware: cheap, general-purpose embedded compute doing real-time onboard
-perception is no longer a hobbyist compromise. It's what's actually being
-found in the field, on both sides of an active war, being iterated on faster
-than most defense-procurement cycles can track.
+That's not where this project's hardware bet came from — the hypothesis this
+project was already built on, that cheap, CPU-only, general-purpose compute
+is enough for real onboard perception rather than a compromise to be
+replaced once better hardware is affordable, predates that find. What the
+Geran wreckage did was **confirm** it: independent, real-world evidence,
+from an active combat example, that the exact hardware-scope bet this
+project holds to is one a live war has separately converged on too.
 
 It isn't isolated. On the other side of the same conflict, Ukraine's
 **Hornet** — a fixed-wing strike drone built by the American firm Perennial
@@ -47,13 +49,15 @@ terminal-phase trajectory against a moving target from its own video feed —
 manufactured at a reported 5,000+ units a month.
 
 Three different programs, two opposing sides, and the same conclusion,
-arrived at independently: when the radio link and the satellite fix are the
-first casualties of contact, the airframe has to be able to see and decide
-for itself, on hardware cheap enough to be attritable. That isn't a future
-requirement being planned for. It's the observed, present-tense state of
-drone warfare, and it's the ground this project starts from — at a fraction
-of even Hornet's budget, and with a scope boundary this document states
-plainly and holds to (see *ANV-17* and *Design decisions*, below).
+arrived at independently of this project and of each other: when the radio
+link and the satellite fix are the first casualties of contact, the airframe
+has to be able to see and decide for itself, on hardware cheap enough to be
+attritable. That isn't a future requirement this project is planning for —
+it's the ground this project already stood on, and the Geran wreckage is
+confirmation of it from a real, active-combat example, not the source of it.
+This project runs the same bet at a fraction of even Hornet's budget, with a
+scope boundary this document states plainly and holds to (see *ANV-17* and
+*Design decisions*, below).
 
 ---
 

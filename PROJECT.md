@@ -48,15 +48,31 @@ Jetson Orin** module for onboard AI object recognition, correcting its own
 terminal-phase trajectory against a moving target from its own video feed —
 manufactured at a reported 5,000+ units a month.
 
-Three different programs, two opposing sides, and the same conclusion,
-arrived at independently of this project and of each other: when the radio
-link and the satellite fix are the first casualties of contact, the airframe
-has to be able to see and decide for itself, on hardware cheap enough to be
-attritable. That isn't a future requirement this project is planning for —
-it's the ground this project already stood on, and the Geran wreckage is
-confirmation of it from a real, active-combat example, not the source of it.
-This project runs the same bet at a fraction of even Hornet's budget, with a
-scope boundary this document states plainly and holds to (see *ANV-17* and
+A fourth data point is the one most directly relevant to this project's own
+scope line. Since 2025, a commercial category of **AI lock-on add-on modules
+for FPV airframes** has gone from prototype to mass-fielded — **TFL-1**, from
+the firm The Fourth Law, chief among them, reportedly around **$442** a unit.
+Strapped onto an otherwise ordinary FPV, it takes over final-approach
+guidance: detecting, tracking, and closing on a target independent of the
+radio link. One Ukrainian brigade using it reported hit rate going from 20%
+to 80%. This isn't a research paper or a demo — it's a live commercial
+market, at a price point in the same neighborhood as this project's own BOM,
+already doing exactly what `LOCK_ON` in this project's mode table (see
+*Control modes*, below) deliberately does not: closing the loop from "target
+found" to "target struck." That gap is not an oversight. It's the line
+stated plainly in *Design decisions*, below, and held on purpose.
+
+Four data points, not three, and not confined to one side of the war: when
+the radio link and the satellite fix are the first casualties of contact,
+the airframe has to be able to see and decide for itself, on hardware cheap
+enough to be attritable — and, increasingly, cheap enough to be sold as a
+module rather than built once per program. That isn't a future requirement
+this project is planning for — it's the ground this project already stood
+on, and the Geran wreckage, Hornet, and the TFL-1 category are each
+confirmation of it from a real, active-combat or active-market example, not
+the source of it. This project runs the same underlying bet at a fraction of
+even Hornet's budget, with a scope boundary this document states plainly and
+holds to (see *ANV-17* and
 *Design decisions*, below).
 
 ---

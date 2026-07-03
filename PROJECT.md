@@ -47,6 +47,14 @@ constraint is deliberate and is treated as a first-class design input, not an
 obstacle worked around after the fact — it shapes every architectural decision
 below.
 
+**Scope.** This is a development and defense-research platform: a low-cost
+testbed for evaluating autonomy approaches on analog FPV airframes — the class
+of platform already in wide field use for reconnaissance and inspection roles
+where GPS is degraded and commercial companion-computer hardware is cost- or
+mass-prohibitive at scale. It is not built or positioned as a consumer/hobbyist
+product, even though it is built from hobbyist-market hardware (see *Market
+context*, below) for cost reasons.
+
 ---
 
 ## Architecture
@@ -246,11 +254,25 @@ inspection. This project sits at the extreme low-cost end of that market and
 was not built to compete commercially in it — the comparison below exists to
 show where the design choices land, not to claim traction.
 
+**A separate, larger market underlies the hardware this project is built
+from**, even though the software targets development/defense-research use
+rather than that market directly: the hobbyist/DIY FPV drone market itself.
+Estimates vary widely by methodology — from **~$558M in 2025 growing at a
+13.7% CAGR** (Virtue Market Research) to **$1.5–1.6B in 2025 growing at
+~22.5% CAGR to ~$6.2B by 2032** (Verified Market Research; Market Research
+Intellect) — but converge on one point: hobbyists and enthusiasts are the
+largest segment by unit volume, the low barrier to entry from ready-to-fly
+kits and an active builder community being the primary demand driver. This
+project's entire airframe BOM (see `onboard/docs/bom.md`) is sourced from
+that hobbyist market, which is precisely what makes the cost target in the
+*Problem* section above achievable — commodity analog FPV parts, not
+purpose-built or defense-grade hardware.
+
 | | This project | ModalAI VOXL 2 | Auterion Skynode | Droneforge Nimbus |
 |---|---|---|---|---|
 | Approach | Onboard companion computer, CPU-only | Onboard companion computer + autopilot | Onboard flight-controller-integrated compute | **Ground-based** — compute stays off the aircraft entirely |
 | List price | ~€100 add-on (~€476 full platform, airframe included) | **$1,199.99** | Not publicly listed | Not publicly listed (hardware bridges an existing FPV drone) |
-| Target buyer | Hobbyist/prosumer analog FPV airframes | Commercial/defense integrators | Commercial/defense OEMs building on AuterionOS | Developers building on existing FPV hardware |
+| Target buyer | Development and defense-research use on low-cost analog FPV airframes | Commercial/defense integrators | Commercial/defense OEMs building on AuterionOS | Developers building on existing FPV hardware |
 | Funding/stage | Personal demonstrator project | Established commercial product | Established commercial product | $2.5M pre-seed (2026) |
 
 The market's commercial players (ModalAI, Auterion) target integrators who

@@ -147,6 +147,43 @@ that raises the ceiling rather than approaching it more efficiently.
 - **Accept:** same-model latency benchmark, OpenCV DNN vs the new backend, on
   real Pi 5 hardware; SITL/bench regression stays green after the swap.
 
+### F11 — Core rescheduling: burst multi-core perception while stationary (M, scoped)
+`PerceptionScheduler::tick()` (`scheduler.cpp`) runs every module **sequentially
+on the single Deliberator thread** — depth and detect never execute
+concurrently, gated by one flat per-tick budget (`budgetMs_ = 60.f`) that
+never changes with flight phase. F9's affinity split pins the fly loop +
+FcLink to one core and leaves the rest of the Pi 5 to the Deliberator — but
+since the Deliberator is one thread, it can only actively drive one of those
+cores at a time. During `SETTLE`/`THINK`/`SCAN` (the move-stop-sense cycle's
+stationary phases) the fly loop and FcLink are doing almost nothing and 2–3
+cores sit idle while depth-then-detect still run one after another. This is
+a scheduling problem, not a hardware one: **reschedule cores to the workload
+that's actually there**, rather than holding a flight-speed-safe topology
+during a phase that doesn't need it.
+- A stationary signal already exists (mission phase `SETTLE`/`THINK`/`SCAN`,
+  or more generally near-zero commanded + estimated velocity) — surface it
+  to the Deliberator as a single bool/flag read each tick, no new estimator
+  work required.
+- On entering a stationary phase: relax the Deliberator's core pinning and
+  dispatch the tick's heavy modules (depth, detect) as short-lived concurrent
+  tasks instead of one sequential call each — `WorldModel` is already
+  mutex-guarded, so independent writers is not a new hazard, just a new
+  caller pattern.
+- On leaving it (motion resumes): tear the worker tasks down and revert to
+  today's single-thread sequential dispatch and F9's conservative affinity
+  layout **before** control-loop timing starts mattering again — the burst
+  path must never be live during MOVE.
+- **The real risk, and the reason this is scoped, not casual:** any burst
+  worker that outlives its stationary window, or lands on the fly-loop/FcLink
+  pinned core, reintroduces exactly the jitter F9 was built to eliminate.
+  This item does not ship without proving it can't do that.
+- **Accept:** unit test asserting parallel dispatch triggers only under the
+  stationary signal and sequential dispatch otherwise; a jitter bench on the
+  fly-loop/FcLink threads showing **no regression** while burst-mode
+  perception is active; a wall-clock benchmark showing depth+detect latency
+  improves running concurrently vs. sequentially during a simulated
+  SETTLE/THINK/SCAN phase.
+
 ---
 
 ## P2 — close out the FC / command layer

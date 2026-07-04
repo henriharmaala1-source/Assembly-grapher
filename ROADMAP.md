@@ -16,14 +16,17 @@ has a ready-made failing acceptance test in the SITL suite; the LLM supervisor
 
 Effort key: S ≈ hours, M ≈ 1–2 days, L ≈ 3days+.
 
-**Status (2026-07):** ✅ **Track F (F1–F9), P2 (P2.1–P2.4), and P5b are DONE** —
-all on `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (9 tests,
-all green: estimator, modes, MSP-over-PTY, config, RC, FcLink, realtime,
-nav_map, SITL). The SITL suite now completes the on-path / dead-centre obstacle
-cases (P5b grid+planner) that previously stalled. **F10** (inference runtime
-swap) stays deferred until perception budget is the bottleneck. Recommended
-next: **P4a** (recorder/replay), then **P5a** (VIO — also unblocks a *metric*
-P5b grid on the mono BOM). Items below are marked ✅ where complete.
+**Status (2026-07):** ✅ **Track F (F1–F9), P2 (P2.1–P2.4), P5b, and the
+crash-survivable black box (P4a-bb) are DONE** — all on
+`claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (10 tests, all
+green: estimator, modes, MSP-over-PTY, config, RC, FcLink, realtime, nav_map,
+SITL, black box). The SITL suite now completes the on-path / dead-centre
+obstacle cases (P5b grid+planner) that previously stalled. A staged hardware
+bring-up plan lives in `onboard/docs/hardware-bringup-checklist.md`. **F10**
+(inference runtime swap) and **F11** (core rescheduling) stay deferred until
+perception budget is the bottleneck. Recommended next: **P5a** (VIO — also
+unblocks a *metric* P5b grid on the mono BOM). Items below are marked ✅ where
+complete.
 
 ---
 
@@ -260,11 +263,29 @@ scene and *suggests*; it can never touch control.
 
 ## P4 — flight recorder, replay, ground view
 
-### P4a — Recorder + replay (M) — *do early*
+### ✅ P4a-bb — Crash-survivable black box — DONE (replaces the recorder as the bring-up priority)
+Ahead of the full recorder/replay tool, the first hardware trials need one
+thing above all: **whatever reached disk survives however the process dies**
+(brownout, lock-up, crash-on-impact). Built as `BlackBox` (`black_box.*`):
+- Append-only, fixed-size (~122 B) records, one per fly-loop tick; per-record
+  CRC32; a 2-byte sync word; periodic `fsync` (default 1 s) so data actually
+  reaches the medium, not just the page cache. `--blackbox=<path>`.
+- Best-effort in the control path: a write error disables the box, never
+  throws or blocks the fly loop. Also logged through a camera outage.
+- Offline decoder `tools/blackbox_decode` → CSV; resyncs past a torn/garbage
+  record instead of giving up, so one bad record never costs the rest.
+- **Accept (met):** `test_black_box` — round-trip, N-record file decode,
+  truncated-tail recovery (N-1 intact), in-record corruption rejected by CRC,
+  and mid-file garbage resynced. 10/10 CTest green.
+
+### P4a — Recorder + replay (M) — *still wanted, now lower priority*
+The black box covers crash-survivable capture; the richer replay tool remains:
 - `--record=dir`: jsonl `WorldState` @10 Hz + events (mode changes, GO,
   failsafe, lock) + optional frame dump (MJPEG); ring-file rotation.
 - `--replay=dir`: `ReplayFcBackend` + replay camera feed the **real pipeline**
   headless from a recording — every field bug becomes desk-reproducible.
+  (A converter from the black-box CSV into this replay format is the cheap
+  bridge between the two.)
 - **Accept:** record a SITL run, replay it, diff the `brief()` streams.
 
 ### P4b — Ground view (M)

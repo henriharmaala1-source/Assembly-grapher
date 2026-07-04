@@ -169,6 +169,7 @@ in-flight validation of the autonomy.
 | `flight_controller.hpp` | `IFlightController` abstraction, `FcMode` |
 | `msp_backend.*` | iNAV MSP backend (telemetry poll, `MSP_SET_RAW_RC`, `MSP2_SENSOR_GPS`, assist/total, MSP_RC) |
 | `fc_link.*` | `FcLink` — FC serviced on its OWN thread; the fly loop hands it intent (thread-safe), so a hung camera can't stall RC; neutralises a stale command |
+| `black_box.*` | `BlackBox` — crash-survivable flight-data logger: append-only fixed-size records, per-record CRC32, periodic fsync, sync-word resync. `--blackbox=<path>`; one record/tick. Decoded offline by `tools/blackbox_decode` (CSV) |
 | `sim_fc_backend.*` | `SimFcBackend` — software-in-the-loop FC (responds to control) for hardware-free testing |
 | `mavlink_backend.hpp` | ArduPilot MAVLink backend — documented stub |
 | `serial_port.*` | POSIX termios serial |
@@ -265,8 +266,10 @@ cd onboard && cmake -B build && cmake --build build -j4
 - **Recently hardened (Track F / P2):** perception staleness stamps + freshness
   gating + think-tier watchdog; mission gated on estimator health (`estEphM`);
   ATTITUDE-priority MSP polling; runtime config (`--config`/`--dump-config`);
-  in-tree CTest suite (estimator, modes, MSP-over-PTY, config, SITL); failsafe
-  RTH wired to an iNAV AUX channel (`failsafe.rth_aux`). See `ROADMAP.md`.
+  in-tree CTest suite (estimator, modes, MSP-over-PTY, config, SITL, black box);
+  failsafe RTH wired to an iNAV AUX channel (`failsafe.rth_aux`); a
+  crash-survivable black box (`--blackbox`, decoded by `blackbox_decode`) for
+  hardware bring-up. See `ROADMAP.md` and `docs/hardware-bringup-checklist.md`.
 
 When you change something, keep this section and the README's tables honest.
 

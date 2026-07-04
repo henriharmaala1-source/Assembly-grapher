@@ -35,6 +35,7 @@ add_executable(kestrel
   src/config.cpp
   src/rc_command.cpp
   src/fc_link.cpp
+  src/black_box.cpp
   src/realtime.cpp)
 
 target_include_directories(kestrel PRIVATE
@@ -42,6 +43,16 @@ target_include_directories(kestrel PRIVATE
   ${OpenCV_INCLUDE_DIRS})
 
 target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} Threads::Threads)
+
+# Offline black-box decoder — a ground tool, not flight code. Links only the
+# format code + world_model (for monoNowS / WorldState), no threads/no camera.
+add_executable(blackbox_decode
+  tools/blackbox_decode.cpp
+  src/black_box.cpp
+  src/world_model.cpp)
+target_include_directories(blackbox_decode PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(blackbox_decode PRIVATE ${OpenCV_LIBS})
 
 # Cortex-A76 tuning when building natively on the Pi 5.
 include(CheckCXXCompilerFlag)
@@ -95,4 +106,5 @@ if(BUILD_TESTS)
   kestrel_test(test_fc_link src/fc_link.cpp src/sim_fc_backend.cpp
                src/world_model.cpp src/realtime.cpp)
   kestrel_test(test_realtime src/realtime.cpp)
+  kestrel_test(test_black_box src/black_box.cpp src/world_model.cpp)
 endif()

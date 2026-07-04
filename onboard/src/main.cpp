@@ -38,6 +38,7 @@
 #include <string>
 #include <thread>
 
+#include "black_box.hpp"
 #include "config.hpp"
 #include "controller.hpp"
 #include "deliberator.hpp"
@@ -203,6 +204,7 @@ int main(int argc, char** argv) {
         "{feed-gps-hz    | 10    | rate to inject synthetic GPS (Hz) }"
         "{budget         | 60    | per-tick CPU budget ms }"
         "{config         |       | key=value tuning file (gains/mission/safety) }"
+        "{blackbox       |       | crash-survivable flight-data black box file (append-only) }"
         "{dump-config    | false | print effective config (defaults+overrides) and exit }"
         "{display        | false | show the video window (desk testing) }";
 
@@ -327,6 +329,20 @@ int main(int argc, char** argv) {
     auto tCamRetry = std::chrono::steady_clock::now();
 
     WorldModel wm;
+
+    // Crash-survivable black box (opt-in via --blackbox=path). Logged once per
+    // fly-loop tick from the snapshot; append-only + periodic fsync, so a
+    // brownout/crash keeps everything written up to the last fsync.
+    BlackBox blackBox;
+    if (!parser.get<std::string>("blackbox").empty()) {
+        if (blackBox.open(parser.get<std::string>("blackbox")))
+            std::printf("[blackbox] logging to %s\n",
+                        parser.get<std::string>("blackbox").c_str());
+        else
+            std::fprintf(stderr, "[blackbox] could not open %s — continuing without it\n",
+                         parser.get<std::string>("blackbox").c_str());
+    }
+
     ClickState click;
     const std::string win = "kestrel";
     if (display) {
@@ -359,6 +375,13 @@ int main(int argc, char** argv) {
             if (fcLink.haveFc()) {
                 ControlCmd hold; hold.valid = true;
                 fcLink.command(hold, allowControl);
+            }
+            // Keep the black box ticking through a camera outage — the gap in
+            // frameId with live telemetry is itself diagnostic. Stamp "now" so
+            // the record's timestamp is real, not the last good frame's.
+            if (blackBox.isOpen()) {
+                wm.with([&](WorldState& s){ s.tickMonoS = monoNowS(); });
+                blackBox.log(wm.snapshot());
             }
             const auto now = std::chrono::steady_clock::now();
             if (now - tCamRetry > std::chrono::seconds(2)) {
@@ -489,6 +512,10 @@ int main(int argc, char** argv) {
             s.control = cmd;  s.controlActive = sent;
         });
         const WorldState snap = wm.snapshot();   // post-arbiter, for display/telemetry
+
+        // Black box: one fixed record per tick, post-arbiter (captures the
+        // command actually issued + whether it was sent live).
+        if (blackBox.isOpen()) blackBox.log(snap);
 
         // ---- telemetry line ~2x/sec (LLM scene-state input)
         if (std::chrono::duration<double>(tNow - tLog).count() >= 0.5) {
@@ -622,5 +649,6 @@ int main(int argc, char** argv) {
 
     deliberator.stop();          // join the think thread before tearing down
     fcLink.stop();               // join the FC I/O thread + disconnect
+    blackBox.close();            // final flush + fsync
     return 0;
 }

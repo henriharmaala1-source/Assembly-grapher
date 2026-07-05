@@ -39,7 +39,11 @@ jobs:
           if (-not (Test-Path 'C:\ocv\opencv\build\OpenCVConfig.cmake')) { throw 'OpenCV extract failed' }
 
       - name: Configure
-        run: cmake -B build -DOpenCV_DIR="C:/ocv/opencv/build"
+        # Point at the vc16 (VS2019) config directly, NOT the top-level one:
+        # the runner's MSVC is newer than any vcXX folder the prebuilt ships, so
+        # the auto-detecting top-level config finds "no compatible binaries". The
+        # vc16 libs are ABI-compatible with newer MSVC, so this links fine.
+        run: cmake -B build -DOpenCV_DIR="C:/ocv/opencv/build/x64/vc16/lib"
 
       - name: Build
         run: cmake --build build --config Release -j 4

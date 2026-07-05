@@ -37,6 +37,22 @@ cmake -B build && cmake --build build -j4     # needs OpenCV (core imgproc imgco
 `highgui` is optional — without it everything works headless and `--save=<dir>`
 still dumps PNGs.
 
+### Windows
+
+No code changes are needed — it builds to an `.exe`. Three options:
+
+1. **Prebuilt exe, zero local setup** — a GitHub Actions workflow
+   (`.github/workflows/nav-sim-windows.yml`) builds `nav_sim.exe` on every push.
+   Grab it from the repo's **Actions** tab → latest *build nav-sim (Windows exe)*
+   run → **Artifacts** → `nav_sim-windows-x64` (exe + the OpenCV DLLs it needs).
+2. **MSYS2** (one package manager gets compiler + CMake + OpenCV): in the
+   *MSYS2 UCRT64* shell, `pacman -S mingw-w64-ucrt-x86_64-{gcc,cmake,opencv}`,
+   then `cmake -B build -G "MinGW Makefiles" && cmake --build build`. Run the
+   exe from that shell so the DLLs are on PATH.
+3. **VS Code**: install the *C/C++* and *CMake Tools* extensions, open this
+   `nav-sim` folder, build (`F7`), then `F5` — the `.vscode/` configs run it
+   with sensible args (`--world=maze --planner=astar --display`).
+
 ## Run
 
 ```bash

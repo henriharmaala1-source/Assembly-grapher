@@ -115,6 +115,22 @@ Arena buildArena(const std::string& name, std::mt19937& rng, int nObs) {
         a.world = randomWorld(rng, nObs);
         a.goal = randomGoal(rng, a.world);
         a.fixedGoal = false;
+        return a;
+    }
+    // Per-seed variation for the structured arenas: shift the whole layout a
+    // little (keeps walls connected) and sprinkle a couple of extra obstacles,
+    // so different seeds give different-but-same-character maps.
+    if (name != "empty") {
+        std::uniform_real_distribution<float> j(-2.0f, 2.0f);
+        const float dx = j(rng), dy = j(rng);
+        for (auto& w : a.world.walls) { w.e0+=dx; w.n0+=dy; w.e1+=dx; w.n1+=dy; }
+        std::uniform_int_distribution<int> ne(0, 2);
+        std::uniform_real_distribution<float> ue(-13,13), un(5,21), ur(0.9f,1.8f);
+        for (int i = 0, extra = ne(rng); i < extra; ++i) {
+            sim::Circle c{ ue(rng), un(rng), ur(rng) };
+            if (std::hypot(c.e, c.n) > 4.f && std::hypot(c.e-a.goal.e, c.n-a.goal.n) > 3.f)
+                a.world.circles.push_back(c);
+        }
     }
     return a;
 }
@@ -305,16 +321,179 @@ void printRow(const char* name, const RunResult& r) {
                 r.straightLen>0? r.pathLen/r.straightLen : 0.f,
                 r.planCalls? r.planMsTotal/r.planCalls : 0.0);
 }
+
+// ===========================================================================
+// Interactive GUI: an episode you can step, plus a clickable control panel.
+// ===========================================================================
+
+const std::vector<std::string> kArenas = {"random","empty","slalom","rooms","maze","trap","cluttered"};
+const std::vector<std::string> kSensors = {"camera","tof","tof-wide"};
+
+// One steppable episode: world + grid + drone + planner + trail. Same physics
+// as run(), but advanced one tick at a time so the GUI can drive it live.
+struct SimEpisode {
+    RunOpts opt;
+    sim::World world; navsim::OccupancyGrid grid; navsim::Drone drone; navsim::Vec2 goal{};
+    std::unique_ptr<navsim::IPlanner> planner;
+    std::string plannerName="astar", arenaName="maze", sensorName="camera";
+    unsigned seed=1;
+    std::vector<cv::Point2f> trail; std::vector<navsim::Vec2> lastPath; std::vector<float> ranges;
+    int inflate=3, steps=0; float dt=0.05f;
+    bool reached=false, collided=false; float minStandoff=1e9f, pathLen=0.f, lastE=0, lastN=0;
+    double lastPlanMs=0.0;
+
+    void restart() {
+        Sensor sp = sensorPreset(sensorName); sensorName = sp.name;
+        opt.hFov = sp.fovDeg; opt.maxRange = sp.rangeM; opt.nRays = sp.rays;
+        std::mt19937 rng(seed);
+        Arena a = buildArena(arenaName, rng, 6);
+        world = a.world; goal = a.goal;
+        grid = navsim::OccupancyGrid();
+        drone = navsim::Drone(); drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f/kPi;
+        inflate = (int)std::ceil(1.5f / grid.cellM());
+        planner = navsim::makePlanner(plannerName); if (planner) planner->reset();
+        trail.clear(); lastPath.clear(); ranges.clear();
+        steps=0; reached=collided=false; minStandoff=1e9f; pathLen=0; lastE=drone.e; lastN=drone.n;
+    }
+    void step() {
+        if (reached || collided || !planner) return;
+        world.advance(dt);
+        sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
+        grid.integrate(drone.e, drone.n, drone.yawDeg, ranges, opt.hFov, opt.maxRange);
+        navsim::PlanResult pr = planner->plan(grid, {drone.e,drone.n}, goal, inflate);
+        lastPath = pr.path; lastPlanMs = pr.planMs;
+        float tb = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
+        if (pr.ok && pr.path.size()>=2) { float look=2.5f, acc=0; navsim::Vec2 wp=pr.path.back();
+            for (size_t i=1;i<pr.path.size();++i){ acc+=std::hypot(pr.path[i].e-pr.path[i-1].e,pr.path[i].n-pr.path[i-1].n); if(acc>=look){wp=pr.path[i];break;} }
+            tb = std::atan2(wp.e-drone.e, wp.n-drone.n) * 180.f/kPi; }
+        float fwd=opt.maxRange; for(int i=opt.nRays/2-3;i<=opt.nRays/2+3;++i) if(i>=0&&i<(int)ranges.size()) fwd=std::min(fwd,ranges[i]);
+        drone.step(tb, dt, std::max(0.f,std::min(1.f,(fwd-1.5f)/3.f)));
+        trail.emplace_back(drone.e, drone.n);
+        pathLen += std::hypot(drone.e-lastE, drone.n-lastN); lastE=drone.e; lastN=drone.n;
+        float clr = world.clearanceAt(drone.e, drone.n); minStandoff=std::min(minStandoff,clr);
+        if (clr<0) collided=true;
+        if (std::hypot(goal.e-drone.e, goal.n-drone.n) <= 1.5f) reached=true;
+        if (++steps > 3500) reached = true;   // stuck -> end so the demo can loop
+    }
+};
+
+struct Button { cv::Rect r; int group; int value; std::string label; };
+// groups: 0 planner, 1 arena, 2 sensor, 3 action(value: 0 restart,1 pause,2 newseed,3 quit)
+
+std::vector<Button> buildButtons(int panelW) {
+    std::vector<Button> b; int y = 30; const int x=8, w=panelW-16, h=20, gap=2;
+    auto section=[&](int group, const std::vector<std::string>& items){
+        for (int i=0;i<(int)items.size();++i){ b.push_back({cv::Rect(x,y,w,h), group, i, items[i]}); y+=h+gap; }
+        y += 14;
+    };
+    section(0, navsim::plannerNames());
+    section(1, kArenas);
+    section(2, kSensors);
+    b.push_back({cv::Rect(x, y, w/2-2, 24), 3, 0, "Restart"});
+    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, 24), 3, 2, "New seed"}); y+=28;
+    b.push_back({cv::Rect(x, y, w/2-2, 24), 3, 1, "Pause"});
+    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, 24), 3, 3, "Quit"});
+    return b;
+}
+
+cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
+                        int selP, int selA, int selS, bool paused) {
+    const int panelW=200, viewW=620, H=640;
+    cv::Mat canvas(H, panelW+viewW, CV_8UC3, cv::Scalar(18,18,20));
+    // ---- control panel
+    cv::rectangle(canvas, cv::Rect(0,0,panelW,H), cv::Scalar(30,30,34), -1);
+    auto hdr=[&](const char* t,int y){ cv::putText(canvas,t,{8,y},cv::FONT_HERSHEY_SIMPLEX,0.42,{150,180,255},1); };
+    hdr("PLANNER", 22);
+    for (auto& bt : btns) {
+        if (bt.group==1 && bt.value==0) hdr("ARENA",  bt.r.y-6);
+        if (bt.group==2 && bt.value==0) hdr("SENSOR", bt.r.y-6);
+        bool sel = (bt.group==0&&bt.value==selP)||(bt.group==1&&bt.value==selA)||(bt.group==2&&bt.value==selS);
+        bool isPause = (bt.group==3&&bt.value==1);
+        cv::Scalar bg = sel ? cv::Scalar(70,120,60) : cv::Scalar(50,50,55);
+        if (bt.group==3) bg = cv::Scalar(60,60,75);
+        if (isPause && paused) bg = cv::Scalar(60,110,150);
+        cv::rectangle(canvas, bt.r, bg, -1);
+        cv::rectangle(canvas, bt.r, cv::Scalar(80,80,88), 1);
+        std::string lbl = (isPause && paused) ? "Play" : bt.label;
+        cv::putText(canvas, lbl, {bt.r.x+6, bt.r.y+bt.r.height-6}, cv::FONT_HERSHEY_SIMPLEX, 0.4, {235,235,235}, 1);
+    }
+    // ---- FPV (top right)
+    const int fpvH=250;
+    cv::Mat fpv = sim::renderFPV(ep.ranges, ep.opt.maxRange, viewW, fpvH);
+    if (!ep.ranges.empty()) {   // corridor arrow (offset from the openest ray)
+        cv::putText(fpv, "FPV", {8,20}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {255,255,255}, 1);
+    }
+    fpv.copyTo(canvas(cv::Rect(panelW, 0, viewW, fpvH)));
+    // ---- top-down mapped (bottom right)
+    const float cE=ep.goal.e*0.5f, cN=ep.goal.n*0.5f;
+    const float span=std::max(26.f, std::hypot(ep.goal.e,ep.goal.n)*1.7f+10.f);
+    const int tdSize = H - fpvH - 8;
+    cv::Mat td = renderGridView(ep.grid, ep.world, ep.drone, ep.goal, ep.lastPath, ep.trail,
+                                ep.ranges, ep.opt.hFov, ep.opt.maxRange,
+                                ep.plannerName.c_str(), ep.sensorName.c_str(), cE, cN, tdSize, span);
+    td.copyTo(canvas(cv::Rect(panelW + (viewW-tdSize)/2, fpvH+4, tdSize, tdSize)));
+    // ---- status line
+    char st[160];
+    std::snprintf(st, sizeof(st), "%s | seed %u | %s | %s%s  steps %d  standoff %.2fm  plan %.2fms",
+        ep.arenaName.c_str(), ep.seed,
+        ep.reached?"REACHED":(ep.collided?"COLLIDED":"running"),
+        paused?"[PAUSED] ":"", ep.plannerName.c_str(), ep.steps, ep.minStandoff, ep.lastPlanMs);
+    cv::putText(canvas, st, {panelW+8, H-10}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {200,220,200}, 1);
+    return canvas;
+}
+
+#if defined(SIM_HAVE_HIGHGUI)
+struct Click { int x=-1,y=-1; bool pending=false; };
+static void onMouse(int e,int x,int y,int,void* u){ if(e==cv::EVENT_LBUTTONDOWN){ auto*c=(Click*)u; c->x=x;c->y=y;c->pending=true; } }
+
+int runGui() {
+    SimEpisode ep; int selP=2 /*astar*/, selA=4 /*maze*/, selS=0 /*camera*/;
+    ep.plannerName=navsim::plannerNames()[selP]; ep.arenaName=kArenas[selA]; ep.sensorName=kSensors[selS];
+    ep.restart();
+    auto btns = buildButtons(200);
+    Click click; bool paused=false; int doneDwell=0;
+    const std::string win="nav-sim"; cv::namedWindow(win); cv::setMouseCallback(win, onMouse, &click);
+    std::printf("[gui] click the panel to choose planner/arena/sensor. q or Quit to exit.\n");
+    while (true) {
+        if (!paused) { ep.step(); ep.step(); }        // 2 ticks/frame for pace
+        if ((ep.reached||ep.collided) && !paused) { if (++doneDwell>40){ ep.restart(); doneDwell=0; } }
+        cv::Mat frame = renderComposite(ep, btns, selP, selA, selS, paused);
+        cv::imshow(win, frame);
+        const int k = cv::waitKey(20) & 0xFF;
+        if (k=='q' || k==27) break;
+        if (k==' ') paused=!paused;
+        if (k=='r') { ep.restart(); doneDwell=0; }
+        if (k=='n') { ep.seed++; ep.restart(); doneDwell=0; }
+        if (click.pending) {
+            click.pending=false;
+            for (auto& bt : btns) if (bt.r.contains({click.x,click.y})) {
+                if (bt.group==0){ selP=bt.value; ep.plannerName=navsim::plannerNames()[selP]; ep.restart(); }
+                else if (bt.group==1){ selA=bt.value; ep.arenaName=kArenas[selA]; ep.restart(); }
+                else if (bt.group==2){ selS=bt.value; ep.sensorName=kSensors[selS]; ep.restart(); }
+                else if (bt.group==3){ if(bt.value==0) ep.restart();
+                    else if(bt.value==1) paused=!paused;
+                    else if(bt.value==2){ ep.seed++; ep.restart(); }
+                    else if(bt.value==3) return 0; }
+                doneDwell=0; break;
+            }
+        }
+    }
+    return 0;
+}
+#endif
 }  // namespace
 
 int main(int argc, char** argv) {
     RunOpts opt; std::string planner="astar", worldSel="random", goalSel="random";
-    unsigned seed=1; int batch=0, nObs=6; bool compare=false, listP=false;
+    unsigned seed=1; int batch=0, nObs=6; bool compare=false, listP=false, gui=false;
+    std::string guiShot;
 
     for (int i=1;i<argc;++i){ std::string a=argv[i];
         auto val=[&](const char*k)->std::string{ size_t L=std::strlen(k);
             return (a.rfind(k,0)==0&&a.size()>L)?a.substr(L):std::string(); };
         if(a=="--display")opt.display=true; else if(a=="--compare")compare=true;
+        else if(a=="--gui")gui=true;
+        else if(!val("--gui-shot=").empty())guiShot=val("--gui-shot=");
         else if(a=="--list-planners")listP=true;
         else if(!val("--planner=").empty())planner=val("--planner=");
         else if(!val("--world=").empty())worldSel=val("--world=");
@@ -332,6 +511,32 @@ int main(int argc, char** argv) {
     // apply the sensor FOV preset
     { Sensor sp = sensorPreset(opt.sensorName); opt.sensorName = sp.name;
       opt.hFov = sp.fovDeg; opt.maxRange = sp.rangeM; opt.nRays = sp.rays; }
+
+    // ---- headless one-frame GUI render (for verifying layout without a display)
+    if (!guiShot.empty()) {
+        SimEpisode ep;
+        ep.plannerName = (planner!="astar"||worldSel=="random") ? planner : "astar";
+        ep.arenaName = (worldSel!="random") ? worldSel : "maze";
+        ep.sensorName = opt.sensorName; ep.seed = seed; ep.restart();
+        for (int s=0; s<160; ++s) ep.step();
+        int sp=0; { auto ns=navsim::plannerNames(); for(int i=0;i<(int)ns.size();++i) if(ns[i]==ep.plannerName) sp=i; }
+        int sa=4; for(int i=0;i<(int)kArenas.size();++i) if(kArenas[i]==ep.arenaName) sa=i;
+        int ss=0; for(int i=0;i<(int)kSensors.size();++i) if(kSensors[i]==ep.sensorName) ss=i;
+        cv::Mat f = renderComposite(ep, buildButtons(200), sp, sa, ss, false);
+        cv::imwrite(guiShot, f);
+        std::printf("wrote %s\n", guiShot.c_str());
+        return 0;
+    }
+
+    // ---- interactive GUI
+    if (gui) {
+#if defined(SIM_HAVE_HIGHGUI)
+        return runGui();
+#else
+        std::fprintf(stderr, "--gui needs an OpenCV built with highgui (this build has none).\n");
+        return 2;
+#endif
+    }
 
     auto makeGoal=[&](std::mt19937&rng,const sim::World&w)->navsim::Vec2{
         if(goalSel!="random"){ float e=0,n=0; if(std::sscanf(goalSel.c_str(),"%f,%f",&e,&n)==2) return {e,n}; }

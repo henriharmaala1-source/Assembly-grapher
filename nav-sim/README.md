@@ -72,13 +72,25 @@ No code changes are needed — it builds to an `.exe`. Three options:
 ## Run
 
 ```bash
+./build/nav_sim --gui                                         # interactive: click to pick things
 ./build/nav_sim --list-planners
 ./build/nav_sim --planner=astar --goal=random --seed=7        # one run, verbose
 ./build/nav_sim --compare --seed=7                            # all planners, same world
 ./build/nav_sim --planner=potential --batch=200               # mass stats (reach %, traps)
-./build/nav_sim --planner=astar --seed=7 --display            # live window (needs highgui)
+./build/nav_sim --planner=astar --seed=7 --display            # single run, live window
 ./build/nav_sim --planner=astar --seed=7 --save=/tmp/frames   # PNG dump (headless-friendly)
 ```
+
+### Interactive GUI (`--gui`)
+
+A one-window control panel (needs an OpenCV with highgui — the prebuilt Windows
+build has it). Click the left panel to choose the **planner**, **arena**, and
+**sensor** live; the run restarts instantly with the new choice. Buttons:
+**Restart · New seed · Pause · Quit**. Keys: `space` pause, `r` restart, `n` new
+seed, `q` quit. The right side shows the **FPV view** (top) and the **top-down
+mapped view** (bottom — grey = what the drone has scanned, orange = true
+obstacles, the shaded wedge = the live sensor FOV, plus the plan and trail).
+On Windows: `nav_sim.exe --gui`.
 
 Flags: `--planner=`, `--sensor=`, `--world=`, `--goal=random|E,N`,
 `--obstacles=N`, `--seed=`, `--batch=N`, `--compare`, `--display`, `--save=<dir>`.

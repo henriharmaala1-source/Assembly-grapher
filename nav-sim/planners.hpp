@@ -27,6 +27,9 @@ public:
     virtual const char* name() const = 0;
     virtual PlanResult  plan(const OccupancyGrid& g, Vec2 start, Vec2 goal,
                              int inflateCells) = 0;
+    // Called once at the start of each run — stateful reactive planners (bug2)
+    // clear their per-episode memory here. Stateless planners ignore it.
+    virtual void reset() {}
 };
 
 // Factory: name -> planner. Names: wavefront, dijkstra, astar, potential, rrt.

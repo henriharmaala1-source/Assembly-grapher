@@ -20,13 +20,29 @@ long did planning take.
 
 ## Planners
 
-| name | method | character |
-|---|---|---|
-| `wavefront` | BFS flood from the goal + gradient descent | complete, near-optimal, but floods the whole grid every tick (slow) |
-| `dijkstra`  | 8-connected weighted search from the start | complete, near-optimal, faster than wavefront |
-| `astar`     | Dijkstra + octile heuristic | complete, near-optimal, fastest of the exhaustive methods |
-| `potential` | attractive-to-goal + repulsive-from-obstacles, one step | reactive, near-free, **traps in local minima** (included to show it) |
-| `rrt`       | sampling-based tree growth with goal bias | scales to open space, jagged/suboptimal paths |
+Ten methods across the main planning families:
+
+| name | family | method | character |
+|---|---|---|---|
+| `wavefront` | grid search | BFS flood from the goal + gradient descent | complete, near-optimal, floods the whole grid every tick (slow) |
+| `dijkstra`  | grid search | 8-connected weighted search from the start | complete, near-optimal, faster than wavefront |
+| `astar`     | grid search | Dijkstra + octile heuristic | complete, near-optimal, fast |
+| `greedy`    | grid search | best-first on heuristic only (ignores cost) | fastest expansions, suboptimal, can be led astray |
+| `weighted-astar` | grid search | A* with inflated heuristic (w=2.5) | faster than A*, bounded-suboptimal |
+| `theta*`    | grid search | any-angle A* (line-of-sight parent shortcut) | shortest/smoothest paths, not locked to 8 directions |
+| `potential` | reactive | attractive-to-goal + repulsive-from-obstacles | near-free, traps in local minima |
+| `rrt`       | sampling | random tree growth with goal bias | scales to open space, jagged, jittery under replanning |
+| `rrt*`      | sampling | RRT + choose-parent + rewire | better paths than RRT, much costlier per plan |
+| `bug2`      | reactive | m-line seek + boundary follow (stateful) | cheap; works on simple boundaries, fragile on complex ones |
+
+**No planner wins everywhere** — that's the point of the testbench. Across
+arenas and seeds: the complete grid searches (`wavefront`/`dijkstra`/`astar`)
+are the most robust; the heuristic and any-angle variants (`greedy`,
+`weighted-astar`, `theta*`) trade robustness for speed or path quality and can
+wedge under partial observability; `rrt*` finds better paths than `rrt` but pays
+~100x the plan time; the reactive methods (`potential`, `bug2`) are the cheapest
+but fail on complex or concave maps. Run `--compare` on different `--world` and
+`--seed` values to see it flip.
 
 ## Build
 
@@ -88,13 +104,14 @@ never a free shot:
 | `trap`      | a U-shaped cul-de-sac straddling the direct line |
 | `cluttered` | dense mixed circles + walls, no clean lane |
 
-The `trap` arena is the sharpest discriminator. On it, `wavefront` and
-`dijkstra` route around the dead-end and reach; `potential` escapes slowly via
-repulsion; but `astar` can wedge *inside* it (its heuristic pulls it into the
-cul-de-sac mouth before the sensor has mapped the walls) and `rrt` wanders
-(per-tick random trees give an unstable waypoint). A concrete example of why
-"which planner is best" depends on the map and the sensing — which is the whole
-point of the testbench.
+The `trap` arena is the sharpest discriminator. On it, the uniform-cost global
+searches (`wavefront`, `dijkstra`) route around the dead-end and reach — but the
+heuristic-guided ones (`astar`, `greedy`, `weighted-astar`, `theta*`) get pulled
+into the cul-de-sac mouth before the sensor has mapped its walls and wedge
+inside; `rrt` wanders (per-tick random trees give an unstable waypoint) and
+`bug2`'s boundary-follow doesn't trace the concave U reliably. A concrete
+example of why "which planner is best" depends on the map *and* the sensing —
+which is the whole point of the testbench.
 
 ### Sensor FOV modes
 

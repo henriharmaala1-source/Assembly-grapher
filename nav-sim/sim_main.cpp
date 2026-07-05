@@ -223,6 +223,7 @@ cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
 
 RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2 goal,
               const RunOpts& opt, bool verbose) {
+    planner.reset();   // clear any per-episode state (bug2)
     sim::World world = worldIn;
     navsim::OccupancyGrid grid;
     navsim::Drone drone;   // starts at origin, facing the goal

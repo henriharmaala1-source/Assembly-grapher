@@ -69,9 +69,22 @@ navsim::Vec2 randomGoal(std::mt19937& rng, const sim::World& w) {
 struct RunOpts {
     bool  display = false;
     std::string saveDir;
+    std::string sensorName = "camera";
     int   nRays = 61; float hFov = 90.f, maxRange = 8.f;
     int   viz = 480;
 };
+
+// Sensor FOV presets — the real hardware tradeoff. A forward ToF (VL53L5CX/L9CX)
+// is a NARROW metric cone; a monocular camera is WIDE but nominal-scale. A narrow
+// FOV maps a thin strip per tick (more turning/scanning to build a map); a wide
+// FOV sees more at once. Same planners, different sensing footprint.
+struct Sensor { const char* name; float fovDeg; float rangeM; int rays; };
+Sensor sensorPreset(const std::string& s) {
+    if (s == "tof")      return {"tof",      45.f, 4.0f, 31};   // VL53L5CX-like: narrow, short, metric
+    if (s == "tof-wide") return {"tof-wide", 63.f, 9.0f, 45};   // VL53L9CX-like: wider, longer
+    if (s == "camera")   return {"camera",   90.f, 8.0f, 61};   // monocular: wide, nominal range
+    return {"camera", 90.f, 8.0f, 61};
+}
 
 struct RunResult {
     bool   reached = false, collided = false;
@@ -79,15 +92,20 @@ struct RunResult {
     int    replans = 0; double planMsTotal = 0.0; long planCalls = 0;
 };
 
-// Draw the occupancy grid + planned path + trail, top-down.
+// Draw the occupancy grid + planned path + trail + the live sensor FOV footprint,
+// top-down. The FOV wedge + scan hits show HOW the drone maps: the grid fills in
+// behind the sweeping cone, and a narrow (ToF) vs wide (camera) FOV is visible.
 cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
                        const navsim::Drone& d, navsim::Vec2 goal,
                        const std::vector<navsim::Vec2>& path,
                        const std::vector<cv::Point2f>& trail,
-                       const char* planner, int size, float spanM) {
+                       const std::vector<float>& ranges, float hFovDeg, float maxRange,
+                       const char* planner, const char* sensor, int size, float spanM) {
     cv::Mat img(size, size, CV_8UC3, cv::Scalar(24,24,26));
     const float ppm = size / spanM;
     auto toPx = [&](float e, float n){ return cv::Point((int)(size/2 + e*ppm), (int)(size/2 - n*ppm)); };
+    const cv::Point dp = toPx(d.e,d.n);
+
     // occupancy belief (grey = known-free, red = believed-occupied)
     for (int cy=0; cy<g.cells(); ++cy) for (int cx=0; cx<g.cells(); ++cx) {
         const float L = g.logAt(cx,cy); if (std::fabs(L) < 0.05f) continue;
@@ -98,6 +116,28 @@ cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
                              : cv::Vec3b(48,48,50);
         cv::rectangle(img, cv::Rect(p.x-s/2,p.y-s/2,s,s), col, -1);
     }
+    // live sensor FOV wedge (translucent) — the current sensing footprint
+    {
+        const float half = hFovDeg * 0.5f;
+        std::vector<cv::Point> cone{ dp };
+        for (float a=-half; a<=half+0.1f; a+=4.f) {
+            const float b=(d.yawDeg+a)*kPi/180.f;
+            cone.push_back(toPx(d.e+std::sin(b)*maxRange, d.n+std::cos(b)*maxRange));
+        }
+        cv::Mat ov = img.clone();
+        cv::fillConvexPoly(ov, cone, cv::Scalar(70,65,40), cv::LINE_AA);
+        cv::addWeighted(ov, 0.22, img, 0.78, 0, img);
+        cv::polylines(img, cone, true, cv::Scalar(120,110,70), 1, cv::LINE_AA);
+    }
+    // scan hits this tick (bright = the fresh measurements building the map)
+    {
+        const int N=(int)ranges.size(); const float half=hFovDeg*0.5f;
+        for (int i=0;i<N;++i){ if (ranges[i] >= maxRange-1e-3f) continue;
+            const float rel=(N==1)?0.f:(-half+2.f*half*i/(N-1));
+            const float b=(d.yawDeg+rel)*kPi/180.f;
+            cv::circle(img, toPx(d.e+std::sin(b)*ranges[i], d.n+std::cos(b)*ranges[i]), 2, {90,200,255}, -1, cv::LINE_AA);
+        }
+    }
     // true obstacles (outline, so belief vs truth is visible)
     for (auto& c : w.circles) cv::circle(img, toPx(c.e,c.n), (int)(c.r*ppm), {80,110,220}, 1, cv::LINE_AA);
     for (auto& wl : w.walls)  cv::line(img, toPx(wl.e0,wl.n0), toPx(wl.e1,wl.n1), {80,110,220}, 2, cv::LINE_AA);
@@ -107,10 +147,11 @@ cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
     for (size_t i=1;i<trail.size();++i) cv::line(img, toPx(trail[i-1].x,trail[i-1].y), toPx(trail[i].x,trail[i].y), {90,200,90}, 1, cv::LINE_AA);
     // goal + drone
     cv::drawMarker(img, toPx(goal.e,goal.n), {80,255,80}, cv::MARKER_STAR, 16, 2, cv::LINE_AA);
-    const cv::Point dp = toPx(d.e,d.n); const float yr = d.yawDeg*kPi/180.f;
+    const float yr = d.yawDeg*kPi/180.f;
     cv::arrowedLine(img, dp, cv::Point(dp.x+(int)(22*std::sin(yr)), dp.y-(int)(22*std::cos(yr))), {255,255,255}, 2, cv::LINE_AA,0,0.3);
     cv::circle(img, dp, 4, {255,255,255}, -1, cv::LINE_AA);
-    cv::putText(img, planner, {8,22}, cv::FONT_HERSHEY_SIMPLEX, 0.6, {235,235,235}, 1);
+    char hud[96]; std::snprintf(hud,sizeof(hud),"%s  |  %s  %.0f deg / %.0f m", planner, sensor, hFovDeg, maxRange);
+    cv::putText(img, hud, {8,22}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {235,235,235}, 1);
     return img;
 }
 
@@ -169,7 +210,9 @@ RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2
 
 #if defined(SIM_HAVE_HIGHGUI)
         if (opt.display || !opt.saveDir.empty()) {
-            cv::Mat top = renderGridView(grid, world, drone, goal, lastPath, trail, planner.name(), opt.viz, 44.f);
+            cv::Mat top = renderGridView(grid, world, drone, goal, lastPath, trail, ranges,
+                                         opt.hFov, opt.maxRange, planner.name(), opt.sensorName.c_str(),
+                                         opt.viz, 44.f);
             if (!opt.saveDir.empty() && step % 4 == 0) {
                 char p[512]; std::snprintf(p,sizeof(p),"%s/%s_%05d.png", opt.saveDir.c_str(), planner.name(), step);
                 cv::imwrite(p, top);
@@ -210,8 +253,14 @@ int main(int argc, char** argv) {
         else if(!val("--batch=").empty())batch=std::atoi(val("--batch=").c_str());
         else if(!val("--obstacles=").empty())nObs=std::atoi(val("--obstacles=").c_str());
         else if(!val("--save=").empty())opt.saveDir=val("--save=");
+        else if(!val("--sensor=").empty())opt.sensorName=val("--sensor=");
     }
-    if (listP){ std::printf("planners:\n"); for(auto&n:navsim::plannerNames()) std::printf("  %s\n",n.c_str()); return 0; }
+    if (listP){ std::printf("planners:\n"); for(auto&n:navsim::plannerNames()) std::printf("  %s\n",n.c_str());
+                std::printf("sensors:\n  tof (45 deg/4m)  tof-wide (63 deg/9m)  camera (90 deg/8m)\n"); return 0; }
+
+    // apply the sensor FOV preset
+    { Sensor sp = sensorPreset(opt.sensorName); opt.sensorName = sp.name;
+      opt.hFov = sp.fovDeg; opt.maxRange = sp.rangeM; opt.nRays = sp.rays; }
 
     auto makeGoal=[&](std::mt19937&rng,const sim::World&w)->navsim::Vec2{
         if(goalSel!="random"){ float e=0,n=0; if(std::sscanf(goalSel.c_str(),"%f,%f",&e,&n)==2) return {e,n}; }

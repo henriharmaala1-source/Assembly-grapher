@@ -48,8 +48,26 @@ still dumps PNGs.
 ./build/nav_sim --planner=astar --seed=7 --save=/tmp/frames   # PNG dump (headless-friendly)
 ```
 
-Flags: `--planner=`, `--goal=random|E,N`, `--world=random|empty`, `--obstacles=N`,
-`--seed=`, `--batch=N`, `--compare`, `--display`, `--save=<dir>`.
+Flags: `--planner=`, `--sensor=`, `--goal=random|E,N`, `--world=random|empty`,
+`--obstacles=N`, `--seed=`, `--batch=N`, `--compare`, `--display`, `--save=<dir>`.
+
+### Sensor FOV modes
+
+The drone only knows what its forward sensor has swept — the top-down view draws
+the live FOV wedge + scan hits so you can watch the occupancy grid fill in behind
+it. The sensor preset changes the footprint, mirroring the real hardware tradeoff:
+
+| `--sensor=` | FOV | range | mirrors |
+|---|---|---|---|
+| `camera`   | 90° | 8 m | monocular camera — wide, but nominal (non-metric) scale |
+| `tof`      | 45° | 4 m | VL53L5CX-class ToF — narrow metric cone, short range |
+| `tof-wide` | 63° | 9 m | VL53L9CX-class ToF — wider, longer |
+
+A narrow FOV maps a thin strip (more turning/scanning to build a usable map); a
+wide FOV sees more per tick. Measured over 200 random fields with A*: `camera`
+reaches 200/200; `tof` reaches 193/200 with tighter standoffs — the narrow,
+short-range cone maps less ahead, so it occasionally can't route and reacts
+later. Same planner, different sensing footprint.
 
 Example comparison output (same world + goal, so the differences are the methods):
 

@@ -1,16 +1,23 @@
 name: build nav-sim (Windows exe)
 
 # Builds nav_sim.exe on a Windows runner and uploads it as a downloadable
-# artifact — so you get a prebuilt .exe with no local toolchain at all.
+# artifact — a prebuilt .exe with no local toolchain needed.
 # After a run: repo -> Actions tab -> this workflow -> latest run ->
-# Artifacts -> download "nav_sim-windows-x64" (exe + the OpenCV DLLs it needs).
+# Artifacts -> download "nav_sim-windows-x64" (exe + the OpenCV DLL it needs).
+#
+# Uses the official PREBUILT OpenCV release (a ~2-3 min download+extract) rather
+# than compiling OpenCV from source (which took ~40 min via vcpkg). The prebuilt
+# is MSVC (vc16) and links fine with the runner's VS2022 (ABI-compatible).
 
 on:
   push:
     paths:
       - 'nav-sim/**'
       - '.github/workflows/nav-sim-windows.yml'
-  workflow_dispatch: {}   # lets you trigger it by hand from the Actions tab
+  workflow_dispatch: {}
+
+env:
+  OPENCV_VERSION: "4.10.0"
 
 jobs:
   build:
@@ -22,22 +29,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # vcpkg is preinstalled on the runner; cache the built OpenCV so only the
-      # first run pays the ~15-20 min compile.
-      - name: Cache OpenCV (vcpkg)
-        uses: actions/cache@v4
-        with:
-          path: C:/vcpkg/installed
-          key: vcpkg-opencv4-x64-windows-v1
-
-      - name: Install OpenCV
-        run: vcpkg install opencv4:x64-windows
+      - name: Download prebuilt OpenCV
+        run: |
+          $url = "https://github.com/opencv/opencv/releases/download/$env:OPENCV_VERSION/opencv-$env:OPENCV_VERSION-windows.exe"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile opencv-installer.exe
+          # self-extracting 7z: drops an 'opencv' folder into C:\ocv
+          Start-Process -FilePath .\opencv-installer.exe -ArgumentList '-oC:\ocv','-y' -Wait -NoNewWindow
+          if (-not (Test-Path 'C:\ocv\opencv\build\OpenCVConfig.cmake')) { throw 'OpenCV extract failed' }
 
       - name: Configure
-        run: >
-          cmake -B build
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=x64-windows
+        run: cmake -B build -DOpenCV_DIR="C:/ocv/opencv/build"
 
       - name: Build
         run: cmake --build build --config Release -j 4
@@ -47,10 +49,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build/Release/*.exe dist/ -ErrorAction SilentlyContinue
           Copy-Item build/*.exe dist/ -ErrorAction SilentlyContinue
-          Copy-Item build/Release/*.dll dist/ -ErrorAction SilentlyContinue
-          # Fallback: pull the OpenCV runtime DLLs straight from vcpkg so the
-          # zip is self-contained even if app-local deploy didn't copy them.
-          Copy-Item C:/vcpkg/installed/x64-windows/bin/*.dll dist/ -ErrorAction SilentlyContinue
+          Copy-Item "C:/ocv/opencv/build/x64/vc16/bin/opencv_*.dll" dist/ -ErrorAction SilentlyContinue
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4

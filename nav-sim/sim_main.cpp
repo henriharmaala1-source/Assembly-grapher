@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "drone.hpp"
+#include "move_stop_sense.hpp"
 #include "occupancy_grid.hpp"
 #include "planners.hpp"
 #include "sim_world.hpp"
@@ -160,6 +161,43 @@ struct RunResult {
     float  minStandoff = 1e9f, pathLen = 0.f, straightLen = 0.f, simTime = 0.f;
     int    replans = 0; double planMsTotal = 0.0; long planCalls = 0;
 };
+
+// The sentinel "planner" name for the real onboard move-stop-sense controller.
+const char* kMssName = "move-stop-sense";
+
+// Derive a VFH-like corridor signal from a forward range scan: forward-cone
+// clearance (openness) + the openest direction (offset in [-1,1] over the FoV).
+void corridorFromScan(const std::vector<float>& ranges, float hFovDeg, float maxRange,
+                      float& open, float& offset) {
+    const int N = (int)ranges.size();
+    if (N == 0) { open = 0.f; offset = 0.f; return; }
+    float fwd = maxRange;                                   // forward cone clearance
+    for (int i = N/2-3; i <= N/2+3; ++i) if (i>=0 && i<N) fwd = std::min(fwd, ranges[i]);
+    open = std::max(0.f, std::min(1.f, fwd / maxRange));
+    // openest ray, with a mild center bias so an equally-open field steers
+    // straight ahead (not to the leftmost ray) — approximates VFH+'s forward pref.
+    int best = N/2; float bestScore = -1e9f;
+    for (int i = 0; i < N; ++i) { float sc = ranges[i] - 0.01f*std::abs(i - N/2);
+        if (sc > bestScore) { bestScore = sc; best = i; } }
+    const float half = hFovDeg * 0.5f;
+    const float rel = (N==1) ? 0.f : (-half + 2.f*half*best/(N-1));
+    offset = std::max(-1.f, std::min(1.f, rel / half));
+}
+
+// Grid route bearing toward the goal (mirrors P5b LocalMap.plan feeding the
+// mission's planBearing): run a wavefront/A* on the current partial grid, return
+// the bearing to a lookahead point along the route.
+void planBearingFor(navsim::IPlanner& mapPlanner, const navsim::OccupancyGrid& g,
+                    float e, float n, navsim::Vec2 goal, int inflate,
+                    bool& valid, float& bearingDeg) {
+    valid = false;
+    navsim::PlanResult pr = mapPlanner.plan(g, {e,n}, goal, inflate);
+    if (!pr.ok || pr.path.size() < 2) return;
+    float acc = 0.f; navsim::Vec2 wp = pr.path.back();
+    for (size_t i=1;i<pr.path.size();++i){ acc += std::hypot(pr.path[i].e-pr.path[i-1].e, pr.path[i].n-pr.path[i-1].n);
+        if (acc >= 2.5f) { wp = pr.path[i]; break; } }
+    bearingDeg = std::atan2(wp.e-e, wp.n-n) * 180.f/kPi; valid = true;
+}
 
 // Draw the occupancy grid + planned path + trail + the live sensor FOV footprint,
 // top-down. The FOV wedge + scan hits show HOW the drone maps: the grid fills in
@@ -314,6 +352,50 @@ RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2
     return R;
 }
 
+// Headless run of the ported move-stop-sense controller (the drone's real
+// navigation mode). Same world/metrics as run(), but the drone is driven by the
+// phase machine + reactive corridor + grid route instead of a path planner.
+RunResult runMss(const sim::World& worldIn, navsim::Vec2 goal, const RunOpts& opt, bool verbose) {
+    sim::World world = worldIn;
+    navsim::OccupancyGrid grid;
+    navsim::Drone drone; drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f/kPi;
+    const int inflate = (int)std::ceil(1.5f / grid.cellM());
+    navsim::MoveStopSense mss; mss.reset();
+    auto mapPlanner = navsim::makePlanner("astar");   // supplies the grid route bearing
+
+    RunResult R; R.straightLen = std::hypot(goal.e, goal.n);
+    const float dt = 0.05f; float t = 0.f, lastE = drone.e, lastN = drone.n, speed = 0.f;
+    for (int step = 0; step < 6000 && !R.reached; ++step) {
+        world.advance(dt);
+        std::vector<float> ranges;
+        sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
+        grid.integrate(drone.e, drone.n, drone.yawDeg, ranges, opt.hFov, opt.maxRange);
+
+        navsim::MssInput in;
+        in.e=drone.e; in.n=drone.n; in.yawDeg=drone.yawDeg; in.speedMs=speed;
+        corridorFromScan(ranges, opt.hFov, opt.maxRange, in.corridorOpen, in.corridorOffset);
+        planBearingFor(*mapPlanner, grid, drone.e, drone.n, goal, inflate, in.planValid, in.planBearing);
+        in.goalBearing = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
+        const double t0 = 0; navsim::MssOutput out = mss.update(in, dt);
+        R.planMsTotal += 0; ++R.planCalls; (void)t0;
+
+        drone.step(out.bearingDeg, dt, out.speedScale);
+        speed = std::hypot(drone.e-lastE, drone.n-lastN) / dt;
+        R.pathLen += std::hypot(drone.e-lastE, drone.n-lastN); lastE=drone.e; lastN=drone.n;
+        const float clr = world.clearanceAt(drone.e, drone.n);
+        R.minStandoff = std::min(R.minStandoff, clr);
+        if (clr < 0.f) R.collided = true;
+        if (std::hypot(goal.e-drone.e, goal.n-drone.n) <= 1.5f) R.reached = true;
+        if (verbose && step % 40 == 0)
+            std::printf("  t=%5.1f pos=(%6.2f,%6.2f) %-6s dGoal=%5.2f open=%.2f plan=%d clr=%.2f\n",
+                        t, drone.e, drone.n, out.phase, std::hypot(goal.e-drone.e,goal.n-drone.n),
+                        in.corridorOpen, (int)in.planValid, clr);
+        t += dt;
+    }
+    R.simTime = t;
+    return R;
+}
+
 void printRow(const char* name, const RunResult& r) {
     std::printf("  %-10s reached=%-3s collided=%-3s standoff=%5.2fm pathLen=%6.2fm (%.2fx) "
                 "avgPlan=%.3fms\n",
@@ -335,10 +417,12 @@ struct SimEpisode {
     RunOpts opt;
     sim::World world; navsim::OccupancyGrid grid; navsim::Drone drone; navsim::Vec2 goal{};
     std::unique_ptr<navsim::IPlanner> planner;
+    std::unique_ptr<navsim::IPlanner> mapPlanner;   // grid route for the MSS mode
+    navsim::MoveStopSense mssCtl; bool mss=false; std::string phase;
     std::string plannerName="astar", arenaName="maze", sensorName="camera";
     unsigned seed=1;
     std::vector<cv::Point2f> trail; std::vector<navsim::Vec2> lastPath; std::vector<float> ranges;
-    int inflate=3, steps=0; float dt=0.05f;
+    int inflate=3, steps=0; float dt=0.05f, speed=0.f;
     bool reached=false, collided=false; float minStandoff=1e9f, pathLen=0.f, lastE=0, lastN=0;
     double lastPlanMs=0.0;
 
@@ -351,23 +435,39 @@ struct SimEpisode {
         grid = navsim::OccupancyGrid();
         drone = navsim::Drone(); drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f/kPi;
         inflate = (int)std::ceil(1.5f / grid.cellM());
-        planner = navsim::makePlanner(plannerName); if (planner) planner->reset();
-        trail.clear(); lastPath.clear(); ranges.clear();
-        steps=0; reached=collided=false; minStandoff=1e9f; pathLen=0; lastE=drone.e; lastN=drone.n;
+        mss = (plannerName == kMssName);
+        if (mss) { mssCtl.reset(); mapPlanner = navsim::makePlanner("astar"); planner.reset(); }
+        else     { planner = navsim::makePlanner(plannerName); if (planner) planner->reset(); }
+        trail.clear(); lastPath.clear(); ranges.clear(); phase.clear();
+        steps=0; speed=0; reached=collided=false; minStandoff=1e9f; pathLen=0; lastE=drone.e; lastN=drone.n;
     }
     void step() {
-        if (reached || collided || !planner) return;
+        if (reached || collided) return;
         world.advance(dt);
         sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
         grid.integrate(drone.e, drone.n, drone.yawDeg, ranges, opt.hFov, opt.maxRange);
-        navsim::PlanResult pr = planner->plan(grid, {drone.e,drone.n}, goal, inflate);
-        lastPath = pr.path; lastPlanMs = pr.planMs;
-        float tb = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
-        if (pr.ok && pr.path.size()>=2) { float look=2.5f, acc=0; navsim::Vec2 wp=pr.path.back();
-            for (size_t i=1;i<pr.path.size();++i){ acc+=std::hypot(pr.path[i].e-pr.path[i-1].e,pr.path[i].n-pr.path[i-1].n); if(acc>=look){wp=pr.path[i];break;} }
-            tb = std::atan2(wp.e-drone.e, wp.n-drone.n) * 180.f/kPi; }
-        float fwd=opt.maxRange; for(int i=opt.nRays/2-3;i<=opt.nRays/2+3;++i) if(i>=0&&i<(int)ranges.size()) fwd=std::min(fwd,ranges[i]);
-        drone.step(tb, dt, std::max(0.f,std::min(1.f,(fwd-1.5f)/3.f)));
+
+        if (mss) {
+            navsim::MssInput in;
+            in.e=drone.e; in.n=drone.n; in.yawDeg=drone.yawDeg; in.speedMs=speed;
+            corridorFromScan(ranges, opt.hFov, opt.maxRange, in.corridorOpen, in.corridorOffset);
+            planBearingFor(*mapPlanner, grid, drone.e, drone.n, goal, inflate, in.planValid, in.planBearing);
+            in.goalBearing = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
+            navsim::MssOutput out = mssCtl.update(in, dt);
+            phase = out.phase; lastPath = { {drone.e,drone.n}, {out.wpE,out.wpN} };
+            drone.step(out.bearingDeg, dt, out.speedScale);
+        } else if (planner) {
+            navsim::PlanResult pr = planner->plan(grid, {drone.e,drone.n}, goal, inflate);
+            lastPath = pr.path; lastPlanMs = pr.planMs;
+            float tb = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
+            if (pr.ok && pr.path.size()>=2) { float look=2.5f, acc=0; navsim::Vec2 wp=pr.path.back();
+                for (size_t i=1;i<pr.path.size();++i){ acc+=std::hypot(pr.path[i].e-pr.path[i-1].e,pr.path[i].n-pr.path[i-1].n); if(acc>=look){wp=pr.path[i];break;} }
+                tb = std::atan2(wp.e-drone.e, wp.n-drone.n) * 180.f/kPi; }
+            float fwd=opt.maxRange; for(int i=opt.nRays/2-3;i<=opt.nRays/2+3;++i) if(i>=0&&i<(int)ranges.size()) fwd=std::min(fwd,ranges[i]);
+            drone.step(tb, dt, std::max(0.f,std::min(1.f,(fwd-1.5f)/3.f)));
+        } else return;
+
+        speed = std::hypot(drone.e-lastE, drone.n-lastN) / dt;
         trail.emplace_back(drone.e, drone.n);
         pathLen += std::hypot(drone.e-lastE, drone.n-lastN); lastE=drone.e; lastN=drone.n;
         float clr = world.clearanceAt(drone.e, drone.n); minStandoff=std::min(minStandoff,clr);
@@ -376,6 +476,11 @@ struct SimEpisode {
         if (++steps > 3500) reached = true;   // stuck -> end so the demo can loop
     }
 };
+
+// Planner names for the GUI/compare = the 10 path planners + the real nav mode.
+std::vector<std::string> allModeNames() {
+    auto v = navsim::plannerNames(); v.push_back(kMssName); return v;
+}
 
 struct Button { cv::Rect r; int group; int value; std::string label; };
 // groups: 0 planner, 1 arena, 2 sensor, 3 action(value: 0 restart,1 pause,2 newseed,3 quit)
@@ -386,7 +491,7 @@ std::vector<Button> buildButtons(int panelW) {
         for (int i=0;i<(int)items.size();++i){ b.push_back({cv::Rect(x,y,w,h), group, i, items[i]}); y+=h+gap; }
         y += 14;
     };
-    section(0, navsim::plannerNames());
+    section(0, allModeNames());
     section(1, kArenas);
     section(2, kSensors);
     b.push_back({cv::Rect(x, y, w/2-2, 24), 3, 0, "Restart"});
@@ -433,11 +538,14 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
                                 ep.plannerName.c_str(), ep.sensorName.c_str(), cE, cN, tdSize, span);
     td.copyTo(canvas(cv::Rect(panelW + (viewW-tdSize)/2, fpvH+4, tdSize, tdSize)));
     // ---- status line
-    char st[160];
-    std::snprintf(st, sizeof(st), "%s | seed %u | %s | %s%s  steps %d  standoff %.2fm  plan %.2fms",
+    char st[200];
+    std::snprintf(st, sizeof(st), "%s | seed %u | %s%s | %s%s  steps %d  standoff %.2fm",
         ep.arenaName.c_str(), ep.seed,
+        paused?"[PAUSED] ":"",
         ep.reached?"REACHED":(ep.collided?"COLLIDED":"running"),
-        paused?"[PAUSED] ":"", ep.plannerName.c_str(), ep.steps, ep.minStandoff, ep.lastPlanMs);
+        ep.plannerName.c_str(),
+        ep.mss ? ("  phase:"+ep.phase).c_str() : "",
+        ep.steps, ep.minStandoff);
     cv::putText(canvas, st, {panelW+8, H-10}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {200,220,200}, 1);
     return canvas;
 }
@@ -448,7 +556,7 @@ static void onMouse(int e,int x,int y,int,void* u){ if(e==cv::EVENT_LBUTTONDOWN)
 
 int runGui() {
     SimEpisode ep; int selP=2 /*astar*/, selA=4 /*maze*/, selS=0 /*camera*/;
-    ep.plannerName=navsim::plannerNames()[selP]; ep.arenaName=kArenas[selA]; ep.sensorName=kSensors[selS];
+    ep.plannerName=allModeNames()[selP]; ep.arenaName=kArenas[selA]; ep.sensorName=kSensors[selS];
     ep.restart();
     auto btns = buildButtons(200);
     Click click; bool paused=false; int doneDwell=0;
@@ -467,7 +575,7 @@ int runGui() {
         if (click.pending) {
             click.pending=false;
             for (auto& bt : btns) if (bt.r.contains({click.x,click.y})) {
-                if (bt.group==0){ selP=bt.value; ep.plannerName=navsim::plannerNames()[selP]; ep.restart(); }
+                if (bt.group==0){ selP=bt.value; ep.plannerName=allModeNames()[selP]; ep.restart(); }
                 else if (bt.group==1){ selA=bt.value; ep.arenaName=kArenas[selA]; ep.restart(); }
                 else if (bt.group==2){ selS=bt.value; ep.sensorName=kSensors[selS]; ep.restart(); }
                 else if (bt.group==3){ if(bt.value==0) ep.restart();
@@ -504,7 +612,8 @@ int main(int argc, char** argv) {
         else if(!val("--save=").empty())opt.saveDir=val("--save=");
         else if(!val("--sensor=").empty())opt.sensorName=val("--sensor=");
     }
-    if (listP){ std::printf("planners:\n"); for(auto&n:navsim::plannerNames()) std::printf("  %s\n",n.c_str());
+    if (listP){ std::printf("planners:\n"); for(auto&n:allModeNames()) std::printf("  %s\n",n.c_str());
+                std::printf("  (move-stop-sense = the drone's real onboard navigation, ported)\n");
                 std::printf("sensors:\n  tof (45 deg/4m)  tof-wide (63 deg/9m)  camera (90 deg/8m)\n");
                 std::printf("arenas (--world=):\n  random  empty  slalom  rooms  maze  trap  cluttered\n"); return 0; }
 
@@ -519,7 +628,7 @@ int main(int argc, char** argv) {
         ep.arenaName = (worldSel!="random") ? worldSel : "maze";
         ep.sensorName = opt.sensorName; ep.seed = seed; ep.restart();
         for (int s=0; s<160; ++s) ep.step();
-        int sp=0; { auto ns=navsim::plannerNames(); for(int i=0;i<(int)ns.size();++i) if(ns[i]==ep.plannerName) sp=i; }
+        int sp=0; { auto ns=allModeNames(); for(int i=0;i<(int)ns.size();++i) if(ns[i]==ep.plannerName) sp=i; }
         int sa=4; for(int i=0;i<(int)kArenas.size();++i) if(kArenas[i]==ep.arenaName) sa=i;
         int ss=0; for(int i=0;i<(int)kSensors.size();++i) if(kSensors[i]==ep.sensorName) ss=i;
         cv::Mat f = renderComposite(ep, buildButtons(200), sp, sa, ss, false);
@@ -541,16 +650,20 @@ int main(int argc, char** argv) {
     auto makeGoal=[&](std::mt19937&rng,const sim::World&w)->navsim::Vec2{
         if(goalSel!="random"){ float e=0,n=0; if(std::sscanf(goalSel.c_str(),"%f,%f",&e,&n)==2) return {e,n}; }
         return randomGoal(rng,w); };
+    // dispatch a mode by name: the move-stop-sense controller or a path planner.
+    auto runMode=[&](const std::string& name, const sim::World& w, navsim::Vec2 g, bool vb)->RunResult{
+        if (name==kMssName) return runMss(w, g, opt, vb);
+        auto p = navsim::makePlanner(name); if (!p) return RunResult{};
+        return run(*p, w, g, opt, vb); };
 
     // ---- batch (mass data) ------------------------------------------------
     if (batch>0){
-        auto p = navsim::makePlanner(planner);
-        if(!p){ std::fprintf(stderr,"unknown planner '%s'\n",planner.c_str()); return 2; }
+        if (planner!=kMssName && !navsim::makePlanner(planner)){ std::fprintf(stderr,"unknown planner '%s'\n",planner.c_str()); return 2; }
         int reached=0, collided=0; float worst=1e9f; double planMs=0; long calls=0; float lenRatio=0;
         for(int i=0;i<batch;++i){ std::mt19937 rng(seed+i);
             Arena ar = buildArena(worldSel, rng, nObs);
             navsim::Vec2 g = (goalSel!="random") ? makeGoal(rng, ar.world) : ar.goal;
-            RunResult r = run(*p, ar.world, g, opt, false);
+            RunResult r = runMode(planner, ar.world, g, false);
             if(r.reached)reached++; if(r.collided)collided++; worst=std::min(worst,r.minStandoff);
             planMs+=r.planMsTotal; calls+=r.planCalls; if(r.straightLen>0&&r.reached) lenRatio+=r.pathLen/r.straightLen;
             if((i+1)%50==0||i+1==batch) std::printf("  [%4d/%d] reached=%d collided=%d worst=%.2fm\n",i+1,batch,reached,collided,worst);
@@ -572,19 +685,17 @@ int main(int argc, char** argv) {
     std::printf("world: %s (%zu obstacles)  goal: (%.1f, %.1f)  seed: %u\n",
                 worldSel.c_str(), world.circles.size()+world.walls.size(), goal.e, goal.n, seed);
 
-    // ---- compare all planners on the SAME world+goal ----------------------
+    // ---- compare all modes on the SAME world+goal (planners + the real nav) ----
     if (compare){
-        std::printf("\n=== PLANNER COMPARISON (same world+goal) ===\n");
-        for(auto&nm:navsim::plannerNames()){ auto p=navsim::makePlanner(nm);
-            RunResult r = run(*p,world,goal,opt,false); printRow(nm.c_str(), r); }
+        std::printf("\n=== MODE COMPARISON (same world+goal) ===\n");
+        for(auto&nm:allModeNames()){ RunResult r = runMode(nm, world, goal, false); printRow(nm.c_str(), r); }
         return 0;
     }
 
-    // ---- single planner ---------------------------------------------------
-    auto p = navsim::makePlanner(planner);
-    if(!p){ std::fprintf(stderr,"unknown planner '%s' (try --list-planners)\n",planner.c_str()); return 2; }
+    // ---- single mode ------------------------------------------------------
+    if(planner!=kMssName && !navsim::makePlanner(planner)){ std::fprintf(stderr,"unknown planner '%s' (try --list-planners)\n",planner.c_str()); return 2; }
     std::printf("planner: %s\n\n", planner.c_str());
-    RunResult r = run(*p, world, goal, opt, true);
+    RunResult r = runMode(planner, world, goal, true);
     std::printf("\n"); printRow(planner.c_str(), r);
     std::printf("VERDICT: %s\n", (!r.collided && r.reached)?"PASS":(r.collided?"COLLISION":"did not reach"));
     return (!r.collided && r.reached)?0:1;

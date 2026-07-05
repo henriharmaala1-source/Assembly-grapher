@@ -34,6 +34,13 @@ Ten methods across the main planning families:
 | `rrt`       | sampling | random tree growth with goal bias | scales to open space, jagged, jittery under replanning |
 | `rrt*`      | sampling | RRT + choose-parent + rewire | better paths than RRT, much costlier per plan |
 | `bug2`      | reactive | m-line seek + boundary follow (stateful) | cheap; works on simple boundaries, fragile on complex ones |
+| `move-stop-sense` | **the drone's real onboard nav (ported)** | phased controller: settle → think → scan → move → arrive, with a reactive corridor + grid route | not a path planner — a stop-and-think controller; shows the actual aircraft behavior, phase visible in the GUI |
+
+`move-stop-sense` is a faithful, self-contained **port of the drone's real
+onboard `MissionController`** (`onboard/src/mission.cpp`) — the phase machine,
+thresholds, and goal/corridor blend copied over, adapted to this sim's world.
+It's the actual navigation the aircraft flies, so you can watch it (and compare
+it to the textbook planners) here. Covered by the test suite below.
 
 **No planner wins everywhere** — that's the point of the testbench. Across
 arenas and seeds: the complete grid searches (`wavefront`/`dijkstra`/`astar`)
@@ -49,6 +56,15 @@ but fail on complex or concave maps. Run `--compare` on different `--world` and
 ```bash
 cmake -B build && cmake --build build -j4     # needs OpenCV (core imgproc imgcodecs [highgui])
 ```
+
+### Tests
+
+```bash
+cmake -B build -DBUILD_TESTS=ON && cmake --build build && ctest --test-dir build
+```
+
+`test_nav` drives the planners **and the ported move-stop-sense controller**
+headlessly and asserts they reach the goal and keep obstacle standoff.
 
 `highgui` is optional — without it everything works headless and `--save=<dir>`
 still dumps PNGs.

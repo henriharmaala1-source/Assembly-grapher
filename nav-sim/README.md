@@ -48,8 +48,37 @@ still dumps PNGs.
 ./build/nav_sim --planner=astar --seed=7 --save=/tmp/frames   # PNG dump (headless-friendly)
 ```
 
-Flags: `--planner=`, `--sensor=`, `--goal=random|E,N`, `--world=random|empty`,
+Flags: `--planner=`, `--sensor=`, `--world=`, `--goal=random|E,N`,
 `--obstacles=N`, `--seed=`, `--batch=N`, `--compare`, `--display`, `--save=<dir>`.
+
+The top-down view is framed on the journey and carries a legend:
+**orange outline = true obstacle** (ground truth), **red cells = mapped
+occupied**, **grey cells = mapped free** (what the drone has actually scanned —
+an obstacle with no cells around it was never swept), **blue = plan / scan
+hits**, **green = flown trail**, star = goal.
+
+### Arenas (`--world=`)
+
+Not just scattered circles — structured environments where the straight line is
+never a free shot:
+
+| `--world=` | what it is |
+|---|---|
+| `random`    | scattered circular obstacles (default; the batch mode's field) |
+| `empty`     | no obstacles — a sanity baseline |
+| `slalom`    | alternating barriers forcing an S-weave |
+| `rooms`     | two rooms joined by a single narrow doorway |
+| `maze`      | a zig-zag corridor |
+| `trap`      | a U-shaped cul-de-sac straddling the direct line |
+| `cluttered` | dense mixed circles + walls, no clean lane |
+
+The `trap` arena is the sharpest discriminator. On it, `wavefront` and
+`dijkstra` route around the dead-end and reach; `potential` escapes slowly via
+repulsion; but `astar` can wedge *inside* it (its heuristic pulls it into the
+cul-de-sac mouth before the sensor has mapped the walls) and `rrt` wanders
+(per-tick random trees give an unstable waypoint). A concrete example of why
+"which planner is best" depends on the map and the sensing — which is the whole
+point of the testbench.
 
 ### Sensor FOV modes
 

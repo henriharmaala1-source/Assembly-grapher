@@ -66,12 +66,65 @@ navsim::Vec2 randomGoal(std::mt19937& rng, const sim::World& w) {
     return { 20.f, 0.f };
 }
 
+// Structured arenas — not just scattered circles. Each returns a world and a
+// fixed goal chosen so the direct line is NOT a free shot: the drone must turn,
+// weave, route through a doorway, or escape a dead-end. The drone always starts
+// at the origin facing the goal.
+struct Arena { sim::World world; navsim::Vec2 goal; bool fixedGoal = true; };
+
+Arena buildArena(const std::string& name, std::mt19937& rng, int nObs) {
+    Arena a;
+    auto wall = [&](float e0,float n0,float e1,float n1){ a.world.walls.push_back({e0,n0,e1,n1}); };
+    if (name == "empty") {
+        a.goal = {0.f, 22.f};
+    } else if (name == "slalom") {
+        // alternating barriers -> forced S-weave, gap on alternating sides
+        wall(-12,  6,  3,  6);
+        wall( -3, 12, 12, 12);
+        wall(-12, 18,  3, 18);
+        a.goal = {0.f, 26.f};
+    } else if (name == "rooms") {
+        // a dividing wall with a single narrow doorway; goal in the far room
+        wall(-14, 13, -2, 13);
+        wall(  2, 13, 14, 13);
+        wall(-14, 13,-14, 26); wall(14,13,14,26); wall(-14,26,14,26);  // far room box
+        a.goal = {0.f, 22.f};
+    } else if (name == "maze") {
+        // zig-zag corridor
+        wall(-8,  6,  8,  6);      // wall 1 (gap on left below it via start)
+        wall(-8,  6, -8, 13);
+        wall(-8, 13,  6, 13);      // step right
+        wall( 6, 13,  6, 20);
+        wall(-8, 20,  6, 20);
+        a.goal = {-4.f, 24.f};
+    } else if (name == "trap") {
+        // U-shaped cul-de-sac opening toward the start, straddling the direct
+        // line -> potential-field traps in it; the grid planners route around.
+        wall(-5, 10,  5, 10);
+        wall(-5, 10, -5, 17);
+        wall( 5, 10,  5, 17);
+        a.goal = {0.f, 26.f};
+    } else if (name == "cluttered") {
+        // dense mixed obstacles (circles + short walls), no clean lane
+        std::uniform_real_distribution<float> ue(-14,14), un(4,22), ur(0.8f,2.0f);
+        const int n = std::max(nObs, 12);
+        for (int i=0;i<n;++i){ sim::Circle c{ue(rng),un(rng),ur(rng)}; a.world.circles.push_back(c); }
+        wall(-6, 9, -1, 9); wall(4, 15, 10, 15);
+        a.goal = {0.f, 24.f};
+    } else {   // "random"
+        a.world = randomWorld(rng, nObs);
+        a.goal = randomGoal(rng, a.world);
+        a.fixedGoal = false;
+    }
+    return a;
+}
+
 struct RunOpts {
     bool  display = false;
     std::string saveDir;
     std::string sensorName = "camera";
     int   nRays = 61; float hFov = 90.f, maxRange = 8.f;
-    int   viz = 480;
+    int   viz = 720;
 };
 
 // Sensor FOV presets — the real hardware tradeoff. A forward ToF (VL53L5CX/L9CX)
@@ -100,10 +153,12 @@ cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
                        const std::vector<navsim::Vec2>& path,
                        const std::vector<cv::Point2f>& trail,
                        const std::vector<float>& ranges, float hFovDeg, float maxRange,
-                       const char* planner, const char* sensor, int size, float spanM) {
+                       const char* planner, const char* sensor,
+                       float centerE, float centerN, int size, float spanM) {
     cv::Mat img(size, size, CV_8UC3, cv::Scalar(24,24,26));
     const float ppm = size / spanM;
-    auto toPx = [&](float e, float n){ return cv::Point((int)(size/2 + e*ppm), (int)(size/2 - n*ppm)); };
+    auto toPx = [&](float e, float n){
+        return cv::Point((int)(size/2 + (e-centerE)*ppm), (int)(size/2 - (n-centerN)*ppm)); };
     const cv::Point dp = toPx(d.e,d.n);
 
     // occupancy belief (grey = known-free, red = believed-occupied)
@@ -152,6 +207,17 @@ cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
     cv::circle(img, dp, 4, {255,255,255}, -1, cv::LINE_AA);
     char hud[96]; std::snprintf(hud,sizeof(hud),"%s  |  %s  %.0f deg / %.0f m", planner, sensor, hFovDeg, maxRange);
     cv::putText(img, hud, {8,22}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {235,235,235}, 1);
+
+    // legend (bottom-left): what each colour means
+    int ly = size - 74;
+    auto leg = [&](cv::Scalar c, const char* s){
+        cv::rectangle(img, cv::Rect(8, ly-8, 12, 10), c, -1);
+        cv::putText(img, s, {26, ly}, cv::FONT_HERSHEY_SIMPLEX, 0.36, {200,200,200}, 1); ly += 15; };
+    leg({80,110,220}, "true obstacle");
+    leg({60,70,150},  "mapped occupied");
+    leg({48,48,50},   "mapped free");
+    leg({80,220,255}, "plan / scan");
+    leg({90,200,90},  "flown trail");
     return img;
 }
 
@@ -210,9 +276,12 @@ RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2
 
 #if defined(SIM_HAVE_HIGHGUI)
         if (opt.display || !opt.saveDir.empty()) {
+            // frame the view on the whole journey (origin<->goal midpoint), zoomed to fit
+            const float cE = goal.e * 0.5f, cN = goal.n * 0.5f;
+            const float span = std::max(26.f, std::hypot(goal.e, goal.n) * 1.7f + 10.f);
             cv::Mat top = renderGridView(grid, world, drone, goal, lastPath, trail, ranges,
                                          opt.hFov, opt.maxRange, planner.name(), opt.sensorName.c_str(),
-                                         opt.viz, 44.f);
+                                         cE, cN, opt.viz, span);
             if (!opt.saveDir.empty() && step % 4 == 0) {
                 char p[512]; std::snprintf(p,sizeof(p),"%s/%s_%05d.png", opt.saveDir.c_str(), planner.name(), step);
                 cv::imwrite(p, top);
@@ -256,7 +325,8 @@ int main(int argc, char** argv) {
         else if(!val("--sensor=").empty())opt.sensorName=val("--sensor=");
     }
     if (listP){ std::printf("planners:\n"); for(auto&n:navsim::plannerNames()) std::printf("  %s\n",n.c_str());
-                std::printf("sensors:\n  tof (45 deg/4m)  tof-wide (63 deg/9m)  camera (90 deg/8m)\n"); return 0; }
+                std::printf("sensors:\n  tof (45 deg/4m)  tof-wide (63 deg/9m)  camera (90 deg/8m)\n");
+                std::printf("arenas (--world=):\n  random  empty  slalom  rooms  maze  trap  cluttered\n"); return 0; }
 
     // apply the sensor FOV preset
     { Sensor sp = sensorPreset(opt.sensorName); opt.sensorName = sp.name;
@@ -272,8 +342,9 @@ int main(int argc, char** argv) {
         if(!p){ std::fprintf(stderr,"unknown planner '%s'\n",planner.c_str()); return 2; }
         int reached=0, collided=0; float worst=1e9f; double planMs=0; long calls=0; float lenRatio=0;
         for(int i=0;i<batch;++i){ std::mt19937 rng(seed+i);
-            sim::World w = randomWorld(rng,nObs); navsim::Vec2 g = makeGoal(rng,w);
-            RunResult r = run(*p,w,g,opt,false);
+            Arena ar = buildArena(worldSel, rng, nObs);
+            navsim::Vec2 g = (goalSel!="random") ? makeGoal(rng, ar.world) : ar.goal;
+            RunResult r = run(*p, ar.world, g, opt, false);
             if(r.reached)reached++; if(r.collided)collided++; worst=std::min(worst,r.minStandoff);
             planMs+=r.planMsTotal; calls+=r.planCalls; if(r.straightLen>0&&r.reached) lenRatio+=r.pathLen/r.straightLen;
             if((i+1)%50==0||i+1==batch) std::printf("  [%4d/%d] reached=%d collided=%d worst=%.2fm\n",i+1,batch,reached,collided,worst);
@@ -289,8 +360,9 @@ int main(int argc, char** argv) {
 
     // one world+goal from the seed
     std::mt19937 rng(seed);
-    sim::World world = (worldSel=="random")? randomWorld(rng,nObs) : sim::World{};
-    navsim::Vec2 goal = makeGoal(rng,world);
+    Arena arena = buildArena(worldSel, rng, nObs);
+    sim::World world = arena.world;
+    navsim::Vec2 goal = (goalSel!="random") ? makeGoal(rng, world) : arena.goal;
     std::printf("world: %s (%zu obstacles)  goal: (%.1f, %.1f)  seed: %u\n",
                 worldSel.c_str(), world.circles.size()+world.walls.size(), goal.e, goal.n, seed);
 

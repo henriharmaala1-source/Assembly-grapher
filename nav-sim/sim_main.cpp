@@ -68,6 +68,39 @@ navsim::Vec2 randomGoal(std::mt19937& rng, const sim::World& w) {
     return { 20.f, 0.f };
 }
 
+// -------------------------------------------------------------- L2 realism
+// Localization drift: a real GPS-denied EKF (no VIO yet) accumulates position
+// error without bound. Here the "believed" pose = true pose + a random-walk
+// drift, so the occupancy grid is built at the WRONG place and smears — exactly
+// the real onboard weakness. Metrics are still judged on the TRUE pose.
+struct NoisyLoc {
+    float be=0, bn=0, byaw=0; std::mt19937 rng; bool on=false;
+    void reset(unsigned seed, bool enable){ rng.seed(seed?seed:1u); be=bn=byaw=0; on=enable; }
+    // believed pose from the true pose (drift advances by dt)
+    void believed(float te,float tn,float tyaw,float dt, float& e,float& n,float& yaw){
+        if(!on){ e=te; n=tn; yaw=tyaw; return; }
+        std::normal_distribution<float> g(0.f,1.f);
+        const float s=std::sqrt(std::max(dt,1e-3f));
+        be = be*0.9995f + g(rng)*0.05f*s;      // ~5cm/√s random walk, mild decay
+        bn = bn*0.9995f + g(rng)*0.05f*s;
+        byaw = byaw*0.999f + g(rng)*0.6f*s;    // deg
+        e=te+be; n=tn+bn; yaw=tyaw+byaw;
+    }
+};
+
+// Range-sensor noise: Gaussian range error + occasional dropouts (miss) and the
+// odd spurious short return — what a real ToF/mono corridor scan actually gives.
+void noiseRanges(std::vector<float>& r, std::mt19937& rng, float maxRange) {
+    std::normal_distribution<float> g(0.f, 0.12f);      // ~12cm sigma
+    std::uniform_real_distribution<float> u(0.f,1.f);
+    for (auto& x : r) {
+        const float p = u(rng);
+        if (p < 0.02f) { x = maxRange; continue; }       // 2% dropout
+        if (p > 0.995f) { x = std::min(x, 1.0f + u(rng)); continue; } // rare false-near
+        x = std::max(0.1f, std::min(maxRange, x + g(rng)));
+    }
+}
+
 // Structured arenas — not just scattered circles. Each returns a world and a
 // fixed goal chosen so the direct line is NOT a free shot: the drone must turn,
 // weave, route through a doorway, or escape a dead-end. The drone always starts
@@ -174,6 +207,8 @@ struct RunOpts {
     std::string sensorName = "camera";
     int   nRays = 61; float hFov = 90.f, maxRange = 8.f;
     int   viz = 720;
+    bool  noise = false;            // L2 realism: localization drift + sensor noise
+    unsigned noiseSeed = 1;
 };
 
 // Sensor FOV presets — the real hardware tradeoff. A forward ToF (VL53L5CX/L9CX)
@@ -320,26 +355,29 @@ RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2
     RunResult R; R.straightLen = std::hypot(goal.e, goal.n);
     std::vector<cv::Point2f> trail; std::vector<navsim::Vec2> lastPath;
     const float dt = 0.05f; float t = 0.f; float lastE = drone.e, lastN = drone.n;
+    NoisyLoc nloc; nloc.reset(opt.noiseSeed, opt.noise);
 
     for (int step = 0; step < 6000 && !R.reached; ++step) {
         world.advance(dt);
-        // ---- perception: forward scan -> integrate the grid ----------------
+        // ---- perception: forward scan (at TRUE pose) -> integrate at BELIEVED pose
         std::vector<float> ranges;
         sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
-        grid.integrate(drone.e, drone.n, drone.yawDeg, ranges, opt.hFov, opt.maxRange);
+        if (opt.noise) noiseRanges(ranges, nloc.rng, opt.maxRange);
+        float be, bn, byaw; nloc.believed(drone.e, drone.n, drone.yawDeg, dt, be, bn, byaw);
+        grid.integrate(be, bn, byaw, ranges, opt.hFov, opt.maxRange);
 
-        // ---- plan (every tick, on the latest partial map) ------------------
-        navsim::PlanResult pr = planner.plan(grid, {drone.e,drone.n}, goal, inflate);
+        // ---- plan (every tick, on the latest partial map, from the BELIEVED pose)
+        navsim::PlanResult pr = planner.plan(grid, {be,bn}, goal, inflate);
         R.planMsTotal += pr.planMs; ++R.planCalls; if (pr.ok) ++R.replans;
         lastPath = pr.path;
 
-        // ---- follow: lookahead waypoint along the path ---------------------
-        float targetBearing = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
+        // ---- follow: lookahead waypoint along the path (steer from BELIEVED pose)
+        float targetBearing = std::atan2(goal.e-be, goal.n-bn) * 180.f/kPi;
         if (pr.ok && pr.path.size() >= 2) {
             const float lookahead = 2.5f; float acc = 0.f; navsim::Vec2 wp = pr.path.back();
             for (size_t i=1;i<pr.path.size();++i){ acc += std::hypot(pr.path[i].e-pr.path[i-1].e, pr.path[i].n-pr.path[i-1].n);
                 if (acc >= lookahead){ wp = pr.path[i]; break; } }
-            targetBearing = std::atan2(wp.e-drone.e, wp.n-drone.n) * 180.f/kPi;
+            targetBearing = std::atan2(wp.e-be, wp.n-bn) * 180.f/kPi;
         }
         // ---- reactive safety: slow/stop if the forward cone is closing ------
         float fwdClear = opt.maxRange;
@@ -496,6 +534,7 @@ struct SimEpisode {
     int inflate=3, steps=0; float dt=0.05f, speed=0.f;
     bool reached=false, collided=false; float minStandoff=1e9f, pathLen=0.f, lastE=0, lastN=0;
     double lastPlanMs=0.0;
+    NoisyLoc nloc; float be_=0, bn_=0, byaw_=0;   // L2 realism: believed (drifting) pose
 
     void restart() {
         Sensor sp = sensorPreset(sensorName); sensorName = sp.name;
@@ -514,43 +553,47 @@ struct SimEpisode {
         else         { planner = navsim::makePlanner(plannerName); if (planner) planner->reset(); }
         trail.clear(); lastPath.clear(); ranges.clear(); phase.clear();
         steps=0; speed=0; reached=collided=false; minStandoff=1e9f; pathLen=0; lastE=drone.e; lastN=drone.n;
+        nloc.reset(seed, opt.noise); be_=drone.e; bn_=drone.n; byaw_=drone.yawDeg;
     }
     void step() {
         if (reached || collided) return;
         world.advance(dt);
+        // scan at the TRUE pose; noise it; integrate + plan at the BELIEVED (drifting) pose
         sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
-        grid.integrate(drone.e, drone.n, drone.yawDeg, ranges, opt.hFov, opt.maxRange);
+        if (opt.noise) noiseRanges(ranges, nloc.rng, opt.maxRange);
+        nloc.believed(drone.e, drone.n, drone.yawDeg, dt, be_, bn_, byaw_);
+        grid.integrate(be_, bn_, byaw_, ranges, opt.hFov, opt.maxRange);
 
         if (mss) {
             navsim::MssInput in;
-            in.e=drone.e; in.n=drone.n; in.yawDeg=drone.yawDeg; in.speedMs=speed;
+            in.e=be_; in.n=bn_; in.yawDeg=byaw_; in.speedMs=speed;
             corridorFromScan(ranges, opt.hFov, opt.maxRange, in.corridorOpen, in.corridorOffset);
-            planBearingFor(*mapPlanner, grid, drone.e, drone.n, goal, inflate, in.planValid, in.planBearing);
-            in.goalBearing = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
+            planBearingFor(*mapPlanner, grid, be_, bn_, goal, inflate, in.planValid, in.planBearing);
+            in.goalBearing = std::atan2(goal.e-be_, goal.n-bn_) * 180.f/kPi;
             navsim::MssOutput out = mssCtl.update(in, dt);
-            phase = out.phase; lastPath = { {drone.e,drone.n}, {out.wpE,out.wpN} };
+            phase = out.phase; lastPath = { {be_,bn_}, {out.wpE,out.wpN} };
             drone.step(out.bearingDeg, dt, out.speedScale);
         } else if (explore) {
-            navsim::Explore::Out eo = expl.step(grid, {drone.e,drone.n}, inflate);
+            navsim::Explore::Out eo = expl.step(grid, {be_,bn_}, inflate);
             subGoal = eo.goal; goal = eo.goal;   // render toward the sub-goal
             phase = std::string(eo.phase);
             if (eo.done) { reached = true; lastPath.clear(); }
             else {
-                navsim::MssInput in; in.e=drone.e; in.n=drone.n; in.yawDeg=drone.yawDeg; in.speedMs=speed;
+                navsim::MssInput in; in.e=be_; in.n=bn_; in.yawDeg=byaw_; in.speedMs=speed;
                 corridorFromScan(ranges, opt.hFov, opt.maxRange, in.corridorOpen, in.corridorOffset);
-                planBearingFor(*mapPlanner, grid, drone.e, drone.n, eo.goal, inflate, in.planValid, in.planBearing);
-                in.goalBearing = std::atan2(eo.goal.e-drone.e, eo.goal.n-drone.n)*180.f/kPi;
+                planBearingFor(*mapPlanner, grid, be_, bn_, eo.goal, inflate, in.planValid, in.planBearing);
+                in.goalBearing = std::atan2(eo.goal.e-be_, eo.goal.n-bn_)*180.f/kPi;
                 auto out = mssCtl.update(in, dt);
-                lastPath = { {drone.e,drone.n}, {out.wpE,out.wpN} };
+                lastPath = { {be_,bn_}, {out.wpE,out.wpN} };
                 drone.step(out.bearingDeg, dt, out.speedScale);
             }
         } else if (planner) {
-            navsim::PlanResult pr = planner->plan(grid, {drone.e,drone.n}, goal, inflate);
+            navsim::PlanResult pr = planner->plan(grid, {be_,bn_}, goal, inflate);
             lastPath = pr.path; lastPlanMs = pr.planMs;
-            float tb = std::atan2(goal.e-drone.e, goal.n-drone.n) * 180.f/kPi;
+            float tb = std::atan2(goal.e-be_, goal.n-bn_) * 180.f/kPi;
             if (pr.ok && pr.path.size()>=2) { float look=2.5f, acc=0; navsim::Vec2 wp=pr.path.back();
                 for (size_t i=1;i<pr.path.size();++i){ acc+=std::hypot(pr.path[i].e-pr.path[i-1].e,pr.path[i].n-pr.path[i-1].n); if(acc>=look){wp=pr.path[i];break;} }
-                tb = std::atan2(wp.e-drone.e, wp.n-drone.n) * 180.f/kPi; }
+                tb = std::atan2(wp.e-be_, wp.n-bn_) * 180.f/kPi; }
             float fwd=opt.maxRange; for(int i=opt.nRays/2-3;i<=opt.nRays/2+3;++i) if(i>=0&&i<(int)ranges.size()) fwd=std::min(fwd,ranges[i]);
             drone.step(tb, dt, std::max(0.f,std::min(1.f,(fwd-1.5f)/3.f)));
         } else return;
@@ -627,13 +670,14 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
                                 ep.plannerName.c_str(), ep.sensorName.c_str(), cE, cN, tdSize, span);
     td.copyTo(canvas(cv::Rect(panelW + (viewW-tdSize)/2, fpvH+4, tdSize, tdSize)));
     // ---- status line
-    char st[200];
-    std::snprintf(st, sizeof(st), "%s | seed %u | %s%s | %s%s  steps %d  standoff %.2fm",
+    char st[220];
+    std::snprintf(st, sizeof(st), "%s | seed %u | %s%s%s | %s%s  steps %d  standoff %.2fm",
         ep.arenaName.c_str(), ep.seed,
+        ep.opt.noise?"[NOISE] ":"",
         paused?"[PAUSED] ":"",
         ep.reached?"REACHED":(ep.collided?"COLLIDED":"running"),
         ep.plannerName.c_str(),
-        ep.mss ? ("  phase:"+ep.phase).c_str() : "",
+        (ep.mss||ep.explore) ? ("  phase:"+ep.phase).c_str() : "",
         ep.steps, ep.minStandoff);
     cv::putText(canvas, st, {panelW+8, H-10}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {200,220,200}, 1);
     return canvas;
@@ -643,8 +687,9 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
 struct Click { int x=-1,y=-1; bool pending=false; };
 static void onMouse(int e,int x,int y,int,void* u){ if(e==cv::EVENT_LBUTTONDOWN){ auto*c=(Click*)u; c->x=x;c->y=y;c->pending=true; } }
 
-int runGui() {
+int runGui(bool noise) {
     SimEpisode ep; int selP=2 /*astar*/, selA=4 /*maze*/, selS=0 /*camera*/;
+    ep.opt.noise = noise;
     ep.plannerName=allModeNames()[selP]; ep.arenaName=kArenas[selA]; ep.sensorName=kSensors[selS];
     ep.restart();
     auto btns = buildButtons(200);
@@ -690,6 +735,7 @@ int main(int argc, char** argv) {
             return (a.rfind(k,0)==0&&a.size()>L)?a.substr(L):std::string(); };
         if(a=="--display")opt.display=true; else if(a=="--compare")compare=true;
         else if(a=="--gui")gui=true;
+        else if(a=="--noise")opt.noise=true;
         else if(!val("--gui-shot=").empty())guiShot=val("--gui-shot=");
         else if(a=="--list-planners")listP=true;
         else if(!val("--planner=").empty())planner=val("--planner=");
@@ -717,7 +763,7 @@ int main(int argc, char** argv) {
         SimEpisode ep;
         ep.plannerName = (planner!="astar"||worldSel=="random") ? planner : "astar";
         ep.arenaName = (worldSel!="random") ? worldSel : "maze";
-        ep.sensorName = opt.sensorName; ep.seed = seed; ep.restart();
+        ep.sensorName = opt.sensorName; ep.seed = seed; ep.opt.noise = opt.noise; ep.restart();
         for (int s=0; s<160; ++s) ep.step();
         int sp=0; { auto ns=allModeNames(); for(int i=0;i<(int)ns.size();++i) if(ns[i]==ep.plannerName) sp=i; }
         int sa=4; for(int i=0;i<(int)kArenas.size();++i) if(kArenas[i]==ep.arenaName) sa=i;
@@ -731,7 +777,7 @@ int main(int argc, char** argv) {
     // ---- interactive GUI
     if (gui) {
 #if defined(SIM_HAVE_HIGHGUI)
-        return runGui();
+        return runGui(opt.noise);
 #else
         std::fprintf(stderr, "--gui needs an OpenCV built with highgui (this build has none).\n");
         return 2;

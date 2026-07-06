@@ -54,6 +54,34 @@ can wedge in dense or tightly-walled arenas (`cluttered`, `pillars`, tight
 mazes). Kept in as a working demonstration of the *behaviour*, not a robust
 production coverage planner.
 
+### Realism levels
+
+By default the drone knows its exact pose and its range scan is perfect (an
+idealised test of the *logic*). Add `--noise` for an **L2 realism** tier:
+
+- **Localization drift** — the occupancy grid is built at a *drifting, noisy
+  estimated pose* (a bounded random walk), not ground truth. This is the real
+  onboard weakness: a GPS-denied EKF with no VIO accumulates position error, so
+  the map **smears**. Metrics are still judged on the true pose.
+- **Sensor noise** — Gaussian range error, ~2% dropouts, and the odd spurious
+  short return, like a real ToF/mono corridor scan.
+
+```bash
+./nav_sim --planner=astar --batch=100 --noise      # clean vs noisy pass
+./nav_sim --gui --noise                            # watch the map smear live
+```
+
+Effect is honest and measurable — e.g. A* over 100 random fields: clean reaches
+100/100 with 0.59m worst standoff and 0.96x paths; with `--noise` it's 99/100,
+**0.09m** worst standoff (the smeared map makes it skim closer) and 1.10x paths.
+
+> **What `--noise` does NOT include: running the real vision model.** nav-sim's
+> world is a crude raycaster — running a real depth model (trained on
+> photographs) on that toy render would give meaningless depth. Real-vision-model
+> validation belongs in the on-drone/desktop perception tooling fed real video
+> or a photorealistic renderer, not here. This is a *localization + sensor*
+> realism tier, stated plainly.
+
 ### Edge-case arenas
 
 Beyond the basic set, these specifically stress planner failure modes:

@@ -1,5 +1,6 @@
 #include "move_stop_sense.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace navsim {

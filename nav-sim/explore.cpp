@@ -1,5 +1,6 @@
 #include "explore.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <queue>
 

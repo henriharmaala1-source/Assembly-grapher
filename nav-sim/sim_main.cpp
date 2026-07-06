@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "drone.hpp"
+#include "explore.hpp"
 #include "move_stop_sense.hpp"
 #include "occupancy_grid.hpp"
 #include "planners.hpp"
@@ -112,6 +113,37 @@ Arena buildArena(const std::string& name, std::mt19937& rng, int nObs) {
         for (int i=0;i<n;++i){ sim::Circle c{ue(rng),un(rng),ur(rng)}; a.world.circles.push_back(c); }
         wall(-6, 9, -1, 9); wall(4, 15, 10, 15);
         a.goal = {0.f, 24.f};
+    } else if (name == "comb") {
+        // parallel dead-end "teeth" open at the bottom: entering a slot dead-ends
+        // at the top and must be backed out of. Tests dead-end recovery.
+        for (float e=-8; e<=8.01f; e+=4.f) wall(e, 6, e, 15);
+        wall(-10, 15, 10, 15);                 // cap the tops so slots are dead ends
+        a.goal = {0.f, 22.f};
+    } else if (name == "bottleneck") {
+        // a full-width wall with ONE narrow, OFF-CENTRE gap. Tests finding a gap
+        // that isn't on the direct line.
+        wall(-14, 12, 6, 12); wall(9, 12, 14, 12);   // gap at e in [6,9]
+        a.goal = {0.f, 22.f};
+    } else if (name == "gap-choice") {
+        // two gaps in a wall: behind the LEFT one is a sealed pocket (dead end),
+        // the RIGHT one leads to the goal. Tests committing to the correct gap.
+        wall(-14,10,-8,10); wall(-5,10,5,10); wall(8,10,14,10);   // gaps [-8,-5] and [5,8]
+        wall(-8,10,-8,16); wall(-5,10,-5,16); wall(-8,16,-5,16);  // left pocket = dead end
+        a.goal = {6.5f, 22.f};
+    } else if (name == "double-trap") {
+        // two cul-de-sacs in series straddling the direct line — nested local
+        // minima that pull a greedy planner in twice.
+        wall(-5, 8, 5, 8); wall(-5, 8, -5, 13); wall(5, 8, 5, 13);      // trap 1 (opens up)
+        wall(-4, 18, 4, 18); wall(-4, 13, -4, 18); wall(4, 13, 4, 18);  // trap 2 (opens down)
+        a.goal = {0.f, 26.f};
+    } else if (name == "pillars") {
+        // a dense but STRUCTURED pillar field — a weaving corridor exists.
+        for (float n=6; n<=20.01f; n+=3.5f)
+            for (float e=-9; e<=9.01f; e+=4.5f) {
+                const bool gap = (std::fmod(n,7.f) < 1.f) ? (std::fabs(e-2.f)<2.5f) : (std::fabs(e+2.f)<2.5f);
+                if (!gap) a.world.circles.push_back({e, n, 1.0f});
+            }
+        a.goal = {0.f, 24.f};
     } else {   // "random"
         a.world = randomWorld(rng, nObs);
         a.goal = randomGoal(rng, a.world);
@@ -162,8 +194,9 @@ struct RunResult {
     int    replans = 0; double planMsTotal = 0.0; long planCalls = 0;
 };
 
-// The sentinel "planner" name for the real onboard move-stop-sense controller.
+// Sentinel "planner" names for the non-path-planner modes.
 const char* kMssName = "move-stop-sense";
+const char* kExpName = "explore-rth";
 
 // Derive a VFH-like corridor signal from a forward range scan: forward-cone
 // clearance (openness) + the openest direction (offset in [-1,1] over the FoV).
@@ -396,6 +429,42 @@ RunResult runMss(const sim::World& worldIn, navsim::Vec2 goal, const RunOpts& op
     return R;
 }
 
+// Headless run of explore-and-return-home. "reached" == returned to home after
+// mapping the reachable area. Home = origin; goal input is ignored.
+RunResult runExplore(const sim::World& worldIn, const RunOpts& opt, bool verbose) {
+    sim::World world = worldIn;
+    navsim::OccupancyGrid grid; navsim::Drone drone;
+    const int inflate = (int)std::ceil(1.5f / grid.cellM());
+    navsim::Explore expl; navsim::Vec2 home{0.f,0.f}; expl.reset(home);
+    auto mapPlanner = navsim::makePlanner("astar");
+    navsim::MoveStopSense drv; drv.reset();   // robust low-level driver (has SCAN recovery)
+    RunResult R; R.straightLen = 1.f;
+    const float dt = 0.05f; float t=0, lastE=drone.e, lastN=drone.n, speed=0;
+    for (int step=0; step<16000 && !R.reached; ++step) {
+        world.advance(dt);
+        std::vector<float> ranges;
+        sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
+        grid.integrate(drone.e, drone.n, drone.yawDeg, ranges, opt.hFov, opt.maxRange);
+        navsim::Explore::Out eo = expl.step(grid, {drone.e,drone.n}, inflate);
+        if (eo.done) { R.reached = true; break; }
+        navsim::MssInput in; in.e=drone.e; in.n=drone.n; in.yawDeg=drone.yawDeg; in.speedMs=speed;
+        corridorFromScan(ranges, opt.hFov, opt.maxRange, in.corridorOpen, in.corridorOffset);
+        planBearingFor(*mapPlanner, grid, drone.e, drone.n, eo.goal, inflate, in.planValid, in.planBearing);
+        in.goalBearing = std::atan2(eo.goal.e-drone.e, eo.goal.n-drone.n)*180.f/kPi;
+        auto out = drv.update(in, dt);
+        drone.step(out.bearingDeg, dt, out.speedScale);
+        speed = std::hypot(drone.e-lastE, drone.n-lastN)/dt;
+        R.pathLen += std::hypot(drone.e-lastE, drone.n-lastN); lastE=drone.e; lastN=drone.n;
+        float clr=world.clearanceAt(drone.e,drone.n); R.minStandoff=std::min(R.minStandoff,clr);
+        if(clr<0)R.collided=true;
+        if (verbose && step%80==0)
+            std::printf("  t=%5.1f pos=(%6.2f,%6.2f) %-7s/%-6s subgoal=(%.1f,%.1f) clr=%.2f\n",
+                        t, drone.e, drone.n, eo.phase, out.phase, eo.goal.e, eo.goal.n, clr);
+        t += dt;
+    }
+    R.simTime = t; return R;
+}
+
 void printRow(const char* name, const RunResult& r) {
     std::printf("  %-10s reached=%-3s collided=%-3s standoff=%5.2fm pathLen=%6.2fm (%.2fx) "
                 "avgPlan=%.3fms\n",
@@ -408,7 +477,8 @@ void printRow(const char* name, const RunResult& r) {
 // Interactive GUI: an episode you can step, plus a clickable control panel.
 // ===========================================================================
 
-const std::vector<std::string> kArenas = {"random","empty","slalom","rooms","maze","trap","cluttered"};
+const std::vector<std::string> kArenas = {"random","empty","slalom","rooms","maze","trap","cluttered",
+                                          "comb","bottleneck","gap-choice","double-trap","pillars"};
 const std::vector<std::string> kSensors = {"camera","tof","tof-wide"};
 
 // One steppable episode: world + grid + drone + planner + trail. Same physics
@@ -417,8 +487,9 @@ struct SimEpisode {
     RunOpts opt;
     sim::World world; navsim::OccupancyGrid grid; navsim::Drone drone; navsim::Vec2 goal{};
     std::unique_ptr<navsim::IPlanner> planner;
-    std::unique_ptr<navsim::IPlanner> mapPlanner;   // grid route for the MSS mode
+    std::unique_ptr<navsim::IPlanner> mapPlanner;   // grid route for MSS / explore
     navsim::MoveStopSense mssCtl; bool mss=false; std::string phase;
+    navsim::Explore expl; bool explore=false; navsim::Vec2 home{}; navsim::Vec2 subGoal{};
     std::string plannerName="astar", arenaName="maze", sensorName="camera";
     unsigned seed=1;
     std::vector<cv::Point2f> trail; std::vector<navsim::Vec2> lastPath; std::vector<float> ranges;
@@ -436,8 +507,11 @@ struct SimEpisode {
         drone = navsim::Drone(); drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f/kPi;
         inflate = (int)std::ceil(1.5f / grid.cellM());
         mss = (plannerName == kMssName);
-        if (mss) { mssCtl.reset(); mapPlanner = navsim::makePlanner("astar"); planner.reset(); }
-        else     { planner = navsim::makePlanner(plannerName); if (planner) planner->reset(); }
+        explore = (plannerName == kExpName);
+        if (mss)     { mssCtl.reset(); mapPlanner = navsim::makePlanner("astar"); planner.reset(); }
+        else if (explore) { home = {0.f, 0.f}; expl.reset(home); subGoal = home; mssCtl.reset();
+                            mapPlanner = navsim::makePlanner("astar"); planner.reset(); }
+        else         { planner = navsim::makePlanner(plannerName); if (planner) planner->reset(); }
         trail.clear(); lastPath.clear(); ranges.clear(); phase.clear();
         steps=0; speed=0; reached=collided=false; minStandoff=1e9f; pathLen=0; lastE=drone.e; lastN=drone.n;
     }
@@ -456,6 +530,20 @@ struct SimEpisode {
             navsim::MssOutput out = mssCtl.update(in, dt);
             phase = out.phase; lastPath = { {drone.e,drone.n}, {out.wpE,out.wpN} };
             drone.step(out.bearingDeg, dt, out.speedScale);
+        } else if (explore) {
+            navsim::Explore::Out eo = expl.step(grid, {drone.e,drone.n}, inflate);
+            subGoal = eo.goal; goal = eo.goal;   // render toward the sub-goal
+            phase = std::string(eo.phase);
+            if (eo.done) { reached = true; lastPath.clear(); }
+            else {
+                navsim::MssInput in; in.e=drone.e; in.n=drone.n; in.yawDeg=drone.yawDeg; in.speedMs=speed;
+                corridorFromScan(ranges, opt.hFov, opt.maxRange, in.corridorOpen, in.corridorOffset);
+                planBearingFor(*mapPlanner, grid, drone.e, drone.n, eo.goal, inflate, in.planValid, in.planBearing);
+                in.goalBearing = std::atan2(eo.goal.e-drone.e, eo.goal.n-drone.n)*180.f/kPi;
+                auto out = mssCtl.update(in, dt);
+                lastPath = { {drone.e,drone.n}, {out.wpE,out.wpN} };
+                drone.step(out.bearingDeg, dt, out.speedScale);
+            }
         } else if (planner) {
             navsim::PlanResult pr = planner->plan(grid, {drone.e,drone.n}, goal, inflate);
             lastPath = pr.path; lastPlanMs = pr.planMs;
@@ -477,9 +565,10 @@ struct SimEpisode {
     }
 };
 
-// Planner names for the GUI/compare = the 10 path planners + the real nav mode.
+// Planner names for the GUI/compare = the 10 path planners + the higher-level
+// modes (the real move-stop-sense nav, and explore-and-return-home).
 std::vector<std::string> allModeNames() {
-    auto v = navsim::plannerNames(); v.push_back(kMssName); return v;
+    auto v = navsim::plannerNames(); v.push_back(kMssName); v.push_back(kExpName); return v;
 }
 
 struct Button { cv::Rect r; int group; int value; std::string label; };
@@ -612,10 +701,12 @@ int main(int argc, char** argv) {
         else if(!val("--save=").empty())opt.saveDir=val("--save=");
         else if(!val("--sensor=").empty())opt.sensorName=val("--sensor=");
     }
-    if (listP){ std::printf("planners:\n"); for(auto&n:allModeNames()) std::printf("  %s\n",n.c_str());
-                std::printf("  (move-stop-sense = the drone's real onboard navigation, ported)\n");
+    if (listP){ std::printf("modes:\n"); for(auto&n:allModeNames()) std::printf("  %s\n",n.c_str());
+                std::printf("  (move-stop-sense = the drone's real onboard navigation, ported;\n");
+                std::printf("   explore-rth = frontier exploration then return-to-home)\n");
                 std::printf("sensors:\n  tof (45 deg/4m)  tof-wide (63 deg/9m)  camera (90 deg/8m)\n");
-                std::printf("arenas (--world=):\n  random  empty  slalom  rooms  maze  trap  cluttered\n"); return 0; }
+                std::printf("arenas (--world=):\n  random empty slalom rooms maze trap cluttered\n");
+                std::printf("  comb bottleneck gap-choice double-trap pillars\n"); return 0; }
 
     // apply the sensor FOV preset
     { Sensor sp = sensorPreset(opt.sensorName); opt.sensorName = sp.name;
@@ -653,12 +744,13 @@ int main(int argc, char** argv) {
     // dispatch a mode by name: the move-stop-sense controller or a path planner.
     auto runMode=[&](const std::string& name, const sim::World& w, navsim::Vec2 g, bool vb)->RunResult{
         if (name==kMssName) return runMss(w, g, opt, vb);
+        if (name==kExpName) return runExplore(w, opt, vb);
         auto p = navsim::makePlanner(name); if (!p) return RunResult{};
         return run(*p, w, g, opt, vb); };
 
     // ---- batch (mass data) ------------------------------------------------
     if (batch>0){
-        if (planner!=kMssName && !navsim::makePlanner(planner)){ std::fprintf(stderr,"unknown planner '%s'\n",planner.c_str()); return 2; }
+        if (planner!=kMssName && planner!=kExpName && !navsim::makePlanner(planner)){ std::fprintf(stderr,"unknown planner '%s'\n",planner.c_str()); return 2; }
         int reached=0, collided=0; float worst=1e9f; double planMs=0; long calls=0; float lenRatio=0;
         for(int i=0;i<batch;++i){ std::mt19937 rng(seed+i);
             Arena ar = buildArena(worldSel, rng, nObs);
@@ -693,7 +785,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- single mode ------------------------------------------------------
-    if(planner!=kMssName && !navsim::makePlanner(planner)){ std::fprintf(stderr,"unknown planner '%s' (try --list-planners)\n",planner.c_str()); return 2; }
+    if(planner!=kMssName && planner!=kExpName && !navsim::makePlanner(planner)){ std::fprintf(stderr,"unknown planner '%s' (try --list-planners)\n",planner.c_str()); return 2; }
     std::printf("planner: %s\n\n", planner.c_str());
     RunResult r = runMode(planner, world, goal, true);
     std::printf("\n"); printRow(planner.c_str(), r);

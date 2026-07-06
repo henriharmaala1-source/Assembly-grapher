@@ -18,7 +18,8 @@ add_executable(nav_sim
   sim_world.cpp
   occupancy_grid.cpp
   planners.cpp
-  move_stop_sense.cpp)
+  move_stop_sense.cpp
+  explore.cpp)
 
 target_include_directories(nav_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(nav_sim PRIVATE ${OpenCV_LIBS})
@@ -43,7 +44,8 @@ if(BUILD_TESTS)
     sim_world.cpp
     occupancy_grid.cpp
     planners.cpp
-    move_stop_sense.cpp)
+    move_stop_sense.cpp
+    explore.cpp)
   target_include_directories(test_nav PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(test_nav PRIVATE ${OpenCV_LIBS})
   add_test(NAME test_nav COMMAND test_nav)

@@ -36,11 +36,35 @@ Ten methods across the main planning families:
 | `bug2`      | reactive | m-line seek + boundary follow (stateful) | cheap; works on simple boundaries, fragile on complex ones |
 | `move-stop-sense` | **the drone's real onboard nav (ported)** | phased controller: settle → think → scan → move → arrive, with a reactive corridor + grid route | not a path planner — a stop-and-think controller; shows the actual aircraft behavior, phase visible in the GUI |
 
+| `explore-rth` | **coverage** | frontier exploration then return-to-home | maps the reachable area (driving toward known/unknown borders), then routes back home. **Experimental** — solid in open arenas, can wedge in dense/tight ones |
+
 `move-stop-sense` is a faithful, self-contained **port of the drone's real
 onboard `MissionController`** (`onboard/src/mission.cpp`) — the phase machine,
 thresholds, and goal/corridor blend copied over, adapted to this sim's world.
 It's the actual navigation the aircraft flies, so you can watch it (and compare
 it to the textbook planners) here. Covered by the test suite below.
+
+`explore-rth` is a **frontier-exploration + return-home** behaviour (Yamauchi
+frontier exploration): instead of a fixed goal it drives toward the nearest
+border between mapped-free and unknown space to grow the map, until nothing
+reachable is left, then plans a route back to home. It's driven by the
+move-stop-sense controller underneath. **Honest status: experimental** — it maps
+and returns cleanly in open arenas (`empty`, `random`), but its reactive driver
+can wedge in dense or tightly-walled arenas (`cluttered`, `pillars`, tight
+mazes). Kept in as a working demonstration of the *behaviour*, not a robust
+production coverage planner.
+
+### Edge-case arenas
+
+Beyond the basic set, these specifically stress planner failure modes:
+
+| `--world=` | what it tests |
+|---|---|
+| `comb` | parallel dead-end teeth — entering a slot dead-ends and must be backed out |
+| `bottleneck` | one narrow, **off-centre** gap in a full-width wall — finding a gap off the direct line |
+| `gap-choice` | two gaps, the near one a sealed pocket — committing to the *correct* gap |
+| `double-trap` | two cul-de-sacs in series — nested local minima |
+| `pillars` | a dense but structured pillar field — weaving a corridor |
 
 **No planner wins everywhere** — that's the point of the testbench. Across
 arenas and seeds: the complete grid searches (`wavefront`/`dijkstra`/`astar`)

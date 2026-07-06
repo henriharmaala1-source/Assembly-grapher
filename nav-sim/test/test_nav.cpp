@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "drone.hpp"
+#include "explore.hpp"
 #include "move_stop_sense.hpp"
 #include "occupancy_grid.hpp"
 #include "planners.hpp"
@@ -75,6 +76,31 @@ Res runMss(const sim::World& w, navsim::Vec2 goal){
     }
     return R;
 }
+// drive explore-and-return-home; returns true if it mapped and returned home
+bool runExplore(const sim::World& w){
+    navsim::OccupancyGrid grid; navsim::Drone d;
+    const int infl=(int)std::ceil(1.5f/grid.cellM());
+    navsim::Explore ex; ex.reset({0.f,0.f}); auto mp=navsim::makePlanner("astar");
+    navsim::MoveStopSense drv; drv.reset();
+    const float dt=0.05f; std::vector<float> rg; float lastE=d.e,lastN=d.n,speed=0;
+    for(int s=0;s<16000;++s){
+        sim::castScan(w,d.e,d.n,d.yawDeg,HFOV,RAYS,RANGE,rg);
+        grid.integrate(d.e,d.n,d.yawDeg,rg,HFOV,RANGE);
+        auto eo=ex.step(grid,{d.e,d.n},infl);
+        if(eo.done) return true;                 // returned home
+        navsim::MssInput in; in.e=d.e; in.n=d.n; in.yawDeg=d.yawDeg; in.speedMs=speed;
+        corridor(rg,in.corridorOpen,in.corridorOffset);
+        auto pr=mp->plan(grid,{d.e,d.n},eo.goal,infl);
+        if(pr.ok&&pr.path.size()>=2){ float acc=0; navsim::Vec2 wp=pr.path.back();
+            for(size_t i=1;i<pr.path.size();++i){acc+=std::hypot(pr.path[i].e-pr.path[i-1].e,pr.path[i].n-pr.path[i-1].n); if(acc>=2.5f){wp=pr.path[i];break;}}
+            in.planValid=true; in.planBearing=std::atan2(wp.e-d.e,wp.n-d.n)*180.f/kPi; }
+        in.goalBearing=std::atan2(eo.goal.e-d.e,eo.goal.n-d.n)*180.f/kPi;
+        auto out=drv.update(in,dt);
+        d.step(out.bearingDeg,dt,out.speedScale);
+        speed=std::hypot(d.e-lastE,d.n-lastN)/dt; lastE=d.e; lastN=d.n;
+    }
+    return false;
+}
 }  // namespace
 
 int main(){
@@ -90,6 +116,10 @@ int main(){
     }
     // theta* any-angle also reaches
     { sim::World w; navsim::Vec2 g{6.f,18.f}; Res t=runPlanner(w,g,"theta*"); CHECK(t.reached); CHECK(!t.collided); }
+
+    // explore-and-return-home maps the area and returns to home (empty + walls)
+    { sim::World w; CHECK(runExplore(w)); }
+    { sim::World w; w.walls.push_back({-6,8,6,8}); CHECK(runExplore(w)); }
 
     std::printf("test_nav: OK\n");
     return 0;

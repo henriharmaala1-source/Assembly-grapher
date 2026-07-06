@@ -240,8 +240,15 @@ void corridorFromScan(const std::vector<float>& ranges, float hFovDeg, float max
                       float& open, float& offset) {
     const int N = (int)ranges.size();
     if (N == 0) { open = 0.f; offset = 0.f; return; }
-    float fwd = maxRange;                                   // forward cone clearance
-    for (int i = N/2-3; i <= N/2+3; ++i) if (i>=0 && i<N) fwd = std::min(fwd, ranges[i]);
+    // Forward-cone clearance, robust to ONE spurious near-return: drop the single
+    // lowest ray and take the 2nd-lowest. A lone noisy ray no longer flips
+    // "open"->"blocked" — this stands in for the real DepthNav's blur/VFH+
+    // hysteresis, which the port otherwise lacked (so it twitched under --noise).
+    std::vector<float> cone;
+    for (int i = N/2-3; i <= N/2+3; ++i) if (i>=0 && i<N) cone.push_back(ranges[i]);
+    float fwd = maxRange;
+    if (!cone.empty()) { std::sort(cone.begin(), cone.end());
+        fwd = (cone.size() >= 2) ? cone[1] : cone[0]; }
     open = std::max(0.f, std::min(1.f, fwd / maxRange));
     // openest ray, with a mild center bias so an equally-open field steers
     // straight ahead (not to the leftmost ray) — approximates VFH+'s forward pref.
@@ -619,18 +626,22 @@ struct Button { cv::Rect r; int group; int value; std::string label; };
 // groups: 0 planner, 1 arena, 2 sensor, 3 action(value: 0 restart,1 pause,2 newseed,3 quit)
 
 std::vector<Button> buildButtons(int panelW) {
-    std::vector<Button> b; int y = 30; const int x=8, w=panelW-16, h=20, gap=2;
+    // Compact so 12 modes + 12 arenas + 3 sensors + 6 action buttons fit in 640px.
+    std::vector<Button> b; int y = 26; const int x=8, w=panelW-16, h=16, gap=1;
     auto section=[&](int group, const std::vector<std::string>& items){
         for (int i=0;i<(int)items.size();++i){ b.push_back({cv::Rect(x,y,w,h), group, i, items[i]}); y+=h+gap; }
-        y += 14;
+        y += 10;
     };
     section(0, allModeNames());
     section(1, kArenas);
     section(2, kSensors);
-    b.push_back({cv::Rect(x, y, w/2-2, 24), 3, 0, "Restart"});
-    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, 24), 3, 2, "New seed"}); y+=28;
-    b.push_back({cv::Rect(x, y, w/2-2, 24), 3, 1, "Pause"});
-    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, 24), 3, 3, "Quit"});
+    const int ah=22, ar=25;
+    b.push_back({cv::Rect(x, y, w/2-2, ah), 3, 0, "Restart"});
+    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 2, "New seed"}); y+=ar;
+    b.push_back({cv::Rect(x, y, w/2-2, ah), 3, 1, "Pause"});
+    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 3, "Quit"}); y+=ar;
+    b.push_back({cv::Rect(x, y, w/2-2, ah), 3, 4, "- Slower"});
+    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 5, "Faster +"});
     return b;
 }
 
@@ -696,17 +707,26 @@ int runGui(bool noise) {
     auto btns = buildButtons(200);
     Click click; bool paused=false; int doneDwell=0;
     const std::string win="nav-sim"; cv::namedWindow(win); cv::setMouseCallback(win, onMouse, &click);
-    std::printf("[gui] click the panel to choose planner/arena/sensor. q or Quit to exit.\n");
+    std::printf("[gui] click the panel to choose planner/arena/sensor. "
+                "space=pause  [ ]=speed  r=restart  n=new seed  q=quit\n");
+    float speedMul = 1.0f, acc = 0.f;   // ticks/frame; [ halves, ] doubles
+    auto slower=[&]{ speedMul=std::max(0.125f, speedMul*0.5f); };
+    auto faster=[&]{ speedMul=std::min(8.0f,  speedMul*2.0f); };
     while (true) {
-        if (!paused) { ep.step(); ep.step(); }        // 2 ticks/frame for pace
+        if (!paused) { acc += speedMul; int nstep=(int)acc; acc-=nstep;
+                       for (int s=0;s<nstep;++s) ep.step(); }
         if ((ep.reached||ep.collided) && !paused) { if (++doneDwell>40){ ep.restart(); doneDwell=0; } }
         cv::Mat frame = renderComposite(ep, btns, selP, selA, selS, paused);
+        char sp[32]; std::snprintf(sp,sizeof(sp),"speed %gx", speedMul);
+        cv::putText(frame, sp, {210, 44}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {180,220,255}, 1);
         cv::imshow(win, frame);
         const int k = cv::waitKey(20) & 0xFF;
         if (k=='q' || k==27) break;
         if (k==' ') paused=!paused;
         if (k=='r') { ep.restart(); doneDwell=0; }
         if (k=='n') { ep.seed++; ep.restart(); doneDwell=0; }
+        if (k=='[') slower();
+        if (k==']') faster();
         if (click.pending) {
             click.pending=false;
             for (auto& bt : btns) if (bt.r.contains({click.x,click.y})) {
@@ -716,7 +736,9 @@ int runGui(bool noise) {
                 else if (bt.group==3){ if(bt.value==0) ep.restart();
                     else if(bt.value==1) paused=!paused;
                     else if(bt.value==2){ ep.seed++; ep.restart(); }
-                    else if(bt.value==3) return 0; }
+                    else if(bt.value==3) return 0;
+                    else if(bt.value==4) slower();
+                    else if(bt.value==5) faster(); }
                 doneDwell=0; break;
             }
         }

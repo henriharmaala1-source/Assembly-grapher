@@ -1,9 +1,12 @@
 #include "sim_world.hpp"
 
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <queue>
+#include <string>
 
 namespace sim {
 
@@ -49,6 +52,15 @@ float World::rayRange(float pe, float pn, float bearingDeg, float maxRange) cons
     float best = maxRange;
     for (const auto& c : circles) best = std::min(best, rayCircle(pe, pn, de, dn, c, maxRange));
     for (const auto& w : walls)   best = std::min(best, raySegment(pe, pn, de, dn, w, maxRange));
+    if (hasOcc()) {                                    // march the occupancy bitmap
+        const float stepM = ocell * 0.5f;
+        for (float m = 0.f; m < best; m += stepM) {
+            const int cx = (int)((pe + de*m - oe0) / ocell);
+            const int cy = (int)((pn + dn*m - on0) / ocell);
+            if (cx<0 || cy<0 || cx>=ow || cy>=oh) break;   // off the map = open
+            if (occ[(size_t)cy*ow+cx]) { best = std::min(best, m); break; }
+        }
+    }
     return best;
 }
 
@@ -65,7 +77,64 @@ float World::clearanceAt(float pe, float pn) const {
         const float ce = w.e0 + t * se, cn = w.n0 + t * sn;
         best = std::min(best, std::hypot(pe - ce, pn - cn));
     }
+    if (hasOcc() && !occDist.empty()) {                // precomputed distance transform
+        const int cx = (int)((pe - oe0) / ocell), cy = (int)((pn - on0) / ocell);
+        if (cx>=0 && cy>=0 && cx<ow && cy<oh) best = std::min(best, occDist[(size_t)cy*ow+cx]);
+    }
     return best;
+}
+
+bool loadOccupancyImage(World& w, const std::string& path, float metersPerPixel,
+                        float& startE, float& startN, float& goalE, float& goalN) {
+    cv::Mat img = cv::imread(path, cv::IMREAD_GRAYSCALE);
+    if (img.empty()) return false;
+    // Downscale very large maps so the sim stays fast (target ~200 px max side).
+    const int maxSide = 220;
+    if (std::max(img.cols, img.rows) > maxSide) {
+        const float s = (float)maxSide / std::max(img.cols, img.rows);
+        cv::resize(img, img, {}, s, s, cv::INTER_AREA);
+        metersPerPixel /= s;                           // keep real-world scale
+    }
+    w.ow = img.cols; w.oh = img.rows; w.ocell = metersPerPixel;
+    w.occ.assign((size_t)w.ow * w.oh, 0);
+    cv::Mat freeMask(img.rows, img.cols, CV_8U);
+    for (int y = 0; y < img.rows; ++y)
+        for (int x = 0; x < img.cols; ++x) {
+            // image row 0 = top; flip so +n (north) is UP in the image.
+            const bool solid = img.at<unsigned char>(y, x) < 128;   // dark = obstacle
+            const int gy = img.rows - 1 - y;
+            w.occ[(size_t)gy*w.ow + x] = solid ? 1 : 0;
+            freeMask.at<unsigned char>(gy, x) = solid ? 0 : 255;
+        }
+    // distance-to-nearest-solid (metres) for clearance queries
+    cv::Mat dist; cv::distanceTransform(freeMask, dist, cv::DIST_L2, 3);
+    w.occDist.assign((size_t)w.ow * w.oh, 0.f);
+    for (int y = 0; y < w.oh; ++y)
+        for (int x = 0; x < w.ow; ++x)
+            w.occDist[(size_t)y*w.ow + x] = dist.at<float>(y, x) * w.ocell;
+    // start = free cell nearest the bottom-centre; origin placed so start = (0,0)
+    int sx = w.ow/2, sy = 0; float bestD = 1e18f;
+    for (int y = 0; y < w.oh; ++y) for (int x = 0; x < w.ow; ++x) {
+        if (w.occ[(size_t)y*w.ow+x]) continue;
+        const float d = (float)((x-w.ow/2)*(x-w.ow/2)) + (float)(y*y*4);   // prefer bottom-centre
+        if (d < bestD) { bestD = d; sx = x; sy = y; }
+    }
+    w.oe0 = -sx * w.ocell; w.on0 = -sy * w.ocell;      // start cell -> world (0,0)
+    startE = 0.f; startN = 0.f;
+    // goal = reachable free cell farthest from start (BFS over free cells)
+    std::vector<int> dgrid((size_t)w.ow*w.oh, -1);
+    std::queue<std::pair<int,int>> q; q.push({sx,sy}); dgrid[(size_t)sy*w.ow+sx]=0;
+    int gx=sx, gy=sy, gmax=0;
+    const int DX[4]={1,-1,0,0}, DY[4]={0,0,1,-1};
+    while (!q.empty()) { auto [cx,cy]=q.front(); q.pop();
+        const int dd=dgrid[(size_t)cy*w.ow+cx];
+        if (dd>gmax){ gmax=dd; gx=cx; gy=cy; }
+        for (int k=0;k<4;++k){ int nx=cx+DX[k], ny=cy+DY[k];
+            if(nx<0||ny<0||nx>=w.ow||ny>=w.oh) continue;
+            if(w.occ[(size_t)ny*w.ow+nx]||dgrid[(size_t)ny*w.ow+nx]>=0) continue;
+            dgrid[(size_t)ny*w.ow+nx]=dd+1; q.push({nx,ny}); } }
+    goalE = w.oe0 + gx * w.ocell; goalN = w.on0 + gy * w.ocell;
+    return true;
 }
 
 void castScan(const World& w, float pe, float pn, float yawDeg,

@@ -41,6 +41,18 @@ struct World {
     std::vector<Circle> circles;
     std::vector<Wall>   walls;
 
+    // Optional occupancy bitmap (e.g. loaded from a PNG / ROS map / floorplan):
+    // occ[y*ow+x]==1 means that cell is solid. occDist holds each cell's distance
+    // (m) to the nearest solid, precomputed at load for fast clearance queries.
+    std::vector<unsigned char> occ;
+    std::vector<float>         occDist;
+    int   ow = 0, oh = 0;
+    float ocell = 0.1f, oe0 = 0.f, on0 = 0.f;
+    bool  hasOcc() const { return ow > 0 && oh > 0; }
+    bool  occSolid(int cx, int cy) const {
+        return cx>=0 && cy>=0 && cx<ow && cy<oh && occ[(size_t)cy*ow+cx];
+    }
+
     void advance(float dt);   // moves any circle with a velocity
 
     // Ground-truth range (m) from p along `bearingDeg` (0 = North, +E clockwise)
@@ -51,6 +63,14 @@ struct World {
     // an obstacle). Used for standoff / collision metrics against TRUTH.
     float clearanceAt(float pe, float pn) const;
 };
+
+// Load a PNG/PGM occupancy image into `w` as an occupancy bitmap: dark pixels
+// (< threshold) are solid. `metersPerPixel` sets the scale. Returns false on
+// read failure. Also picks a free START (near the bottom-centre) and a far free
+// GOAL, returned in world coords, with the world origin placed so the start is
+// at (0,0). Any existing circles/walls in `w` are left intact.
+bool loadOccupancyImage(World& w, const std::string& path, float metersPerPixel,
+                        float& startE, float& startN, float& goalE, float& goalN);
 
 // Cast N rays across [yaw - hFov/2, yaw + hFov/2] and fill `ranges` (metres).
 void castScan(const World& w, float pe, float pn, float yawDeg,

@@ -54,6 +54,24 @@ can wedge in dense or tightly-walled arenas (`cluttered`, `pillars`, tight
 mazes). Kept in as a working demonstration of the *behaviour*, not a robust
 production coverage planner.
 
+### Worlds from images (`--map`)
+
+Beyond the built-in arenas, you can load **any occupancy-map image** — the
+robotics standard, and how ROS maps, building floorplans, and maze generators
+are shared online. Dark pixels are obstacles, light pixels are free:
+
+```bash
+./nav_sim --map=floorplan.png --map-mpp=0.15 --compare   # metres-per-pixel
+./nav_sim --gui --map=maze.png                           # load it in the GUI
+```
+
+It picks a free **start** (bottom-centre) and a far reachable **goal**
+automatically, scales by `--map-mpp` (metres per pixel), and downsamples very
+large maps so the sim stays fast. Any PNG/PGM/JPG works. Good sources: ROS
+`map_server` maps, online maze generators (export PNG), or a hand-drawn floorplan
+— black walls on white. In the GUI, clicking an arena button switches back to
+the built-in arenas.
+
 ### Realism levels
 
 By default the drone knows its exact pose and its range scan is perfect (an

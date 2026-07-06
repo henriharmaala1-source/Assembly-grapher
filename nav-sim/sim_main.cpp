@@ -324,6 +324,17 @@ cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
             cv::circle(img, toPx(d.e+std::sin(b)*ranges[i], d.n+std::cos(b)*ranges[i]), 2, {90,200,255}, -1, cv::LINE_AA);
         }
     }
+    // occupancy-map obstacles (loaded from an image): draw solid cells
+    if (w.hasOcc()) {
+        const int cs = std::max(1, (int)std::ceil(w.ocell*ppm));
+        for (int cy=0; cy<w.oh; ++cy) for (int cx=0; cx<w.ow; ++cx) {
+            if (!w.occ[(size_t)cy*w.ow+cx]) continue;
+            const float e = w.oe0 + cx*w.ocell, n = w.on0 + cy*w.ocell;
+            if (std::fabs(e-centerE) > spanM/2 || std::fabs(n-centerN) > spanM/2) continue;
+            const cv::Point p = toPx(e,n);
+            cv::rectangle(img, cv::Rect(p.x-cs/2, p.y-cs/2, cs, cs), {80,110,220}, -1);
+        }
+    }
     // true obstacles (outline, so belief vs truth is visible)
     for (auto& c : w.circles) cv::circle(img, toPx(c.e,c.n), (int)(c.r*ppm), {80,110,220}, 1, cv::LINE_AA);
     for (auto& wl : w.walls)  cv::line(img, toPx(wl.e0,wl.n0), toPx(wl.e1,wl.n1), {80,110,220}, 2, cv::LINE_AA);
@@ -538,6 +549,7 @@ struct SimEpisode {
     navsim::MoveStopSense mssCtl; bool mss=false; std::string phase;
     navsim::Explore expl; bool explore=false; navsim::Vec2 home{}; navsim::Vec2 subGoal{};
     std::string plannerName="astar", arenaName="maze", sensorName="camera";
+    std::string mapPath; float mapMpp=0.15f;   // optional image world
     unsigned seed=1;
     std::vector<cv::Point2f> trail; std::vector<navsim::Vec2> lastPath; std::vector<float> ranges;
     int inflate=3, steps=0; float dt=0.05f, speed=0.f;
@@ -549,8 +561,11 @@ struct SimEpisode {
         Sensor sp = sensorPreset(sensorName); sensorName = sp.name;
         opt.hFov = sp.fovDeg; opt.maxRange = sp.rangeM; opt.nRays = sp.rays;
         std::mt19937 rng(seed);
-        Arena a = buildArena(arenaName, rng, 6);
-        world = a.world; goal = a.goal;
+        if (!mapPath.empty()) {
+            world = sim::World{}; float se,sn,ge,gn;
+            if (sim::loadOccupancyImage(world, mapPath, mapMpp, se,sn,ge,gn)) { goal = {ge,gn}; }
+            else { mapPath.clear(); Arena a=buildArena(arenaName,rng,6); world=a.world; goal=a.goal; }
+        } else { Arena a = buildArena(arenaName, rng, 6); world = a.world; goal = a.goal; }
         grid = navsim::OccupancyGrid();
         drone = navsim::Drone(); drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f/kPi;
         inflate = (int)std::ceil(1.5f / grid.cellM());
@@ -727,17 +742,25 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
                                 ep.ranges, ep.opt.hFov, ep.opt.maxRange,
                                 ep.plannerName.c_str(), ep.sensorName.c_str(), cE, cN, tdSize, span);
     td.copyTo(canvas(cv::Rect(panelW + (viewW-tdSize)/2, fpvH+4, tdSize, tdSize)));
-    // ---- status line
+
+    // ---- outcome badge (colour-coded, prominent), top-right of the FPV pane
+    const char* outcome = ep.reached ? "REACHED" : (ep.collided ? "COLLIDED" : "running");
+    const cv::Scalar oc = ep.reached ? cv::Scalar(90,230,90)
+                        : ep.collided ? cv::Scalar(70,70,240) : cv::Scalar(210,210,210);
+    cv::putText(canvas, outcome, {panelW+viewW-160, 24}, cv::FONT_HERSHEY_DUPLEX, 0.7, oc, 2);
+    if (paused) cv::putText(canvas, "PAUSED", {panelW+viewW-160, 48}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {60,180,240}, 1);
+
+    // ---- status line (context) + controls hint
     char st[220];
-    std::snprintf(st, sizeof(st), "%s | seed %u | %s%s%s | %s%s  steps %d  standoff %.2fm",
-        ep.arenaName.c_str(), ep.seed,
-        ep.opt.noise?"[NOISE] ":"",
-        paused?"[PAUSED] ":"",
-        ep.reached?"REACHED":(ep.collided?"COLLIDED":"running"),
-        ep.plannerName.c_str(),
-        (ep.mss||ep.explore) ? ("  phase:"+ep.phase).c_str() : "",
+    std::snprintf(st, sizeof(st), "%s%s | seed %u | %s%s  steps %d  standoff %.2fm",
+        ep.mapPath.empty()? ep.arenaName.c_str() : "map",
+        ep.opt.noise?"  [NOISE]":"",
+        ep.seed, ep.plannerName.c_str(),
+        (ep.mss||ep.explore) ? ("  "+ep.phase).c_str() : "",
         ep.steps, ep.minStandoff);
-    cv::putText(canvas, st, {panelW+8, H-10}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {200,220,200}, 1);
+    cv::putText(canvas, st, {panelW+8, H-26}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {200,220,200}, 1);
+    cv::putText(canvas, "click a button to change  |  space pause  [ ] speed  r restart  n new-seed  q quit",
+                {panelW+8, H-8}, cv::FONT_HERSHEY_SIMPLEX, 0.36, {150,160,170}, 1);
     return canvas;
 }
 
@@ -745,9 +768,9 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
 struct Click { int x=-1,y=-1; bool pending=false; };
 static void onMouse(int e,int x,int y,int,void* u){ if(e==cv::EVENT_LBUTTONDOWN){ auto*c=(Click*)u; c->x=x;c->y=y;c->pending=true; } }
 
-int runGui(bool noise) {
+int runGui(bool noise, const std::string& mapPath, float mapMpp) {
     SimEpisode ep; int selP=2 /*astar*/, selA=4 /*maze*/, selS=0 /*camera*/;
-    ep.opt.noise = noise;
+    ep.opt.noise = noise; ep.mapPath = mapPath; ep.mapMpp = mapMpp;
     ep.plannerName=allModeNames()[selP]; ep.arenaName=kArenas[selA]; ep.sensorName=kSensors[selS];
     ep.restart();
     auto btns = buildButtons(200);
@@ -777,7 +800,7 @@ int runGui(bool noise) {
             click.pending=false;
             for (auto& bt : btns) if (bt.r.contains({click.x,click.y})) {
                 if (bt.group==0){ selP=bt.value; ep.plannerName=allModeNames()[selP]; ep.restart(); }
-                else if (bt.group==1){ selA=bt.value; ep.arenaName=kArenas[selA]; ep.restart(); }
+                else if (bt.group==1){ selA=bt.value; ep.arenaName=kArenas[selA]; ep.mapPath.clear(); ep.restart(); }
                 else if (bt.group==2){ selS=bt.value; ep.sensorName=kSensors[selS]; ep.restart(); }
                 else if (bt.group==3){ if(bt.value==0) ep.restart();
                     else if(bt.value==1) paused=!paused;
@@ -799,6 +822,7 @@ int main(int argc, char** argv) {
     unsigned seed=1; int batch=0, nObs=6; bool compare=false, listP=false, gui=false;
     std::string guiShot;
     bool sweep=false; int sweepSeeds=5; std::string csvPath;
+    std::string mapPath; float mapMpp=0.15f;
 
     for (int i=1;i<argc;++i){ std::string a=argv[i];
         auto val=[&](const char*k)->std::string{ size_t L=std::strlen(k);
@@ -819,6 +843,8 @@ int main(int argc, char** argv) {
         else if(a=="--sweep")sweep=true;
         else if(!val("--seeds=").empty())sweepSeeds=std::atoi(val("--seeds=").c_str());
         else if(!val("--csv=").empty())csvPath=val("--csv=");
+        else if(!val("--map=").empty())mapPath=val("--map=");
+        else if(!val("--map-mpp=").empty())mapMpp=(float)std::atof(val("--map-mpp=").c_str());
     }
 
     // ---- mass-data sweep: modes × arenas × sensors × seeds × {clean,noise} -> CSV
@@ -842,7 +868,8 @@ int main(int argc, char** argv) {
         SimEpisode ep;
         ep.plannerName = (planner!="astar"||worldSel=="random") ? planner : "astar";
         ep.arenaName = (worldSel!="random") ? worldSel : "maze";
-        ep.sensorName = opt.sensorName; ep.seed = seed; ep.opt.noise = opt.noise; ep.restart();
+        ep.sensorName = opt.sensorName; ep.seed = seed; ep.opt.noise = opt.noise;
+        ep.mapPath = mapPath; ep.mapMpp = mapMpp; ep.restart();
         for (int s=0; s<160; ++s) ep.step();
         int sp=0; { auto ns=allModeNames(); for(int i=0;i<(int)ns.size();++i) if(ns[i]==ep.plannerName) sp=i; }
         int sa=4; for(int i=0;i<(int)kArenas.size();++i) if(kArenas[i]==ep.arenaName) sa=i;
@@ -856,7 +883,7 @@ int main(int argc, char** argv) {
     // ---- interactive GUI
     if (gui) {
 #if defined(SIM_HAVE_HIGHGUI)
-        return runGui(opt.noise);
+        return runGui(opt.noise, mapPath, mapMpp);
 #else
         std::fprintf(stderr, "--gui needs an OpenCV built with highgui (this build has none).\n");
         return 2;
@@ -894,13 +921,23 @@ int main(int argc, char** argv) {
         return collided==0?0:1;
     }
 
-    // one world+goal from the seed
+    // one world+goal — from an image map (--map) or a built-in/seeded arena
     std::mt19937 rng(seed);
-    Arena arena = buildArena(worldSel, rng, nObs);
-    sim::World world = arena.world;
-    navsim::Vec2 goal = (goalSel!="random") ? makeGoal(rng, world) : arena.goal;
-    std::printf("world: %s (%zu obstacles)  goal: (%.1f, %.1f)  seed: %u\n",
-                worldSel.c_str(), world.circles.size()+world.walls.size(), goal.e, goal.n, seed);
+    sim::World world; navsim::Vec2 goal{};
+    if (!mapPath.empty()) {
+        float se,sn,ge,gn;
+        if (!sim::loadOccupancyImage(world, mapPath, mapMpp, se,sn,ge,gn)) {
+            std::fprintf(stderr, "could not load map image '%s'\n", mapPath.c_str()); return 1; }
+        goal = {ge,gn};
+        std::printf("map: %s (%dx%d cells @ %.3f m)  goal: (%.1f, %.1f)\n",
+                    mapPath.c_str(), world.ow, world.oh, world.ocell, goal.e, goal.n);
+    } else {
+        Arena arena = buildArena(worldSel, rng, nObs);
+        world = arena.world;
+        goal = (goalSel!="random") ? makeGoal(rng, world) : arena.goal;
+        std::printf("world: %s (%zu obstacles)  goal: (%.1f, %.1f)  seed: %u\n",
+                    worldSel.c_str(), world.circles.size()+world.walls.size(), goal.e, goal.n, seed);
+    }
 
     // ---- compare all modes on the SAME world+goal (planners + the real nav) ----
     if (compare){

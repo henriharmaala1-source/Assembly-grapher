@@ -210,6 +210,7 @@ struct RunOpts {
     int   viz = 720;
     bool  noise = false;            // L2 realism: localization drift + sensor noise
     unsigned noiseSeed = 1;
+    int   maxSteps = 0;             // 0 = per-mode default; >0 caps run length (sweeps)
 };
 
 // Sensor FOV presets — the real hardware tradeoff. A forward ToF (VL53L5CX/L9CX)
@@ -365,7 +366,7 @@ RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2
     const float dt = 0.05f; float t = 0.f; float lastE = drone.e, lastN = drone.n;
     NoisyLoc nloc; nloc.reset(opt.noiseSeed, opt.noise);
 
-    for (int step = 0; step < 6000 && !R.reached; ++step) {
+    for (int step = 0, cap=opt.maxSteps>0?opt.maxSteps:6000; step < cap && !R.reached; ++step) {
         world.advance(dt);
         // ---- perception: forward scan (at TRUE pose) -> integrate at BELIEVED pose
         std::vector<float> ranges;
@@ -444,7 +445,7 @@ RunResult runMss(const sim::World& worldIn, navsim::Vec2 goal, const RunOpts& op
 
     RunResult R; R.straightLen = std::hypot(goal.e, goal.n);
     const float dt = 0.05f; float t = 0.f, lastE = drone.e, lastN = drone.n, speed = 0.f;
-    for (int step = 0; step < 6000 && !R.reached; ++step) {
+    for (int step = 0, cap=opt.maxSteps>0?opt.maxSteps:6000; step < cap && !R.reached; ++step) {
         world.advance(dt);
         std::vector<float> ranges;
         sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
@@ -486,7 +487,7 @@ RunResult runExplore(const sim::World& worldIn, const RunOpts& opt, bool verbose
     navsim::MoveStopSense drv; drv.reset();   // robust low-level driver (has SCAN recovery)
     RunResult R; R.straightLen = 1.f;
     const float dt = 0.05f; float t=0, lastE=drone.e, lastN=drone.n, speed=0;
-    for (int step=0; step<16000 && !R.reached; ++step) {
+    for (int step=0, cap=opt.maxSteps>0?opt.maxSteps:16000; step<cap && !R.reached; ++step) {
         world.advance(dt);
         std::vector<float> ranges;
         sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
@@ -622,6 +623,51 @@ std::vector<std::string> allModeNames() {
     auto v = navsim::plannerNames(); v.push_back(kMssName); v.push_back(kExpName); return v;
 }
 
+// Dispatch a mode by name (path planner, move-stop-sense, or explore).
+RunResult runByName(const std::string& name, const sim::World& w, navsim::Vec2 g, const RunOpts& opt) {
+    if (name==kMssName) return runMss(w, g, opt, false);
+    if (name==kExpName) return runExplore(w, opt, false);
+    auto p = navsim::makePlanner(name); if (!p) return RunResult{};
+    return run(*p, w, g, opt, false);
+}
+
+// Mass-data generator: sweep every mode × arena × sensor × seed × {clean,noise}
+// and write one CSV row per run — a dataset to analyse en masse.
+int runSweep(int seeds, const std::string& csvPath, const std::string& sensorFilter,
+             const std::string& modeFilter) {
+    std::FILE* out = csvPath.empty() ? stdout : std::fopen(csvPath.c_str(), "w");
+    if (!out) { std::fprintf(stderr, "cannot open %s\n", csvPath.c_str()); return 1; }
+    std::fprintf(out, "mode,arena,sensor,seed,noise,reached,collided,min_standoff_m,"
+                      "path_len_m,straight_m,path_ratio,sim_time_s,plan_ms\n");
+    std::vector<std::string> modes   = modeFilter.empty()   ? allModeNames() : std::vector<std::string>{modeFilter};
+    std::vector<std::string> sensors = sensorFilter.empty() ? kSensors       : std::vector<std::string>{sensorFilter};
+    long rows = 0;
+    for (auto& mode : modes)
+      for (auto& arena : kArenas)
+        for (auto& sen : sensors) {
+          RunOpts o; Sensor sp = sensorPreset(sen);
+          o.sensorName=sp.name; o.hFov=sp.fovDeg; o.maxRange=sp.rangeM; o.nRays=sp.rays;
+          o.maxSteps = 2500;   // cap wedged runs so the sweep stays tractable
+          for (int s = 1; s <= seeds; ++s)
+            for (int nz = 0; nz < 2; ++nz) {
+              o.noise = (nz!=0); o.noiseSeed = (unsigned)s;
+              std::mt19937 rng((unsigned)s);
+              Arena a = buildArena(arena, rng, 6);
+              RunResult r = runByName(mode, a.world, a.goal, o);
+              const float ratio = r.straightLen>0 ? r.pathLen/r.straightLen : 0.f;
+              const float so = r.minStandoff>1e8f ? 99.f : r.minStandoff;
+              std::fprintf(out, "%s,%s,%s,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.3f,%.1f,%.4f\n",
+                  mode.c_str(), arena.c_str(), sp.name, s, nz, r.reached?1:0, r.collided?1:0,
+                  so, r.pathLen, r.straightLen, ratio, r.simTime,
+                  r.planCalls ? r.planMsTotal/r.planCalls : 0.0);
+              ++rows;
+            }
+        }
+    if (out != stdout) std::fclose(out);
+    std::fprintf(stderr, "[sweep] %ld rows -> %s\n", rows, csvPath.empty()?"stdout":csvPath.c_str());
+    return 0;
+}
+
 struct Button { cv::Rect r; int group; int value; std::string label; };
 // groups: 0 planner, 1 arena, 2 sensor, 3 action(value: 0 restart,1 pause,2 newseed,3 quit)
 
@@ -752,6 +798,7 @@ int main(int argc, char** argv) {
     RunOpts opt; std::string planner="astar", worldSel="random", goalSel="random";
     unsigned seed=1; int batch=0, nObs=6; bool compare=false, listP=false, gui=false;
     std::string guiShot;
+    bool sweep=false; int sweepSeeds=5; std::string csvPath;
 
     for (int i=1;i<argc;++i){ std::string a=argv[i];
         auto val=[&](const char*k)->std::string{ size_t L=std::strlen(k);
@@ -769,6 +816,15 @@ int main(int argc, char** argv) {
         else if(!val("--obstacles=").empty())nObs=std::atoi(val("--obstacles=").c_str());
         else if(!val("--save=").empty())opt.saveDir=val("--save=");
         else if(!val("--sensor=").empty())opt.sensorName=val("--sensor=");
+        else if(a=="--sweep")sweep=true;
+        else if(!val("--seeds=").empty())sweepSeeds=std::atoi(val("--seeds=").c_str());
+        else if(!val("--csv=").empty())csvPath=val("--csv=");
+    }
+
+    // ---- mass-data sweep: modes × arenas × sensors × seeds × {clean,noise} -> CSV
+    if (sweep) {
+        const std::string sensorFilter = (opt.sensorName!="camera") ? opt.sensorName : std::string();
+        return runSweep(sweepSeeds, csvPath, sensorFilter, (planner!="astar")?planner:std::string());
     }
     if (listP){ std::printf("modes:\n"); for(auto&n:allModeNames()) std::printf("  %s\n",n.c_str());
                 std::printf("  (move-stop-sense = the drone's real onboard navigation, ported;\n");

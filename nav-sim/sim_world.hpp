@@ -72,6 +72,12 @@ struct World {
 bool loadOccupancyImage(World& w, const std::string& path, float metersPerPixel,
                         float& startE, float& startN, float& goalE, float& goalN);
 
+// Procedurally generate a big recursive-division maze into `w` (occupancy bitmap)
+// — a large, always-solvable map with no external file. Returns start/goal in
+// world coords (start at origin). worldSizeM is the square side in metres.
+bool genMaze(World& w, float worldSizeM, float ocellM, unsigned seed,
+             float& startE, float& startN, float& goalE, float& goalN);
+
 // Cast N rays across [yaw - hFov/2, yaw + hFov/2] and fill `ranges` (metres).
 void castScan(const World& w, float pe, float pn, float yawDeg,
               float hFovDeg, int n, float maxRange, std::vector<float>& ranges);

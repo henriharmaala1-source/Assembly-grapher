@@ -178,6 +178,19 @@ Arena buildArena(const std::string& name, std::mt19937& rng, int nObs) {
                 if (!gap) a.world.circles.push_back({e, n, 1.0f});
             }
         a.goal = {0.f, 24.f};
+    } else if (name == "big-maze") {
+        // a large procedural maze (occupancy bitmap) — a genuinely big map, no
+        // external file. Grid auto-sizes to it (see makeGridFor).
+        float sE,sN,gE,gN;
+        sim::genMaze(a.world, 56.f, 0.5f, (unsigned)(rng()|1u), sE,sN,gE,gN);
+        a.goal = {gE,gN};
+        return a;   // occ world — skip the wall/circle jitter below
+    } else if (name == "big-cluttered") {
+        // a large open field densely scattered with obstacles.
+        std::uniform_real_distribution<float> ue(-24,24), un(6,46), ur(0.9f,2.4f);
+        for (int i=0;i<40;++i){ sim::Circle c{ue(rng),un(rng),ur(rng)};
+            if (std::hypot(c.e,c.n)>4.f) a.world.circles.push_back(c); }
+        a.goal = {0.f, 46.f};
     } else {   // "random"
         a.world = randomWorld(rng, nObs);
         a.goal = randomGoal(rng, a.world);
@@ -200,6 +213,20 @@ Arena buildArena(const std::string& name, std::mt19937& rng, int nObs) {
         }
     }
     return a;
+}
+
+// The planning occupancy grid, sized to the world: the built-in small arenas use
+// the default ~80 m grid; a big occ-bitmap map (big-maze) gets a grid big enough
+// to cover it, centred on the map.
+navsim::OccupancyGrid makeGridFor(const sim::World& w) {
+    if (!w.hasOcc()) return navsim::OccupancyGrid();
+    navsim::OccupancyGrid::Params p; p.cellM = 0.5f;
+    const float e0=w.oe0, e1=w.oe0+w.ow*w.ocell, n0=w.on0, n1=w.on0+w.oh*w.ocell;
+    const float ext = std::max(e1-e0, n1-n0) + 10.f;
+    p.cells = std::min(360, std::max(160, (int)std::ceil(ext/p.cellM)));
+    navsim::OccupancyGrid g(p);
+    g.setOrigin((e0+e1)*0.5f, (n0+n1)*0.5f);
+    return g;
 }
 
 struct RunOpts {
@@ -335,6 +362,17 @@ cv::Mat renderGridView(const navsim::OccupancyGrid& g, const sim::World& w,
             cv::rectangle(img, cv::Rect(p.x-cs/2, p.y-cs/2, cs, cs), {80,110,220}, -1);
         }
     }
+    // true occupancy bitmap (big maps) — solid cells in the obstacle colour
+    if (w.hasOcc()) {
+        const int s = std::max(1, (int)(w.ocell*ppm) + 1);
+        for (int cy=0; cy<w.oh; ++cy) for (int cx=0; cx<w.ow; ++cx) {
+            if (!w.occSolid(cx,cy)) continue;
+            const float e = w.oe0+(cx+0.5f)*w.ocell, n = w.on0+(cy+0.5f)*w.ocell;
+            if (std::fabs(e-centerE) > spanM*0.55f || std::fabs(n-centerN) > spanM*0.55f) continue;
+            const cv::Point p = toPx(e,n);
+            cv::rectangle(img, cv::Rect(p.x-s/2, p.y-s/2, s, s), cv::Scalar(70,95,180), -1);
+        }
+    }
     // true obstacles (outline, so belief vs truth is visible)
     for (auto& c : w.circles) cv::circle(img, toPx(c.e,c.n), (int)(c.r*ppm), {80,110,220}, 1, cv::LINE_AA);
     for (auto& wl : w.walls)  cv::line(img, toPx(wl.e0,wl.n0), toPx(wl.e1,wl.n1), {80,110,220}, 2, cv::LINE_AA);
@@ -367,7 +405,7 @@ RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2
               const RunOpts& opt, bool verbose) {
     planner.reset();   // clear any per-episode state (bug2)
     sim::World world = worldIn;
-    navsim::OccupancyGrid grid;
+    navsim::OccupancyGrid grid = makeGridFor(world);
     navsim::Drone drone;   // starts at origin, facing the goal
     drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f / kPi;
     const int inflate = (int)std::ceil(1.5f / grid.cellM());   // ~1.5 m robot berth
@@ -448,7 +486,7 @@ RunResult run(navsim::IPlanner& planner, const sim::World& worldIn, navsim::Vec2
 // phase machine + reactive corridor + grid route instead of a path planner.
 RunResult runMss(const sim::World& worldIn, navsim::Vec2 goal, const RunOpts& opt, bool verbose) {
     sim::World world = worldIn;
-    navsim::OccupancyGrid grid;
+    navsim::OccupancyGrid grid = makeGridFor(world);
     navsim::Drone drone; drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f/kPi;
     const int inflate = (int)std::ceil(1.5f / grid.cellM());
     navsim::MoveStopSense mss; mss.reset();
@@ -491,7 +529,7 @@ RunResult runMss(const sim::World& worldIn, navsim::Vec2 goal, const RunOpts& op
 // mapping the reachable area. Home = origin; goal input is ignored.
 RunResult runExplore(const sim::World& worldIn, const RunOpts& opt, bool verbose) {
     sim::World world = worldIn;
-    navsim::OccupancyGrid grid; navsim::Drone drone;
+    navsim::OccupancyGrid grid = makeGridFor(world); navsim::Drone drone;
     const int inflate = (int)std::ceil(1.5f / grid.cellM());
     navsim::Explore expl; navsim::Vec2 home{0.f,0.f}; expl.reset(home);
     auto mapPlanner = navsim::makePlanner("astar");
@@ -536,7 +574,8 @@ void printRow(const char* name, const RunResult& r) {
 // ===========================================================================
 
 const std::vector<std::string> kArenas = {"random","empty","slalom","rooms","maze","trap","cluttered",
-                                          "comb","bottleneck","gap-choice","double-trap","pillars"};
+                                          "comb","bottleneck","gap-choice","double-trap","pillars",
+                                          "big-maze","big-cluttered"};
 const std::vector<std::string> kSensors = {"camera","tof","tof-wide"};
 
 // One steppable episode: world + grid + drone + planner + trail. Same physics
@@ -566,7 +605,7 @@ struct SimEpisode {
             if (sim::loadOccupancyImage(world, mapPath, mapMpp, se,sn,ge,gn)) { goal = {ge,gn}; }
             else { mapPath.clear(); Arena a=buildArena(arenaName,rng,6); world=a.world; goal=a.goal; }
         } else { Arena a = buildArena(arenaName, rng, 6); world = a.world; goal = a.goal; }
-        grid = navsim::OccupancyGrid();
+        grid = makeGridFor(world);
         drone = navsim::Drone(); drone.yawDeg = std::atan2(goal.e, goal.n) * 180.f/kPi;
         inflate = (int)std::ceil(1.5f / grid.cellM());
         mss = (plannerName == kMssName);
@@ -733,6 +772,11 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
     if (!ep.ranges.empty()) {   // corridor arrow (offset from the openest ray)
         cv::putText(fpv, "FPV", {8,20}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {255,255,255}, 1);
     }
+    // controls hint (top-right of the FPV pane, over the sky)
+    cv::putText(fpv, "click to choose  |  space: pause   [ / ]: speed   r: restart",
+                {8, fpvH-26}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {210,225,245}, 1);
+    cv::putText(fpv, "n: new seed / map   q: quit",
+                {8, fpvH-8}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {210,225,245}, 1);
     fpv.copyTo(canvas(cv::Rect(panelW, 0, viewW, fpvH)));
     // ---- top-down mapped (bottom right)
     const float cE=ep.goal.e*0.5f, cN=ep.goal.n*0.5f;

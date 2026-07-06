@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <queue>
+#include <random>
 #include <string>
 
 namespace sim {
@@ -39,6 +40,68 @@ float raySegment(float pe, float pn, float de, float dn,
     const float u = (qe * dn - qn * de) / denom;       // along the segment
     if (t < 0.f || u < 0.f || u > 1.f) return maxRange;
     return std::min(t, maxRange);
+}
+
+// Given a filled occ bitmap, compute the clearance distance-transform, pick a
+// roomy free START near the bottom-centre (origin placed so start = world (0,0)),
+// and a reachable free GOAL farthest from it. Shared by the image loader and the
+// procedural generators.
+void finalizeOcc(World& w, float& startE, float& startN, float& goalE, float& goalN) {
+    cv::Mat freeMask(w.oh, w.ow, CV_8U);
+    for (int y=0;y<w.oh;++y) for (int x=0;x<w.ow;++x)
+        freeMask.at<unsigned char>(y,x) = w.occ[(size_t)y*w.ow+x] ? 0 : 255;
+    cv::Mat dist; cv::distanceTransform(freeMask, dist, cv::DIST_L2, 3);
+    w.occDist.assign((size_t)w.ow*w.oh, 0.f);
+    for (int y=0;y<w.oh;++y) for (int x=0;x<w.ow;++x)
+        w.occDist[(size_t)y*w.ow+x] = dist.at<float>(y,x)*w.ocell;
+    // start = the roomiest free cell near the bottom-centre (drone needs berth)
+    int sx=w.ow/2, sy=1; float bestScore=-1e18f;
+    for (int y=0;y<w.oh;++y) for (int x=0;x<w.ow;++x){
+        if (w.occ[(size_t)y*w.ow+x]) continue;
+        const float openM = w.occDist[(size_t)y*w.ow+x];
+        if (openM < 1.6f) continue;
+        const float score = openM*3.f - std::hypot((float)(x-w.ow/2),(float)y)*w.ocell;
+        if (score>bestScore){ bestScore=score; sx=x; sy=y; }
+    }
+    w.oe0 = -sx*w.ocell; w.on0 = -sy*w.ocell;
+    startE=0.f; startN=0.f;
+    std::vector<int> dg((size_t)w.ow*w.oh,-1);
+    std::queue<std::pair<int,int>> q; q.push({sx,sy}); dg[(size_t)sy*w.ow+sx]=0;
+    int gx=sx, gy=sy, gmax=0; const int DX[4]={1,-1,0,0},DY[4]={0,0,1,-1};
+    while(!q.empty()){ auto[cx,cy]=q.front(); q.pop(); int dd=dg[(size_t)cy*w.ow+cx];
+        if(dd>gmax){gmax=dd;gx=cx;gy=cy;}
+        for(int k=0;k<4;++k){int nx=cx+DX[k],ny=cy+DY[k];
+            if(nx<0||ny<0||nx>=w.ow||ny>=w.oh)continue;
+            if(w.occ[(size_t)ny*w.ow+nx]||dg[(size_t)ny*w.ow+nx]>=0)continue;
+            dg[(size_t)ny*w.ow+nx]=dd+1; q.push({nx,ny});}}
+    goalE=w.oe0+gx*w.ocell; goalN=w.on0+gy*w.ocell;
+}
+
+// Recursive-division maze into the occ bitmap: keep splitting each region with a
+// wall that has ONE gap wide enough for the drone, until regions are corridor-
+// sized. Always fully connected (every wall has a gap), so always solvable.
+void mazeDivide(World& w, int N, int x0,int y0,int x1,int y1,
+                int minCell,int gapCell, std::mt19937& rng) {
+    const int wdt=x1-x0, hgt=y1-y0;
+    if (wdt < 2*minCell && hgt < 2*minCell) return;
+    const bool vert = (wdt > hgt);
+    if (vert) {
+        const int room = std::max(1, wdt-2*minCell);
+        const int wx = x0+minCell + (int)(rng()%room);
+        const int gr = std::max(1, hgt-gapCell);
+        const int gy = y0 + (int)(rng()%gr);
+        for (int y=y0;y<y1;++y) if (y<gy||y>=gy+gapCell) w.occ[(size_t)y*N+wx]=1;
+        mazeDivide(w,N,x0,y0,wx,y1,minCell,gapCell,rng);
+        mazeDivide(w,N,wx+1,y0,x1,y1,minCell,gapCell,rng);
+    } else {
+        const int room = std::max(1, hgt-2*minCell);
+        const int wy = y0+minCell + (int)(rng()%room);
+        const int gr = std::max(1, wdt-gapCell);
+        const int gx = x0 + (int)(rng()%gr);
+        for (int x=x0;x<x1;++x) if (x<gx||x>=gx+gapCell) w.occ[(size_t)wy*N+x]=1;
+        mazeDivide(w,N,x0,y0,x1,wy,minCell,gapCell,rng);
+        mazeDivide(w,N,x0,wy+1,x1,y1,minCell,gapCell,rng);
+    }
 }
 }  // namespace
 
@@ -97,43 +160,28 @@ bool loadOccupancyImage(World& w, const std::string& path, float metersPerPixel,
     }
     w.ow = img.cols; w.oh = img.rows; w.ocell = metersPerPixel;
     w.occ.assign((size_t)w.ow * w.oh, 0);
-    cv::Mat freeMask(img.rows, img.cols, CV_8U);
     for (int y = 0; y < img.rows; ++y)
         for (int x = 0; x < img.cols; ++x) {
-            // image row 0 = top; flip so +n (north) is UP in the image.
             const bool solid = img.at<unsigned char>(y, x) < 128;   // dark = obstacle
-            const int gy = img.rows - 1 - y;
+            const int gy = img.rows - 1 - y;                        // flip: +n up
             w.occ[(size_t)gy*w.ow + x] = solid ? 1 : 0;
-            freeMask.at<unsigned char>(gy, x) = solid ? 0 : 255;
         }
-    // distance-to-nearest-solid (metres) for clearance queries
-    cv::Mat dist; cv::distanceTransform(freeMask, dist, cv::DIST_L2, 3);
-    w.occDist.assign((size_t)w.ow * w.oh, 0.f);
-    for (int y = 0; y < w.oh; ++y)
-        for (int x = 0; x < w.ow; ++x)
-            w.occDist[(size_t)y*w.ow + x] = dist.at<float>(y, x) * w.ocell;
-    // start = free cell nearest the bottom-centre; origin placed so start = (0,0)
-    int sx = w.ow/2, sy = 0; float bestD = 1e18f;
-    for (int y = 0; y < w.oh; ++y) for (int x = 0; x < w.ow; ++x) {
-        if (w.occ[(size_t)y*w.ow+x]) continue;
-        const float d = (float)((x-w.ow/2)*(x-w.ow/2)) + (float)(y*y*4);   // prefer bottom-centre
-        if (d < bestD) { bestD = d; sx = x; sy = y; }
-    }
-    w.oe0 = -sx * w.ocell; w.on0 = -sy * w.ocell;      // start cell -> world (0,0)
-    startE = 0.f; startN = 0.f;
-    // goal = reachable free cell farthest from start (BFS over free cells)
-    std::vector<int> dgrid((size_t)w.ow*w.oh, -1);
-    std::queue<std::pair<int,int>> q; q.push({sx,sy}); dgrid[(size_t)sy*w.ow+sx]=0;
-    int gx=sx, gy=sy, gmax=0;
-    const int DX[4]={1,-1,0,0}, DY[4]={0,0,1,-1};
-    while (!q.empty()) { auto [cx,cy]=q.front(); q.pop();
-        const int dd=dgrid[(size_t)cy*w.ow+cx];
-        if (dd>gmax){ gmax=dd; gx=cx; gy=cy; }
-        for (int k=0;k<4;++k){ int nx=cx+DX[k], ny=cy+DY[k];
-            if(nx<0||ny<0||nx>=w.ow||ny>=w.oh) continue;
-            if(w.occ[(size_t)ny*w.ow+nx]||dgrid[(size_t)ny*w.ow+nx]>=0) continue;
-            dgrid[(size_t)ny*w.ow+nx]=dd+1; q.push({nx,ny}); } }
-    goalE = w.oe0 + gx * w.ocell; goalN = w.on0 + gy * w.ocell;
+    finalizeOcc(w, startE, startN, goalE, goalN);
+    return true;
+}
+
+bool genMaze(World& w, float worldSizeM, float ocellM, unsigned seed,
+             float& startE, float& startN, float& goalE, float& goalN) {
+    std::mt19937 rng(seed ? seed : 1u);
+    const int N = std::max(24, (int)(worldSizeM / ocellM));
+    w.ow = N; w.oh = N; w.ocell = ocellM;
+    w.occ.assign((size_t)N*N, 0);
+    for (int x=0;x<N;++x){ w.occ[x]=1; w.occ[(size_t)(N-1)*N+x]=1; }   // border
+    for (int y=0;y<N;++y){ w.occ[(size_t)y*N]=1; w.occ[(size_t)y*N+N-1]=1; }
+    const int minCell = std::max(8, (int)(4.0f/ocellM));   // corridors ~4 m
+    const int gapCell = std::max(8, (int)(4.0f/ocellM));   // gaps ~4 m (berth fits)
+    mazeDivide(w, N, 1, 1, N-1, N-1, minCell, gapCell, rng);
+    finalizeOcc(w, startE, startN, goalE, goalN);
     return true;
 }
 

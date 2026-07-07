@@ -13,6 +13,7 @@ inline float wrap180(float d){ while(d>180.f)d-=360.f; while(d<=-180.f)d+=360.f;
 
 void MoveStopSense::reset() {
     phase_ = Phase::SETTLE; tPhase_ = 0.f; haveWp_ = false; roundSign_ = 0.f;
+    scanDir_ = 0.f;
 }
 
 const char* MoveStopSense::phaseName() const {
@@ -61,24 +62,32 @@ MssOutput MoveStopSense::update(const MssInput& in, float dt) {
                 wpE_ = in.e + p_.stepM*std::sin(b); wpN_ = in.n + p_.stepM*std::cos(b);
                 haveWp_ = true;
                 phase_ = Phase::MOVE; tPhase_ = 0.f;
-            } else { phase_ = Phase::SCAN; tPhase_ = 0.f; } // cornered -> look
+            } else { phase_ = Phase::SCAN; tPhase_ = 0.f; scanDir_ = 0.f; } // cornered -> look
             break;                                         // hover this tick
         }
         case Phase::SCAN: {
-            if (in.corridorOpen >= p_.minOpenToMove) { phase_ = Phase::THINK; tPhase_ = 0.f; break; }
-            if (tPhase_ >= p_.scanTimeoutSec)        { phase_ = Phase::SETTLE; tPhase_ = 0.f; break; }
-            float dir;
-            if (p_.useMap && in.planValid) {
-                const float e = wrap180(in.planBearing - in.yawDeg);
-                dir = (std::fabs(e) < 3.f) ? (roundSign_!=0.f?roundSign_:-1.f)
-                                           : (e>=0.f?1.f:-1.f);
-            } else {
-                dir = (roundSign_!=0.f)        ? roundSign_
-                    : (in.corridorOffset>0.02f)?  1.f
-                    : (in.corridorOffset<-0.02f)? -1.f : -1.f;
+            if (in.corridorOpen >= p_.minOpenToMove) { phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f; break; }
+            if (tPhase_ >= p_.scanTimeoutSec)        { phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f; break; }
+            // LATCH one sweep direction for the whole SCAN episode. Recomputing it
+            // per-tick was the bug: when the grid route (planBearing) is itself
+            // blocked and nearly on the nose, the |e|<3 deadband flips `dir` every
+            // tick and the nose just jitters ±3 on a dead bearing, never sweeping
+            // to find the real opening. Pick the start side once — toward the route
+            // if it points clearly off-axis, else keep rounding the obstacle — then
+            // hold it, so the nose sweeps across every bearing until one opens.
+            if (scanDir_ == 0.f) {
+                if (p_.useMap && in.planValid) {
+                    const float e = wrap180(in.planBearing - in.yawDeg);
+                    scanDir_ = (std::fabs(e) < 3.f) ? (roundSign_!=0.f?roundSign_:-1.f)
+                                                    : (e>=0.f?1.f:-1.f);
+                } else {
+                    scanDir_ = (roundSign_!=0.f)        ? roundSign_
+                             : (in.corridorOffset>0.02f)?  1.f
+                             : (in.corridorOffset<-0.02f)? -1.f : -1.f;
+                }
             }
             o.yawScan = true; o.speedScale = 0.f;
-            o.bearingDeg = in.yawDeg + dir*90.f;           // keep turning `dir` in place
+            o.bearingDeg = in.yawDeg + scanDir_*90.f;      // keep sweeping one way in place
             break;
         }
         case Phase::MOVE: {

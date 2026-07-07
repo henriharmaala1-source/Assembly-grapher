@@ -30,6 +30,7 @@ void MissionController::enable(bool on) {
     tPhase_  = 0.f;
     haveWp_  = false;
     roundSign_ = 0.f;
+    scanDir_ = 0.f;
     if (on) {                          // fresh occupancy grid per mission (P5b)
         p_.map.robotR = p_.planBerthM; // route with a wider berth than live safety
         map_ = LocalMap(p_.map);
@@ -151,7 +152,7 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
                 commitWaypoint_(s);
                 phase_ = Phase::MOVE; tPhase_ = 0.f;
             } else if (fresh) {
-                phase_ = Phase::SCAN; tPhase_ = 0.f;     // cornered -> turn to look
+                phase_ = Phase::SCAN; tPhase_ = 0.f; scanDir_ = 0.f;  // cornered -> turn to look
             } else {
                 phase_ = Phase::SETTLE; tPhase_ = 0.f;   // no live data -> re-settle
             }
@@ -162,34 +163,39 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             // corridor opens up ahead, then re-plan. Give up after ~a full turn.
             // Scanning blind is pointless — stale perception drops us to SETTLE.
             if (!s.corridorFresh(p_.corridorStaleSec)) {
-                phase_ = Phase::SETTLE; tPhase_ = 0.f;
+                phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f;
                 break;
             }
             if (s.corridorOpen >= p_.minOpenToMove) {
-                phase_ = Phase::THINK; tPhase_ = 0.f;    // opening found -> commit
+                phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f;  // opening found -> commit
                 break;                                   // hover this tick
             }
             if (tPhase_ >= p_.scanTimeoutSec) {
-                phase_ = Phase::SETTLE; tPhase_ = 0.f;   // dead end -> settle & retry
+                phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f;  // dead end -> settle & retry
                 break;
             }
-            // Choose a turn direction. WITH a grid route, turn toward it — the
-            // planner knows from memory where the opening is, even when it lies
-            // well outside the blocked forward FoV (that's the whole point of the
-            // map). WITHOUT one, fall back to the reactive wall-follow: keep
-            // turning the way we're rounding the obstacle (the openest ray in a
-            // boxed FoV is noise), defaulting to a fixed side.
-            float dir;
-            if (p_.useMap && s.planValid) {
-                const float e = wrap180(s.planBearing - s.vehYawDeg);
-                dir = (std::fabs(e) < 3.f) ? (roundSign_ != 0.f ? roundSign_ : -1.f)
-                                           : (e >= 0.f ? 1.f : -1.f);
-            } else {
-                dir = (roundSign_ != 0.f)         ? roundSign_
-                    : (s.corridorOffset > 0.02f)  ?  1.f
-                    : (s.corridorOffset < -0.02f) ? -1.f : -1.f;
+            // LATCH one sweep direction for the whole SCAN, then hold it. Choosing
+            // per-tick was a livelock: when the grid route (planBearing) is itself
+            // blocked and lands within the |e|<3 deadband of the nose, `dir` flips
+            // every tick and the aircraft just jitters ~+/-3 on a dead bearing,
+            // never sweeping to the real opening. Pick the start side ONCE — toward
+            // the route if it points clearly off-axis (the planner knows from memory
+            // where the opening is), else keep rounding the obstacle the reactive
+            // way — then commit, so the nose sweeps across every bearing until one
+            // opens ahead. SCAN's job is to find an opening, not to align with a
+            // blocked plan.
+            if (scanDir_ == 0.f) {
+                if (p_.useMap && s.planValid) {
+                    const float e = wrap180(s.planBearing - s.vehYawDeg);
+                    scanDir_ = (std::fabs(e) < 3.f) ? (roundSign_ != 0.f ? roundSign_ : -1.f)
+                                                    : (e >= 0.f ? 1.f : -1.f);
+                } else {
+                    scanDir_ = (roundSign_ != 0.f)         ? roundSign_
+                             : (s.corridorOffset > 0.02f)  ?  1.f
+                             : (s.corridorOffset < -0.02f) ? -1.f : -1.f;
+                }
             }
-            c.yaw = dir * p_.scanYawRate;
+            c.yaw = scanDir_ * p_.scanYawRate;
             break;                  // yaw only, no pitch
         }
         case Phase::MOVE: {

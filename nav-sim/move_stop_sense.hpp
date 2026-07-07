@@ -65,6 +65,7 @@ private:
     float  tPhase_ = 0.f;
     float  legE_ = 0, legN_ = 0, wpE_ = 0, wpN_ = 0;
     float  roundSign_ = 0.f;
+    float  scanDir_   = 0.f;   // latched sweep direction for the current SCAN
     bool   haveWp_ = false;
 };
 

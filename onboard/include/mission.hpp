@@ -100,5 +100,9 @@ private:
     float  roundSign_ = 0.f;            // which way we're rounding an obstacle
                                         // (-1 left / +1 right / 0 none) — steers
                                         // the scan out of a concave dead-end
+    float  scanDir_   = 0.f;            // sweep direction latched for the current
+                                        // SCAN (0 = pick one on entry) — a whole-
+                                        // episode commit so the nose sweeps instead
+                                        // of jittering on a blocked plan bearing
     bool   haveWp_  = false;
 };

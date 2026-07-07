@@ -46,6 +46,8 @@ public:
         float minOpenToKeep = 0.06f;
         float scanYawRate   = 1.0f;   // (sim: just a turn intent)
         float scanTimeoutSec= 9.f;
+        int   stuckSweeps   = 4;      // failed attempts within stuckEscapeM -> STUCK
+        float stuckEscapeM  = 1.5f;   // net move that counts as escaping a dead spot
         bool  useMap        = true;   // use the grid route as the goal term
     };
 
@@ -57,8 +59,14 @@ public:
     const char* phaseName() const;
 
 private:
-    enum class Phase { SETTLE, THINK, SCAN, MOVE, ARRIVE };
+    // STUCK — boxed in for real: the drone has swept in place stuckSweeps times
+    // without a single leg making progress. It cannot self-recover in a static
+    // world (deterministic controller -> same inputs -> same "no opening"), so it
+    // stops thrashing, holds a stationary hover, and waits for the world/operator
+    // to change. Passive only: no yaw, no translation.
+    enum class Phase { SETTLE, THINK, SCAN, MOVE, ARRIVE, STUCK };
     float desiredBearing_(const MssInput& in) const;   // goal+corridor blend (ported)
+    bool  tallyStuck_(float e, float n);   // net-displacement stuck detector
 
     Params p_;
     Phase  phase_ = Phase::SETTLE;
@@ -66,6 +74,9 @@ private:
     float  legE_ = 0, legN_ = 0, wpE_ = 0, wpN_ = 0;
     float  roundSign_ = 0.f;
     float  scanDir_   = 0.f;   // latched sweep direction for the current SCAN
+    int    scanFails_ = 0;     // failed attempts near the current anchor
+    float  stuckAnchorE_ = 0.f, stuckAnchorN_ = 0.f;  // where the trouble started
+    bool   haveAnchor_ = false;
     bool   haveWp_ = false;
 };
 

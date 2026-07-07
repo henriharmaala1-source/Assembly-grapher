@@ -30,7 +30,13 @@ public:
     // place (yaw only, no translation) to bring open space into the camera FoV,
     // then re-plan. A forward-facing narrow-FoV camera cannot see a lateral
     // escape around an obstacle wider than its FoV without first turning to look.
-    enum class Phase { SETTLE, THINK, SCAN, MOVE, ARRIVE };
+    //
+    // STUCK — boxed in for real: the aircraft has made stuckSweeps navigation
+    // attempts without escaping a small radius of where the trouble began. It
+    // cannot self-recover in a static world (a deterministic controller re-derives
+    // the same "no opening" forever), so it stops thrashing, holds a stationary
+    // hover, raises STUCK on telemetry, and waits for the world/operator to change.
+    enum class Phase { SETTLE, THINK, SCAN, MOVE, ARRIVE, STUCK };
 
     struct Params {
         float settleSec      = 1.5f;   // min hover time before committing a leg
@@ -52,6 +58,9 @@ public:
                                        // so skimming the inflated edge is safe.
         float scanYawRate    = 0.4f;   // yaw stick while scanning ([-1,1])
         float scanTimeoutSec = 9.f;    // give up scanning after ~a full rotation
+        int   stuckSweeps    = 4;      // failed attempts within stuckEscapeM -> STUCK
+        float stuckEscapeM   = 1.5f;   // net move (m) that counts as escaping a dead
+                                       // spot and clears the stuck tally
 
         // P5b — local occupancy grid + wavefront planner. When enabled and a
         // route exists, the grid gives the GLOBAL direction (routing around
@@ -87,6 +96,7 @@ private:
     // to RE-STEER live while moving (reactive avoidance, not a blind waypoint run).
     float desiredBearing_(const WorldState& s) const;
     void  commitWaypoint_(const WorldState& s);
+    bool  tallyStuck_(float e, float n);   // net-displacement stuck detector
 
     void  updateMap_(WorldState& s);   // integrate the scan + (re)plan (P5b)
 
@@ -104,5 +114,9 @@ private:
                                         // SCAN (0 = pick one on entry) — a whole-
                                         // episode commit so the nose sweeps instead
                                         // of jittering on a blocked plan bearing
+    int    scanFails_ = 0;             // failed attempts near the current anchor
+    float  stuckAnchorE_ = 0.f;        // where the current run of trouble began
+    float  stuckAnchorN_ = 0.f;        // (ENU) — net-displacement stuck detector
+    bool   haveAnchor_ = false;
     bool   haveWp_  = false;
 };

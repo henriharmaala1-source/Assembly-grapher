@@ -13,7 +13,25 @@ inline float wrap180(float d){ while(d>180.f)d-=360.f; while(d<=-180.f)d+=360.f;
 
 void MoveStopSense::reset() {
     phase_ = Phase::SETTLE; tPhase_ = 0.f; haveWp_ = false; roundSign_ = 0.f;
-    scanDir_ = 0.f;
+    scanDir_ = 0.f; scanFails_ = 0; haveAnchor_ = false;
+}
+
+// Record one failed navigation attempt and report whether the drone is now stuck.
+// "Stuck" is defined by NET displacement, not by any single phase timing: an
+// anchor is dropped where the trouble starts, and every attempt that ends still
+// within stuckEscapeM of it increments the tally. The instant the drone gets
+// farther than that from the anchor it has genuinely relocated, so the anchor
+// jumps forward and the tally clears. Only a true limit cycle — pinned within a
+// small radius across stuckSweeps attempts — trips it. This is robust to the
+// funnel failure where the corridor momentarily reads "open" and the drone
+// twitches back and forth without ever escaping.
+bool MoveStopSense::tallyStuck_(float e, float n) {
+    if (!haveAnchor_) { stuckAnchorE_ = e; stuckAnchorN_ = n; haveAnchor_ = true; }
+    if (std::hypot(e - stuckAnchorE_, n - stuckAnchorN_) > p_.stuckEscapeM) {
+        stuckAnchorE_ = e; stuckAnchorN_ = n; scanFails_ = 0;   // real progress
+        return false;
+    }
+    return ++scanFails_ >= p_.stuckSweeps;
 }
 
 const char* MoveStopSense::phaseName() const {
@@ -23,6 +41,7 @@ const char* MoveStopSense::phaseName() const {
         case Phase::SCAN:   return "SCAN";
         case Phase::MOVE:   return "MOVE";
         case Phase::ARRIVE: return "ARRIVE";
+        case Phase::STUCK:  return "STUCK";
     }
     return "?";
 }
@@ -67,7 +86,15 @@ MssOutput MoveStopSense::update(const MssInput& in, float dt) {
         }
         case Phase::SCAN: {
             if (in.corridorOpen >= p_.minOpenToMove) { phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f; break; }
-            if (tPhase_ >= p_.scanTimeoutSec)        { phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f; break; }
+            if (tPhase_ >= p_.scanTimeoutSec) {
+                // Full sweep found no opening — one failed attempt. Finish the sweep
+                // (we're here at its timeout, not mid-rotation), then either re-settle
+                // and try again or, if we've been pinned in the same spot for
+                // stuckSweeps attempts, latch STUCK.
+                scanDir_ = 0.f; tPhase_ = 0.f;
+                phase_ = tallyStuck_(in.e, in.n) ? Phase::STUCK : Phase::SETTLE;
+                break;
+            }
             // LATCH one sweep direction for the whole SCAN episode. Recomputing it
             // per-tick was the bug: when the grid route (planBearing) is itself
             // blocked and nearly on the nose, the |e|<3 deadband flips `dir` every
@@ -108,7 +135,22 @@ MssOutput MoveStopSense::update(const MssInput& in, float dt) {
             wpE_ = in.e + p_.stepM*std::sin(b); wpN_ = in.n + p_.stepM*std::cos(b);
             break;
         }
-        case Phase::ARRIVE: { phase_ = Phase::SETTLE; tPhase_ = 0.f; break; }  // stop, re-think
+        case Phase::ARRIVE: {
+            // A leg (real or a phantom-open nudge) just ended — count it as an
+            // attempt. If the drone has been pinned near the same spot for
+            // stuckSweeps attempts, latch STUCK instead of thinking again.
+            phase_ = tallyStuck_(in.e, in.n) ? Phase::STUCK : Phase::SETTLE;
+            tPhase_ = 0.f;
+            break;
+        }
+        case Phase::STUCK: {
+            // Boxed in for real — hold a stationary hover and STAY PUT. No sweeping,
+            // no translation, no auto-recovery: a deterministic controller in a
+            // static world would only re-derive the same "no opening" forever, and a
+            // momentary phantom-open reading must not un-stick it. Cleared only by a
+            // fresh mission (reset) or the operator. This is the honest failure mode.
+            break;                                         // hover, in place
+        }
     }
 
     o.phase = phaseName(); o.wpE = wpE_; o.wpN = wpN_;

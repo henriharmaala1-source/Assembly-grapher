@@ -20,8 +20,27 @@ const char* MissionController::phaseName(Phase p) {
         case Phase::SCAN:   return "SCAN";
         case Phase::MOVE:   return "MOVE";
         case Phase::ARRIVE: return "ARRIVE";
+        case Phase::STUCK:  return "STUCK";
     }
     return "?";
+}
+
+// Record one failed navigation attempt and report whether the aircraft is now
+// stuck. "Stuck" is defined by NET displacement, not by any single phase timing:
+// an anchor is dropped where the trouble starts, and every attempt that ends
+// still within stuckEscapeM of it increments the tally. The instant the aircraft
+// gets farther than that from the anchor it has genuinely relocated, so the
+// anchor jumps forward and the tally clears. Only a true limit cycle — pinned
+// within a small radius across stuckSweeps attempts — trips it. Robust to the
+// funnel failure where the corridor momentarily reads "open" and the aircraft
+// twitches back and forth without ever escaping.
+bool MissionController::tallyStuck_(float e, float n) {
+    if (!haveAnchor_) { stuckAnchorE_ = e; stuckAnchorN_ = n; haveAnchor_ = true; }
+    if (std::hypot(e - stuckAnchorE_, n - stuckAnchorN_) > p_.stuckEscapeM) {
+        stuckAnchorE_ = e; stuckAnchorN_ = n; scanFails_ = 0;   // real progress
+        return false;
+    }
+    return ++scanFails_ >= p_.stuckSweeps;
 }
 
 void MissionController::enable(bool on) {
@@ -31,6 +50,8 @@ void MissionController::enable(bool on) {
     haveWp_  = false;
     roundSign_ = 0.f;
     scanDir_ = 0.f;
+    scanFails_ = 0;
+    haveAnchor_ = false;
     if (on) {                          // fresh occupancy grid per mission (P5b)
         p_.map.robotR = p_.planBerthM; // route with a wider berth than live safety
         map_ = LocalMap(p_.map);
@@ -171,7 +192,11 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
                 break;                                   // hover this tick
             }
             if (tPhase_ >= p_.scanTimeoutSec) {
-                phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f;  // dead end -> settle & retry
+                // Full sweep found no opening — one failed attempt. If the aircraft
+                // has been pinned near the same spot for stuckSweeps attempts it is
+                // genuinely boxed in: latch STUCK. Otherwise re-settle and retry.
+                scanDir_ = 0.f; tPhase_ = 0.f;
+                phase_ = tallyStuck_(s.estPe, s.estPn) ? Phase::STUCK : Phase::SETTLE;
                 break;
             }
             // LATCH one sweep direction for the whole SCAN, then hold it. Choosing
@@ -234,8 +259,21 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             break;
         }
         case Phase::ARRIVE: {
-            phase_ = Phase::SETTLE; tPhase_ = 0.f;   // stop, then think again
+            // A leg (real, or a phantom-open nudge) just ended — count it as an
+            // attempt. If the aircraft has been pinned near the same spot for
+            // stuckSweeps attempts, latch STUCK instead of thinking again.
+            phase_ = tallyStuck_(s.estPe, s.estPn) ? Phase::STUCK : Phase::SETTLE;
+            tPhase_ = 0.f;
             break;                  // hover
+        }
+        case Phase::STUCK: {
+            // Boxed in for real — hold a stationary hover and STAY PUT. No sweeping,
+            // no translation, no auto-recovery: a deterministic controller in a
+            // static world would only re-derive the same "no opening" forever, and a
+            // momentary phantom-open reading must not un-stick it. Raises STUCK on
+            // the telemetry phase for the operator; cleared only by a fresh mission
+            // (enable) or the operator taking over. The honest failure mode.
+            break;                  // hover (all-zero command)
         }
     }
 

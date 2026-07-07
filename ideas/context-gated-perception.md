@@ -4,7 +4,11 @@
 — not in `PROJECT.md`/`ROADMAP.md` — because it hasn't been designed against
 the real interfaces (`IPerceptionModule`, the Deliberator scheduler,
 `Mission::Params`) yet, and nothing below should be read as built or planned
-for a specific phase. If it graduates, it lands as a `P6.x` item.*
+for a specific phase. If it graduates, it lands as a `P6.x` item. A follow-on
+research note — whether AI could ever make the decisions here rather than
+just the perception, what hardware/training that would take, and how far
+that is from this project's Pi-5 constraint — lives in
+`ideas/learned-decision-making.md`.*
 
 ---
 

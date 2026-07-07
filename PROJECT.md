@@ -19,58 +19,34 @@ covered here)
 
 ## Prologue
 
-Early February 2026, a reconnaissance variant of the Russian Geran/Shahed
-strike-drone line was recovered and taken apart. Open-source technical
-breakdowns of the wreckage found a **Raspberry Pi 5** on board, running video
-processing, alongside a Windows mini-PC handling other functions. Not a
-custom board built to a military spec. A single-board computer anyone can
-order for a few hundred euros, doing onboard video AI on a live combat
-airframe.
+Early February 2026, a recovered Russian Geran/Shahed reconnaissance drone
+was found running video processing on a **Raspberry Pi 5** — not a
+military-spec board, a single-board computer anyone can order for a few
+hundred euros, doing onboard AI on a live combat airframe.
 
-That's not where this project's hardware bet came from — the hypothesis this
-project was already built on, that cheap, CPU-only, general-purpose compute
-is enough for real onboard perception rather than a compromise to be
-replaced once better hardware is affordable, predates that find. What the
-Geran wreckage did was **confirm** it: independent, real-world evidence,
-from an active combat example, that the exact hardware-scope bet this
-project holds to is one a live war has separately converged on too.
+That's not where this project's hardware bet came from; the hypothesis this
+project was already built on — that cheap, CPU-only, general-purpose compute
+is enough for real onboard perception — predates that find. But it's
+independent confirmation of it, and not an isolated data point. Ukraine's
+**Hornet** strike drone (a complete aircraft, not directly comparable in cost
+or scope, but the same navigation premise) flies primarily by optical flow,
+with GPS reduced to an occasional cross-check, because satellite navigation
+is the first thing a contested electromagnetic environment takes away.
+Russia's **Geran-2 MS** carries an Nvidia Jetson Orin for onboard,
+terminal-phase target correction. And since 2025, a commercial category of
+**AI lock-on add-on modules** for ordinary FPV airframes — **TFL-1** chief
+among them, reportedly ~$442 a unit — has gone from prototype to
+mass-fielded, one Ukrainian brigade reporting hit rate going from 20% to 80%.
 
-It isn't isolated. On the other side of the same conflict, Ukraine's
-**Hornet** — a fixed-wing strike drone built by the American firm Perennial
-Autonomy, in service since March 2026 and used to cut Russian logistics 50–150
-km behind the front — is a complete aircraft system, not a module, so it
-isn't directly comparable to this project or the other data points here on
-cost or scope. What it does confirm is the same underlying navigation bet:
-it flies primarily by **optical flow** — a downward camera and a processor
-tracking terrain motion beneath it, GPS reduced to an occasional cross-check
-rather than the primary reference, specifically because satellite navigation
-is the first thing a contested electromagnetic environment takes away. And on
-the Russian side, the production Geran-2 MS variant now carries an **Nvidia
-Jetson Orin** module for onboard AI object recognition, correcting its own
-terminal-phase trajectory against a moving target from its own video feed —
-manufactured at a reported 5,000+ units a month.
-
-A fourth data point: since 2025, a commercial category of **AI lock-on
-add-on modules for FPV airframes** has gone from prototype to mass-fielded —
-**TFL-1**, from the firm The Fourth Law, chief among them, reportedly around
-**$442** a unit. Strapped onto an otherwise ordinary FPV, it takes over
-final-approach guidance: detecting, tracking, and closing on a target
-independent of the radio link. One Ukrainian brigade using it reported hit
-rate going from 20% to 80%. This isn't a research paper or a demo — it's a
-live commercial market, at a price point in the same neighborhood as this
-project's own BOM.
-
-Four data points, not three, and not confined to one side of the war: when
-the radio link and the satellite fix are the first casualties of contact,
-the airframe has to be able to see and decide for itself, on hardware cheap
-enough to be attritable — and, increasingly, cheap enough to be sold as a
-module rather than built once per program. That isn't a future requirement
-this project is planning for — it's the ground this project already stood
-on, and the Geran wreckage, Hornet, and the TFL-1 category are each
-confirmation of it from a real, active-combat or active-market example, not
-the source of it. This project runs the same underlying bet at module scale
-rather than whole-aircraft scale, with a scope boundary this document states
-plainly and holds to (see *Design decisions*, below).
+Four data points, two sides of the same war, one conclusion: when the radio
+link and the satellite fix are the first casualties of contact, the airframe
+has to see and decide for itself, on hardware cheap enough to be attritable.
+That isn't a future requirement this project plans for — it's the ground
+this project already stood on, and each of these is confirmation of it from
+a real, active-combat or active-market example, not the source of it. This
+project runs the same underlying bet at module scale, not whole-aircraft
+scale, with a scope boundary stated plainly and held (see *Design
+decisions*, below).
 
 ---
 
@@ -85,8 +61,8 @@ every extension point, and a headless software-in-the-loop test suite that
 validates the full perception→estimation→planning→control pipeline before any
 hardware is required.
 
-**Scale:** 24 source files and 29 headers, C++17, 9 CTest targets (in-tree,
-hardware-free, runs in under 3 seconds), one custom occupancy-grid planner, one
+**Scale:** 24 source files and 29 headers, C++17, 10 CTest targets (in-tree,
+hardware-free, runs in under 10 seconds), one custom occupancy-grid planner, one
 loosely-coupled Kalman estimator, four plugin interfaces, built iteratively over
 roughly 14 weeks (March–July 2026).
 
@@ -113,8 +89,8 @@ testbed for evaluating autonomy approaches on analog FPV airframes — the class
 of platform already in wide field use for reconnaissance and inspection roles
 where GPS is degraded and commercial companion-computer hardware is cost- or
 mass-prohibitive at scale. It is not built or positioned as a consumer/hobbyist
-product, even though it is built from hobbyist-market hardware (see *Market
-context*, below) for cost reasons.
+product, even though it is built from hobbyist-market hardware (see
+`onboard/docs/bom.md`) for cost reasons.
 
 ---
 
@@ -294,6 +270,37 @@ planner robust to the vehicle's own position falling inside that wider margin
 
 ---
 
+## Key challenges and solutions
+
+### Software / autonomy-stack challenges
+
+| Challenge | Solution | Status |
+|---|---|---|
+| CPU-bound perception (depth inference, detection) could stall the control loop if run on the same thread as flight control | Two/three-tier threading (fly loop / Deliberator / FcLink) + `SCHED_FIFO` real-time scheduling so inference physically cannot preempt the control-critical threads | Built, SITL-tested |
+| A camera capture stall could silently starve the flight-controller command rate below its failsafe floor | Dedicated `FcLink` thread owns the FC connection exclusively at a fixed ~50Hz, independent of camera timing; substitutes a neutral hover rather than repeating a stale command | Built, unit-tested |
+| A purely reactive obstacle-avoidance layer forgets an obstacle once it leaves the field of view — stalls on anything sitting on the direct path (a known local-minimum failure mode) | Rolling occupancy grid + wavefront planner layered as a goal-bias term over the existing reactive blend — required two non-obvious fixes (wider planning inflation than the live safety margin; snap-to-nearest-free-cell when the vehicle's own position falls inside that margin) | Built, SITL-tested (previously-stalling scenarios now reach goal) |
+| A stalled perception thread could leave stale data trusted indefinitely by the control path | Every blackboard field is timestamped and checked against a staleness threshold, not just a validity flag | Built, tested |
+| Monocular depth has no absolute scale, which corrupts a *metric* occupancy grid | Committed a forward time-of-flight sensor as the primary obstacle source (metric, geometrically sound); monocular kept as a nominal-scale fallback | Designed and integrated; awaiting hardware to validate the ToF path for real |
+| The FPV camera's fixed up-tilt (for horizon-centering in forward flight) points at the sky during a hover, which would corrupt grid observations | Feed effective (attitude + mount-tilt) elevation into de-rotation; suppress grid writes outside a usable elevation window | Built; relevant only to the monocular fallback path — moot on the forward-fixed ToF sensor |
+| Sequential, single-threaded perception dispatch leaves idle CPU cores unused during stationary mission phases | Identified opportunity (core rescheduling during SETTLE/THINK/SCAN) — see *Perception scheduling*, above | **Not built** — on the roadmap (F11), not yet implemented |
+| No MAVLink-centric tooling (MAVROS, PX4-Avoidance) applies to a Betaflight/iNAV airframe | Built the MSP protocol integration from the wire spec up | Built, tested against a PTY-simulated FC |
+
+### Drone / airframe architecture challenges
+
+| Challenge | Solution | Status |
+|---|---|---|
+| A Pi 5 draws real continuous power (~8–12W typical under load) from the same 6S flight battery — a direct trade against flight endurance | Accepted explicitly as a cost of the design (no GPU, CPU-only, minimal added electrical load); not eliminated, stated as a trade-off | Open, stated as a known cost rather than solved |
+| Sustained CPU load under inference risks thermal throttling on a Pi 5, which would silently defeat the real-time scheduling guarantees (`vcgencmd get_throttled` can show this happening with no other symptom) | Official 27W PD supply + active cooling specified as a hardware prerequisite alongside F9's scheduling work | Documented requirement; **not yet validated on real hardware** |
+| Added mass (Pi 5, capture dongle, power breakout, ToF/GPS modules) changes a freestyle airframe's thrust-to-weight and flight characteristics | Minimized by design: no GPU, no dedicated camera (passive analog tap instead), COTS lightweight components only | Designed for; real added mass not yet measured on the assembled airframe |
+| FPV airframes vibrate significantly at motor/prop harmonics — risk to capture quality and any vibration-sensitive sensor | Attitude is taken directly from the FC's own already-filtered AHRS rather than a second onboard IMU, avoiding a second vibration-sensitive sensing path; physical mount damping is a build-phase task, not yet done | Partially designed around; physical isolation not yet built/tested |
+| Tapping the analog composite video signal into a Pi 5 has no proper commercial solution — consumer USB analog-capture dongles are not built or validated for this use, and ARM/Pi 5 driver support for any given chipset is inconsistent and largely undocumented | No clean fix exists yet, so none is claimed: the approach is to trial available capture dongles now, during testing, to find one that works well enough to validate the rest of the pipeline — and revisit the analog-capture problem properly, on its own, once the rest of the product is otherwise finished, rather than block on solving it upfront | **Open, deliberately deferred** — not solved, not designed around, explicitly revisited later |
+| Limited UART availability on a compact flight controller (Matek H743-SLIM V4) shared across GPS, VTX telemetry, ELRS receiver, and the companion-computer MSP link | UART budget planned against the FC's actual port count in the BOM; MSP given a dedicated port | Planned; not yet wired on real hardware |
+| GPS/compass magnetic interference from nearby ESC current and VTX transmission on a compact 7" frame | Physical placement (mast/offset) planned in the BOM; software-side, the loosely-coupled estimator gates out degraded fixes rather than trusting a single reading blindly | Software mitigation built; physical placement not yet validated |
+| A forward-fixed ToF sensor (chosen specifically to dodge the camera-tilt problem) has a narrower field of view than a gimbaled or wider sensor would — it only sees what's directly ahead | Accepted as a scope trade-off: matches the corridor-steering use case (forward obstacle avoidance), not full-surround sensing | Stated as a design trade-off, not a gap to hide |
+| A hobbyist freestyle frame isn't designed for a companion-computer payload — mounting, connector strain relief, and crash survivability of wiring are unsolved for this specific build | Not yet solved — this is a physical build task waiting on the parts that are on order | **Open**, honestly unaddressed until the physical build happens |
+
+---
+
 ## Engineering process
 
 The project was built test-first wherever the target hardware wasn't
@@ -314,17 +321,19 @@ real production sources:
   failure mode described above, before it was fixed — the fix's acceptance
   criterion was flipping two previously-asserted-failing scenarios to passing
   without regressing any of the others.
-- Eight further unit-test binaries covering the estimator (glitch gating,
+- Nine further unit-test binaries covering the estimator (glitch gating,
   re-acquisition, uncertainty growth under GPS loss), the mode-arbitration
   safety layers, the wire protocol to the flight controller (verified against
   a PTY-attached simulated FC — including channel order, checksum, and
   telemetry decode), the FC-link thread's behavior under a stalled control
   loop (it must substitute a neutral hover, not keep repeating a stale motion
   command indefinitely), the config parser, the RC command source, real-time
-  thread scheduling, and the occupancy-grid planner in isolation.
+  thread scheduling, the occupancy-grid planner in isolation, and the
+  crash-survivable flight-data black box (round-trip, truncated-tail
+  recovery, corruption rejection, mid-file resync).
 
-The full suite — 9 CTest targets — runs in under 3 seconds with no camera, no
-flight controller, and no network, the same discipline major open-source
+The full suite — 10 CTest targets — runs in under 10 seconds with no camera,
+no flight controller, and no network, the same discipline major open-source
 flight-controller projects (ArduPilot, PX4) apply to their own CI.
 
 One integration issue is worth naming specifically because it shaped the
@@ -363,37 +372,6 @@ undifferentiated pass, split into two tracks:
   in the control loop), a ground-station view, and mission-capability
   extensions (broader object detection, standoff-only subject following,
   multi-goal missions, a geofence).
-
----
-
-## Key challenges and solutions
-
-### Software / autonomy-stack challenges
-
-| Challenge | Solution | Status |
-|---|---|---|
-| CPU-bound perception (depth inference, detection) could stall the control loop if run on the same thread as flight control | Two/three-tier threading (fly loop / Deliberator / FcLink) + `SCHED_FIFO` real-time scheduling so inference physically cannot preempt the control-critical threads | Built, SITL-tested |
-| A camera capture stall could silently starve the flight-controller command rate below its failsafe floor | Dedicated `FcLink` thread owns the FC connection exclusively at a fixed ~50Hz, independent of camera timing; substitutes a neutral hover rather than repeating a stale command | Built, unit-tested |
-| A purely reactive obstacle-avoidance layer forgets an obstacle once it leaves the field of view — stalls on anything sitting on the direct path (a known local-minimum failure mode) | Rolling occupancy grid + wavefront planner layered as a goal-bias term over the existing reactive blend — required two non-obvious fixes (wider planning inflation than the live safety margin; snap-to-nearest-free-cell when the vehicle's own position falls inside that margin) | Built, SITL-tested (previously-stalling scenarios now reach goal) |
-| A stalled perception thread could leave stale data trusted indefinitely by the control path | Every blackboard field is timestamped and checked against a staleness threshold, not just a validity flag | Built, tested |
-| Monocular depth has no absolute scale, which corrupts a *metric* occupancy grid | Committed a forward time-of-flight sensor as the primary obstacle source (metric, geometrically sound); monocular kept as a nominal-scale fallback | Designed and integrated; awaiting hardware to validate the ToF path for real |
-| The FPV camera's fixed up-tilt (for horizon-centering in forward flight) points at the sky during a hover, which would corrupt grid observations | Feed effective (attitude + mount-tilt) elevation into de-rotation; suppress grid writes outside a usable elevation window | Built; relevant only to the monocular fallback path — moot on the forward-fixed ToF sensor |
-| Sequential, single-threaded perception dispatch leaves idle CPU cores unused during stationary mission phases | Identified opportunity (core rescheduling during SETTLE/THINK/SCAN) — see *Perception scheduling*, above | **Not built** — on the roadmap (F11), not yet implemented |
-| No MAVLink-centric tooling (MAVROS, PX4-Avoidance) applies to a Betaflight/iNAV airframe | Built the MSP protocol integration from the wire spec up | Built, tested against a PTY-simulated FC |
-
-### Drone / airframe architecture challenges
-
-| Challenge | Solution | Status |
-|---|---|---|
-| A Pi 5 draws real continuous power (~8–12W typical under load) from the same 6S flight battery — a direct trade against flight endurance | Accepted explicitly as a cost of the design (no GPU, CPU-only, minimal added electrical load); not eliminated, stated as a trade-off | Open, stated as a known cost rather than solved |
-| Sustained CPU load under inference risks thermal throttling on a Pi 5, which would silently defeat the real-time scheduling guarantees (`vcgencmd get_throttled` can show this happening with no other symptom) | Official 27W PD supply + active cooling specified as a hardware prerequisite alongside F9's scheduling work | Documented requirement; **not yet validated on real hardware** |
-| Added mass (Pi 5, capture dongle, power breakout, ToF/GPS modules) changes a freestyle airframe's thrust-to-weight and flight characteristics | Minimized by design: no GPU, no dedicated camera (passive analog tap instead), COTS lightweight components only | Designed for; real added mass not yet measured on the assembled airframe |
-| FPV airframes vibrate significantly at motor/prop harmonics — risk to capture quality and any vibration-sensitive sensor | Attitude is taken directly from the FC's own already-filtered AHRS rather than a second onboard IMU, avoiding a second vibration-sensitive sensing path; physical mount damping is a build-phase task, not yet done | Partially designed around; physical isolation not yet built/tested |
-| Tapping the analog composite video signal into a Pi 5 has no proper commercial solution — consumer USB analog-capture dongles are not built or validated for this use, and ARM/Pi 5 driver support for any given chipset is inconsistent and largely undocumented | No clean fix exists yet, so none is claimed: the approach is to trial available capture dongles now, during testing, to find one that works well enough to validate the rest of the pipeline — and revisit the analog-capture problem properly, on its own, once the rest of the product is otherwise finished, rather than block on solving it upfront | **Open, deliberately deferred** — not solved, not designed around, explicitly revisited later |
-| Limited UART availability on a compact flight controller (Matek H743-SLIM V4) shared across GPS, VTX telemetry, ELRS receiver, and the companion-computer MSP link | UART budget planned against the FC's actual port count in the BOM; MSP given a dedicated port | Planned; not yet wired on real hardware |
-| GPS/compass magnetic interference from nearby ESC current and VTX transmission on a compact 7" frame | Physical placement (mast/offset) planned in the BOM; software-side, the loosely-coupled estimator gates out degraded fixes rather than trusting a single reading blindly | Software mitigation built; physical placement not yet validated |
-| A forward-fixed ToF sensor (chosen specifically to dodge the camera-tilt problem) has a narrower field of view than a gimbaled or wider sensor would — it only sees what's directly ahead | Accepted as a scope trade-off: matches the corridor-steering use case (forward obstacle avoidance), not full-surround sensing | Stated as a design trade-off, not a gap to hide |
-| A hobbyist freestyle frame isn't designed for a companion-computer payload — mounting, connector strain relief, and crash survivability of wiring are unsolved for this specific build | Not yet solved — this is a physical build task waiting on the parts that are on order | **Open**, honestly unaddressed until the physical build happens |
 
 ---
 
@@ -443,40 +421,10 @@ Concretely, across five recurring roles:
 
 ## Market context
 
-**Independent market-research estimates** (360iResearch; ResearchAndMarkets)
-put the global drone onboard-computer market at roughly **$340–450M in 2025**,
-projected to grow at a **13–15% CAGR** to **$890M–970M by 2032**, driven by
-demand for AI-enabled autonomy, sensor fusion, and GPS-denied/BVLOS-capable
-operation across defense, public safety, agriculture, and infrastructure
-inspection. This project sits at the extreme low-cost end of that market and
-was not built to compete commercially in it — the comparison below exists to
-show where the design choices land, not to claim traction.
-
-**The specific gap this project targets:** a cheap companion computer, built
-from deliberately limited (CPU-only, no GPU) hardware, integrated directly
-onto an existing analog FPV airframe. Every comparison point below misses
-that gap in a different direction — ModalAI and Auterion are onboard, but at
-10x+ the cost and with GPU-class compute assumed; Droneforge is cheap and
-matches the analog-FPV premise, but moves the compute off the aircraft
-entirely onto a ground PC. Nothing in the table is both cheap *and* onboard
-*and* built to run on hardware this constrained — that combination is the
-gap, and it's the reason the CPU-only constraint in *Problem*, above, is
-treated as a first-class design input rather than a limitation to route
-around.
-
-**A separate, larger market underlies the hardware this project is built
-from**, even though the software targets development/defense-research use
-rather than that market directly: the hobbyist/DIY FPV drone market itself.
-Estimates vary widely by methodology — from **~$558M in 2025 growing at a
-13.7% CAGR** (Virtue Market Research) to **$1.5–1.6B in 2025 growing at
-~22.5% CAGR to ~$6.2B by 2032** (Verified Market Research; Market Research
-Intellect) — but converge on one point: hobbyists and enthusiasts are the
-largest segment by unit volume, the low barrier to entry from ready-to-fly
-kits and an active builder community being the primary demand driver. This
-project's entire airframe BOM (see `onboard/docs/bom.md`) is sourced from
-that hobbyist market, which is precisely what makes the cost target in the
-*Problem* section above achievable — commodity analog FPV parts, not
-purpose-built or defense-grade hardware.
+This project sits at the extreme low-cost end of the drone-onboard-compute
+market (independent estimates: ~$340–450M in 2025, growing toward
+$890M–970M by 2032) and isn't built to compete commercially in it — this
+table exists only to show where the design choices land:
 
 | | This project | ModalAI VOXL 2 | Auterion Skynode | Droneforge Nimbus |
 |---|---|---|---|---|
@@ -485,14 +433,11 @@ purpose-built or defense-grade hardware.
 | Target buyer | Development and defense-research use on low-cost analog FPV airframes | Commercial/defense integrators | Commercial/defense OEMs building on AuterionOS | Developers building on existing FPV hardware |
 | Funding/stage | Personal demonstrator project | Established commercial product | Established commercial product | $2.5M pre-seed (2026) |
 
-The market's commercial players (ModalAI, Auterion) target integrators who
-are already buying purpose-built compute at the $1,000+ price point — a
-segment this project doesn't compete in and isn't trying to. Droneforge is
-the closer conceptual peer: it validates the same underlying premise this
-project relies on — that an analog FPV video/telemetry link carries enough
-information for real autonomy — but resolves the cost/mass constraint by
-moving compute to the ground instead of onto the airframe. This project's
-distinct bet is the opposite one: keep the compute onboard, at roughly
+Droneforge is the closest conceptual peer: it validates the same premise
+this project relies on — that an analog FPV video/telemetry link carries
+enough information for real autonomy — but resolves the cost/mass
+constraint by moving compute to the ground instead of onto the airframe.
+This project's bet is the opposite: keep the compute onboard, at roughly
 **1/12th the cost of a single VOXL 2 unit**, accepting a CPU-only ceiling on
 what's achievable in exchange for an aircraft that's autonomous without
 depending on a ground link at all.
@@ -540,14 +485,15 @@ The project tracks its own backlog against named, numbered phases
 re-confirmed by rebuilding and re-running the full suite rather than quoted
 from memory.
 
-**Done and currently green — 9/9 tests, 0 failures, full suite under 10 seconds,
-no camera or flight hardware attached:**
+**Done and currently green — 10/10 tests, 0 failures, full suite under 10
+seconds, no camera or flight hardware attached:**
 
 | Area | What's built |
 |---|---|
 | Operational hardening (8 items) | Perception-staleness gating + think-tier watchdog; the flight-controller link on its own thread, decoupled from camera timing; mission legs gated on estimator health; ATTITUDE-priority telemetry polling; the altitude-authority invariant written down as an explicit contract, not an implicit assumption; the full test suite itself, brought in-tree; a runtime config file so tuning doesn't require a rebuild; `SCHED_FIFO` real-time scheduling for the two control-critical threads |
 | Command layer (4 items) | Failsafe return-to-home wired to a real flight-controller AUX channel (not a no-op); a radio-based command source, so the aircraft is flyable without a laptop; an advisory "shadow" mode that runs the autonomy live and shows its intended commands without ever sending them — a zero-risk way to build trust in the autonomy before arming it; a written, props-off validation procedure for bumpless manual-to-assisted control handoff |
 | Autonomous navigation | The occupancy-grid planner (above), plus the FPV-specific camera-tilt handling and the decision to commit a metric ranging sensor as the primary obstacle source rather than depending on monocular depth alone |
+| Bring-up tooling | A crash-survivable flight-data black box (append-only, CRC-checked, resyncs past a torn record) with an offline CSV decoder, so the first hardware sessions capture data even through a brownout or crash; a staged hardware bring-up checklist (`onboard/docs/hardware-bringup-checklist.md`) sequencing Pi-alone → capture-chain → bench → powered-bench → first-flight validation |
 
 **Software-in-the-loop scenario results, from the current build:**
 

@@ -149,6 +149,66 @@ design.
 
 ---
 
+## Related architectures — the wider landscape this sits in
+
+Scene-classify → adapt behavior is one point in a much older space of "give a
+robot information on what to do based on its environment." Surveyed
+2026-07-07 so this isn't presented as more novel than it is:
+
+| Family | Environment → decision, in one line | Where in this project |
+|---|---|---|
+| **Reactive / behavior-based** (Brooks' subsumption, 1986) | Sensing wired straight to acting, no world model; layered behaviors, higher ones suppress lower ones | The VFH+ corridor steering — sensor reading → steering command, no deliberation |
+| **Deliberative (sense-plan-act)** | Build a world model, then a symbolic planner (STRIPS/PDDL) searches an action sequence to a goal | Not used directly, but the wavefront planner over the occupancy grid is this family in miniature |
+| **Hybrid three-layer** | Reactive layer (fast/safe) + deliberative layer (goals/maps) + a sequencer arbitrating between them | **This project's own architecture**: Deliberator + fly loop + `MissionController` as the sequencer |
+| **FSM / hierarchical state machines** | Environment readings gate transitions between named modes, each with its own policy | `MoveStopSense` / `MissionController` (SETTLE→THINK→SCAN→MOVE→ARRIVE→STUCK) |
+| **Behavior trees** | Same job as an FSM, composed as prioritized/reactive tree nodes instead of a transition table | Considered, not adopted — see prior design discussion; the FSM already covers this project's scope |
+| **Blackboard architecture** (Hearsay-II, 1970s) | No central controller; independent modules read/write shared state, triggering on what's new | `WorldState` |
+| **Fuzzy-logic / rule-based controllers** | Sensor readings through fuzzy membership rules straight to actuator commands | Not used; a smoothed cousin of the reactive family |
+| **BDI / cognitive architectures** (Bratman) | Environment updates *beliefs*; the agent picks among competing *desires* and commits to an *intention*, replanning on failure | Not used — heavier machinery than this project's scope needs |
+| **MDP / POMDP policy control** | Formalizes "state → action" as a value/policy function, explicitly modeling *uncertainty* | Relevant but not solved this way: the occupancy grid's "unknown = free" optimism is a classic POMDP problem (acting under partial observability) sidestepped with a heuristic, not a probabilistic policy |
+| **Semantic / topological place classification** | Robot classifies *which place type* it's in (kitchen, corridor, office) from detected objects/features, adapts navigation per place | **The closest published relative to the idea in this file** — an active robotics sub-field, not invented here (see citations above) |
+| **End-to-end learned sensorimotor policies** | A trained net maps raw sensor input straight to actuator output, no explicit decision layer | Not used — see *Where AI fits*, below, for why |
+| **Vision-Language-Action (VLA) models** | A foundation model takes image + language instruction, outputs action directly, fusing perception and decision into one learned step | Not used — needs GPU-class compute this project's Pi-5/CPU-only constraint rules out, and trades away the inspectability this project is built around |
+| **Context-aware computing** (Dey & Abowd, 1990s ubiquitous computing) | The general, non-robotics parent of all of the above: sense context → adapt system behavior | Every row above is a robotics specialization of this older, more general pattern |
+
+This project is a **hybrid three-layer / FSM / blackboard** design. The
+context-gated perception idea above doesn't replace any of that — it's a
+**semantic place-classification** layer added on top, feeding a new input
+(the setting label) into the existing sequencer and scheduler, the same slot
+the socially-aware-navigation literature uses a "context classification
+pipeline" for.
+
+## Where AI fits in this design (and where it deliberately doesn't)
+
+Worth being precise about, since "AI" gets used to mean two different things:
+
+- **Historically, "AI" meant symbolic search and planning** — A*, STRIPS/PDDL
+  planners, rule-based expert systems, decision trees. Under that definition,
+  this project already has AI throughout its decision layer: the wavefront
+  planner, the FSM's phase logic, even a hand-authored decision tree would
+  count.
+- **Colloquially today, "AI" means learned/statistical models** — neural
+  nets, ML classifiers. Under *that* definition, here's where it actually
+  sits in a real perception→decision→action pipeline, checked against what's
+  deployed today rather than assumed:
+
+| Layer | Is it (modern-sense) AI, in practice? | Why |
+|---|---|---|
+| **Perception** — object detection, depth estimation, scene/place classification | **Yes, dominant and undisputed.** | This is what ML is genuinely best at: turning raw pixels into structured facts. This project's depth model and object detector are exactly this; the setting classifier proposed in this file would be too (a learned decision tree/small CNN over detections). |
+| **State estimation** — fusing sensors into a position/velocity estimate | **No, classical.** | Kalman filtering is 1960s estimation theory, not machine learning — worth naming explicitly because it's easy to assume "estimator = AI." This project's EKF is a concrete counter-example already in the codebase. |
+| **High-level decision/task logic** — FSM, behavior tree, blackboard, symbolic planning | **No, classical (in the modern sense) — and deliberately so.** | This is precisely the layer that needs to be inspectable, testable without a camera, and certifiable — properties hand-authored logic has and a learned policy generally doesn't. This project's `MissionController`, the wavefront planner, and the mode arbiter are all classical by design, not by omission. |
+| **Low-level continuous control** (motor/gait control, not task decisions) | **Increasingly yes, and now in production** — reinforcement-learned locomotion policies run on real deployed legged robots (ANYmal, Unitree-class quadrupeds), not just in simulation. | Notable because it shows AI *can* live inside a real control loop today — but even on those robots, the *high-level* task/mission decision layer above the learned gait controller is still classical. AI has entered low-level control before it's entered high-level decision-making. |
+| **Advisory task-level suggestions, kept out of the control loop** | **Yes, and this is the emerging safe pattern for it.** | This project's own P3 (LLM supervisor, `ROADMAP.md`) is exactly this: an LLM reads the world state and *suggests*, through a whitelisted command schema, and can never touch control directly. Published work (RoboGuard, 2026) formalizes the same principle for LLM-planned robot tasks: a safety/guardrail module — not the LLM — has final say over whether a proposed plan executes, cutting unsafe-plan execution from 92% to under 2.5% in their evaluation. The recurring shape, in both cases, is: **AI proposes, a separate deterministic/verifiable layer disposes.** |
+
+**Net for this project:** AI (modern sense) belongs in perception — including
+the setting-classifier idea in this file — and, cautiously and only as an
+advisory suggester, at the very top of the decision stack (P3). It does not
+belong in the FSM/planner/estimator layer, not because that's old-fashioned,
+but because that layer's job is to be safety-provable on a Pi 5 with no
+camera attached, which is exactly what a learned policy gives up.
+
+---
+
 ## Status
 
 Idea only. Not designed against `IPerceptionModule`/the Deliberator scheduler,

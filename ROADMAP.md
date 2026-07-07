@@ -261,6 +261,20 @@ scene and *suggests*; it can never touch control.
 - **Accept:** guard unit tests (malformed / out-of-bounds / flooding inputs);
   kill the sidecar mid-run → zero effect on the fly loop.
 
+### P3.1 — mission language → object search, small quantized LLM (idea, **unscheduled experiment**)
+Extends P3 rather than replacing it: parse a compound mission ("look for a
+house and find a chair") into an ordered subgoal list (P3's existing
+whitelist-schema job), execute each subgoal as **object-goal navigation**
+(frontier exploration — nav-sim's `explore-rth` already is this — + the
+existing move-stop-sense/occupancy-grid approach, unchanged), and optionally
+let the same LLM sidecar bias *which frontier to try first* with a
+commonsense prior ("chairs are more likely near a house"), output
+grammar-constrained to a fixed label so it's whitelist-compatible like
+everything else P3 emits — never a direct command. Written up with concrete
+Pi-5 `llama.cpp` quantization numbers and a proposed nav-sim experiment:
+`ideas/mission-language-and-object-search.md`. Not designed against the real
+interfaces; if pursued, starts in nav-sim, no hardware.
+
 ## P4 — flight recorder, replay, ground view
 
 ### ✅ P4a-bb — Crash-survivable black box — DONE (replaces the recorder as the bring-up priority)

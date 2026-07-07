@@ -360,6 +360,14 @@ prove out.
   `missionGoalBearing`; set from ground view (P4b) or RC. (M)
 - **P6.5** Geofence + max range/altitude enforced in `ModeManager` as a third
   safety layer (config). (M)
+- **P6.6** Context-gated perception + nav profile (idea, **unscheduled**) — a
+  cheap always-on classifier names the current setting (indoor/open/forest)
+  from object detections, gating both which specialist perception models run
+  and which `Mission::Params` profile is active. Written up, not designed
+  against the real interfaces yet: `ideas/context-gated-perception.md`. If
+  pursued, the low-risk first cut is the `Params`-profile half alone (table
+  keyed by setting label, debounced switch, safe-default-on-uncertainty),
+  with model-gating as a separate, later step.
 
 ---
 

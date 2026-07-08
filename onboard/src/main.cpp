@@ -17,6 +17,7 @@
 //   modes: f=FLY s=ASSIST k=LOCK_ON o=FOLLOW_ROAD w=WAYPOINT a=AUTONOMY
 //          y=SHADOW (operator flies; autonomy intent drawn only) h=HOLD
 //   AUTONOMY/SHADOW: ← → (or , .) steer the goal direction, g = GO / STOP (hover)
+//                    N/E/S/W = set an absolute heading (0/90/180/270°) in one press
 //   x = abort -> iNAV RTH     space = arm/disarm control     r = reset  q/ESC = quit
 //
 // Bench-test (--bench-test): no camera; connects to the FC and prints a live
@@ -589,7 +590,7 @@ int main(int argc, char** argv) {
                 const cv::Scalar gcol = snap.missionGo ? cv::Scalar(80, 255, 80)
                                                        : cv::Scalar(60, 180, 255);
                 cv::arrowedLine(frame, c0, tip, gcol, 3, cv::LINE_AA, 0, 0.3);
-                cv::putText(frame, snap.missionGo ? "GO" : "ARMED (g=go , .=steer)",
+                cv::putText(frame, snap.missionGo ? "GO" : "ARMED (g=go , .=steer NESW=set)",
                             {c0.x + 10, c0.y}, cv::FONT_HERSHEY_SIMPLEX, 0.45, gcol, 1);
             }
 
@@ -616,6 +617,13 @@ int main(int argc, char** argv) {
             if (kx == kLeft  || k == ',') wm.with([&](WorldState& s){ s.missionGoalBearing -= 15.f; });
             if (kx == kRight || k == '.') wm.with([&](WorldState& s){ s.missionGoalBearing += 15.f; });
             if (kx == kUp)                wm.with([&](WorldState& s){ s.missionGoalBearing = s.vehYawDeg; });
+            // Absolute-heading quick-set ("advance in direction X" in one press),
+            // distinct from the relative ±15° nudge above. Uppercase so it can't
+            // collide with the lowercase mode-select keys (s=ASSIST, w=WAYPOINT).
+            if (k == 'N') wm.with([&](WorldState& s){ s.missionGoalBearing = 0.f;   });
+            if (k == 'E') wm.with([&](WorldState& s){ s.missionGoalBearing = 90.f;  });
+            if (k == 'S') wm.with([&](WorldState& s){ s.missionGoalBearing = 180.f; });
+            if (k == 'W') wm.with([&](WorldState& s){ s.missionGoalBearing = 270.f; });
             if (k == 'g') { wm.with([&](WorldState& s){ s.missionGo = !s.missionGo; });
                             std::printf("[auto] %s\n",
                                         wm.snapshot().missionGo ? "GO" : "STOP (hover)"); }

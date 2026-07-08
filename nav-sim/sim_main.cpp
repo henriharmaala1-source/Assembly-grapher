@@ -543,6 +543,7 @@ RunResult runExplore(const sim::World& worldIn, const RunOpts& opt, bool verbose
         sim::castScan(world, drone.e, drone.n, drone.yawDeg, opt.hFov, opt.nRays, opt.maxRange, ranges);
         grid.integrate(drone.e, drone.n, drone.yawDeg, ranges, opt.hFov, opt.maxRange);
         navsim::Explore::Out eo = expl.step(grid, {drone.e,drone.n}, inflate);
+        if (eo.resetDriver) drv.reset();   // fresh objective (home) -- don't carry a stale STUCK latch into it
         if (eo.done) { R.reached = true; break; }
         navsim::MssInput in; in.e=drone.e; in.n=drone.n; in.yawDeg=drone.yawDeg; in.speedMs=speed;
         corridorFromScan(ranges, opt.hFov, opt.maxRange, in.corridorOpen, in.corridorOffset);
@@ -651,6 +652,7 @@ struct SimEpisode {
             drone.step(out.bearingDeg, dt, out.speedScale);
         } else if (explore) {
             navsim::Explore::Out eo = expl.step(grid, {be_,bn_}, inflate);
+            if (eo.resetDriver) mssCtl.reset();   // fresh objective (home) -- don't carry a stale STUCK latch into it
             subGoal = eo.goal; goal = eo.goal;   // render toward the sub-goal
             phase = std::string(eo.phase);
             if (eo.done) { reached = true; lastPath.clear(); }

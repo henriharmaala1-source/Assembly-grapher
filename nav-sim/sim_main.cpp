@@ -595,6 +595,11 @@ struct SimEpisode {
     bool reached=false, collided=false; float minStandoff=1e9f, pathLen=0.f, lastE=0, lastN=0;
     double lastPlanMs=0.0;
     NoisyLoc nloc; float be_=0, bn_=0, byaw_=0;   // L2 realism: believed (drifting) pose
+    unsigned noiseSeq=0;   // advances each restart so the SAME arena gets a fresh
+                           // noise draw every run (non-deterministic replays)
+    // In-GUI mass-data summary for the current mode/arena/sensor (Run-batch button).
+    struct BatchStat { int n=0, reached=0, collided=0; float worst=0.f, ratio=0.f; };
+    BatchStat batch; bool hasBatch=false;
 
     void restart() {
         Sensor sp = sensorPreset(sensorName); sensorName = sp.name;
@@ -616,7 +621,12 @@ struct SimEpisode {
         else         { planner = navsim::makePlanner(plannerName); if (planner) planner->reset(); }
         trail.clear(); lastPath.clear(); ranges.clear(); phase.clear();
         steps=0; speed=0; reached=collided=false; minStandoff=1e9f; pathLen=0; lastE=drone.e; lastN=drone.n;
-        nloc.reset(seed, opt.noise); be_=drone.e; bn_=drone.n; byaw_=drone.yawDeg;
+        // Noise is seeded INDEPENDENTLY of the arena seed and advanced each run, so
+        // replaying the same map (same `seed`) wanders differently every time. With
+        // noise off, the run stays fully deterministic (arena seed only).
+        if (opt.noise) ++noiseSeq;
+        nloc.reset(opt.noise ? (seed*100003u + noiseSeq) : seed, opt.noise);
+        be_=drone.e; bn_=drone.n; byaw_=drone.yawDeg;
     }
     void step() {
         if (reached || collided) return;
@@ -685,6 +695,30 @@ RunResult runByName(const std::string& name, const sim::World& w, navsim::Vec2 g
     return run(*p, w, g, opt, false);
 }
 
+// Run N headless episodes on the current mode/arena/sensor — one per seed, so the
+// arena layout varies across the batch (mass data over scenarios of the same
+// character) — and summarise. This is the GUI's in-panel batch button: the same
+// stats the headless --batch prints, without leaving the GUI. Noise (if on) gets
+// a distinct seed per run too, so each run is an independent draw.
+SimEpisode::BatchStat runBatchCurrent(const SimEpisode& ep, int N) {
+    SimEpisode::BatchStat s; s.n=N;
+    float worst=1e9f, ratioSum=0.f; int ratioN=0;
+    for (int i=0;i<N;++i) {
+        std::mt19937 rng((unsigned)(ep.seed + i));
+        Arena ar = buildArena(ep.arenaName, rng, 6);
+        RunOpts o = ep.opt;                       // current sensor FoV/range/rays + noise flag
+        o.noiseSeed = (unsigned)(ep.seed + i + 1);// independent noise draw per run
+        RunResult r = runByName(ep.plannerName, ar.world, ar.goal, o);
+        if (r.reached)  s.reached++;
+        if (r.collided) s.collided++;
+        worst = std::min(worst, r.minStandoff);
+        if (r.reached && r.straightLen > 0.f) { ratioSum += r.pathLen / r.straightLen; ++ratioN; }
+    }
+    s.worst = (worst==1e9f) ? 0.f : worst;
+    s.ratio = ratioN ? ratioSum/ratioN : 0.f;
+    return s;
+}
+
 // Mass-data generator: sweep every mode × arena × sensor × seed × {clean,noise}
 // and write one CSV row per run — a dataset to analyse en masse.
 int runSweep(int seeds, const std::string& csvPath, const std::string& sensorFilter,
@@ -735,13 +769,15 @@ std::vector<Button> buildButtons(int panelW) {
     section(0, allModeNames());
     section(1, kArenas);
     section(2, kSensors);
-    const int ah=22, ar=25;
+    const int ah=19, ar=22;   // 4 action rows must fit the 640px panel below 14 arenas
     b.push_back({cv::Rect(x, y, w/2-2, ah), 3, 0, "Restart"});
     b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 2, "New seed"}); y+=ar;
     b.push_back({cv::Rect(x, y, w/2-2, ah), 3, 1, "Pause"});
     b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 3, "Quit"}); y+=ar;
     b.push_back({cv::Rect(x, y, w/2-2, ah), 3, 4, "- Slower"});
-    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 5, "Faster +"});
+    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 5, "Faster +"}); y+=ar;
+    b.push_back({cv::Rect(x, y, w/2-2, ah), 3, 6, "Noise"});       // label set live
+    b.push_back({cv::Rect(x+w/2+2, y, w/2-2, ah), 3, 7, "Run batch"});
     return b;
 }
 
@@ -758,12 +794,16 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
         if (bt.group==2 && bt.value==0) hdr("SENSOR", bt.r.y-6);
         bool sel = (bt.group==0&&bt.value==selP)||(bt.group==1&&bt.value==selA)||(bt.group==2&&bt.value==selS);
         bool isPause = (bt.group==3&&bt.value==1);
+        bool isNoise = (bt.group==3&&bt.value==6);
         cv::Scalar bg = sel ? cv::Scalar(70,120,60) : cv::Scalar(50,50,55);
         if (bt.group==3) bg = cv::Scalar(60,60,75);
         if (isPause && paused) bg = cv::Scalar(60,110,150);
+        if (isNoise && ep.opt.noise) bg = cv::Scalar(40,110,160);   // lit when noise is on
         cv::rectangle(canvas, bt.r, bg, -1);
         cv::rectangle(canvas, bt.r, cv::Scalar(80,80,88), 1);
-        std::string lbl = (isPause && paused) ? "Play" : bt.label;
+        std::string lbl = bt.label;
+        if (isPause && paused) lbl = "Play";
+        else if (isNoise)      lbl = ep.opt.noise ? "Noise ON" : "Noise off";
         cv::putText(canvas, lbl, {bt.r.x+6, bt.r.y+bt.r.height-6}, cv::FONT_HERSHEY_SIMPLEX, 0.4, {235,235,235}, 1);
     }
     // ---- FPV (top right)
@@ -775,7 +815,7 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
     // controls hint (top-right of the FPV pane, over the sky)
     cv::putText(fpv, "click to choose  |  space: pause   [ / ]: speed   r: restart",
                 {8, fpvH-26}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {210,225,245}, 1);
-    cv::putText(fpv, "n: new seed / map   q: quit",
+    cv::putText(fpv, "n: new seed   x: noise   b: run batch   q: quit",
                 {8, fpvH-8}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {210,225,245}, 1);
     fpv.copyTo(canvas(cv::Rect(panelW, 0, viewW, fpvH)));
     // ---- top-down mapped (bottom right)
@@ -794,6 +834,25 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
     cv::putText(canvas, outcome, {panelW+viewW-160, 24}, cv::FONT_HERSHEY_DUPLEX, 0.7, oc, 2);
     if (paused) cv::putText(canvas, "PAUSED", {panelW+viewW-160, 48}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {60,180,240}, 1);
 
+    // ---- batch (mass-data) summary overlay, top-right of the FPV pane
+    if (ep.hasBatch) {
+        const SimEpisode::BatchStat& b = ep.batch;
+        const int bx = panelW+viewW-198, by = 74;
+        cv::rectangle(canvas, cv::Rect(bx-6, by-16, 196, 96), cv::Scalar(34,34,44), -1);
+        cv::rectangle(canvas, cv::Rect(bx-6, by-16, 196, 96), cv::Scalar(95,95,120), 1);
+        char l[5][72];
+        std::snprintf(l[0], sizeof l[0], "BATCH  n=%d%s", b.n, ep.opt.noise?"  [noisy]":"");
+        std::snprintf(l[1], sizeof l[1], "reached  %d/%d (%.0f%%)", b.reached, b.n, b.n?100.f*b.reached/b.n:0.f);
+        std::snprintf(l[2], sizeof l[2], "collided %d/%d", b.collided, b.n);
+        std::snprintf(l[3], sizeof l[3], "worst standoff %.2fm", b.worst);
+        std::snprintf(l[4], sizeof l[4], "avg path/straight %.2fx", b.ratio);
+        cv::putText(canvas, l[0], {bx, by},    cv::FONT_HERSHEY_SIMPLEX, 0.42, {150,200,255}, 1);
+        cv::putText(canvas, l[1], {bx, by+18}, cv::FONT_HERSHEY_SIMPLEX, 0.40, {200,240,200}, 1);
+        cv::putText(canvas, l[2], {bx, by+34}, cv::FONT_HERSHEY_SIMPLEX, 0.40, {205,205,215}, 1);
+        cv::putText(canvas, l[3], {bx, by+50}, cv::FONT_HERSHEY_SIMPLEX, 0.40, {205,205,215}, 1);
+        cv::putText(canvas, l[4], {bx, by+66}, cv::FONT_HERSHEY_SIMPLEX, 0.40, {205,205,215}, 1);
+    }
+
     // ---- status line (context) + controls hint
     char st[220];
     std::snprintf(st, sizeof(st), "%s%s | seed %u | %s%s  steps %d  standoff %.2fm",
@@ -803,12 +862,13 @@ cv::Mat renderComposite(SimEpisode& ep, const std::vector<Button>& btns,
         (ep.mss||ep.explore) ? ("  "+ep.phase).c_str() : "",
         ep.steps, ep.minStandoff);
     cv::putText(canvas, st, {panelW+8, H-26}, cv::FONT_HERSHEY_SIMPLEX, 0.42, {200,220,200}, 1);
-    cv::putText(canvas, "click a button to change  |  space pause  [ ] speed  r restart  n new-seed  q quit",
-                {panelW+8, H-8}, cv::FONT_HERSHEY_SIMPLEX, 0.36, {150,160,170}, 1);
+    cv::putText(canvas, "click a button  |  space pause  [ ] speed  r restart  n new-seed  x noise  b batch  q quit",
+                {panelW+8, H-8}, cv::FONT_HERSHEY_SIMPLEX, 0.34, {150,160,170}, 1);
     return canvas;
 }
 
 #if defined(SIM_HAVE_HIGHGUI)
+constexpr int kGuiBatchN = 20;   // episodes per in-GUI "Run batch" press
 struct Click { int x=-1,y=-1; bool pending=false; };
 static void onMouse(int e,int x,int y,int,void* u){ if(e==cv::EVENT_LBUTTONDOWN){ auto*c=(Click*)u; c->x=x;c->y=y;c->pending=true; } }
 
@@ -821,7 +881,7 @@ int runGui(bool noise, const std::string& mapPath, float mapMpp) {
     Click click; bool paused=false; int doneDwell=0;
     const std::string win="nav-sim"; cv::namedWindow(win); cv::setMouseCallback(win, onMouse, &click);
     std::printf("[gui] click the panel to choose planner/arena/sensor. "
-                "space=pause  [ ]=speed  r=restart  n=new seed  q=quit\n");
+                "space=pause  [ ]=speed  r=restart  n=new seed  x=noise  b=run batch  q=quit\n");
     float speedMul = 1.0f, acc = 0.f;   // ticks/frame; [ halves, ] doubles
     auto slower=[&]{ speedMul=std::max(0.125f, speedMul*0.5f); };
     auto faster=[&]{ speedMul=std::min(8.0f,  speedMul*2.0f); };
@@ -834,24 +894,30 @@ int runGui(bool noise, const std::string& mapPath, float mapMpp) {
         cv::putText(frame, sp, {210, 44}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {180,220,255}, 1);
         cv::imshow(win, frame);
         const int k = cv::waitKey(20) & 0xFF;
+        auto runBatch=[&]{ ep.batch = runBatchCurrent(ep, kGuiBatchN); ep.hasBatch=true; };
+        auto toggleNoise=[&]{ ep.opt.noise=!ep.opt.noise; ep.hasBatch=false; ep.restart(); doneDwell=0; };
         if (k=='q' || k==27) break;
         if (k==' ') paused=!paused;
         if (k=='r') { ep.restart(); doneDwell=0; }
-        if (k=='n') { ep.seed++; ep.restart(); doneDwell=0; }
+        if (k=='n') { ep.seed++; ep.hasBatch=false; ep.restart(); doneDwell=0; }
         if (k=='[') slower();
         if (k==']') faster();
+        if (k=='b') runBatch();
+        if (k=='x') toggleNoise();
         if (click.pending) {
             click.pending=false;
             for (auto& bt : btns) if (bt.r.contains({click.x,click.y})) {
-                if (bt.group==0){ selP=bt.value; ep.plannerName=allModeNames()[selP]; ep.restart(); }
-                else if (bt.group==1){ selA=bt.value; ep.arenaName=kArenas[selA]; ep.mapPath.clear(); ep.restart(); }
-                else if (bt.group==2){ selS=bt.value; ep.sensorName=kSensors[selS]; ep.restart(); }
+                if (bt.group==0){ selP=bt.value; ep.plannerName=allModeNames()[selP]; ep.hasBatch=false; ep.restart(); }
+                else if (bt.group==1){ selA=bt.value; ep.arenaName=kArenas[selA]; ep.mapPath.clear(); ep.hasBatch=false; ep.restart(); }
+                else if (bt.group==2){ selS=bt.value; ep.sensorName=kSensors[selS]; ep.hasBatch=false; ep.restart(); }
                 else if (bt.group==3){ if(bt.value==0) ep.restart();
                     else if(bt.value==1) paused=!paused;
-                    else if(bt.value==2){ ep.seed++; ep.restart(); }
+                    else if(bt.value==2){ ep.seed++; ep.hasBatch=false; ep.restart(); }
                     else if(bt.value==3) return 0;
                     else if(bt.value==4) slower();
-                    else if(bt.value==5) faster(); }
+                    else if(bt.value==5) faster();
+                    else if(bt.value==6) toggleNoise();
+                    else if(bt.value==7) runBatch(); }
                 doneDwell=0; break;
             }
         }

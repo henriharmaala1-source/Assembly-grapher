@@ -31,8 +31,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    // MiDaS .tflite ships uncompressed so it can be memory-mapped at runtime.
-    androidResources { noCompress += "tflite" }
+    // midas_small.onnx ships uncompressed so it can be mapped/read efficiently.
+    androidResources { noCompress += "onnx" }
 }
 
 dependencies {
@@ -42,8 +42,11 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+    // ONNX Runtime, not TFLite: runs the SAME midas_small.onnx the desktop
+    // tools (tilt_bench.py / spin_map.py) already use, via OpenCV DNN's ONNX
+    // path there and ORT's NNAPI execution provider here — no separate TFLite
+    // model to source, no preprocessing to reconcile (see MidasDepth.kt).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
 
     // ARCore — used by the Stage-3 ArCorePoseProvider upgrade (see README).
     implementation("com.google.ar:core:1.44.0")

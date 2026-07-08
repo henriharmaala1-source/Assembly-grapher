@@ -111,6 +111,38 @@ The usability flag is a starting heuristic (see the docstring in
 itself while calibrating: does it look like real room structure, or a flat
 wash of one colour.
 
+## Spin-in-place mapping (`spin_map.py`)
+
+Answers: can spinning the webcam in one spot build a real map the drone's
+`SCAN` phase logic could use to find an opening? Deliberately **not** general
+SLAM — walking around needs translation, which is scale-ambiguous from one
+camera and drifts without correction. Pure rotation from a fixed point has
+neither problem, and it's exactly what `MoveStopSense::Phase::SCAN` already
+does on the real aircraft (yaw only, no translation, sweep until an opening
+appears) — so this tests that mechanism against real depth-model output
+instead of nav-sim's simulated raycasts.
+
+```bash
+python spin_map.py
+python spin_map.py --hfov 78     # set to your webcam's real horizontal FOV — matters a lot
+```
+
+Sparse optical flow between frames estimates how far you've rotated (no
+translation assumed); the same horizon-band openness histogram from
+`tilt_bench.py` gets written into a bearing-indexed polar map as you turn.
+Once enough of the circle is covered, it finds the widest open arc — the
+same thing `SCAN` is looking for — and draws it as a green arrow on the
+radar view, alongside a live heading needle and coverage percentage.
+
+**How to spin:** rest your elbow or use a tripod head — rotate in place,
+don't walk in a circle (that reintroduces the translation error this
+approach exists to avoid). Press **r** to reset and start a fresh spin,
+**s** to save the radar view + a metrics JSON, **q**/ESC to quit.
+
+This builds a single-vantage-point 360° map, not a multi-room one — that
+would need walking, i.e. the harder translation/SLAM problem this
+deliberately sidesteps.
+
 ## Architecture
 
 Three threads (`pipeline.py`): capture, inference, and display, so GPU work

@@ -73,6 +73,44 @@ curl -L -o checkpoints/sam2.1_hiera_tiny.pt https://dl.fbaipublicfiles.com/segme
 Defaults point at `configs/sam2.1/sam2.1_hiera_t.yaml` and
 `./checkpoints/sam2.1_hiera_tiny.pt`. Override with `SAM2_CFG` / `SAM2_CKPT`.
 
+## Camera-tilt bench (`tilt_bench.py`)
+
+Standalone tool, separate from `main.py`: finds the real camera-tilt angle
+that breaks the monocular depth model, on your actual webcam, instead of
+trusting the reasoned-guess defaults currently in the onboard C++
+(`camUpMaxDeg_` / `camDownMaxDeg_` in `onboard/include/perception.hpp`).
+
+```bash
+python tilt_bench.py
+python tilt_bench.py --depth-model ~/depth_models/midas_small.onnx
+python tilt_bench.py --depth-backend dav2 --band 0.25
+```
+
+It runs the same `DepthNav` this app uses, then reproduces the onboard
+pipeline's horizon-band openness histogram (the exact mechanism the
+elevation-window gate analyses) and flags when that signal goes
+suspiciously flat. That flat-and-confident reading — not visible noise — is
+the actual danger sign: a depth model pointed at featureless sky tends to
+report a smooth "everything is far," which reads as a falsely-open corridor
+rather than an obviously bad one.
+
+Hold/mount the camera level, then slowly tilt it up toward the ceiling/sky
+in a few steps, then back through level and down toward the floor. Watch the
+`USABLE` / `MARGINAL` / `SUSPECT` flag (and the live per-column openness bar
+graph, and the horizon-band lines drawn right on the video feed — that's
+exactly the region being analysed). Note the angle — a phone inclinometer or
+spirit level against the housing works fine — where each direction first
+flips to `SUSPECT`. Press **s** at any point to save a labelled snapshot
+(frame + heatmap + metrics JSON) to `tilt_bench_out/` for later comparison.
+Those two angles are your real `camUpMaxDeg_` / `camDownMaxDeg_` — and,
+separately, they tell you how much physical up-tilt the camera mount can
+actually afford before hover starts losing scan coverage.
+
+The usability flag is a starting heuristic (see the docstring in
+`tilt_bench.py`), not ground truth — cross-check it against the heatmap
+itself while calibrating: does it look like real room structure, or a flat
+wash of one colour.
+
 ## Architecture
 
 Three threads (`pipeline.py`): capture, inference, and display, so GPU work

@@ -67,6 +67,14 @@ class DepthNav:
     def traverse(self):
         return self._traverse
 
+    @property
+    def depth(self):
+        """Full-resolution normalised depth map, (H,W) float32 in [0,1],
+        0=near/blocked, 1=far/open — same convention `update()` produces
+        internally. Exposed for tools (e.g. tilt_bench.py) that need the raw
+        field rather than just the single best steer point in `traverse`."""
+        return self._depth
+
     # ---------------------------------------------------------------- update
 
     def update(self, frame: np.ndarray) -> bool:

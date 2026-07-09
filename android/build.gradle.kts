@@ -1,7 +1,7 @@
 // Top-level build file. Plugin versions are pinned here; the app module applies
 // them.
 //
-// AGP 9.x requires Gradle 9.1.0+ (see gradle/wrapper/gradle-wrapper.properties)
+// AGP 9.2.0 requires Gradle 9.4.1+ (confirmed by a real sync — earlier compat-table research said 9.1.0, which was wrong) (see gradle/wrapper/gradle-wrapper.properties)
 // — AGP 8.5.2 predates Gradle 9 support and its native-build (CMake) code calls
 // a Project.exec() overload Gradle 9.0 removed, which is the exact
 // NoSuchMethodError this version bump fixes. AGP 9.0+ also bundles its own

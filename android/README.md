@@ -111,14 +111,14 @@ Open the `android/` folder in Android Studio, let it sync, plug in the phone
 **If sync fails with a `NoSuchMethodError` mentioning `Project.exec` inside
 native-build/CMake code:** that's an AGP/Gradle version mismatch — AGP < 8.7
 calls a `Project.exec()` overload Gradle 9.0 removed. This project pins
-AGP 9.2.0 + Gradle 9.1.0 (`gradle/wrapper/gradle-wrapper.properties`) to avoid
+AGP 9.2.0 + Gradle 9.4.1 (`gradle/wrapper/gradle-wrapper.properties`) to avoid
 it; if your Android Studio still tries to use a different Gradle, force it via
 **Settings → Build, Execution, Deployment → Gradle → Gradle JVM/Distribution →
 "gradle-wrapper.properties file"**, then **File → Sync Project with Gradle
 Files**. If `gradlew`/`gradlew.bat` are missing (only matters for CLI builds,
 not Android-Studio-driven ones), regenerate them from Android Studio's
 Terminal tab with a real Gradle install: `gradle wrapper --gradle-version
-9.1.0 --distribution-type all`.
+9.4.1 --distribution-type all`.
 
 The app module must stay at `<repo>/android/` so the out-of-tree
 `nav-sim/move_stop_sense.cpp` reference in CMake resolves; the build fails with a

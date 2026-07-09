@@ -1,11 +1,20 @@
 package com.kestrel.navviz
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -19,20 +28,24 @@ import com.kestrel.navviz.depth.MidasDepth
 import com.kestrel.navviz.depth.Openness
 import com.kestrel.navviz.pose.GyroPoseProvider
 import com.kestrel.navviz.ui.NavOverlayView
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 /**
  * Stage 1–3 host: CameraX preview -> MiDaS depth (throttled) -> openness ->
  * gyro yaw -> the REAL MoveStopSense (NavCore/JNI) -> overlay. This is the
- * "run the actual nav algorithm on live phone data" loop.
+ * "run the actual Pi navigation code against live phone data" test rig — the
+ * phone stands in for the aircraft's sensors, nothing more.
  *
- * ARCore (full 6-DoF, walk-around mapping) is the Stage-3 upgrade documented in
- * android/README — it replaces CameraX as the frame source, so it's a deliberate
- * swap, not wired here, to keep this first build actually runnable.
+ * Controls:
+ *   TAP        — set the mission goal bearing to the direction the camera is
+ *                facing right now ("fly that way"), like the onboard Up-arrow /
+ *                N-E-S-W quick-set.
+ *   LONG-PRESS — re-zero the pose frame and reset the controller (fresh nav
+ *                session; clears a STUCK latch the honest way, via reset).
  *
- * UNBUILT/UNTESTED in this session (no SDK or device available) — every device
- * interaction below follows documented CameraX/TFLite patterns but needs the
- * on-device iterate loop to shake out. Treat as a scaffold, not a finished app.
+ * ARCore (full 6-DoF, walk-around MOVE legs) is the Stage-4 upgrade documented
+ * in android/README.md — deliberately not wired here so this build runs first.
  */
 class MainActivity : ComponentActivity() {
 
@@ -46,21 +59,50 @@ class MainActivity : ComponentActivity() {
 
     private var lastTickMs = 0L
     private var lastDepthMs = 0L
-    private var goalBearingDeg = 0f     // operator goal; TODO: wire a UI control
 
+    // Operator goal (deg, 0 = N in the pose frame). Volatile: written from the
+    // UI thread (tap), read from the analysis thread each tick.
+    @Volatile private var goalBearingDeg = 0f
+    @Volatile private var lastOpen: Openness.Result? = null
+
+    @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        previewView = PreviewView(this)
-        overlay = NavOverlayView(this)
+        // Locals, not the fields, inside apply{}: the FrameLayout receiver has
+        // its own `overlay` property (View.getOverlay) that silently shadows
+        // the field there — a real compile error caught by validation.
+        val pv = PreviewView(this)
+        val ov = NavOverlayView(this)
+        previewView = pv
+        overlay = ov
         setContentView(FrameLayout(this).apply {
-            addView(previewView); addView(overlay)
+            addView(pv); addView(ov)
         })
 
         nav = NavCore()
         pose = GyroPoseProvider(this).also { it.start(); it.recenter() }
-        // Depth model load is best-effort: if the asset is missing the app still
-        // runs (openness just reports nothing) rather than crashing on launch.
-        depth = runCatching { MidasDepth(this) }.getOrNull()
+        // Best-effort model load: missing asset -> app still runs (controller
+        // sees a fully-open corridor) instead of crashing at launch.
+        depth = runCatching { MidasDepth(this) }
+            .onFailure {
+                Toast.makeText(this,
+                    "midas_small.onnx missing from assets — depth disabled", Toast.LENGTH_LONG).show()
+            }.getOrNull()
+
+        val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                goalBearingDeg = pose.yawDeg
+                Toast.makeText(this@MainActivity,
+                    "goal set: ${goalBearingDeg.toInt()}° (current heading)", Toast.LENGTH_SHORT).show()
+                return true
+            }
+            override fun onLongPress(e: MotionEvent) {
+                pose.recenter(); nav.reset(); goalBearingDeg = 0f
+                Toast.makeText(this@MainActivity,
+                    "pose re-zeroed, controller reset", Toast.LENGTH_SHORT).show()
+            }
+        })
+        overlay.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev); true }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             == PackageManager.PERMISSION_GRANTED) startCamera()
@@ -70,6 +112,7 @@ class MainActivity : ComponentActivity() {
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
         super.onRequestPermissionsResult(rc, p, r)
         if (rc == 1 && r.firstOrNull() == PackageManager.PERMISSION_GRANTED) startCamera()
+        else if (rc == 1) Toast.makeText(this, "camera permission is required", Toast.LENGTH_LONG).show()
     }
 
     private fun startCamera() {
@@ -92,36 +135,37 @@ class MainActivity : ComponentActivity() {
         image.use {
             val now = SystemClock.elapsedRealtime()
 
-            // Depth is the expensive stage — throttle it (~10 Hz), reuse the last
-            // openness between depth frames, exactly the cheap/heavy tier split
-            // the onboard scheduler uses. corridor* default to "open" until the
-            // first depth frame lands.
-            var open = lastOpen
-            if (depth != null && now - lastDepthMs > 100) {
-                val bmp = it.toBitmap()
+            // Depth is the expensive stage — throttle it (~10 Hz max) and reuse
+            // the last openness between depth frames: the same cheap/heavy tier
+            // split the onboard Deliberator uses. corridor* defaults to "open"
+            // until the first depth frame lands.
+            val d = depth
+            if (d != null && now - lastDepthMs > 100) {
+                // ROTATION MATTERS: CameraX delivers frames in the SENSOR's
+                // orientation (landscape). Without applying rotationDegrees the
+                // portrait-held image is sideways and the horizon-band analysis
+                // slices vertical stripes — silently garbage. Rotate first.
+                val bmp = it.toUprightBitmap()
                 if (bmp != null) {
-                    val d = depth!!.infer(bmp)
-                    open = Openness.analyze(d, depth!!.inW, depth!!.inH)
-                    lastOpen = open
+                    val dep = d.infer(bmp)
+                    lastOpen = Openness.analyze(dep, d.inW, d.inH)
                     lastDepthMs = now
                 }
             }
 
-            val dt = if (lastTickMs == 0L) 0.05f else (now - lastTickMs) / 1000f
+            val dt = if (lastTickMs == 0L) 0.05f else ((now - lastTickMs) / 1000f).coerceIn(0.001f, 0.5f)
             lastTickMs = now
 
-            val corridorOpen = open?.corridorOpen ?: 1f
-            val corridorOffset = open?.corridorOffset ?: 0f
+            val open = lastOpen
             val result = nav.update(
                 e = pose.e, n = pose.n, yawDeg = pose.yawDeg, speedMs = 0f,
-                corridorOpen = corridorOpen, corridorOffset = corridorOffset,
+                corridorOpen = open?.corridorOpen ?: 1f,
+                corridorOffset = open?.corridorOffset ?: 0f,
                 goalBearing = goalBearingDeg, dt = dt,
             )
             overlay.post { overlay.render(result, open, pose.yawDeg, goalBearingDeg) }
         }
     }
-
-    @Volatile private var lastOpen: Openness.Result? = null
 
     override fun onDestroy() {
         super.onDestroy()
@@ -129,18 +173,49 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Minimal YUV_420_888 -> ARGB Bitmap. TODO(device): verify against the real
- *  ImageProxy format the camera delivers; some devices need a rotation apply. */
-private fun ImageProxy.toBitmap(): Bitmap? = runCatching {
-    val yBuffer = planes[0].buffer
-    val vuBuffer = planes[2].buffer
-    val ySize = yBuffer.remaining(); val vuSize = vuBuffer.remaining()
-    val nv21 = ByteArray(ySize + vuSize)
-    yBuffer.get(nv21, 0, ySize); vuBuffer.get(nv21, ySize, vuSize)
-    val yuv = android.graphics.YuvImage(
-        nv21, android.graphics.ImageFormat.NV21, width, height, null)
-    val out = java.io.ByteArrayOutputStream()
-    yuv.compressToJpeg(android.graphics.Rect(0, 0, width, height), 85, out)
+/**
+ * YUV_420_888 -> upright ARGB Bitmap. Stride-aware NV21 repack (plane
+ * layouts differ per device; naive buffer concatenation breaks on padded rows),
+ * then JPEG round-trip for the colour conversion, then rotate by the frame's
+ * reported rotationDegrees so the output is upright regardless of how the
+ * phone is held.
+ */
+private fun ImageProxy.toUprightBitmap(): Bitmap? = runCatching {
+    val nv21 = yuv420ToNv21(this)
+    val yuv = YuvImage(nv21, ImageFormat.NV21, width, height, null)
+    val out = ByteArrayOutputStream()
+    yuv.compressToJpeg(Rect(0, 0, width, height), 85, out)
     val bytes = out.toByteArray()
-    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    val deg = imageInfo.rotationDegrees
+    if (deg != 0) {
+        val m = Matrix().apply { postRotate(deg.toFloat()) }
+        bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+    }
+    bmp
 }.getOrNull()
+
+private fun yuv420ToNv21(image: ImageProxy): ByteArray {
+    val w = image.width; val h = image.height
+    val nv21 = ByteArray(w * h * 3 / 2)
+    val yPlane = image.planes[0]
+    var pos = 0
+    // Y: copy row by row (rowStride may exceed width on many sensors).
+    val yBuf = yPlane.buffer
+    for (row in 0 until h) {
+        yBuf.position(row * yPlane.rowStride)
+        yBuf.get(nv21, pos, w); pos += w
+    }
+    // Interleaved VU at half resolution, honouring pixel + row strides.
+    val uPlane = image.planes[1]; val vPlane = image.planes[2]
+    val uBuf = uPlane.buffer; val vBuf = vPlane.buffer
+    for (row in 0 until h / 2) {
+        for (col in 0 until w / 2) {
+            val vIdx = row * vPlane.rowStride + col * vPlane.pixelStride
+            val uIdx = row * uPlane.rowStride + col * uPlane.pixelStride
+            nv21[pos++] = vBuf.get(vIdx)
+            nv21[pos++] = uBuf.get(uIdx)
+        }
+    }
+    return nv21
+}

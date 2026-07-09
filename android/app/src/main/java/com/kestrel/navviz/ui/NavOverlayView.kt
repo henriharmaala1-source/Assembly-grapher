@@ -35,8 +35,17 @@ class NavOverlayView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        val r = result ?: return
+        val r = result ?: run {
+            sub.color = Color.LTGRAY
+            canvas.drawText("waiting for camera…", 24f, 60f, sub)
+            return
+        }
         val w = width.toFloat(); val h = height.toFloat()
+
+        sub.color = Color.argb(200, 200, 210, 220)
+        canvas.drawText("tap: set goal = current heading   |   long-press: reset",
+            24f, h - 24f, sub)
+        sub.color = Color.LTGRAY
 
         // Phase + flag banner
         val phaseCol = when (r.phase) {

@@ -8,17 +8,31 @@ nav-sim's simulated raycasts — so you can watch the real
 actual room. Target device: Honor Magic V5 (Snapdragon 8 Elite, Android 15,
 Google Play Services present → ARCore viable).
 
-> **Status: scaffold, not a finished app.** This was written without an Android
-> SDK or device in the loop, so **nothing here has been compiled or run.** The
-> parts most likely to be correct are the ones grounded in code that WAS
-> validated: the JNI bridge into the real C++ controller (compiled and linked
-> against a real `jni.h` + the real `MoveStopSense` API), and `Openness.kt`
-> (transcribed back to Python and re-run against the same room/sky/wall scenes
-> `tilt_bench.py`/`spin_map.py` use — this caught and fixed a real center-bias
-> scaling bug). The device-facing plumbing (CameraX, ONNX Runtime I/O, sensor
-> wiring, Gradle/AGP versions) follows documented patterns but needs the
-> on-device iterate loop to shake out. Treat it as a strong starting point that
-> boots you past the boilerplate, not as turnkey.
+> **Status: compile-validated, not yet device-run.** What has actually been
+> verified, with real toolchains (not assumed):
+>
+> - **All Kotlin compiles clean** — every source file, built with the real
+>   Kotlin 2.2.10 compiler against the real API-34 `android.jar` and the real
+>   `onnxruntime-android:1.26.0` jar. (CameraX/androidx types were stood in by
+>   minimal API-faithful stubs — the one part artifact-level validation
+>   couldn't reach; the ~10 stubbed signatures are well-known and low-risk.)
+>   This caught and fixed a real bug: `addView(overlay)` inside a
+>   `FrameLayout.apply{}` resolved to the receiver's own `View.overlay`
+>   property instead of the activity field.
+> - **Every ONNX Runtime call verified against the real jar** via `javap`
+>   (`addNnapi`, `createSession(byte[],…)`, `createTensor(env,FloatBuffer,long[])`,
+>   `run(Map)`, `Result.get(int)`, `AutoCloseable` conformance for `use{}`) —
+>   and the ORT AAR ships its own prebuilt arm64 `.so`s, so no NDK is involved
+>   on the ORT side.
+> - **JNI end-to-end**: `move_stop_sense.cpp` + `nav_bridge.cpp` compile and
+>   link into a `.so`; its exported symbols match the compiled `NavCore.class`
+>   native descriptors exactly (name, arity, types).
+> - **Manifest parses; CMake configures** (including the repo-root path check).
+>
+> Still needing the on-device loop: the CameraX runtime behaviour (real frame
+> formats/rotation), NNAPI acceleration actually engaging, and the NDK build of
+> `libnavviz.so` (Android Studio auto-installs the NDK on first sync). Sensor
+> math (gyro yaw) is untested against a real IMU.
 
 ## What actually runs the algorithm
 

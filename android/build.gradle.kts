@@ -1,15 +1,15 @@
 // Top-level build file. Plugin versions are pinned here; the app module applies
 // them.
 //
-// AGP 9.2.0 requires Gradle 9.4.1+ (confirmed by a real sync — earlier compat-table research said 9.1.0, which was wrong) (see gradle/wrapper/gradle-wrapper.properties)
-// — AGP 8.5.2 predates Gradle 9 support and its native-build (CMake) code calls
-// a Project.exec() overload Gradle 9.0 removed, which is the exact
-// NoSuchMethodError this version bump fixes. AGP 9.0+ also bundles its own
-// Kotlin support and wants KGP >= 2.2.10; android.builtInKotlin=false in
-// gradle.properties keeps the explicit org.jetbrains.kotlin.android plugin
-// below working without ALSO migrating to that new config style in this same
-// fix (opt-out still supported through AGP 9.x, removed in AGP 10).
+// STABLE AGP 8.x line — deliberately NOT AGP 9. AGP 9.x (Jan 2026) removed the
+// old BaseExtension DSL that the classic org.jetbrains.kotlin.android plugin
+// casts to, so AGP 9 + that plugin throws "ApplicationExtensionImpl cannot be
+// cast to BaseExtension". Rather than take on AGP 9's built-in-Kotlin migration
+// mid-project, we pin the mature, universally-used pairing:
+//   AGP 8.7.2  +  Gradle 8.9 (gradle/wrapper/gradle-wrapper.properties)  +  Kotlin 2.0.20
+// The gradle wrapper is the key piece: it FORCES Gradle 8.9, so AGP 8.x never
+// meets the Project.exec() removal in Gradle 9 that started the version chase.
 plugins {
-    id("com.android.application") version "9.2.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.2.10" apply false
+    id("com.android.application") version "8.7.2" apply false
+    id("org.jetbrains.kotlin.android") version "2.0.20" apply false
 }

@@ -108,17 +108,15 @@ Hugging Face download required.
 Open the `android/` folder in Android Studio, let it sync, plug in the phone
 (USB debugging on), Run.
 
-**If sync fails with a `NoSuchMethodError` mentioning `Project.exec` inside
-native-build/CMake code:** that's an AGP/Gradle version mismatch — AGP < 8.7
-calls a `Project.exec()` overload Gradle 9.0 removed. This project pins
-AGP 9.2.0 + Gradle 9.4.1 (`gradle/wrapper/gradle-wrapper.properties`) to avoid
-it; if your Android Studio still tries to use a different Gradle, force it via
-**Settings → Build, Execution, Deployment → Gradle → Gradle JVM/Distribution →
-"gradle-wrapper.properties file"**, then **File → Sync Project with Gradle
-Files**. If `gradlew`/`gradlew.bat` are missing (only matters for CLI builds,
-not Android-Studio-driven ones), regenerate them from Android Studio's
-Terminal tab with a real Gradle install: `gradle wrapper --gradle-version
-9.4.1 --distribution-type all`.
+**Toolchain versions** are pinned to the mature, stable **AGP 8.7.2 + Gradle
+8.9 + Kotlin 2.0.20** line (`build.gradle.kts` + `gradle/wrapper/`). This
+combination was chosen deliberately over AGP 9.x: AGP 9 (Jan 2026) removed the
+old `BaseExtension` DSL and broke the classic `org.jetbrains.kotlin.android`
+plugin (`ApplicationExtensionImpl cannot be cast to BaseExtension`), and its
+built-in-Kotlin migration is more churn than this project needs. The pinned
+gradle wrapper forces Gradle 8.9, so AGP 8.x never meets the `Project.exec()`
+removal in Gradle 9 that a mismatched setup hits. If Android Studio offers to
+"upgrade" AGP or Gradle, **decline** — the pinned versions are correct as-is.
 
 The app module must stay at `<repo>/android/` so the out-of-tree
 `nav-sim/move_stop_sense.cpp` reference in CMake resolves; the build fails with a

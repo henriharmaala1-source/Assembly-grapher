@@ -109,7 +109,7 @@ class MainActivity : ComponentActivity() {
         else ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 1)
     }
 
-    override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+    override fun onRequestPermissionsResult(rc: Int, p: Array<String>, r: IntArray) {
         super.onRequestPermissionsResult(rc, p, r)
         if (rc == 1 && r.firstOrNull() == PackageManager.PERMISSION_GRANTED) startCamera()
         else if (rc == 1) Toast.makeText(this, "camera permission is required", Toast.LENGTH_LONG).show()

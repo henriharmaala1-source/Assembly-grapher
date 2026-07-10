@@ -21,6 +21,9 @@ import kotlin.math.sin
  *  - the phase, openness flag/%, per-column openness bar, and a small compass
  *    (yaw / goal / steer bearings)
  */
+private const val CAM_HFOV_DEG = 64f   // approx phone back-camera horizontal FoV;
+                                       // maps corridorOffset [-1,1] -> a bearing
+
 class NavOverlayView(context: Context) : View(context) {
 
     private var result: NavCore.Result? = null
@@ -114,25 +117,42 @@ class NavOverlayView(context: Context) : View(context) {
             drawBarStrip(canvas, o.perColumn, 24f, vh - 140f, vw - 48f, 74f)
         }
 
-        // BIG steer arrow from centre: where the controller wants to go, relative
-        // to the nose (bearing - yaw). This is the headline "which way" cue.
+        // OPENNESS arrow (cyan): the openest direction the depth analysis found,
+        // relative to the nose — pure reactive perception, BEFORE the goal is
+        // blended in. corridorOffset [-1,1] spans the camera's horizontal FoV.
+        open?.let { o ->
+            val openRel = o.corridorOffset * (CAM_HFOV_DEG / 2f)
+            drawBigArrow(canvas, vw / 2f, vh / 2f, openRel,
+                minOf(vw, vh) * (0.16f + 0.10f * o.corridorOpen), Color.rgb(0, 200, 255))
+        }
+
+        // BIG steer arrow (green/amber): where the controller DECIDED to go
+        // (goal blended with openness), relative to the nose. Drawn on top so
+        // decision reads over perception when they coincide.
         val rel = wrap180(r.bearingDeg - yawDeg)
         val steerCol = if (r.speedScale > 0.01f) Color.rgb(90, 230, 90) else Color.rgb(255, 200, 60)
         drawBigArrow(canvas, vw / 2f, vh / 2f, rel, minOf(vw, vh) * 0.28f, steerCol)
 
-        // Concrete numbers instead of a compass: which way (left/right + degrees)
-        // the controller is steering, and how far off the goal the nose is.
-        val steerWord = when { rel > 3f -> "→ right ${rel.toInt()}°"
-                               rel < -3f -> "← left ${(-rel).toInt()}°"
-                               else -> "▲ straight" }
+        // Concrete numbers instead of a compass: openest direction (perception),
+        // the controller's steer (decision), and how far off goal the nose is.
+        val steerWord = when { rel > 3f -> "→R ${rel.toInt()}°"
+                               rel < -3f -> "←L ${(-rel).toInt()}°"
+                               else -> "▲straight" }
+        val openWord = open?.let {
+            val od = it.corridorOffset * (CAM_HFOV_DEG / 2f)
+            when { od > 3f -> "→R ${od.toInt()}°"; od < -3f -> "←L ${(-od).toInt()}°"; else -> "▲ahead" }
+        } ?: "—"
         val goalRel = wrap180(goalDeg - yawDeg)
         sub.color = Color.WHITE
-        canvas.drawText("steer $steerWord    goal Δ ${goalRel.toInt()}°", 24f, vh - 168f, sub)
+        canvas.drawText("open $openWord   steer $steerWord   goalΔ ${goalRel.toInt()}°", 24f, vh - 168f, sub)
 
         status.takeIf { it.isNotEmpty() }?.let {
             sub.color = Color.argb(200, 190, 200, 210)
             canvas.drawText(it, 24f, vh - 26f, sub)
         }
+        // Legend: cyan = openest (perception), green = steer (decision).
+        sub.color = Color.rgb(0, 200, 255); canvas.drawText("● openest", 24f, vh - 100f, sub)
+        sub.color = Color.rgb(128, 255, 0); canvas.drawText("        ● steer", 24f, vh - 100f, sub)
         sub.color = Color.argb(200, 190, 200, 210)
         canvas.drawText("tap: goal=heading   2-tap: depth view   hold: reset", 24f, vh - 62f, sub)
     }

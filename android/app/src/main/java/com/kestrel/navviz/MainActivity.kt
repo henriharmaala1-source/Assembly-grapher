@@ -64,6 +64,8 @@ class MainActivity : ComponentActivity() {
     // UI thread (tap), read from the analysis thread each tick.
     @Volatile private var goalBearingDeg = 0f
     @Volatile private var lastOpen: Openness.Result? = null
+    @Volatile private var lastDepth: FloatArray? = null
+    @Volatile private var depthStatus = "depth: loading…"
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,19 +83,27 @@ class MainActivity : ComponentActivity() {
 
         nav = NavCore()
         pose = GyroPoseProvider(this).also { it.start(); it.recenter() }
-        // Best-effort model load: missing asset -> app still runs (controller
-        // sees a fully-open corridor) instead of crashing at launch.
+        // Best-effort model load: any failure -> app still runs (controller sees
+        // a fully-open corridor) and the REASON is shown on the HUD, not swallowed.
         depth = runCatching { MidasDepth(this) }
+            .onSuccess { depthStatus = "depth: ${it.provider}" }
             .onFailure {
-                Toast.makeText(this,
-                    "midas_small.onnx missing from assets — depth disabled", Toast.LENGTH_LONG).show()
+                depthStatus = "depth OFF: ${it.message ?: it.javaClass.simpleName}"
+                Toast.makeText(this, depthStatus, Toast.LENGTH_LONG).show()
             }.getOrNull()
 
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapUp(e: MotionEvent): Boolean {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                // Confirmed (not the first half of a double-tap) so double-tap can
+                // own the depth-view toggle without also re-setting the goal.
                 goalBearingDeg = pose.yawDeg
                 Toast.makeText(this@MainActivity,
                     "goal set: ${goalBearingDeg.toInt()}° (current heading)", Toast.LENGTH_SHORT).show()
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val mode = overlay.cycleHeat()
+                Toast.makeText(this@MainActivity, "view: $mode", Toast.LENGTH_SHORT).show()
                 return true
             }
             override fun onLongPress(e: MotionEvent) {
@@ -147,8 +157,16 @@ class MainActivity : ComponentActivity() {
                 // slices vertical stripes — silently garbage. Rotate first.
                 val bmp = it.toUprightBitmap()
                 if (bmp != null) {
-                    val dep = d.infer(bmp)
-                    lastOpen = Openness.analyze(dep, d.inW, d.inH)
+                    try {
+                        val dep = d.infer(bmp)
+                        lastDepth = dep
+                        lastOpen = Openness.analyze(dep, d.inW, d.inH)
+                        depthStatus = "depth: ${d.provider}"
+                    } catch (e: Throwable) {
+                        // Surface an inference failure (e.g. tensor-shape mismatch)
+                        // instead of silently killing the analysis loop.
+                        depthStatus = "depth ERR: ${e.message ?: e.javaClass.simpleName}"
+                    }
                     lastDepthMs = now
                 }
             }
@@ -163,7 +181,11 @@ class MainActivity : ComponentActivity() {
                 corridorOffset = open?.corridorOffset ?: 0f,
                 goalBearing = goalBearingDeg, dt = dt,
             )
-            overlay.post { overlay.render(result, open, pose.yawDeg, goalBearingDeg) }
+            val dW = depth?.inW ?: 0; val dH = depth?.inH ?: 0
+            overlay.post {
+                overlay.render(result, open, lastDepth, dW, dH,
+                    pose.yawDeg, goalBearingDeg, depthStatus)
+            }
         }
     }
 

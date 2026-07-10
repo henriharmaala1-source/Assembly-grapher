@@ -8,20 +8,14 @@ import android.graphics.Bitmap
 import java.nio.FloatBuffer
 
 /**
- * On-device MiDaS depth inference via ONNX Runtime.
+ * On-device MiDaS depth inference via ONNX Runtime — runs the SAME
+ * midas_small.onnx the desktop tools use.
  *
- * Runs the EXACT SAME `midas_small.onnx` the desktop tools use
- * (tilt_bench.py / spin_map.py, via OpenCV DNN) — so there's no separate model
- * to fetch and no preprocessing to reconcile: the ImageNet mean/std NCHW input
- * and inverse-depth output below match the desktop `DepthNav` byte for byte.
- * Copy the file you already have at ~/depth_models/midas_small.onnx into
- * app/src/main/assets/midas_small.onnx (see android/README).
- *
- * SCAFFOLD — written without an Android device in the loop. The ORT API calls
- * follow the documented onnxruntime-android pattern, but the input/output
- * tensor NAMES and the exact output rank are read back from the session at load
- * time (rather than hard-coded) precisely because that's the part most likely to
- * vary; still, treat first-run behaviour as needing on-device confirmation.
+ * Session creation tries NNAPI (the phone's NPU/GPU/DSP) first, then falls
+ * back to plain CPU if NNAPI can't compile the model — this fallback is the
+ * fix for "depth silently disabled": createSession() throws (not addNnapi())
+ * when NNAPI rejects the graph, and without the fallback that killed depth
+ * entirely. `provider` records which path won, for the on-screen status line.
  *
  * Output convention: 0 = near/blocked, 1 = far/open (MiDaS emits inverse depth,
  * higher = closer, so we invert) — the layout Openness.analyze() expects.
@@ -32,23 +26,34 @@ class MidasDepth(context: Context, modelAsset: String = "midas_small.onnx") {
     private val session: OrtSession
     private val inputName: String
 
-    // MiDaS small is 256x256, ImageNet-normalised NCHW (matches desktop DepthNav).
+    /** "nnapi" or "cpu" — surfaced in the overlay so it's clear what ran. */
+    val provider: String
+
     val inW = 256
     val inH = 256
 
     init {
         val bytes = context.assets.open(modelAsset).use { it.readBytes() }
-        val opts = OrtSession.SessionOptions()
-        // NNAPI = the phone's NPU/GPU/DSP accel path; fall back to CPU if the
-        // device or model can't take it (some ops aren't NNAPI-supported).
-        runCatching { opts.addNnapi() }
-        session = env.createSession(bytes, opts)
+
+        // Attempt NNAPI; on ANY failure during option-build or session compile,
+        // fall back to a clean CPU session. Never let acceleration take depth down.
+        val (sess, prov) = try {
+            val o = OrtSession.SessionOptions()
+            o.addNnapi()
+            env.createSession(bytes, o) to "nnapi"
+        } catch (_: Throwable) {
+            env.createSession(bytes, OrtSession.SessionOptions()) to "cpu"
+        }
+        session = sess
+        provider = prov
         inputName = session.inputNames.iterator().next()
     }
 
     /**
      * @return depth as row-major FloatArray of size inW*inH, values [0,1],
-     *   0 = near/blocked, 1 = far/open — the layout Openness.analyze() expects.
+     *   0 = near/blocked, 1 = far/open. Throws on tensor-shape mismatch — the
+     *   caller surfaces that rather than swallowing it, so a wrong model layout
+     *   is visible instead of silently blank.
      */
     fun infer(bitmap: Bitmap): FloatArray {
         val scaled = Bitmap.createScaledBitmap(bitmap, inW, inH, true)
@@ -57,9 +62,11 @@ class MidasDepth(context: Context, modelAsset: String = "midas_small.onnx") {
 
         input.use {
             session.run(mapOf(inputName to it)).use { result ->
-                val raw = (result[0].value)  // shape [1,H,W] or [1,1,H,W] -> flatten
-                val flat = flatten(raw)
-                // Normalise to [0,1] then invert (MiDaS higher=closer).
+                val flat = flatten(result[0].value)
+                if (flat.size != inW * inH) {
+                    throw IllegalStateException(
+                        "depth output ${flat.size} != ${inW * inH}; model layout differs")
+                }
                 var min = Float.MAX_VALUE; var max = -Float.MAX_VALUE
                 for (v in flat) { if (v < min) min = v; if (v > max) max = v }
                 val range = (max - min).coerceAtLeast(1e-6f)
@@ -70,7 +77,6 @@ class MidasDepth(context: Context, modelAsset: String = "midas_small.onnx") {
         }
     }
 
-    /** Flatten ONNX output of unknown nesting ([1,H,W] or [1,1,H,W]) to row-major. */
     private fun flatten(v: Any?): FloatArray {
         val list = ArrayList<Float>(inW * inH)
         fun rec(o: Any?) {

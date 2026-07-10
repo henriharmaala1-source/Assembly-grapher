@@ -1,9 +1,11 @@
 package com.kestrel.navviz.ui
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.view.View
 import com.kestrel.navviz.NavCore
 import com.kestrel.navviz.depth.Openness
@@ -11,12 +13,13 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Draws the live nav state on top of the camera preview: the phase
- * (SETTLE/THINK/SCAN/MOVE/ARRIVE/STUCK), the openness usability flag, the
- * per-column openness bar strip (same signal the corridor scan consumes), and
- * a radar-style compass showing yaw, the goal bearing, and the controller's
- * chosen steer bearing. Intentionally plain Canvas — no dependency on the exact
- * screen/foldable geometry, so it renders on cover or unfolded.
+ * Live nav HUD over the camera:
+ *  - a translucent DEPTH HEATMAP (red = near/blocked, green = far/open) so the
+ *    depth model is visibly working, not just a thin bar
+ *  - a big STEER ARROW from screen centre showing where MoveStopSense wants to
+ *    go (relative to the nose), plus a goal marker
+ *  - the phase, openness flag/%, per-column openness bar, and a small compass
+ *    (yaw / goal / steer bearings)
  */
 class NavOverlayView(context: Context) : View(context) {
 
@@ -24,30 +27,70 @@ class NavOverlayView(context: Context) : View(context) {
     private var open: Openness.Result? = null
     private var yawDeg = 0f
     private var goalDeg = 0f
+    private var status = ""
 
-    private val text = Paint().apply { color = Color.WHITE; textSize = 44f; isAntiAlias = true }
-    private val sub = Paint().apply { color = Color.LTGRAY; textSize = 30f; isAntiAlias = true }
+    // Depth heatmap: a small source bitmap rebuilt per depth frame, scaled up
+    // at draw time. Reused to avoid per-frame allocation churn.
+    private var heat: Bitmap? = null
+    // 0 = camera only, 1 = translucent heatmap over camera, 2 = full depth map.
+    private var heatMode = 1
+
+    /** Double-tap cycles the heatmap display mode. Returns the new mode's label. */
+    fun cycleHeat(): String {
+        heatMode = (heatMode + 1) % 3
+        invalidate()
+        return when (heatMode) { 0 -> "camera"; 1 -> "depth overlay"; else -> "full depth map" }
+    }
+
+    private val text = Paint().apply { color = Color.WHITE; textSize = 46f; isAntiAlias = true }
+    private val sub = Paint().apply { color = Color.LTGRAY; textSize = 32f; isAntiAlias = true }
     private val stroke = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 4f; isAntiAlias = true }
     private val fill = Paint().apply { style = Paint.Style.FILL; isAntiAlias = true }
+    private val heatPaint = Paint().apply { isAntiAlias = false; alpha = 115 }
 
-    fun render(r: NavCore.Result, o: Openness.Result?, yaw: Float, goal: Float) {
-        result = r; open = o; yawDeg = yaw; goalDeg = goal; invalidate()
+    /**
+     * @param depth row-major [0,1] depth (0 near .. 1 far), or null if none this frame
+     */
+    fun render(
+        r: NavCore.Result, o: Openness.Result?,
+        depth: FloatArray?, dw: Int, dh: Int,
+        yaw: Float, goal: Float, statusLine: String,
+    ) {
+        result = r; open = o; yawDeg = yaw; goalDeg = goal; status = statusLine
+        if (depth != null && depth.size == dw * dh) heat = buildHeat(depth, dw, dh)
+        invalidate()
+    }
+
+    private fun buildHeat(depth: FloatArray, w: Int, h: Int): Bitmap {
+        val px = IntArray(w * h)
+        for (i in depth.indices) {
+            val v = depth[i].coerceIn(0f, 1f)
+            val g = (kotlin.math.min(2f * v, 1f) * 255).toInt()
+            val red = (kotlin.math.min(2f * (1f - v), 1f) * 255).toInt()
+            px[i] = Color.rgb(red, g, 0)
+        }
+        val b = heat?.takeIf { it.width == w && it.height == h }
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        b.setPixels(px, 0, w, 0, 0, w, h)
+        return b
     }
 
     override fun onDraw(canvas: Canvas) {
+        val vw = width.toFloat(); val vh = height.toFloat()
+
+        // Heatmap under everything. mode 1 = translucent over the camera, mode 2
+        // = full opaque depth map (camera hidden), mode 0 = off.
+        if (heatMode != 0) heat?.let {
+            heatPaint.alpha = if (heatMode == 2) 255 else 115
+            canvas.drawBitmap(it, Rect(0, 0, it.width, it.height), Rect(0, 0, width, height), heatPaint)
+        }
+
         val r = result ?: run {
             sub.color = Color.LTGRAY
-            canvas.drawText("waiting for camera…", 24f, 60f, sub)
-            return
+            canvas.drawText("waiting for camera…", 24f, 60f, sub); return
         }
-        val w = width.toFloat(); val h = height.toFloat()
 
-        sub.color = Color.argb(200, 200, 210, 220)
-        canvas.drawText("tap: set goal = current heading   |   long-press: reset",
-            24f, h - 24f, sub)
-        sub.color = Color.LTGRAY
-
-        // Phase + flag banner
+        // Phase banner.
         val phaseCol = when (r.phase) {
             NavCore.Phase.MOVE -> Color.rgb(90, 230, 90)
             NavCore.Phase.STUCK -> Color.rgb(240, 70, 70)
@@ -55,10 +98,9 @@ class NavOverlayView(context: Context) : View(context) {
             else -> Color.WHITE
         }
         text.color = phaseCol
-        canvas.drawText(r.phase.name, 24f, 60f, text)
-        text.color = Color.WHITE
-        canvas.drawText("bearing ${r.bearingDeg.toInt()}°  speed ${"%.2f".format(r.speedScale)}",
-            24f, 110f, sub)
+        canvas.drawText(r.phase.name, 24f, 62f, text)
+        sub.color = Color.WHITE
+        canvas.drawText("bearing ${r.bearingDeg.toInt()}°  speed ${"%.2f".format(r.speedScale)}", 24f, 104f, sub)
 
         open?.let { o ->
             val flagCol = when (o.flag) {
@@ -67,42 +109,68 @@ class NavOverlayView(context: Context) : View(context) {
                 Openness.Flag.SUSPECT -> Color.rgb(240, 70, 70)
             }
             sub.color = flagCol
-            canvas.drawText("depth ${o.flag}  open ${(o.corridorOpen * 100).toInt()}%  spread ${"%.2f".format(o.spread)}",
-                24f, 150f, sub)
+            canvas.drawText("depth ${o.flag}  open ${(o.corridorOpen * 100).toInt()}%", 24f, 144f, sub)
             sub.color = Color.LTGRAY
-            drawBarStrip(canvas, o.perColumn, 24f, h - 120f, w - 48f, 70f)
+            drawBarStrip(canvas, o.perColumn, 24f, vh - 140f, vw - 48f, 74f)
         }
 
-        drawRadar(canvas, w - 190f, 190f, 150f, r)
+        // BIG steer arrow from centre: where the controller wants to go, relative
+        // to the nose (bearing - yaw). This is the headline "which way" cue.
+        val rel = wrap180(r.bearingDeg - yawDeg)
+        val steerCol = if (r.speedScale > 0.01f) Color.rgb(90, 230, 90) else Color.rgb(255, 200, 60)
+        drawBigArrow(canvas, vw / 2f, vh / 2f, rel, minOf(vw, vh) * 0.28f, steerCol)
+
+        // Concrete numbers instead of a compass: which way (left/right + degrees)
+        // the controller is steering, and how far off the goal the nose is.
+        val steerWord = when { rel > 3f -> "→ right ${rel.toInt()}°"
+                               rel < -3f -> "← left ${(-rel).toInt()}°"
+                               else -> "▲ straight" }
+        val goalRel = wrap180(goalDeg - yawDeg)
+        sub.color = Color.WHITE
+        canvas.drawText("steer $steerWord    goal Δ ${goalRel.toInt()}°", 24f, vh - 168f, sub)
+
+        status.takeIf { it.isNotEmpty() }?.let {
+            sub.color = Color.argb(200, 190, 200, 210)
+            canvas.drawText(it, 24f, vh - 26f, sub)
+        }
+        sub.color = Color.argb(200, 190, 200, 210)
+        canvas.drawText("tap: goal=heading   2-tap: depth view   hold: reset", 24f, vh - 62f, sub)
     }
 
-    private fun drawBarStrip(canvas: Canvas, cols: FloatArray, x0: Float, y0: Float, w: Float, h: Float) {
-        fill.color = Color.argb(140, 30, 30, 34)
-        canvas.drawRect(x0, y0, x0 + w, y0 + h, fill)
+    private fun drawBigArrow(c: Canvas, cx: Float, cy: Float, bearingDeg: Float, len: Float, col: Int) {
+        val a = Math.toRadians((bearingDeg - 90f).toDouble())
+        val tx = cx + len * cos(a).toFloat(); val ty = cy + len * sin(a).toFloat()
+        stroke.color = Color.argb(160, 0, 0, 0); stroke.strokeWidth = 14f
+        c.drawLine(cx, cy, tx, ty, stroke)
+        stroke.color = col; stroke.strokeWidth = 9f
+        c.drawLine(cx, cy, tx, ty, stroke)
+        // arrowhead
+        fill.color = col
+        val ah = Math.toRadians((bearingDeg - 90f).toDouble())
+        val h1 = ah + 2.5; val h2 = ah - 2.5; val hl = 34f
+        val p = android.graphics.Path().apply {
+            moveTo(tx, ty)
+            lineTo(tx + hl * cos(h1).toFloat(), ty + hl * sin(h1).toFloat())
+            lineTo(tx + hl * cos(h2).toFloat(), ty + hl * sin(h2).toFloat())
+            close()
+        }
+        c.drawPath(p, fill)
+    }
+
+    private fun drawBarStrip(c: Canvas, cols: FloatArray, x0: Float, y0: Float, w: Float, h: Float) {
+        fill.color = Color.argb(140, 30, 30, 34); c.drawRect(x0, y0, x0 + w, y0 + h, fill)
         val n = cols.size
         for (i in cols.indices) {
             val v = cols[i].coerceIn(0f, 1f)
             val bx = x0 + i / n.toFloat() * w
-            val bh = v * h
             fill.color = Color.rgb(
                 (kotlin.math.min(2f * (1 - v), 1f) * 255).toInt(),
                 (kotlin.math.min(2f * v, 1f) * 255).toInt(), 0)
-            canvas.drawRect(bx, y0 + h - bh, bx + (w / n) + 1f, y0 + h, fill)
+            c.drawRect(bx, y0 + h - v * h, bx + (w / n) + 1f, y0 + h, fill)
         }
     }
 
-    private fun drawRadar(canvas: Canvas, cx: Float, cy: Float, rad: Float, r: NavCore.Result) {
-        stroke.color = Color.argb(160, 120, 120, 130)
-        canvas.drawCircle(cx, cy, rad, stroke)
-        // yaw (white), goal (cyan), steer bearing (green) — bearings are 0=N, y-up.
-        drawNeedle(canvas, cx, cy, rad, yawDeg, Color.WHITE, 4f)
-        drawNeedle(canvas, cx, cy, rad, goalDeg, Color.rgb(0, 200, 255), 3f)
-        drawNeedle(canvas, cx, cy, rad, r.bearingDeg, Color.rgb(128, 255, 0), 5f)
-    }
-
-    private fun drawNeedle(canvas: Canvas, cx: Float, cy: Float, rad: Float, bearingDeg: Float, col: Int, wdt: Float) {
-        val a = Math.toRadians((bearingDeg - 90f).toDouble())
-        stroke.color = col; stroke.strokeWidth = wdt
-        canvas.drawLine(cx, cy, cx + rad * cos(a).toFloat(), cy + rad * sin(a).toFloat(), stroke)
+    private fun wrap180(d: Float): Float {
+        var x = d; while (x > 180f) x -= 360f; while (x <= -180f) x += 360f; return x
     }
 }

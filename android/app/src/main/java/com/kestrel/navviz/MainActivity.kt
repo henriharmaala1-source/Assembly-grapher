@@ -24,30 +24,38 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.kestrel.navviz.depth.LockTracker
 import com.kestrel.navviz.depth.MidasDepth
 import com.kestrel.navviz.depth.Openness
+import com.kestrel.navviz.depth.RoadFollow
 import com.kestrel.navviz.pose.GyroPoseProvider
 import com.kestrel.navviz.ui.NavOverlayView
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import kotlin.math.abs
 
 /**
- * Stage 1–3 host: CameraX preview -> MiDaS depth (throttled) -> openness ->
- * gyro yaw -> the REAL MoveStopSense (NavCore/JNI) -> overlay. This is the
- * "run the actual Pi navigation code against live phone data" test rig — the
- * phone stands in for the aircraft's sensors, nothing more.
+ * CameraX preview -> mode-gated perception -> overlay, a phone test rig for the
+ * kestrel navigation stack. Three swipe-selectable modes:
+ *   NAV  — MiDaS depth -> openness -> the REAL MoveStopSense (NavCore/JNI). The
+ *          "run the actual Pi controller against live data" case.
+ *   ROAD — appearance road-follow (RoadFollow.kt, a Kotlin port of the onboard
+ *          road_follow.cpp CIELab follower). Its own steer, not move-stop-sense.
+ *   LOCK — click-to-lock target tracking (LockTracker.kt, the NCC template layer
+ *          of the onboard tracker; the CSRT/KCF/Kalman layers can't port to Kotlin).
  *
- * Controls:
- *   TAP        — set the mission goal bearing to the direction the camera is
- *                facing right now ("fly that way"), like the onboard Up-arrow /
- *                N-E-S-W quick-set.
- *   LONG-PRESS — re-zero the pose frame and reset the controller (fresh nav
- *                session; clears a STUCK latch the honest way, via reset).
+ * Controls: SWIPE left/right cycles mode. TAP = per-mode (NAV: set goal to
+ * current heading; ROAD: re-learn the road model; LOCK: designate a target).
+ * DOUBLE-TAP (NAV): cycle the depth view. LONG-PRESS: reset everything.
  *
- * ARCore (full 6-DoF, walk-around MOVE legs) is the Stage-4 upgrade documented
- * in android/README.md — deliberately not wired here so this build runs first.
+ * ROAD/LOCK are Kotlin reimplementations (like Openness.kt), so they validate
+ * the ALGORITHM, not the exact C++ — only MoveStopSense (NAV) is the real code.
+ * ARCore 6-DoF is still the deferred Stage-4 upgrade (android/README.md).
  */
 class MainActivity : ComponentActivity() {
+
+    /** Which perception+behaviour is active. Swipe left/right to cycle. */
+    enum class Mode { NAV, ROAD, LOCK }
 
     private lateinit var overlay: NavOverlayView
     private lateinit var previewView: PreviewView
@@ -55,16 +63,22 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var nav: NavCore
     private var depth: MidasDepth? = null
+    private val road = RoadFollow()
+    private val lock = LockTracker()
     private lateinit var pose: GyroPoseProvider
 
     private var lastTickMs = 0L
-    private var lastDepthMs = 0L
+    private var lastPercMs = 0L
 
+    @Volatile private var mode = Mode.NAV
     // Operator goal (deg, 0 = N in the pose frame). Volatile: written from the
     // UI thread (tap), read from the analysis thread each tick.
     @Volatile private var goalBearingDeg = 0f
     @Volatile private var lastOpen: Openness.Result? = null
     @Volatile private var lastDepth: FloatArray? = null
+    @Volatile private var lastRoad: RoadFollow.Result? = null
+    @Volatile private var lastBox: LockTracker.Box? = null
+    @Volatile private var pendingDesignate: Pair<Float, Float>? = null   // fractional tap point
     @Volatile private var depthStatus = "depth: loading…"
 
     @SuppressLint("ClickableViewAccessibility")
@@ -94,22 +108,38 @@ class MainActivity : ComponentActivity() {
 
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // Confirmed (not the first half of a double-tap) so double-tap can
-                // own the depth-view toggle without also re-setting the goal.
-                goalBearingDeg = pose.yawDeg
-                Toast.makeText(this@MainActivity,
-                    "goal set: ${goalBearingDeg.toInt()}° (current heading)", Toast.LENGTH_SHORT).show()
+                // Tap means different things per mode. Confirmed (not the first
+                // half of a double-tap) so double-tap owns the depth-view toggle.
+                when (mode) {
+                    Mode.NAV -> {
+                        goalBearingDeg = pose.yawDeg
+                        toast("goal set: ${goalBearingDeg.toInt()}° (heading)")
+                    }
+                    Mode.ROAD -> { road.relearn(); toast("road model re-learned") }
+                    Mode.LOCK -> {
+                        // Hand the fractional tap point to the analysis thread to
+                        // designate on the next real (rotated) frame.
+                        pendingDesignate = (e.x / overlay.width) to (e.y / overlay.height)
+                        toast("locking on…")
+                    }
+                }
                 return true
             }
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                val mode = overlay.cycleHeat()
-                Toast.makeText(this@MainActivity, "view: $mode", Toast.LENGTH_SHORT).show()
-                return true
+                toast("view: ${overlay.cycleHeat()}"); return true
             }
             override fun onLongPress(e: MotionEvent) {
-                pose.recenter(); nav.reset(); goalBearingDeg = 0f
-                Toast.makeText(this@MainActivity,
-                    "pose re-zeroed, controller reset", Toast.LENGTH_SHORT).show()
+                pose.recenter(); nav.reset(); lock.reset(); road.relearn(); goalBearingDeg = 0f
+                toast("reset")
+            }
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                if (abs(vx) < abs(vy) || abs(vx) < 800f) return false   // horizontal flings only
+                val order = Mode.values()
+                mode = order[(mode.ordinal + if (vx < 0) 1 else order.size - 1) % order.size]
+                lock.reset()
+                overlay.setMode(mode.name)
+                toast("mode: ${mode.name}")
+                return true
             }
         })
         overlay.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev); true }
@@ -145,35 +175,43 @@ class MainActivity : ComponentActivity() {
         image.use {
             val now = SystemClock.elapsedRealtime()
 
-            // Depth is the expensive stage — throttle it (~10 Hz max) and reuse
-            // the last openness between depth frames: the same cheap/heavy tier
-            // split the onboard Deliberator uses. corridor* defaults to "open"
-            // until the first depth frame lands.
-            val d = depth
-            if (d != null && now - lastDepthMs > 100) {
-                // ROTATION MATTERS: CameraX delivers frames in the SENSOR's
-                // orientation (landscape). Without applying rotationDegrees the
-                // portrait-held image is sideways and the horizon-band analysis
-                // slices vertical stripes — silently garbage. Rotate first.
+            // Heavy perception is throttled (~10 Hz) and MODE-GATED: only the
+            // active mode's perception runs, so we never pay for depth in ROAD
+            // mode or vice-versa — the cheap/heavy split the Deliberator uses.
+            // ROTATION MATTERS: CameraX frames are in sensor (landscape)
+            // orientation; rotate upright first or the analysis is sideways.
+            if (now - lastPercMs > 100) {
                 val bmp = it.toUprightBitmap()
                 if (bmp != null) {
-                    try {
-                        val dep = d.infer(bmp)
-                        lastDepth = dep
-                        lastOpen = Openness.analyze(dep, d.inW, d.inH)
-                        depthStatus = "depth: ${d.provider}"
-                    } catch (e: Throwable) {
-                        // Surface an inference failure (e.g. tensor-shape mismatch)
-                        // instead of silently killing the analysis loop.
-                        depthStatus = "depth ERR: ${e.message ?: e.javaClass.simpleName}"
+                    when (mode) {
+                        Mode.NAV -> depth?.let { d ->
+                            try {
+                                val dep = d.infer(bmp)
+                                lastDepth = dep
+                                lastOpen = Openness.analyze(dep, d.inW, d.inH)
+                                depthStatus = "depth: ${d.provider}"
+                            } catch (e: Throwable) {
+                                depthStatus = "depth ERR: ${e.message ?: e.javaClass.simpleName}"
+                            }
+                        }
+                        Mode.ROAD -> lastRoad = road.analyze(bmp)
+                        Mode.LOCK -> {
+                            pendingDesignate?.let { (fx, fy) ->
+                                lock.designate(bmp, fx * bmp.width, fy * bmp.height)
+                                pendingDesignate = null
+                            }
+                            lastBox = lock.update(bmp)
+                        }
                     }
-                    lastDepthMs = now
+                    lastPercMs = now
                 }
             }
 
             val dt = if (lastTickMs == 0L) 0.05f else ((now - lastTickMs) / 1000f).coerceIn(0.001f, 0.5f)
             lastTickMs = now
 
+            // The real MoveStopSense controller only drives NAV mode (it steers
+            // on the depth corridor). ROAD/LOCK are their own behaviours.
             val open = lastOpen
             val result = nav.update(
                 e = pose.e, n = pose.n, yawDeg = pose.yawDeg, speedMs = 0f,
@@ -184,10 +222,13 @@ class MainActivity : ComponentActivity() {
             val dW = depth?.inW ?: 0; val dH = depth?.inH ?: 0
             overlay.post {
                 overlay.render(result, open, lastDepth, dW, dH,
-                    pose.yawDeg, goalBearingDeg, depthStatus)
+                    pose.yawDeg, goalBearingDeg, depthStatus, lastRoad, lastBox)
             }
         }
     }
+
+    private fun toast(m: String) =
+        overlay.post { Toast.makeText(this, m, Toast.LENGTH_SHORT).show() }
 
     override fun onDestroy() {
         super.onDestroy()

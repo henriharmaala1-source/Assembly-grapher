@@ -36,3 +36,13 @@ target_include_directories(navviz PRIVATE
 
 # JNI needs no extra find_package on Android; jni.h is on the NDK include path.
 target_link_libraries(navviz android log)
+
+# 16 KB page-size support. The Magic V5 (and all Android 15+ devices on the
+# newer SoCs) uses 16 KB memory pages; native .so's must be aligned to a 16 KB
+# ELF max-page-size or the loader rejects them at install/launch. NDK r28+ does
+# this by default, but set it explicitly so an older NDK also produces a
+# compliant library. (This aligns OUR lib; the ONNX Runtime .so's ship from
+# onnxruntime-android 1.26.0, which is recent enough to already be 16 KB-aligned.)
+target_link_options(navviz PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384")

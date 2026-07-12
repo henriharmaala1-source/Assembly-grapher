@@ -67,11 +67,20 @@ class MidasDepth(context: Context, modelAsset: String = "midas_small.onnx") {
                     throw IllegalStateException(
                         "depth output ${flat.size} != ${inW * inH}; model layout differs")
                 }
-                var min = Float.MAX_VALUE; var max = -Float.MAX_VALUE
-                for (v in flat) { if (v < min) min = v; if (v > max) max = v }
-                val range = (max - min).coerceAtLeast(1e-6f)
+                // ROBUST normalisation: 2nd/98th percentiles, not raw min/max.
+                // MiDaS relative depth had a single very-near or very-far pixel
+                // stretch the whole [0,1] range, so mid-distance obstacles
+                // collapsed toward "far/open" and only things RIGHT in front
+                // registered ("only detects things very nearby"). Percentile
+                // bounds ignore those outliers so the usable range spreads across
+                // real scene depth. Subsampled sort keeps it cheap.
+                val sample = FloatArray((flat.size + 7) / 8) { flat[it * 8] }
+                sample.sort()
+                val lo = sample[sample.size * 2 / 100]
+                val hi = sample[sample.size * 98 / 100]
+                val range = (hi - lo).coerceAtLeast(1e-6f)
                 val out = FloatArray(flat.size)
-                for (i in flat.indices) out[i] = 1f - (flat[i] - min) / range
+                for (i in flat.indices) out[i] = (1f - (flat[i] - lo) / range).coerceIn(0f, 1f)
                 return out
             }
         }

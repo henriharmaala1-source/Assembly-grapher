@@ -4,13 +4,10 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Size
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.widget.FrameLayout
@@ -30,7 +27,6 @@ import com.kestrel.navviz.depth.Openness
 import com.kestrel.navviz.depth.RoadFollow
 import com.kestrel.navviz.pose.GyroPoseProvider
 import com.kestrel.navviz.ui.NavOverlayView
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
@@ -164,6 +160,12 @@ class MainActivity : ComponentActivity() {
             }
             val analysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                // RGBA output + a small analysis resolution: the previous path
+                // JPEG-encoded then decoded every FULL-res frame (huge waste). A
+                // 640x480 RGBA buffer copied straight to a Bitmap is far cheaper,
+                // and depth downscales to 256 anyway. This is the main framerate fix.
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                .setTargetResolution(Size(640, 480))
                 .build().also { it.setAnalyzer(analysisExecutor, ::analyze) }
             provider.unbindAll()
             provider.bindToLifecycle(
@@ -237,48 +239,20 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * YUV_420_888 -> upright ARGB Bitmap. Stride-aware NV21 repack (plane
- * layouts differ per device; naive buffer concatenation breaks on padded rows),
- * then JPEG round-trip for the colour conversion, then rotate by the frame's
- * reported rotationDegrees so the output is upright regardless of how the
- * phone is held.
+ * RGBA_8888 ImageProxy -> upright Bitmap, cheaply: copy the single RGBA plane
+ * straight into a Bitmap (handling row-stride padding), then rotate by the
+ * frame's reported rotationDegrees. No YUV repack, no JPEG round-trip — that
+ * per-frame encode/decode was the main framerate sink.
  */
 private fun ImageProxy.toUprightBitmap(): Bitmap? = runCatching {
-    val nv21 = yuv420ToNv21(this)
-    val yuv = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-    val out = ByteArrayOutputStream()
-    yuv.compressToJpeg(Rect(0, 0, width, height), 85, out)
-    val bytes = out.toByteArray()
-    var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    val plane = planes[0]
+    val buf = plane.buffer.also { it.rewind() }
+    val paddedW = plane.rowStride / plane.pixelStride   // width incl. row padding
+    val padded = Bitmap.createBitmap(paddedW, height, Bitmap.Config.ARGB_8888)
+    padded.copyPixelsFromBuffer(buf)
+    var bmp = if (paddedW != width) Bitmap.createBitmap(padded, 0, 0, width, height) else padded
     val deg = imageInfo.rotationDegrees
-    if (deg != 0) {
-        val m = Matrix().apply { postRotate(deg.toFloat()) }
-        bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
-    }
+    if (deg != 0) bmp = Bitmap.createBitmap(
+        bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(deg.toFloat()) }, true)
     bmp
 }.getOrNull()
-
-private fun yuv420ToNv21(image: ImageProxy): ByteArray {
-    val w = image.width; val h = image.height
-    val nv21 = ByteArray(w * h * 3 / 2)
-    val yPlane = image.planes[0]
-    var pos = 0
-    // Y: copy row by row (rowStride may exceed width on many sensors).
-    val yBuf = yPlane.buffer
-    for (row in 0 until h) {
-        yBuf.position(row * yPlane.rowStride)
-        yBuf.get(nv21, pos, w); pos += w
-    }
-    // Interleaved VU at half resolution, honouring pixel + row strides.
-    val uPlane = image.planes[1]; val vPlane = image.planes[2]
-    val uBuf = uPlane.buffer; val vBuf = vPlane.buffer
-    for (row in 0 until h / 2) {
-        for (col in 0 until w / 2) {
-            val vIdx = row * vPlane.rowStride + col * vPlane.pixelStride
-            val uIdx = row * uPlane.rowStride + col * uPlane.pixelStride
-            nv21[pos++] = vBuf.get(vIdx)
-            nv21[pos++] = uBuf.get(uIdx)
-        }
-    }
-    return nv21
-}

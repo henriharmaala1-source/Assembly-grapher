@@ -306,6 +306,33 @@ The black box covers crash-survivable capture; the richer replay tool remains:
 - Lightweight tail of the jsonl over TCP/websocket → single-page map (ENU
   track), HUD state, corridor/mission phase, est health. No ROS, no heavy deps.
 
+### P4c — Remote/edge-compute simulation over WiFi (idea, **unscheduled experiment**)
+Motivated by tactical-5G (Nokia Banshee-class) deployments in Ukraine: a
+resilient local network bubble would let a drone offload perception to
+ground/edge compute even in a contested-EW environment, matching kestrel's
+existing hybrid edge+onboard-autonomy story rather than requiring a new one.
+Maps cleanly onto the current architecture with **no new fallback logic** —
+the blackboard's staleness gating (F1) already treats any perception source
+as "trust it while fresh, ignore it once stale."
+- `RemotePerceptionModule` (C++, implements `IPerceptionModule`): ships a
+  frame over the network each tick, writes the result into `WorldModel` on
+  success. On timeout/failure it simply doesn't write — existing
+  staleness/`corridorValid` handling takes over exactly as it does for a
+  stalled onboard model (F1), so this needs no bespoke degrade path.
+- Small Python edge/ground server (Flask/FastAPI) for the desktop side —
+  receives a frame, runs depth/detect, returns the result.
+- Testbed: WiFi between the Pi and a desktop stands in for the tactical link.
+  Use Linux `tc`/`netem` to inject realistic degradation (latency, jitter,
+  packet loss, bandwidth caps) and characterize where the mission degrades
+  gracefully vs. where it doesn't.
+- New SITL fault-injection scenario, "remote link dropout mid-leg" —
+  alongside the existing "perception dropout mid-leg" / "GPS loss mid-leg"
+  scenarios (F1/F3): drop the simulated remote link mid-leg, assert the
+  mission settles rather than flying on stale remote perception.
+- **Accept:** `RemotePerceptionModule` unit test (timeout → no stale write);
+  SITL "remote link dropout mid-leg" passes; a `netem`-degraded bench run
+  characterizing behavior across latency/loss levels.
+
 ## P5 — localization + planning
 
 ### P5a — VIO velocity (M/L)

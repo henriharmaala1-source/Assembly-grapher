@@ -14,7 +14,7 @@ is the one that counts — the UVC stacks differ — but a Windows run is a fine
 first look with the rig already on the desk.
 
 Usage:
-    pip install opencv-python
+    pip install opencv-contrib-python       # superset; also what tracker/ needs
     python capture_stats.py                 # device 0, 60 s
     python capture_stats.py --device 1 --seconds 600   # 10 min soak (thermal)
     python capture_stats.py --width 720 --height 576    # request a resolution

@@ -17,7 +17,8 @@ Keys:
   q  or ESC  quit
 
 Usage:
-    pip install opencv-python numpy      # NOT opencv-python-headless (needs GUI)
+    pip install opencv-contrib-python numpy   # superset; also what tracker/ needs
+                                              # (NOT a -headless build — needs GUI)
     python capture_cv_live.py                 # device 0
     python capture_cv_live.py --device 1
 """

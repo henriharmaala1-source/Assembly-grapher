@@ -17,7 +17,7 @@ Saves annotated images next to the input so you can eyeball what it measured:
   <name>_edges.png, <name>_features.png
 
 Usage:
-    pip install opencv-python numpy
+    pip install opencv-contrib-python numpy   # superset; also what tracker/ needs
     python capture_cv_check.py capture_sample_1.png
     python capture_cv_check.py *.png          # several at once
 """

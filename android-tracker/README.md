@@ -65,29 +65,32 @@ scripts are missing (they're gitignored), let Studio generate them or copy
 `gradlew`, `gradlew.bat`, and `gradle/wrapper/gradle-wrapper.jar` from
 `../android/`.
 
-## Camera input — platform Camera2, no external library
+## Camera input — UVC over USB Host
 
-`camera/Camera2FrameSource.kt` ingests the dongle through the **platform Camera2
-API** — no UVC library, nothing to resolve from JitPack. The capture dongle
-enumerates as a camera with `LENS_FACING_EXTERNAL` (the same capability the
-generic USB-camera app used); we prefer that external camera when present and
-fall back to the built-in back camera otherwise, so the app **always runs** and
-uses the feed-faithful dongle path whenever it's plugged in. Frames arrive as
-YUV_420_888; the Y plane (row-stride-aware copy) is the luminance the tracker
-wants — no colour conversion, no JPEG.
+The Magic V5 does **not** expose the capture dongle as a Camera2 external camera
+(many phones don't), so `camera/UvcFrameSource.kt` opens it over USB Host with
+libuvc via **herohan/UVCAndroid** (`com.herohan:UVCAndroid`, a single AAR on
+**Maven Central** — chosen because the more popular AUSBC/libausbc is a
+multi-module JitPack build whose `libuvc` module fails to resolve,
+jiangdongguo/AndroidUSBCamera #727/#728). We use it only to open the dongle and
+receive NV21 frames; the Y plane (first width*height bytes) is the luminance the
+tracker wants — no colour conversion, no JPEG.
 
-Requires the CAMERA runtime permission (requested via the modern ActivityResult
-API — no `onRequestPermissionsResult` override). If a specific phone does *not*
-expose the dongle via Camera2 external, that's the one thing to check on device;
-the built-in fallback still lets you test the tracker meanwhile.
+USB permission is handled by the library on device attach (no CAMERA runtime
+permission). The frame-callback wiring in `UvcFrameSource.kt` is the most likely
+spot to need a small on-device tweak against the resolved library version — it's
+isolated behind `FrameSource`, so nothing else is affected.
+
+`camera/Camera2FrameSource.kt` is kept as a built-in-camera fallback for phones
+that *do* expose UVC through Camera2 — swap it in MainActivity if ever useful.
 
 ## Status
 
 - ✅ Tracker logic — validated in Python (tracking + scale adaptation).
 - ✅ Pure-Kotlin core (`track/`) — type-checks against the real Kotlin compiler.
-- ⏳ Android layers — build on device. No external deps now (Camera2, not a UVC
-  library), so the only device-specific unknown is whether the phone exposes the
-  dongle as a Camera2 external camera; the built-in fallback runs regardless.
+- ⏳ Android layers — build on device. The UVCAndroid dependency resolves from
+  Maven Central; `UvcFrameSource.kt`'s frame-callback wiring is the expected
+  device-iteration point (library API shape), isolated behind `FrameSource`.
 
 ## Lessons carried from navviz (so we don't repeat them)
 

@@ -57,14 +57,23 @@ class SharedState:
         return False
 
 
-def capture_loop(cap, shared: SharedState, stop: threading.Event):
-    """Continuously grab frames; only the newest is kept."""
+def capture_loop(cap, shared: SharedState, stop: threading.Event, settings=None):
+    """Continuously grab frames; only the newest is kept. When `settings` is
+    given, each frame is run through the FramePreprocessor (digital zoom +
+    appearance filters) here — before either the inference or display thread
+    sees it — so the whole pipeline operates on one consistent frame."""
+    prep = None
+    if settings is not None:
+        from .preprocess import FramePreprocessor
+        prep = FramePreprocessor(settings)
     while not stop.is_set():
         ok, frame = cap.read()
         if not ok:
             print("Camera read failed — stopping.")
             stop.set()
             break
+        if prep is not None:
+            frame = prep.process(frame, shared.get_result())
         shared.set_frame(frame)
 
 

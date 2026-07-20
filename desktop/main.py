@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", message="xFormers is not available")
 
 from tracker.core import State
 from tracker.ui import MouseHandler, draw_overlay
-from tracker.settings import Settings, launch_settings
+from tracker.settings import Settings, launch_settings, FILTER_MODES
 from tracker.pipeline import SharedState, capture_loop, inference_loop, cpu_inference_loop
 from tracker.engine import EngineManager
 from tracker.click_segment import ClickSegmenter
@@ -115,7 +115,7 @@ def main():
 
     # Capture and inference run on their own threads; display stays on main.
     cap_thread = threading.Thread(
-        target=capture_loop, args=(cap, shared, stop), daemon=True)
+        target=capture_loop, args=(cap, shared, stop, settings), daemon=True)
     if cpu_mode:
         inf_thread = threading.Thread(
             target=cpu_inference_loop,
@@ -179,6 +179,12 @@ def main():
                 cv2.putText(out, f"{inf_fps:.0f} trk", (out.shape[1] - 76, 46),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
 
+            # Zoom / filter status tag (only when either is active).
+            if settings.zoom > 1.001 or settings.filter_mode != "none":
+                tag = f"zoom {settings.zoom:.2f}x   filter {settings.filter_mode}"
+                cv2.putText(out, tag, (12, out.shape[0] - 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
             # Engine-switch feedback.
             loading = result.get("engine_loading")
             err     = result.get("engine_error")
@@ -198,6 +204,14 @@ def main():
                 settings.drone_mode = not settings.drone_mode
             elif key in (ord("n"), ord("N")):
                 settings.depth_on = not settings.depth_on
+            elif key in (ord("+"), ord("=")):
+                settings.zoom = min(4.0, round(settings.zoom + 0.25, 2))
+            elif key in (ord("-"), ord("_")):
+                settings.zoom = max(1.0, round(settings.zoom - 0.25, 2))
+            elif key in (ord("f"), ord("F")):
+                order = FILTER_MODES
+                settings.filter_mode = order[
+                    (order.index(settings.filter_mode) + 1) % len(order)]
             elif key in (ord("c"), ord("C")):
                 # clear the segment overlay without resetting tracking
                 mouse.pending_point = None

@@ -58,7 +58,7 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
             helper?.let { hpr ->
                 hpr.startPreview()
                 hpr.previewSize?.let { w = it.width; h = it.height }
-                hpr.addFrameCallback(frameCb, UVCCamera.PIXEL_FORMAT_NV21)
+                hpr.setFrameCallback(frameCb, UVCCamera.PIXEL_FORMAT_NV21)
                 Log.i("UvcFrameSource", "UVC preview ${w}x$h")
             }
         }

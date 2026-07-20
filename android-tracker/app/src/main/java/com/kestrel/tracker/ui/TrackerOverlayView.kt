@@ -26,15 +26,30 @@ class TrackerOverlayView(context: Context) : View(context) {
 
     private var pipBmp: Bitmap? = null
     private var result: LockTracker.Result? = null
-    private var filterName = "none"
     private var fps = 0f
+
+    // Filter selector — tap a chip to change or turn OFF (no cycling required).
+    private var filterNames: List<String> = emptyList()
+    private var filterIdx = 0
+    private val chipRects = ArrayList<RectF>()
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 34f; color = Color.WHITE }
     private val PIP = 300
 
+    /** Register the filter names once (e.g. ["off","stretch","edge",...]). */
+    fun setFilters(names: List<String>) { filterNames = names }
+
+    /** If (vx,vy) hit a filter chip, its index; else null (→ treat as a lock tap). */
+    fun filterButtonAt(vx: Float, vy: Float): Int? {
+        for (i in chipRects.indices) if (chipRects[i].contains(vx, vy)) return i
+        return null
+    }
+
+    private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
+
     /** Called from the camera thread each frame with luminance bytes. */
-    fun submit(luma: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filter: String, fps: Float) {
+    fun submit(luma: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filterIdx: Int, fps: Float) {
         if (frameW != w || frameH != h) {
             frameW = w; frameH = h; framePx = IntArray(w * h)
             frameBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -46,7 +61,7 @@ class TrackerOverlayView(context: Context) : View(context) {
         }
         frameBmp?.setPixels(px, 0, w, 0, 0, w, h)
         pipBmp = r?.crop?.let { grayToBitmap(it) }
-        result = r; filterName = filter; this.fps = fps
+        result = r; this.filterIdx = filterIdx; this.fps = fps
         postInvalidate()
     }
 
@@ -112,13 +127,38 @@ class TrackerOverlayView(context: Context) : View(context) {
                 p.color = Color.rgb(240, 40, 40); p.style = Paint.Style.FILL
                 canvas.drawRect(px1 + PIP / 2 - 4, py1 + PIP / 2 - 4,
                     px1 + PIP / 2 + 4, py1 + PIP / 2 + 4, p)
-                canvas.drawText("ZOOM $filterName", px1, py1 + PIP + 30, text)
+                canvas.drawText("ZOOM ${fname(filterIdx)}", px1, py1 + PIP + 30, text)
             }
         }
 
         val st = r?.state?.name ?: "IDLE"
         val cf = ((r?.conf ?: 0f) * 100).toInt()
-        canvas.drawText("$st   conf $cf%   filter $filterName   ${fps.toInt()} fps", 24f, 44f, text)
-        canvas.drawText("tap=lock  double-tap=filter  long-press=reset", 24f, height - 24f, text)
+        canvas.drawText("$st   conf $cf%   filter ${fname(filterIdx)}   ${fps.toInt()} fps", 24f, 44f, text)
+        canvas.drawText("tap target=lock   long-press=reset", 24f, height - 24f, text)
+
+        drawFilterChips(canvas)
+    }
+
+    /** A row of tappable filter chips along the bottom — tap any to switch, tap
+     *  "off" to disable filtering. The active chip is highlighted. */
+    private fun drawFilterChips(canvas: Canvas) {
+        chipRects.clear()
+        if (filterNames.isEmpty()) return
+        val chipH = 58f; val padX = 20f; val gap = 10f
+        var x = 24f; val y = height - chipH - 74f
+        for (i in filterNames.indices) {
+            val label = fname(i)
+            val w = text.measureText(label) + padX * 2
+            val rect = RectF(x, y, x + w, y + chipH)
+            chipRects.add(rect)
+            p.style = Paint.Style.FILL
+            p.color = if (i == filterIdx) Color.rgb(40, 150, 220) else Color.argb(180, 30, 30, 30)
+            canvas.drawRoundRect(rect, 12f, 12f, p)
+            p.style = Paint.Style.STROKE; p.strokeWidth = 2f
+            p.color = if (i == filterIdx) Color.WHITE else Color.rgb(90, 90, 90)
+            canvas.drawRoundRect(rect, 12f, 12f, p)
+            canvas.drawText(label, x + padX, y + chipH - 18f, text)
+            x += w + gap
+        }
     }
 }

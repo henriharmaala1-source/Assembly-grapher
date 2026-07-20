@@ -44,10 +44,12 @@ so it ports straight to the onboard C++ lock tracker.
 
 ## Controls
 
-- **Tap** — lock the target under your finger.
-- **Double-tap** — cycle the crop filter: `none → stretch → edge → threshold →
-  sharpen`. Test which best reveals your target on this feed (threshold ≈ the
-  thermal hot-blob style; edge for hard-edged man-made objects).
+- **Tap a target** — lock the target under your finger.
+- **Filter chips** (bottom row) — tap any chip to switch the crop filter, or tap
+  **`off`** to disable filtering entirely. One tap, no cycling. The active chip
+  is highlighted. Chips: `off · stretch · edge · threshold · sharpen` (threshold
+  ≈ the thermal hot-blob style; edge for hard-edged man-made objects). Double-tap
+  anywhere still quick-cycles them if you prefer.
 - **Long-press** — reset.
 - Top-right **zoom PiP** shows the tracking window (like the footage). HUD shows
   state / confidence / filter / fps.

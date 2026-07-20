@@ -45,15 +45,25 @@ class MainActivity : AppCompatActivity() {
         view = TrackerOverlayView(this)
         setContentView(view)
         tracker.filter = filters[filterIdx]
+        // Chip labels; NONE shows as "off" so turning filtering off is one tap.
+        view.setFilters(filters.map { if (it == CropFilter.NONE) "off" else it.name.lowercase() })
 
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true    // required to receive the rest
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                pendingTap = view.viewToFrame(e.x, e.y)   // designate on the next frame
+                // A tap on a filter chip switches/disables the filter; anywhere
+                // else designates the target under the finger.
+                val chip = view.filterButtonAt(e.x, e.y)
+                if (chip != null) {
+                    filterIdx = chip
+                    tracker.filter = filters[chip]
+                } else {
+                    pendingTap = view.viewToFrame(e.x, e.y)
+                }
                 return true
             }
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                filterIdx = (filterIdx + 1) % filters.size
+                filterIdx = (filterIdx + 1) % filters.size   // quick cycle, still available
                 tracker.filter = filters[filterIdx]
                 return true
             }
@@ -79,7 +89,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val res = tracker.update(gf)
-        view.submit(luma, w, h, res, filters[filterIdx].name.lowercase(), fps)
+        view.submit(luma, w, h, res, filterIdx, fps)
     }
 
     override fun onDestroy() {

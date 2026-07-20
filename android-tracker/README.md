@@ -65,27 +65,29 @@ scripts are missing (they're gitignored), let Studio generate them or copy
 `gradlew`, `gradlew.bat`, and `gradle/wrapper/gradle-wrapper.jar` from
 `../android/`.
 
-## The one device-verify seam: UVC input
+## Camera input — platform Camera2, no external library
 
-`camera/UvcFrameSource.kt` is the only file that couldn't be compile-checked
-here. It uses **AUSBC (AndroidUSBCamera / libausbc)** — declared in
-`app/build.gradle.kts` via JitPack — *only* to open the dongle and receive raw
-NV21 preview frames (whose Y-plane is handed straight to the tracker; no colour
-conversion, the feed is mono). The AUSBC API (class/callback names, the
-`CameraRequest` builder, the preview-format enum) can differ between library
-versions — if the build complains, reconcile that one file against the resolved
-`libausbc` version. Everything else depends on it only through the `FrameSource`
-interface, so nothing else changes.
+`camera/Camera2FrameSource.kt` ingests the dongle through the **platform Camera2
+API** — no UVC library, nothing to resolve from JitPack. The capture dongle
+enumerates as a camera with `LENS_FACING_EXTERNAL` (the same capability the
+generic USB-camera app used); we prefer that external camera when present and
+fall back to the built-in back camera otherwise, so the app **always runs** and
+uses the feed-faithful dongle path whenever it's plugged in. Frames arrive as
+YUV_420_888; the Y plane (row-stride-aware copy) is the luminance the tracker
+wants — no colour conversion, no JPEG.
 
-The USB-camera app you tested already proved the phone can ingest this dongle;
-this is about wiring that same capability into the app.
+Requires the CAMERA runtime permission (requested via the modern ActivityResult
+API — no `onRequestPermissionsResult` override). If a specific phone does *not*
+expose the dongle via Camera2 external, that's the one thing to check on device;
+the built-in fallback still lets you test the tracker meanwhile.
 
 ## Status
 
 - ✅ Tracker logic — validated in Python (tracking + scale adaptation).
 - ✅ Pure-Kotlin core (`track/`) — type-checks against the real Kotlin compiler.
-- ⏳ Android + UVC layers — build on device; `UvcFrameSource.kt` is the expected
-  iteration point (library API), exactly as the navviz Android layers were.
+- ⏳ Android layers — build on device. No external deps now (Camera2, not a UVC
+  library), so the only device-specific unknown is whether the phone exposes the
+  dongle as a Camera2 external camera; the built-in fallback runs regardless.
 
 ## Lessons carried from navviz (so we don't repeat them)
 

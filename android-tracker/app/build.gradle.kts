@@ -26,15 +26,11 @@ android {
 }
 
 dependencies {
-    // UVC / USB-camera: ingests the analog capture dongle (same one that worked
-    // in the generic USB-camera app). AUSBC (AndroidUSBCamera) is actively
-    // maintained and on JitPack; it opens the device and delivers raw frame
-    // callbacks — which is ALL we use it for (we render + track ourselves).
-    // NOTE: this is the one seam that can't be compile-checked here — verify the
-    // exact frame-callback API against the library version on device (see
-    // camera/UvcFrameSource.kt and README).
-    implementation("com.github.jiangdongguo.AndroidUSBCamera:libausbc:3.3.3")
-
+    // No external UVC library. The capture dongle is ingested through the
+    // platform Camera2 API as an EXTERNAL camera (the same reason a generic
+    // USB-camera app can see it) — zero extra dependencies, nothing to resolve
+    // from JitPack, and it falls back to the built-in camera when no dongle is
+    // attached so the app always runs. See camera/Camera2FrameSource.kt.
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.2")
     implementation("androidx.appcompat:appcompat:1.7.0")

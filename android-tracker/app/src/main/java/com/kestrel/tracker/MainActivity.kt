@@ -1,13 +1,17 @@
 package com.kestrel.tracker
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.MotionEvent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.kestrel.tracker.camera.Camera2FrameSource
 import com.kestrel.tracker.camera.FrameSource
-import com.kestrel.tracker.camera.UvcFrameSource
 import com.kestrel.tracker.track.CropFilter
 import com.kestrel.tracker.track.GrayFrame
 import com.kestrel.tracker.track.LockTracker
@@ -38,6 +42,12 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var pendingTap: Pair<Float, Float>? = null
     private var lastMs = 0L
     private var fps = 0f
+
+    // Modern permission request — no onRequestPermissionsResult override (the
+    // Array<out String> vs Array<String> signature trap navviz hit).
+    private val camPerm = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) startSource() }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,7 +81,13 @@ class MainActivity : AppCompatActivity() {
         })
         view.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev); true }
 
-        source = UvcFrameSource(this).also { it.start(::onFrame) }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            == PackageManager.PERMISSION_GRANTED) startSource()
+        else camPerm.launch(Manifest.permission.CAMERA)
+    }
+
+    private fun startSource() {
+        source = Camera2FrameSource(this).also { it.start(::onFrame) }
     }
 
     /** Camera-thread callback: luma bytes -> GrayFrame -> tracker -> overlay. */

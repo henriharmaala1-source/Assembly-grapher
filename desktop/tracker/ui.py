@@ -242,6 +242,69 @@ def _draw_motion_detect(out, blobs, fg_mask):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
 
+_PIP_SIZE   = 220          # on-screen size of the zoom window (px)
+_PIP_MARGIN = 12
+_PIP_CLAHE  = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+
+def _apply_pip_filter(crop, mode):
+    """Filters for the zoom window, to test which best reveals the target on a
+    given feed. All return a 3-channel BGR image so the PiP composites cleanly."""
+    if mode == "clahe":                      # local contrast — low-contrast thermal
+        lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        return cv2.cvtColor(cv2.merge([_PIP_CLAHE.apply(l), a, b]), cv2.COLOR_LAB2BGR)
+    if mode == "edge":                       # Canny — structure/outline
+        g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        return cv2.cvtColor(cv2.Canny(g, 60, 140), cv2.COLOR_GRAY2BGR)
+    if mode == "threshold":                  # Otsu binary — hot-blob segmentation
+        g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        _, t = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return cv2.cvtColor(t, cv2.COLOR_GRAY2BGR)
+    if mode == "sharpen":                    # unsharp mask
+        blur = cv2.GaussianBlur(crop, (0, 0), 3)
+        return cv2.addWeighted(crop, 1.5, blur, -0.5, 0)
+    if mode == "gray":
+        g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        return cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
+    return crop
+
+
+def _draw_target_zoom(out, bbox, filter_mode, margin_scale=2.2):
+    """Top-right zoom PiP of the tracked target — like the reference tracker's
+    window. The crop is sized PROPORTIONALLY to the box (scale-adaptive), then
+    normalised to a fixed on-screen size: that is why the window looks the same
+    size as the target grows/shrinks with range — it scales with the target and
+    the display normalises it. Also outlines the crop source on the wide frame."""
+    fh, fw = out.shape[:2]
+    x, y, w, h = bbox
+    cx, cy = x + w / 2.0, y + h / 2.0
+
+    side = int(max(48, min(max(w, h) * margin_scale, min(fw, fh))))
+    rx = int(max(0, min(cx - side / 2.0, fw - side)))
+    ry = int(max(0, min(cy - side / 2.0, fh - side)))
+    crop = out[ry:ry + side, rx:rx + side]
+    if crop.size == 0:
+        return
+
+    pip = cv2.resize(_apply_pip_filter(crop.copy(), filter_mode),
+                     (_PIP_SIZE, _PIP_SIZE), interpolation=cv2.INTER_LINEAR)
+    px1 = fw - _PIP_SIZE - _PIP_MARGIN
+    py1 = _PIP_MARGIN
+    out[py1:py1 + _PIP_SIZE, px1:px1 + _PIP_SIZE] = pip
+    cv2.rectangle(out, (px1, py1), (px1 + _PIP_SIZE, py1 + _PIP_SIZE), (230, 230, 230), 1)
+
+    # Marker at the target's actual position inside the window (handles edge clamp).
+    mcx = int(px1 + (cx - rx) / side * _PIP_SIZE)
+    mcy = int(py1 + (cy - ry) / side * _PIP_SIZE)
+    cv2.rectangle(out, (mcx - 3, mcy - 3), (mcx + 3, mcy + 3), (40, 40, 240), -1)
+
+    cv2.putText(out, f"ZOOM  {filter_mode}", (px1, py1 + _PIP_SIZE + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (230, 230, 230), 1)
+    # Where the window is looking, on the wide frame.
+    cv2.rectangle(out, (rx, ry), (rx + side, ry + side), (120, 120, 120), 1)
+
+
 def draw_overlay(
     frame: np.ndarray,
     state: State,
@@ -353,6 +416,13 @@ def draw_overlay(
         # ── help strip ────────────────────────────────────────────────────────
         cv2.putText(out, "click=segment  drag=track  C=clear  D=drone  R=reset  ESC=quit",
                     (10, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (110, 110, 110), 1)
+
+    # ── target zoom PiP (scale-adaptive crop + selectable filter) ─────────────
+    if getattr(cfg, "zoom_pip", True):
+        pip_bbox = (drone_result or {}).get("bbox") if drone_mode else (
+            bbox if state == State.LOCKED else None)
+        if pip_bbox is not None:
+            _draw_target_zoom(out, pip_bbox, getattr(cfg, "zoom_pip_filter", "none"))
 
     # ── FPS (always shown) ────────────────────────────────────────────────────
     if cfg.show_fps:

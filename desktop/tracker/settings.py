@@ -69,6 +69,11 @@ class Settings:
     zoom:        float = 1.0        # digital zoom; 1.0 = off; +/- keys; follows lock
     filter_mode: str   = "none"     # "none" | "wb" | "wb+clahe"; f key cycles
 
+    # Target zoom window (see ui._draw_target_zoom) — top-right PiP of the
+    # tracked target, scale-adaptive crop, selectable filter for A/B testing.
+    zoom_pip:        bool = True
+    zoom_pip_filter: str  = "none"  # none|clahe|edge|threshold|sharpen|gray; g key
+
 
 TRACKER_BACKENDS  = ["ViT", "CSRT", "KCF", "Optical Flow"]
 TRACKING_ENGINES  = ["hybrid", "sam2"]
@@ -76,6 +81,7 @@ SEGMENT_BACKENDS  = ["SAM 2", "MobileSAM", "FastSAM-s"]
 DRONE_BACKENDS    = ["CSRT", "KCF", "Optical Flow"]
 DEPTH_BACKENDS    = ["midas", "dav2"]
 FILTER_MODES      = ["none", "wb", "wb+clahe"]
+PIP_FILTERS       = ["none", "clahe", "edge", "threshold", "sharpen", "gray"]
 
 
 # ----------------------------------------------------------------- GUI builder
@@ -136,6 +142,8 @@ def _run_gui(settings: Settings) -> None:
     f = section("Capture  (+/- zoom, F filter — small targets / shifting light)")
     slider_row(f, "Digital zoom (x)",  "zoom", 1.0, 4.0)
     combo_row(f,  "Appearance filter", "filter_mode", FILTER_MODES)
+    check_row(f,  "Target zoom window (PiP)", "zoom_pip")
+    combo_row(f,  "Zoom window filter (G)",   "zoom_pip_filter", PIP_FILTERS)
 
     # ── Engine ────────────────────────────────────────────────────────────────
     f = section("Engine  (switches live; lock carries over)")
@@ -221,7 +229,8 @@ def _run_gui(settings: Settings) -> None:
     _refresh_path()
 
     ttk.Separator(root).pack(fill="x", pady=8)
-    ttk.Label(root, text="R reset   D drone   N depth   +/- zoom   F filter   ESC quit",
+    ttk.Label(root,
+              text="R reset  D drone  N depth  +/- zoom  F filter  G zoomfilter  P pip  ESC quit",
               foreground="gray").pack(pady=(0, 8))
 
     root.mainloop()

@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", message="xFormers is not available")
 
 from tracker.core import State
 from tracker.ui import MouseHandler, draw_overlay
-from tracker.settings import Settings, launch_settings, FILTER_MODES
+from tracker.settings import Settings, launch_settings, FILTER_MODES, PIP_FILTERS
 from tracker.pipeline import SharedState, capture_loop, inference_loop, cpu_inference_loop
 from tracker.engine import EngineManager
 from tracker.click_segment import ClickSegmenter
@@ -212,6 +212,12 @@ def main():
                 order = FILTER_MODES
                 settings.filter_mode = order[
                     (order.index(settings.filter_mode) + 1) % len(order)]
+            elif key in (ord("g"), ord("G")):
+                order = PIP_FILTERS
+                settings.zoom_pip_filter = order[
+                    (order.index(settings.zoom_pip_filter) + 1) % len(order)]
+            elif key in (ord("p"), ord("P")):
+                settings.zoom_pip = not settings.zoom_pip
             elif key in (ord("c"), ord("C")):
                 # clear the segment overlay without resetting tracking
                 mouse.pending_point = None

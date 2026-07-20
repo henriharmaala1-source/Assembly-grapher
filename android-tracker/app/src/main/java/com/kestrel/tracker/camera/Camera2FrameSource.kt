@@ -32,10 +32,10 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
     private var reader: ImageReader? = null
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
-    private var onLuma: ((ByteArray, Int, Int) -> Unit)? = null
+    private var onFrame: ((ByteArray, Int, Int) -> Unit)? = null
 
-    override fun start(onLuma: (ByteArray, Int, Int) -> Unit) {
-        this.onLuma = onLuma
+    override fun start(onFrame: (ByteArray, Int, Int) -> Unit) {
+        this.onFrame = onFrame
         thread = HandlerThread("cam").also { it.start() }
         handler = Handler(thread!!.looper)
 
@@ -103,16 +103,20 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
             val plane = img.planes[0]              // Y plane = luminance
             val buf = plane.buffer
             val rowStride = plane.rowStride
-            val luma = ByteArray(w * h)
+            // Emit NV21: fill Y, leave UV neutral (grey). This fallback path is
+            // luma-only — colour display / the chroma filter light up on the UVC
+            // (dongle) path, which delivers real chroma.
+            val nv21 = ByteArray(w * h * 3 / 2)
             if (rowStride == w) {
-                buf.get(luma, 0, w * h)
+                buf.get(nv21, 0, w * h)
             } else {
-                for (row in 0 until h) {           // strip row padding
+                for (row in 0 until h) {
                     buf.position(row * rowStride)
-                    buf.get(luma, row * w, w)
+                    buf.get(nv21, row * w, w)
                 }
             }
-            onLuma?.invoke(luma, w, h)
+            for (i in w * h until nv21.size) nv21[i] = 128.toByte()   // neutral chroma
+            onFrame?.invoke(nv21, w, h)
         } finally {
             img.close()
         }
@@ -121,6 +125,6 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
     override fun stop() {
         session?.close(); device?.close(); reader?.close()
         thread?.quitSafely()
-        session = null; device = null; reader = null; thread = null; onLuma = null
+        session = null; device = null; reader = null; thread = null; onFrame = null
     }
 }

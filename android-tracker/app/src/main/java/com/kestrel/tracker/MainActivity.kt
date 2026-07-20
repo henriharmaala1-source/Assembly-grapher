@@ -75,13 +75,18 @@ class MainActivity : AppCompatActivity() {
         source = UvcFrameSource(this).also { it.start(::onFrame) }
     }
 
-    /** Camera-thread callback: luma bytes -> GrayFrame -> tracker -> overlay. */
-    private fun onFrame(luma: ByteArray, w: Int, h: Int) {
+    /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay. */
+    private fun onFrame(nv21: ByteArray, w: Int, h: Int) {
         val now = SystemClock.elapsedRealtime()
         if (lastMs != 0L) fps = 0.9f * fps + 0.1f * (1000f / max(1L, now - lastMs))
         lastMs = now
 
-        val gf = GrayFrame(FloatArray(w * h) { (luma[it].toInt() and 0xFF).toFloat() }, w, h)
+        // Only split out chroma when the colour filter needs it — otherwise a
+        // cheap luma-only frame keeps the tracker loop fast.
+        val gf = if (filters[filterIdx] == CropFilter.CHROMA)
+            GrayFrame.fromNv21(nv21, w, h)
+        else
+            GrayFrame(FloatArray(w * h) { (nv21[it].toInt() and 0xFF).toFloat() }, w, h)
 
         pendingTap?.let { (fx, fy) ->
             if (fx in 0f..w.toFloat() && fy in 0f..h.toFloat())
@@ -90,7 +95,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val res = tracker.update(gf)
-        view.submit(luma, w, h, res, filterIdx, fps)
+        view.submit(nv21, w, h, res, filterIdx, fps)
     }
 
     override fun onDestroy() {

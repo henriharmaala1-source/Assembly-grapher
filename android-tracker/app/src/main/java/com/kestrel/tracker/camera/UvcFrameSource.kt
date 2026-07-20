@@ -26,21 +26,23 @@ import java.nio.ByteBuffer
 class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSource {
 
     private var helper: CameraHelper? = null
-    private var onLuma: ((ByteArray, Int, Int) -> Unit)? = null
+    private var onFrame: ((ByteArray, Int, Int) -> Unit)? = null
     @Volatile private var w = 0
     @Volatile private var h = 0
 
     private val frameCb = object : IFrameCallback {
         override fun onFrame(frame: ByteBuffer) {
-            val cb = onLuma ?: return
+            val cb = onFrame ?: return
             val ww = w; val hh = h
             if (ww == 0 || hh == 0) return
-            val need = ww * hh
-            if (frame.capacity() < need) return
-            val luma = ByteArray(need)
+            if (frame.capacity() < ww * hh) return
+            // Pass the FULL NV21 frame (Y + VU) so the pipeline has colour; Y is
+            // the first w*h bytes, chroma follows. GrayFrame.fromNv21 splits it.
+            val take = minOf(frame.capacity(), ww * hh * 3 / 2)
+            val buf = ByteArray(take)
             frame.position(0)
-            frame.get(luma, 0, need)          // NV21: Y plane first = luminance
-            cb(luma, ww, hh)
+            frame.get(buf, 0, take)
+            cb(buf, ww, hh)
         }
     }
 
@@ -66,8 +68,8 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
         override fun onCancel(device: UsbDevice?) {}
     }
 
-    override fun start(onLuma: (ByteArray, Int, Int) -> Unit) {
-        this.onLuma = onLuma
+    override fun start(onFrame: (ByteArray, Int, Int) -> Unit) {
+        this.onFrame = onFrame
         helper = CameraHelper().also { it.setStateCallback(stateCb) }
         Log.i("UvcFrameSource", "waiting for UVC dongle attach")
     }
@@ -75,6 +77,6 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
     override fun stop() {
         helper?.closeCamera()
         helper?.release()
-        helper = null; onLuma = null
+        helper = null; onFrame = null
     }
 }

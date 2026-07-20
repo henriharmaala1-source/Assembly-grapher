@@ -48,18 +48,14 @@ class TrackerOverlayView(context: Context) : View(context) {
 
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
 
-    /** Called from the camera thread each frame with luminance bytes. */
-    fun submit(luma: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filterIdx: Int, fps: Float) {
+    /** Called from the camera thread each frame with an NV21 buffer. */
+    fun submit(nv21: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filterIdx: Int, fps: Float) {
         if (frameW != w || frameH != h) {
             frameW = w; frameH = h; framePx = IntArray(w * h)
             frameBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         }
-        val px = framePx
-        for (i in 0 until w * h) {
-            val v = luma[i].toInt() and 0xFF
-            px[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
-        }
-        frameBmp?.setPixels(px, 0, w, 0, 0, w, h)
+        nv21ToArgb(nv21, w, h, framePx)
+        frameBmp?.setPixels(framePx, 0, w, 0, 0, w, h)
         pipBmp = r?.crop?.let { grayToBitmap(it) }
         result = r; this.filterIdx = filterIdx; this.fps = fps
         postInvalidate()
@@ -72,6 +68,31 @@ class TrackerOverlayView(context: Context) : View(context) {
         val s = minOf(width.toFloat() / frameW, height.toFloat() / frameH)
         val ox = (width - frameW * s) / 2f; val oy = (height - frameH * s) / 2f
         return ((vx - ox) / s) to ((vy - oy) / s)
+    }
+
+    /** NV21 -> ARGB (integer YUV→RGB). Falls back to grey if the buffer is
+     *  luma-only. This is the colour feed the operator sees. */
+    private fun nv21ToArgb(nv21: ByteArray, w: Int, h: Int, out: IntArray) {
+        val n = w * h
+        val color = nv21.size >= n + n / 2
+        for (j in 0 until h) {
+            val uvRow = n + (j shr 1) * w
+            val row = j * w
+            for (i in 0 until w) {
+                val y = nv21[row + i].toInt() and 0xFF
+                if (color) {
+                    val uv = uvRow + (i and 1.inv())
+                    val v = (nv21[uv].toInt() and 0xFF) - 128
+                    val u = (nv21[uv + 1].toInt() and 0xFF) - 128
+                    val r = (y + (1436 * v shr 10)).coerceIn(0, 255)
+                    val g = (y - (352 * u shr 10) - (731 * v shr 10)).coerceIn(0, 255)
+                    val b = (y + (1815 * u shr 10)).coerceIn(0, 255)
+                    out[row + i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                } else {
+                    out[row + i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
+                }
+            }
+        }
     }
 
     private fun grayToBitmap(g: GrayFrame): Bitmap {

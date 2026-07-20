@@ -10,7 +10,7 @@ import kotlin.math.sqrt
  * correlation invariant to whatever the filter removes (e.g. absolute contrast).
  * All operate on a GrayFrame and return a new GrayFrame of the same size.
  */
-enum class CropFilter { NONE, STRETCH, EDGE, THRESHOLD, SHARPEN }
+enum class CropFilter { NONE, STRETCH, EDGE, THRESHOLD, SHARPEN, CHROMA }
 
 object Filters {
 
@@ -20,6 +20,21 @@ object Filters {
         CropFilter.EDGE      -> sobel(g)       // gradient magnitude — structure
         CropFilter.THRESHOLD -> otsu(g)        // hot-blob binary — thermal style
         CropFilter.SHARPEN   -> sharpen(g)
+        CropFilter.CHROMA    -> chroma(g)      // colourfulness — colour-distinct target pops
+    }
+
+    /** Track on colour instead of luma: per-pixel chroma magnitude
+     *  sqrt((U-128)^2+(V-128)^2). A saturated target on a desaturated background
+     *  pops even when they're the same brightness. Brightness-invariant (helps
+     *  under changing light); wraparound-free (unlike hue), so NCC behaves.
+     *  Passthrough to luma if the frame carries no colour (e.g. thermal). */
+    private fun chroma(g: GrayFrame): GrayFrame {
+        val cu = g.cu; val cv = g.cv
+        if (cu == null || cv == null) return g
+        val out = FloatArray(g.d.size) {
+            (sqrt(cu[it] * cu[it] + cv[it] * cv[it]) * 1.41f).coerceIn(0f, 255f)
+        }
+        return GrayFrame(out, g.w, g.h, cu, cv)
     }
 
     /** Robust 2nd/98th-percentile contrast stretch — cheap CLAHE stand-in. */

@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.view.View
 import com.kestrel.tracker.track.GrayFrame
 import com.kestrel.tracker.track.LockTracker
+import com.kestrel.tracker.track.MotionDetector
 
 /**
  * Draws the (grayscale) feed + the tracked box + a top-right zoom PiP of the
@@ -33,6 +34,11 @@ class TrackerOverlayView(context: Context) : View(context) {
     private var filterIdx = 0
     private val chipRects = ArrayList<RectF>()
 
+    // Mode (LOCK vs MOTION) — top-left button toggles it.
+    private var motionMode = false
+    private var blobs: List<MotionDetector.Blob> = emptyList()
+    private val modeRect = RectF()
+
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 34f; color = Color.WHITE }
     private val PIP = 300
@@ -46,10 +52,14 @@ class TrackerOverlayView(context: Context) : View(context) {
         return null
     }
 
+    /** True if (vx,vy) hit the mode toggle button. */
+    fun modeButtonAt(vx: Float, vy: Float): Boolean = modeRect.contains(vx, vy)
+
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
 
     /** Called from the camera thread each frame with an NV21 buffer. */
-    fun submit(nv21: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filterIdx: Int, fps: Float) {
+    fun submit(nv21: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filterIdx: Int,
+               fps: Float, motionMode: Boolean, blobs: List<MotionDetector.Blob>) {
         if (frameW != w || frameH != h) {
             frameW = w; frameH = h; framePx = IntArray(w * h)
             frameBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -58,6 +68,7 @@ class TrackerOverlayView(context: Context) : View(context) {
         frameBmp?.setPixels(framePx, 0, w, 0, 0, w, h)
         pipBmp = r?.crop?.let { grayToBitmap(it) }
         result = r; this.filterIdx = filterIdx; this.fps = fps
+        this.motionMode = motionMode; this.blobs = blobs
         postInvalidate()
     }
 
@@ -121,6 +132,22 @@ class TrackerOverlayView(context: Context) : View(context) {
         fun fx(x: Float) = ox + x * s
         fun fy(y: Float) = oy + y * s
 
+        if (motionMode) {
+            // MOTION mode: draw candidate movers; the largest is the primary.
+            for ((idx, b) in blobs.withIndex()) {
+                val primary = idx == 0
+                p.style = Paint.Style.STROKE; p.strokeWidth = if (primary) 3f else 2f
+                p.color = if (primary) Color.rgb(60, 220, 255) else Color.rgb(90, 150, 170)
+                canvas.drawRect(fx(b.x.toFloat()), fy(b.y.toFloat()),
+                    fx((b.x + b.w).toFloat()), fy((b.y + b.h).toFloat()), p)
+            }
+            canvas.drawText("MOTION   ${blobs.size} movers   ${fps.toInt()} fps", 24f, 44f, text)
+            canvas.drawText("tap a mover to lock it   (button: switch mode)", 24f, height - 24f, text)
+            drawModeButton(canvas)
+            drawFilterChips(canvas)
+            return
+        }
+
         val r = result
         if (r != null && (r.state == LockTracker.State.LOCKED || r.state == LockTracker.State.COASTING)) {
             val col = when {
@@ -157,7 +184,21 @@ class TrackerOverlayView(context: Context) : View(context) {
         canvas.drawText("$st   conf $cf%   filter ${fname(filterIdx)}   ${fps.toInt()} fps", 24f, 44f, text)
         canvas.drawText("tap target=lock   long-press=reset", 24f, height - 24f, text)
 
+        drawModeButton(canvas)
         drawFilterChips(canvas)
+    }
+
+    /** Top-right MODE toggle (LOCK / MOTION). */
+    private fun drawModeButton(canvas: Canvas) {
+        val label = if (motionMode) "MODE: MOTION" else "MODE: LOCK"
+        val bw = text.measureText(label) + 36f
+        val x1 = width - bw - 16f; val y1 = 16f; val bh = 58f
+        modeRect.set(x1, y1, x1 + bw, y1 + bh)
+        p.style = Paint.Style.FILL; p.color = Color.argb(200, 20, 60, 90)
+        canvas.drawRoundRect(modeRect, 12f, 12f, p)
+        p.style = Paint.Style.STROKE; p.strokeWidth = 2f; p.color = Color.rgb(120, 200, 240)
+        canvas.drawRoundRect(modeRect, 12f, 12f, p)
+        canvas.drawText(label, x1 + 18f, y1 + bh - 18f, text)
     }
 
     /** A row of tappable filter chips along the bottom — tap any to switch, tap

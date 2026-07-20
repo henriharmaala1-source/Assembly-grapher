@@ -42,9 +42,23 @@ Validated in Python: tracks a moving+growing synthetic target to ~3.6 px, box
 grows 64→143 px as it approaches. Pure Kotlin on `GrayFrame`, no Android deps —
 so it ports straight to the onboard C++ lock tracker.
 
+## Modes
+
+Top-right **MODE** button toggles between:
+
+- **LOCK** — tap a target to lock and track it (the correlation tracker).
+- **MOTION** — acquire by *movement*. A running-average background is subtracted
+  each frame; what moved is boxed (largest = primary). **Tap a mover to lock it**
+  — its box is handed to the tracker and you drop into LOCK. This is the cue that
+  works when colour/brightness/texture can't separate the target (a car the same
+  colour as the road): the instant it moves, it lights up. Assumes a roughly
+  stationary camera — which is exactly the move-stop-sense *acquire-while-settled*
+  case; ego-motion compensation is the moving-camera upgrade.
+
 ## Controls
 
-- **Tap a target** — lock the target under your finger.
+- **Tap a target** — lock the target under your finger (LOCK mode); or tap a
+  mover to lock it (MOTION mode).
 - **Filter chips** (bottom row) — tap any chip to switch the crop filter, or tap
   **`off`** to disable filtering entirely. One tap, no cycling. The active chip
   is highlighted. Chips: `off · stretch · edge · threshold · sharpen · chroma`

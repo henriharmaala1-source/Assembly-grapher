@@ -11,6 +11,7 @@ import com.kestrel.tracker.camera.UvcFrameSource
 import com.kestrel.tracker.track.CropFilter
 import com.kestrel.tracker.track.GrayFrame
 import com.kestrel.tracker.track.LockTracker
+import com.kestrel.tracker.track.MotionDetector
 import com.kestrel.tracker.ui.TrackerOverlayView
 import kotlin.math.max
 
@@ -35,9 +36,15 @@ class MainActivity : AppCompatActivity() {
     private val filters = CropFilter.values()
     private var filterIdx = 0
 
-    @Volatile private var pendingTap: Pair<Float, Float>? = null
+    // Pending designation [cx, cy, size] in frame coords (from a tap or a blob).
+    @Volatile private var pendingDesignate: FloatArray? = null
     private var lastMs = 0L
     private var fps = 0f
+
+    // MOTION mode — acquire targets by movement (works when colour/texture can't).
+    @Volatile private var motionMode = false
+    private val motion = MotionDetector()
+    @Volatile private var lastBlobs: List<MotionDetector.Blob> = emptyList()
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,14 +58,29 @@ class MainActivity : AppCompatActivity() {
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true    // required to receive the rest
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // A tap on a filter chip switches/disables the filter; anywhere
-                // else designates the target under the finger.
+                // Priority: mode button, then filter chip, then a target tap.
+                if (view.modeButtonAt(e.x, e.y)) {
+                    motionMode = !motionMode
+                    if (motionMode) motion.reset()
+                    return true
+                }
                 val chip = view.filterButtonAt(e.x, e.y)
-                if (chip != null) {
-                    filterIdx = chip
-                    tracker.filter = filters[chip]
+                if (chip != null) { filterIdx = chip; tracker.filter = filters[chip]; return true }
+
+                val fp = view.viewToFrame(e.x, e.y) ?: return true
+                if (motionMode) {
+                    // Tap a mover to lock it: hand its box to the tracker + switch to LOCK.
+                    val b = lastBlobs.firstOrNull {
+                        fp.first in it.x.toFloat()..(it.x + it.w).toFloat() &&
+                        fp.second in it.y.toFloat()..(it.y + it.h).toFloat()
+                    }
+                    if (b != null) {
+                        pendingDesignate = floatArrayOf(
+                            b.x + b.w / 2f, b.y + b.h / 2f, maxOf(b.w, b.h).toFloat())
+                        motionMode = false
+                    }
                 } else {
-                    pendingTap = view.viewToFrame(e.x, e.y)
+                    pendingDesignate = floatArrayOf(fp.first, fp.second, 64f)
                 }
                 return true
             }
@@ -67,7 +89,7 @@ class MainActivity : AppCompatActivity() {
                 tracker.filter = filters[filterIdx]
                 return true
             }
-            override fun onLongPress(e: MotionEvent) { tracker.reset() }
+            override fun onLongPress(e: MotionEvent) { tracker.reset(); motion.reset() }
         })
         view.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev); true }
 
@@ -83,19 +105,23 @@ class MainActivity : AppCompatActivity() {
 
         // Only split out chroma when the colour filter needs it — otherwise a
         // cheap luma-only frame keeps the tracker loop fast.
-        val gf = if (filters[filterIdx] == CropFilter.CHROMA)
+        val gf = if (!motionMode && filters[filterIdx] == CropFilter.CHROMA)
             GrayFrame.fromNv21(nv21, w, h)
         else
             GrayFrame(FloatArray(w * h) { (nv21[it].toInt() and 0xFF).toFloat() }, w, h)
 
-        pendingTap?.let { (fx, fy) ->
-            if (fx in 0f..w.toFloat() && fy in 0f..h.toFloat())
-                tracker.designate(gf, fx, fy, 64f)
-            pendingTap = null
+        val res: LockTracker.Result?
+        if (motionMode) {
+            lastBlobs = motion.detect(gf)      // acquire by movement; no lock update
+            res = null
+        } else {
+            pendingDesignate?.let { d ->
+                tracker.designate(gf, d[0], d[1], d[2]); pendingDesignate = null
+            }
+            res = tracker.update(gf)
+            lastBlobs = emptyList()
         }
-
-        val res = tracker.update(gf)
-        view.submit(nv21, w, h, res, filterIdx, fps)
+        view.submit(nv21, w, h, res, filterIdx, fps, motionMode, lastBlobs)
     }
 
     override fun onDestroy() {

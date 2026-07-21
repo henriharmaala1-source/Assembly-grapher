@@ -59,16 +59,19 @@ Top-right **MODE** button toggles between:
 
 - **Tap a target** — lock the target under your finger (LOCK mode); or tap a
   mover to lock it (MOTION mode).
-- **Filter chips** (bottom row) — tap any chip to switch the crop filter, or tap
-  **`off`** to disable filtering entirely. One tap, no cycling. The active chip
-  is highlighted. Chips: `off · stretch · edge · threshold · sharpen · chroma`
-  (threshold ≈ the thermal hot-blob style; edge for hard-edged man-made objects;
-  **chroma** tracks on colourfulness, so a colour-distinct target pops even when
-  it's the same brightness as its background — a colour cue the mono channel
-  throws away). Double-tap anywhere still quick-cycles them if you prefer.
+- **Cue chips** (bottom row) — tap to pick the tracking cue set: `off · edge ·
+  sharpen · chroma · threshold · FUSE`. Single-cue chips are for A/B testing
+  which channel best reveals your target (edge = structure, chroma = colour,
+  threshold = hot-blob). **FUSE** combines structure + colour + brightness and
+  weights each by its own confidence (PSR) every frame — so lock survives when
+  any single cue goes flat (a car the same colour as the road has no chroma but
+  plenty of structure). This is the mode to fly. Switching cues while locked
+  rebuilds templates without losing the lock. Double-tap quick-cycles.
 
-The feed itself is shown in **colour** (NV21→RGB); the chroma filter is how you
-put that colour to work in the *tracker*, not just the display.
+The feed is shown in **colour** (NV21→RGB). A **magenta ✕** marks the
+latency-compensated aim point — where the target *is now*, projected forward
+from its velocity to cancel the ~150 ms feed delay (distinct from the box
+centre, which is where it was seen).
 - **Long-press** — reset.
 - Top-right **zoom PiP** shows the tracking window (like the footage). HUD shows
   state / confidence / filter / fps.

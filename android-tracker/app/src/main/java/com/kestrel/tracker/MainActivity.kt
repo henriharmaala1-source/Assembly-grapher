@@ -33,8 +33,18 @@ class MainActivity : AppCompatActivity() {
     private val tracker = LockTracker()
     private var source: FrameSource? = null
 
-    private val filters = CropFilter.values()
+    // Each chip = a fused cue set for the tracker. "FUSE" combines structure +
+    // colour + brightness so lock survives when any single cue goes flat.
+    private val cueModes = listOf(
+        CueMode("off",       listOf(CropFilter.NONE)),
+        CueMode("edge",      listOf(CropFilter.EDGE)),
+        CueMode("sharpen",   listOf(CropFilter.SHARPEN)),
+        CueMode("chroma",    listOf(CropFilter.CHROMA)),
+        CueMode("threshold", listOf(CropFilter.THRESHOLD)),
+        CueMode("FUSE",      listOf(CropFilter.EDGE, CropFilter.CHROMA, CropFilter.NONE)),
+    )
     private var filterIdx = 0
+    private val needColor get() = cueModes[filterIdx].cues.contains(CropFilter.CHROMA)
 
     // Pending designation [cx, cy, size] in frame coords (from a tap or a blob).
     @Volatile private var pendingDesignate: FloatArray? = null
@@ -51,9 +61,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         view = TrackerOverlayView(this)
         setContentView(view)
-        tracker.filter = filters[filterIdx]
-        // Chip labels; NONE shows as "off" so turning filtering off is one tap.
-        view.setFilters(filters.map { if (it == CropFilter.NONE) "off" else it.name.lowercase() })
+        tracker.setCues(cueModes[filterIdx].cues)
+        view.setFilters(cueModes.map { it.label })
 
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true    // required to receive the rest
@@ -65,7 +74,7 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
                 val chip = view.filterButtonAt(e.x, e.y)
-                if (chip != null) { filterIdx = chip; tracker.filter = filters[chip]; return true }
+                if (chip != null) { filterIdx = chip; tracker.setCues(cueModes[chip].cues); return true }
 
                 val fp = view.viewToFrame(e.x, e.y) ?: return true
                 if (motionMode) {
@@ -85,8 +94,8 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                filterIdx = (filterIdx + 1) % filters.size   // quick cycle, still available
-                tracker.filter = filters[filterIdx]
+                filterIdx = (filterIdx + 1) % cueModes.size   // quick cycle, still available
+                tracker.setCues(cueModes[filterIdx].cues)
                 return true
             }
             override fun onLongPress(e: MotionEvent) { tracker.reset(); motion.reset() }
@@ -103,9 +112,9 @@ class MainActivity : AppCompatActivity() {
         if (lastMs != 0L) fps = 0.9f * fps + 0.1f * (1000f / max(1L, now - lastMs))
         lastMs = now
 
-        // Only split out chroma when the colour filter needs it — otherwise a
-        // cheap luma-only frame keeps the tracker loop fast.
-        val gf = if (!motionMode && filters[filterIdx] == CropFilter.CHROMA)
+        // Split out chroma only when an active cue needs it — otherwise a cheap
+        // luma-only frame keeps the tracker loop fast.
+        val gf = if (!motionMode && needColor)
             GrayFrame.fromNv21(nv21, w, h)
         else
             GrayFrame(FloatArray(w * h) { (nv21[it].toInt() and 0xFF).toFloat() }, w, h)
@@ -129,3 +138,6 @@ class MainActivity : AppCompatActivity() {
         source?.stop()
     }
 }
+
+/** A selectable tracking cue set: one channel (A/B testing) or several (fusion). */
+private data class CueMode(val label: String, val cues: List<CropFilter>)

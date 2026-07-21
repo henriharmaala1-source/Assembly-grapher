@@ -165,6 +165,13 @@ class TrackerOverlayView(context: Context) : View(context) {
             p.strokeWidth = 2f
             canvas.drawLine(ccx, ccy, fx(r.predX), fy(r.predY), p)
 
+            // Latency-compensated AIM point (where to steer NOW on a ~150ms feed),
+            // magenta so it can't be confused with the box centre.
+            val ax = fx(r.aimX); val ay = fy(r.aimY)
+            p.color = Color.rgb(255, 0, 200); p.strokeWidth = 2f
+            canvas.drawLine(ax - 12, ay - 12, ax + 12, ay + 12, p)
+            canvas.drawLine(ax - 12, ay + 12, ax + 12, ay - 12, p)
+
             // PiP top-right — the tracking window (like the reference footage).
             pipBmp?.let { pip ->
                 val px1 = width - PIP - 16f; val py1 = 16f

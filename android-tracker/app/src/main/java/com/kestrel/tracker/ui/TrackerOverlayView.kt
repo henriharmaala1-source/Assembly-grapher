@@ -13,17 +13,20 @@ import com.kestrel.tracker.track.LockTracker
 import com.kestrel.tracker.track.MotionDetector
 
 /**
- * Draws the (grayscale) feed + the tracked box + a top-right zoom PiP of the
- * followed crop — the reference-footage layout. Everything is luminance: the
- * analog/thermal feed is effectively mono, and the tracker only needs luma, so
- * we never pay for YUV→RGB or a JPEG round-trip (the navviz framerate lesson).
+ * Draws the colour feed + the tracked box + a top-right zoom PiP of the followed
+ * crop. The feed bitmap is built at HALF resolution: the per-pixel YUV→RGB pass
+ * runs on the frame-delivery thread, so a full-res conversion throttles the
+ * camera (the navviz framerate lesson, again). The tracker still uses full-res
+ * luma — only the displayed bitmap is downsampled, drawn scaled.
  */
 class TrackerOverlayView(context: Context) : View(context) {
 
     private var frameBmp: Bitmap? = null
-    private var frameW = 0
+    private var frameW = 0            // full frame size (coordinate mapping)
     private var frameH = 0
-    private var framePx = IntArray(0)
+    private var dispW = 0             // downsampled display-bitmap size
+    private var dispH = 0
+    private var dispPx = IntArray(0)
 
     private var pipBmp: Bitmap? = null
     private var result: LockTracker.Result? = null
@@ -68,12 +71,14 @@ class TrackerOverlayView(context: Context) : View(context) {
     /** Called from the camera thread each frame with an NV21 buffer. */
     fun submit(nv21: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filterIdx: Int,
                fps: Float, motionMode: Boolean, blobs: List<MotionDetector.Blob>) {
-        if (frameW != w || frameH != h) {
-            frameW = w; frameH = h; framePx = IntArray(w * h)
-            frameBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        frameW = w; frameH = h
+        val dw = (w / 2).coerceAtLeast(1); val dh = (h / 2).coerceAtLeast(1)
+        if (dispW != dw || dispH != dh) {
+            dispW = dw; dispH = dh; dispPx = IntArray(dw * dh)
+            frameBmp = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888)
         }
-        nv21ToArgb(nv21, w, h, framePx)
-        frameBmp?.setPixels(framePx, 0, w, 0, 0, w, h)
+        nv21ToArgb(nv21, w, h, dispPx, dw, dh)
+        frameBmp?.setPixels(dispPx, 0, dw, 0, 0, dw, dh)
         pipBmp = r?.crop?.let { grayToBitmap(it) }
         result = r; this.filterIdx = filterIdx; this.fps = fps
         this.motionMode = motionMode; this.blobs = blobs
@@ -91,24 +96,30 @@ class TrackerOverlayView(context: Context) : View(context) {
 
     /** NV21 -> ARGB (integer YUV→RGB). Falls back to grey if the buffer is
      *  luma-only. This is the colour feed the operator sees. */
-    private fun nv21ToArgb(nv21: ByteArray, w: Int, h: Int, out: IntArray) {
+    /** NV21 -> ARGB at a downsampled (dw×dh) target — samples the source on a
+     *  stride so the conversion is 1/(step^2) the work. Grey if luma-only. */
+    private fun nv21ToArgb(nv21: ByteArray, w: Int, h: Int, out: IntArray, dw: Int, dh: Int) {
         val n = w * h
         val color = nv21.size >= n + n / 2
-        for (j in 0 until h) {
-            val uvRow = n + (j shr 1) * w
-            val row = j * w
-            for (i in 0 until w) {
-                val y = nv21[row + i].toInt() and 0xFF
+        val stepX = w / dw; val stepY = h / dh
+        for (dj in 0 until dh) {
+            val sy = dj * stepY
+            val uvRow = n + (sy shr 1) * w
+            val srow = sy * w
+            val orow = dj * dw
+            for (di in 0 until dw) {
+                val sx = di * stepX
+                val y = nv21[srow + sx].toInt() and 0xFF
                 if (color) {
-                    val uv = uvRow + (i and 1.inv())
+                    val uv = uvRow + (sx and 1.inv())
                     val v = (nv21[uv].toInt() and 0xFF) - 128
                     val u = (nv21[uv + 1].toInt() and 0xFF) - 128
                     val r = (y + (1436 * v shr 10)).coerceIn(0, 255)
                     val g = (y - (352 * u shr 10) - (731 * v shr 10)).coerceIn(0, 255)
                     val b = (y + (1815 * u shr 10)).coerceIn(0, 255)
-                    out[row + i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                    out[orow + di] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
                 } else {
-                    out[row + i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
+                    out[orow + di] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
                 }
             }
         }
@@ -130,12 +141,12 @@ class TrackerOverlayView(context: Context) : View(context) {
             canvas.drawText("waiting for USB camera…", 40f, height / 2f, text)
             return
         }
-        // Letterbox the feed into the view.
+        // Letterbox the feed into the view (bitmap is half-res, drawn scaled up).
         val s = minOf(width.toFloat() / frameW, height.toFloat() / frameH)
-        val dw = frameW * s; val dh = frameH * s
-        val ox = (width - dw) / 2f; val oy = (height - dh) / 2f
-        canvas.drawBitmap(bmp, Rect(0, 0, frameW, frameH),
-            RectF(ox, oy, ox + dw, oy + dh), null)
+        val vw = frameW * s; val vh = frameH * s
+        val ox = (width - vw) / 2f; val oy = (height - vh) / 2f
+        canvas.drawBitmap(bmp, Rect(0, 0, bmp.width, bmp.height),
+            RectF(ox, oy, ox + vw, oy + vh), null)
 
         fun fx(x: Float) = ox + x * s
         fun fy(y: Float) = oy + y * s

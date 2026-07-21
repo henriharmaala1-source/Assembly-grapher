@@ -40,9 +40,11 @@ import kotlin.math.max
 class MainActivity : AppCompatActivity() {
 
     private lateinit var view: TrackerOverlayView
+    private lateinit var texture: TextureView
     private val tracker = LockTracker()
     private var source: FrameSource? = null
     private var displayTexture: SurfaceTexture? = null
+    private var transformSet = false
 
     private var srcKind = SrcKind.PHONE
     private val zoomLevels = floatArrayOf(1f, 2f, 4f)   // Camera2 clamps to the sensor max
@@ -84,7 +86,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val texture = TextureView(this)
+        texture = TextureView(this)
         view = TrackerOverlayView(this)
         val root = FrameLayout(this).apply { addView(texture); addView(view) }  // overlay on top
         setContentView(root)
@@ -174,10 +176,22 @@ class MainActivity : AppCompatActivity() {
         src.setZoom(zoomLevels[zoomIdx])   // reapply zoom across source switches
     }
 
+    /** Aspect-correct the TextureView (fit-center) to match the overlay mapping.
+     *  Rotation is separate (needs the sensor orientation, which is now logged). */
+    private fun fitCenter(pw: Int, ph: Int) {
+        val vw = texture.width; val vh = texture.height
+        if (vw == 0 || vh == 0) { transformSet = false; return }
+        val scale = minOf(vw.toFloat() / pw, vh.toFloat() / ph)
+        val m = android.graphics.Matrix()
+        m.setScale(pw * scale / vw, ph * scale / vh, vw / 2f, vh / 2f)
+        texture.setTransform(m)
+    }
+
     /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay graphics.
      *  (Display is handled by the TextureView directly; this is tracker-only.) */
     private fun onFrame(nv21: ByteArray, w: Int, h: Int) {
         if (!loggedSize) { loggedSize = true; Log.i("MainActivity", "frame ${w}x$h  nv21=${nv21.size}") }
+        if (!transformSet) { transformSet = true; runOnUiThread { fitCenter(w, h) } }
         val now = SystemClock.elapsedRealtime()
         if (lastMs != 0L) fps = 0.9f * fps + 0.1f * (1000f / max(1L, now - lastMs))
         lastMs = now

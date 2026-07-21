@@ -54,7 +54,8 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
             mgr.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 1f
         else 1f
-        Log.i("Camera2", "max zoom ${maxZoom}x")
+        Log.i("Camera2", "max zoom ${maxZoom}x  sensor orientation " +
+            "${mgr.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION)}")
         val size = pickSize(id)
         reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener({ r -> deliver(r) }, handler)

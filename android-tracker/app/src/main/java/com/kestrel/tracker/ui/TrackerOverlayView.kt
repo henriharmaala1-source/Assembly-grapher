@@ -76,10 +76,12 @@ class TrackerOverlayView(context: Context) : View(context) {
         postInvalidate()
     }
 
-    /** Map a touch point (view px) back to frame px (inverts the stretch). */
+    /** Map a touch point (view px) back to frame px (inverts the fit-center). */
     fun viewToFrame(vx: Float, vy: Float): Pair<Float, Float>? {
         if (frameW == 0 || width == 0 || height == 0) return null
-        return (vx * frameW / width) to (vy * frameH / height)
+        val s = minOf(width.toFloat() / frameW, height.toFloat() / frameH)
+        val ox = (width - frameW * s) / 2f; val oy = (height - frameH * s) / 2f
+        return ((vx - ox) / s) to ((vy - oy) / s)
     }
 
     /** Crop -> bitmap in COLOUR when the crop carries chroma (YUV->RGB), else grey. */
@@ -105,10 +107,11 @@ class TrackerOverlayView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        val sx = if (frameW > 0) width.toFloat() / frameW else 1f
-        val sy = if (frameH > 0) height.toFloat() / frameH else 1f
-        fun fx(x: Float) = x * sx
-        fun fy(y: Float) = y * sy
+        // Aspect-correct fit-center (matches the TextureView transform).
+        val s = if (frameW > 0) minOf(width.toFloat() / frameW, height.toFloat() / frameH) else 1f
+        val ox = (width - frameW * s) / 2f; val oy = (height - frameH * s) / 2f
+        fun fx(x: Float) = ox + x * s
+        fun fy(y: Float) = oy + y * s
 
         val r = result
         if (frameW > 0 && motionMode) {

@@ -34,10 +34,14 @@ class TrackerOverlayView(context: Context) : View(context) {
     private var filterIdx = 0
     private val chipRects = ArrayList<RectF>()
 
-    // Mode (LOCK vs MOTION) — top-left button toggles it.
+    // Mode (LOCK vs MOTION) — top-right button toggles it.
     private var motionMode = false
     private var blobs: List<MotionDetector.Blob> = emptyList()
     private val modeRect = RectF()
+
+    // Camera source (PHONE / UVC) — button below MODE.
+    private var srcLabel = "PHONE"
+    private val srcRect = RectF()
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 34f; color = Color.WHITE }
@@ -54,6 +58,10 @@ class TrackerOverlayView(context: Context) : View(context) {
 
     /** True if (vx,vy) hit the mode toggle button. */
     fun modeButtonAt(vx: Float, vy: Float): Boolean = modeRect.contains(vx, vy)
+
+    fun setSrc(label: String) { srcLabel = label }
+    /** True if (vx,vy) hit the camera-source toggle button. */
+    fun srcButtonAt(vx: Float, vy: Float): Boolean = srcRect.contains(vx, vy)
 
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
 
@@ -195,7 +203,7 @@ class TrackerOverlayView(context: Context) : View(context) {
         drawFilterChips(canvas)
     }
 
-    /** Top-right MODE toggle (LOCK / MOTION). */
+    /** Top-right MODE toggle (LOCK / MOTION) + SRC toggle (PHONE / UVC) below it. */
     private fun drawModeButton(canvas: Canvas) {
         val label = if (motionMode) "MODE: MOTION" else "MODE: LOCK"
         val bw = text.measureText(label) + 36f
@@ -206,6 +214,16 @@ class TrackerOverlayView(context: Context) : View(context) {
         p.style = Paint.Style.STROKE; p.strokeWidth = 2f; p.color = Color.rgb(120, 200, 240)
         canvas.drawRoundRect(modeRect, 12f, 12f, p)
         canvas.drawText(label, x1 + 18f, y1 + bh - 18f, text)
+
+        val sl = "SRC: $srcLabel"
+        val sw = text.measureText(sl) + 36f
+        val sx = width - sw - 16f; val sy = y1 + bh + 8f
+        srcRect.set(sx, sy, sx + sw, sy + bh)
+        p.style = Paint.Style.FILL; p.color = Color.argb(200, 70, 45, 20)
+        canvas.drawRoundRect(srcRect, 12f, 12f, p)
+        p.style = Paint.Style.STROKE; p.strokeWidth = 2f; p.color = Color.rgb(240, 190, 120)
+        canvas.drawRoundRect(srcRect, 12f, 12f, p)
+        canvas.drawText(sl, sx + 18f, sy + bh - 18f, text)
     }
 
     /** A row of tappable filter chips along the bottom — tap any to switch, tap

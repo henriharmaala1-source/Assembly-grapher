@@ -1,11 +1,16 @@
 package com.kestrel.tracker
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.MotionEvent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.kestrel.tracker.camera.Camera2FrameSource
 import com.kestrel.tracker.camera.FrameSource
 import com.kestrel.tracker.camera.UvcFrameSource
 import com.kestrel.tracker.track.CropFilter
@@ -18,20 +23,27 @@ import kotlin.math.max
 /**
  * Kestrel Tracker — a portable, feed-faithful lock-on test rig for the Pi.
  *
- * Feed: the analog capture dongle over USB-OTG (UvcFrameSource) — the SAME
- * sensor path the Pi will fly (30 fps, ~150 ms, interlaced), so what locks here
- * locks there, as long as the tracker stays lean enough for the Pi to run at
- * 30 fps — which this one is (pure NCC-in-a-crop, no model).
+ * Feed: selectable via the SRC button — PHONE (built-in camera, always works,
+ * for testing the tracker anywhere) or UVC (the analog capture dongle over
+ * USB-OTG, the feed-faithful path that matches the Pi's sensor chain). Defaults
+ * to PHONE so the tracker runs out of the box.
  *
- * Controls: TAP = lock the target under your finger. DOUBLE-TAP = cycle the
- * crop filter (none/stretch/edge/threshold/sharpen — test which reveals the
- * target best on this feed). LONG-PRESS = reset.
+ * Controls: TAP = lock (or tap a mover in MOTION mode). Buttons top-right: MODE
+ * (LOCK/MOTION) and SRC (PHONE/UVC). Cue chips bottom. LONG-PRESS = reset.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var view: TrackerOverlayView
     private val tracker = LockTracker()
     private var source: FrameSource? = null
+
+    // Camera source — PHONE (built-in, always works) or UVC (the dongle). Default
+    // PHONE so the tracker is testable out of the box; SRC button toggles. UVC is
+    // the feed-faithful path when the dongle cooperates.
+    private var srcKind = SrcKind.PHONE
+    private val camPerm = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) reallyStart() }
 
     // Each chip = a fused cue set for the tracker. "FUSE" combines structure +
     // colour + brightness so lock survives when any single cue goes flat.
@@ -70,7 +82,13 @@ class MainActivity : AppCompatActivity() {
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true    // required to receive the rest
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // Priority: mode button, then filter chip, then a target tap.
+                // Priority: source button, mode button, filter chip, then a tap.
+                if (view.srcButtonAt(e.x, e.y)) {
+                    srcKind = if (srcKind == SrcKind.PHONE) SrcKind.UVC else SrcKind.PHONE
+                    view.setSrc(srcKind.name)
+                    startSource()
+                    return true
+                }
                 if (view.modeButtonAt(e.x, e.y)) {
                     motionMode = !motionMode
                     if (motionMode) motion.reset()
@@ -105,8 +123,29 @@ class MainActivity : AppCompatActivity() {
         })
         view.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev); true }
 
-        // USB permission is handled by the UVC library on device attach.
-        source = UvcFrameSource(this).also { it.start(::onFrame) }
+        view.setSrc(srcKind.name)
+        startSource()
+    }
+
+    /** (Re)start the selected camera source. PHONE needs CAMERA permission; UVC
+     *  is handled by the library on attach. Toggling re-registers the UVC monitor,
+     *  which also picks up an already-plugged dongle. */
+    private fun startSource() {
+        source?.stop(); source = null
+        if (srcKind == SrcKind.PHONE &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED) {
+            camPerm.launch(Manifest.permission.CAMERA)
+            return
+        }
+        reallyStart()
+    }
+
+    private fun reallyStart() {
+        source = when (srcKind) {
+            SrcKind.PHONE -> Camera2FrameSource(this)
+            SrcKind.UVC   -> UvcFrameSource(this)
+        }.also { it.start(::onFrame) }
     }
 
     /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay. */
@@ -144,3 +183,6 @@ class MainActivity : AppCompatActivity() {
 
 /** A selectable tracking cue set: one channel (A/B testing) or several (fusion). */
 private data class CueMode(val label: String, val cues: List<CropFilter>)
+
+/** Camera source: the phone's built-in camera or the USB (UVC) dongle. */
+private enum class SrcKind { PHONE, UVC }

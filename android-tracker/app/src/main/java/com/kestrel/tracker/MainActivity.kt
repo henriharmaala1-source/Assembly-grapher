@@ -35,13 +35,16 @@ class MainActivity : AppCompatActivity() {
 
     // Each chip = a fused cue set for the tracker. "FUSE" combines structure +
     // colour + brightness so lock survives when any single cue goes flat.
+    // FUSE = luma + chroma (both scale-robust) — the simulation-validated default
+    // (best or tied in every scenario). edge is a scale-fragile SPECIALIST kept
+    // as a single-cue chip for same-brightness targets, not in the blend.
     private val cueModes = listOf(
+        CueMode("FUSE",      listOf(CropFilter.NONE, CropFilter.CHROMA)),
         CueMode("off",       listOf(CropFilter.NONE)),
         CueMode("edge",      listOf(CropFilter.EDGE)),
-        CueMode("sharpen",   listOf(CropFilter.SHARPEN)),
         CueMode("chroma",    listOf(CropFilter.CHROMA)),
+        CueMode("sharpen",   listOf(CropFilter.SHARPEN)),
         CueMode("threshold", listOf(CropFilter.THRESHOLD)),
-        CueMode("FUSE",      listOf(CropFilter.EDGE, CropFilter.CHROMA, CropFilter.NONE)),
     )
     private var filterIdx = 0
     private val needColor get() = cueModes[filterIdx].cues.contains(CropFilter.CHROMA)

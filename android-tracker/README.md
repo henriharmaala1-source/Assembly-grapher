@@ -59,14 +59,15 @@ Top-right **MODE** button toggles between:
 
 - **Tap a target** — lock the target under your finger (LOCK mode); or tap a
   mover to lock it (MOTION mode).
-- **Cue chips** (bottom row) — tap to pick the tracking cue set: `off · edge ·
-  sharpen · chroma · threshold · FUSE`. Single-cue chips are for A/B testing
-  which channel best reveals your target (edge = structure, chroma = colour,
-  threshold = hot-blob). **FUSE** combines structure + colour + brightness and
-  weights each by its own confidence (PSR) every frame — so lock survives when
-  any single cue goes flat (a car the same colour as the road has no chroma but
-  plenty of structure). This is the mode to fly. Switching cues while locked
-  rebuilds templates without losing the lock. Double-tap quick-cycles.
+- **Cue chips** (bottom row): `FUSE · off · edge · chroma · sharpen · threshold`.
+  **FUSE** (the default, and the mode to fly) = **luma + chroma**, both
+  scale-robust — chosen by the simulation as best-or-tied across every scenario
+  (translate, approach/zoom, occlusion, distractor, fast). `edge` is a
+  scale-fragile *specialist* (great on a same-brightness structured target, but
+  it mis-scales under zoom), kept as a single-cue chip, not in the blend.
+  Fusion weights each cue by PSR **and** by how close its peak is to the
+  prediction, and a conditional spatial prior rejects an identical distractor —
+  all tuned in `simtrack.py`. Switching cues while locked keeps the lock.
 
 The feed is shown in **colour** (NV21→RGB). A **magenta ✕** marks the
 latency-compensated aim point — where the target *is now*, projected forward

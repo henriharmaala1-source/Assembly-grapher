@@ -56,6 +56,8 @@ class LockTracker {
 
     private var templates: Array<FloatArray> = arrayOf()
     private var tmplNorms: FloatArray = floatArrayOf()
+    private var lumaTmpl: FloatArray = floatArrayOf()   // dedicated luma template for scale
+    private var lumaNorm = 0f
     private var lastRawCrop: GrayFrame? = null      // for rebuilding templates on cue change
     private var bcx = 0f; private var bcy = 0f
     private var bsize = 0f
@@ -66,7 +68,8 @@ class LockTracker {
 
     val hasTarget get() = state == State.LOCKED || state == State.COASTING
 
-    fun reset() { templates = arrayOf(); tmplNorms = floatArrayOf(); lastRawCrop = null
+    fun reset() { templates = arrayOf(); tmplNorms = floatArrayOf()
+                  lumaTmpl = floatArrayOf(); lumaNorm = 0f; lastRawCrop = null
                   state = State.IDLE; badFrames = 0; conf = 0f }
 
     /** Change the fused cue set. If locked, templates are rebuilt from the last
@@ -100,20 +103,30 @@ class LockTracker {
             if (badFrames > 0) maxHalf
             else (SEARCH + velCrop * 2f).toInt().coerceIn(SEARCH, maxHalf)
 
-        // Fuse per-cue response maps, each weighted by its own PSR.
+        // Fuse per-cue response maps (simulation-tuned).
         val c0 = CROP / 2
         val g0 = c0 - searchHalf; val g1 = c0 + searchHalf
         val gw = (g1 - g0) / STRIDE + 1
+        val cc = (gw - 1) / 2f
+        val sigP = if (badFrames > 0) gw / 1.4f else gw / 2.5f
         val fused = FloatArray(gw * gw)
         var anyWeight = 0f
         for (ci in cues.indices) {
             val cueCrop = Filters.apply(crop, cues[ci])
             val resp = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw)
-            val w = (psrOf(resp, gw) - 3f).coerceAtLeast(0f)   // < PSR 3 → ignored
+            // Prediction-proximity: down-weight a cue whose peak drifts off-centre
+            // (a distractor lock, or a confidently-wrong edge under scale — PSR
+            // alone can't catch a sharp-but-wrong peak).
+            var pk = 0; var pv = resp[0]
+            for (i in resp.indices) if (resp[i] > pv) { pv = resp[i]; pk = i }
+            val dxp = pk % gw - cc; val dyp = pk / gw - cc
+            val prox = kotlin.math.exp(-(dxp * dxp + dyp * dyp) / (2f * sigP * sigP))
+            val w = (psrOf(resp, gw) - 3f).coerceAtLeast(0f) * prox
             if (w <= 0f) continue
             anyWeight += w
             for (i in resp.indices) fused[i] += w * resp[i]
         }
+        if (anyWeight > 0f) applyDistractorPrior(fused, gw, cc)
         conf = if (anyWeight > 0f) psrToConf(psrOf(fused, gw)) else 0f
 
         if (anyWeight > 0f && conf >= confFloor()) {
@@ -144,6 +157,10 @@ class LockTracker {
             normPatch(Filters.apply(rawCrop, cues[ci]), CROP / 2f, CROP / 2f, TMPL)
         }
         tmplNorms = FloatArray(cues.size) { normOf(templates[it]) }
+        // Dedicated luma template — scale estimation runs on luma (the
+        // scale-robust channel); edge blurs under downsample and mis-scales.
+        lumaTmpl = normPatch(rawCrop, CROP / 2f, CROP / 2f, TMPL)   // rawCrop.d = luma
+        lumaNorm = normOf(lumaTmpl)
     }
 
     private fun adaptTemplates(rawCrop: GrayFrame, cx: Float, cy: Float) {
@@ -153,6 +170,9 @@ class LockTracker {
             for (i in cur.indices) cur[i] = (1f - TMPL_EMA) * cur[i] + TMPL_EMA * fresh[i]
             tmplNorms[ci] = normOf(cur)
         }
+        val fl = normPatch(rawCrop, cx, cy, TMPL)
+        for (i in lumaTmpl.indices) lumaTmpl[i] = (1f - TMPL_EMA) * lumaTmpl[i] + TMPL_EMA * fl[i]
+        lumaNorm = normOf(lumaTmpl)
     }
 
     /** NCC of a template over the search grid → response map (gw×gw). */
@@ -210,18 +230,42 @@ class LockTracker {
         return frame.cropResample(cx - r / 2f, cy - r / 2f, r, r, CROP, CROP)
     }
 
+    /** Scale on LUMA (crop.d) — the scale-robust channel; edge mis-scales. */
     private fun updateScale(crop: GrayFrame, cx: Float, cy: Float) {
-        val cueCrop = Filters.apply(crop, cues[0])
-        val t = templates[0]
+        val t = lumaTmpl
         var best = -2f; var bestS = 1f
         for (s in SCALES) {
             val ts = TMPL * s
-            val patch = cueCrop.cropResample(cx - ts / 2f, cy - ts / 2f, ts, ts, TMPL, TMPL)
+            val patch = crop.cropResample(cx - ts / 2f, cy - ts / 2f, ts, ts, TMPL, TMPL)
             val p = meanSub(patch.d)
             val ncc = dot(p, t) / (normOf(t) * (normOf(p) + 1e-6f))
             if (ncc > best) { best = ncc; bestS = s }
         }
         bsize = (bsize * (1f + (bestS - 1f) * 0.5f)).coerceIn(12f, minOf(crop.w * 4, 2000).toFloat())
+    }
+
+    /** Conditional spatial prior: if a rival peak exists (an identical distractor
+     *  appearance can't separate), bias the fused map toward the prediction. Only
+     *  when a rival is present, so it never fights a lone target under scale. */
+    private fun applyDistractorPrior(fused: FloatArray, gw: Int, cc: Float) {
+        var pk = 0; var pv = fused[0]
+        for (i in fused.indices) if (fused[i] > pv) { pv = fused[i]; pk = i }
+        if (pv <= 0.1f) return
+        val px = pk % gw; val py = pk / gw
+        var pv2 = -1e9f; var pk2 = -1
+        for (i in fused.indices) {
+            val x = i % gw; val y = i / gw
+            if (kotlin.math.abs(x - px) <= 4 && kotlin.math.abs(y - py) <= 4) continue
+            if (fused[i] > pv2) { pv2 = fused[i]; pk2 = i }
+        }
+        if (pk2 < 0 || pv2 <= 0.6f * pv) return
+        val d = kotlin.math.hypot((pk2 % gw - px).toFloat(), (pk2 / gw - py).toFloat())
+        if (d <= 5f) return
+        val sig = if (badFrames > 0) gw / 1.5f else gw / 2.6f
+        for (i in fused.indices) {
+            val x = i % gw - cc; val y = i / gw - cc
+            fused[i] *= kotlin.math.exp(-(x * x + y * y) / (2f * sig * sig))
+        }
     }
 
     private fun nccAt(crop: GrayFrame, cx: Float, cy: Float, t: FloatArray, tn: Float): Float {

@@ -40,6 +40,7 @@ class TrackerOverlayView(context: Context) : View(context) {
     private var motionMode = false
     private var blobs: List<MotionDetector.Blob> = emptyList()
     private val modeRect = RectF()
+    private var modeLabel = "LOCK"
 
     private var srcLabel = "PHONE"
     private val srcRect = RectF()
@@ -56,6 +57,7 @@ class TrackerOverlayView(context: Context) : View(context) {
         return null
     }
     fun modeButtonAt(vx: Float, vy: Float): Boolean = modeRect.contains(vx, vy)
+    fun setMode(label: String) { modeLabel = label }
     fun setSrc(label: String) { srcLabel = label }
     fun srcButtonAt(vx: Float, vy: Float): Boolean = srcRect.contains(vx, vy)
     fun setZoom(label: String) { zoomLabel = label }
@@ -168,7 +170,7 @@ class TrackerOverlayView(context: Context) : View(context) {
 
     /** Top-right MODE (LOCK/MOTION) + SRC (PHONE/UVC) buttons. */
     private fun drawButtons(canvas: Canvas) {
-        val ml = if (motionMode) "MODE: MOTION" else "MODE: LOCK"
+        val ml = "MODE: $modeLabel"
         val mw = text.measureText(ml) + 36f
         val mx = width - mw - 16f; val my = 16f; val bh = 58f
         modeRect.set(mx, my, mx + mw, my + bh)

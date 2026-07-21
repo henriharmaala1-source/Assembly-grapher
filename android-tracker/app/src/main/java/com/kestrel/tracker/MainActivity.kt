@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import com.kestrel.tracker.camera.Camera2FrameSource
 import com.kestrel.tracker.camera.FrameSource
 import com.kestrel.tracker.camera.UvcFrameSource
+import com.kestrel.tracker.track.BlobFinder
 import com.kestrel.tracker.track.CropFilter
 import com.kestrel.tracker.track.GrayFrame
 import com.kestrel.tracker.track.LockTracker
@@ -72,7 +73,10 @@ class MainActivity : AppCompatActivity() {
     private var loggedSize = false
     private var lumaBuf = FloatArray(0)
 
-    @Volatile private var motionMode = false
+    // Three tap modes: LOCK (precise box at the tap), BLOB (find the distinct
+    // blob near the tap — forgiving), MOTION (acquire movers, tap one to lock).
+    @Volatile private var mode = TrackMode.LOCK
+    private val motionMode get() = mode == TrackMode.MOTION
     private val motion = MotionDetector()
     @Volatile private var lastBlobs: List<MotionDetector.Blob> = emptyList()
 
@@ -88,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         tracker.setCues(cueModes[filterIdx].cues)
         view.setFilters(cueModes.map { it.label })
         view.setSrc(srcKind.name)
+        view.setMode(mode.name)
 
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
@@ -103,26 +108,30 @@ class MainActivity : AppCompatActivity() {
                     view.setSrc(srcKind.name); startSource(); return true
                 }
                 if (view.modeButtonAt(e.x, e.y)) {
-                    motionMode = !motionMode
-                    if (motionMode) motion.reset()
+                    mode = TrackMode.values()[(mode.ordinal + 1) % TrackMode.values().size]
+                    if (mode == TrackMode.MOTION) motion.reset()
+                    view.setMode(mode.name)
                     return true
                 }
                 val chip = view.filterButtonAt(e.x, e.y)
                 if (chip != null) { filterIdx = chip; tracker.setCues(cueModes[chip].cues); return true }
 
                 val fp = view.viewToFrame(e.x, e.y) ?: return true
-                if (motionMode) {
-                    val b = lastBlobs.firstOrNull {
-                        fp.first in it.x.toFloat()..(it.x + it.w).toFloat() &&
-                        fp.second in it.y.toFloat()..(it.y + it.h).toFloat()
+                when (mode) {
+                    TrackMode.MOTION -> {
+                        val b = lastBlobs.firstOrNull {
+                            fp.first in it.x.toFloat()..(it.x + it.w).toFloat() &&
+                            fp.second in it.y.toFloat()..(it.y + it.h).toFloat()
+                        }
+                        if (b != null) {
+                            pendingDesignate = floatArrayOf(
+                                b.x + b.w / 2f, b.y + b.h / 2f, maxOf(b.w, b.h).toFloat())
+                            mode = TrackMode.LOCK; view.setMode(mode.name)
+                        }
                     }
-                    if (b != null) {
-                        pendingDesignate = floatArrayOf(
-                            b.x + b.w / 2f, b.y + b.h / 2f, maxOf(b.w, b.h).toFloat())
-                        motionMode = false
-                    }
-                } else {
-                    pendingDesignate = floatArrayOf(fp.first, fp.second, 64f)
+                    // BLOB: size 0 signals "find the blob near the tap" in onFrame.
+                    TrackMode.BLOB -> pendingDesignate = floatArrayOf(fp.first, fp.second, 0f)
+                    TrackMode.LOCK -> pendingDesignate = floatArrayOf(fp.first, fp.second, 64f)
                 }
                 return true
             }
@@ -187,7 +196,12 @@ class MainActivity : AppCompatActivity() {
             lastBlobs = motion.detect(gf); res = null
         } else {
             pendingDesignate?.let { d ->
-                tracker.designate(gf, d[0], d[1], d[2]); pendingDesignate = null
+                if (d[2] <= 0f) {   // BLOB mode: snap to the distinct blob near the tap
+                    val box = BlobFinder.findBlob(gf, d[0], d[1])
+                    if (box != null) tracker.designate(gf, box[0], box[1], box[2])
+                    else tracker.designate(gf, d[0], d[1], 64f)
+                } else tracker.designate(gf, d[0], d[1], d[2])
+                pendingDesignate = null
             }
             res = tracker.update(gf); lastBlobs = emptyList()
         }
@@ -205,3 +219,6 @@ private data class CueMode(val label: String, val cues: List<CropFilter>)
 
 /** Camera source: the phone's built-in camera or the USB (UVC) dongle. */
 private enum class SrcKind { PHONE, UVC }
+
+/** Tap mode: precise box, forgiving blob-detect, or movement acquisition. */
+private enum class TrackMode { LOCK, BLOB, MOTION }

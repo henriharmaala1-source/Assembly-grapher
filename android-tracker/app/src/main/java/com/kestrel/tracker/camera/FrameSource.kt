@@ -1,17 +1,18 @@
 package com.kestrel.tracker.camera
 
+import android.graphics.SurfaceTexture
+
 /**
  * Abstraction over "where frames come from". The tracker, overlay and activity
- * depend only on this — so swapping the analog dongle for the built-in camera or
- * a test pattern touches nothing else.
+ * depend only on this.
  *
- * Frames are delivered as NV21 (Y plane + 2×2-subsampled VU): the first
- * width*height bytes are luma (all the tracker needs by default), the rest carry
- * chroma for colour display and the `chroma` filter. A source with no real
- * colour may fill UV neutral (grey).
+ * Two outputs per source:
+ *  - onFrame(nv21,w,h): NV21 frames for the TRACKER (Y + 2×2-subsampled VU).
+ *  - `display`: a SurfaceTexture the camera renders to DIRECTLY (GPU) for a
+ *    sharp, full-res preview at native rate — decoupled from the frame-callback
+ *    thread, so the display never competes with tracker processing.
  */
 interface FrameSource {
-    /** onFrame(nv21, width, height): NV21 bytes (>= width*height; full is width*height*3/2). */
-    fun start(onFrame: (ByteArray, Int, Int) -> Unit)
+    fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?)
     fun stop()
 }

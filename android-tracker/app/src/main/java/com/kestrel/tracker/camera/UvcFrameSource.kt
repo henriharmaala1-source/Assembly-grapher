@@ -1,8 +1,10 @@
 package com.kestrel.tracker.camera
 
 import android.content.Context
+import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
 import android.util.Log
+import android.view.Surface
 import com.herohan.uvcapp.CameraHelper
 import com.herohan.uvcapp.ICameraHelper
 import com.serenegiant.usb.IFrameCallback
@@ -29,6 +31,7 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
 
     private var helper: CameraHelper? = null
     private var onFrame: ((ByteArray, Int, Int) -> Unit)? = null
+    private var displayTex: SurfaceTexture? = null
     @Volatile private var w = 0
     @Volatile private var h = 0
 
@@ -65,9 +68,15 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
         }
         override fun onCameraOpen(device: UsbDevice?) {
             helper?.let { hpr ->
-                hpr.startPreview()
                 val ps = hpr.previewSize
                 if (ps != null) { w = ps.width; h = ps.height } else { w = 640; h = 480 }
+                // GPU display surface for the dongle preview — sharp, native rate,
+                // and off the frame-callback thread that feeds the tracker.
+                displayTex?.let { tex ->
+                    tex.setDefaultBufferSize(w, h)
+                    hpr.addSurface(Surface(tex), false)
+                }
+                hpr.startPreview()
                 hpr.setFrameCallback(frameCb, UVCCamera.PIXEL_FORMAT_NV21)
                 Log.i(TAG, "onCameraOpen -> preview ${w}x$h (previewSize=$ps)")
             }
@@ -78,8 +87,9 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
         override fun onCancel(device: UsbDevice?) { Log.w(TAG, "onCancel — USB permission denied?") }
     }
 
-    override fun start(onFrame: (ByteArray, Int, Int) -> Unit) {
+    override fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?) {
         this.onFrame = onFrame
+        this.displayTex = display
         helper = CameraHelper().also { it.setStateCallback(stateCb) }
         Log.i(TAG, "start(): waiting for UVC dongle attach")
     }

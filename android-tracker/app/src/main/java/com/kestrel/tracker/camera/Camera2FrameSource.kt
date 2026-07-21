@@ -2,6 +2,7 @@ package com.kestrel.tracker.camera
 
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -11,6 +12,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 
 /**
  * Frame source over the platform Camera2 API — no external UVC library.
@@ -33,8 +35,9 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
     private var onFrame: ((ByteArray, Int, Int) -> Unit)? = null
+    private var displaySurface: Surface? = null
 
-    override fun start(onFrame: (ByteArray, Int, Int) -> Unit) {
+    override fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?) {
         this.onFrame = onFrame
         thread = HandlerThread("cam").also { it.start() }
         handler = Handler(thread!!.looper)
@@ -43,6 +46,11 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         val size = pickSize(id)
         reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener({ r -> deliver(r) }, handler)
+        }
+        // Display surface (GPU preview) sized to the camera output.
+        if (display != null) {
+            display.setDefaultBufferSize(size.width, size.height)
+            displaySurface = Surface(display)
         }
         try {
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
@@ -88,13 +96,15 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
     }
 
     private fun startSession(cam: CameraDevice) {
-        val surface = reader!!.surface
+        // Two targets: the ImageReader (tracker frames) + the display surface
+        // (GPU preview). The display path never touches Kotlin/YUV conversion.
+        val targets = listOfNotNull(reader!!.surface, displaySurface)
         @Suppress("DEPRECATION")
-        cam.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
+        cam.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) {
                 session = s
                 val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                    .apply { addTarget(surface) }.build()
+                    .apply { targets.forEach { addTarget(it) } }.build()
                 s.setRepeatingRequest(req, null, handler)
             }
             override fun onConfigureFailed(s: CameraCaptureSession) {
@@ -139,8 +149,9 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
     }
 
     override fun stop() {
-        session?.close(); device?.close(); reader?.close()
+        session?.close(); device?.close(); reader?.close(); displaySurface?.release()
         thread?.quitSafely()
-        session = null; device = null; reader = null; thread = null; onFrame = null
+        session = null; device = null; reader = null; displaySurface = null
+        thread = null; onFrame = null
     }
 }

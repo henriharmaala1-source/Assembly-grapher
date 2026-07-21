@@ -3,11 +3,14 @@ package com.kestrel.tracker
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.TextureView
+import android.widget.FrameLayout
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -22,35 +25,31 @@ import com.kestrel.tracker.ui.TrackerOverlayView
 import kotlin.math.max
 
 /**
- * Kestrel Tracker — a portable, feed-faithful lock-on test rig for the Pi.
+ * Kestrel Tracker — a portable lock-on test rig for the Pi.
  *
- * Feed: selectable via the SRC button — PHONE (built-in camera, always works,
- * for testing the tracker anywhere) or UVC (the analog capture dongle over
- * USB-OTG, the feed-faithful path that matches the Pi's sensor chain). Defaults
- * to PHONE so the tracker runs out of the box.
+ * Display: the camera renders straight to a TextureView (GPU, sharp, native
+ * rate) with the tracker overlay drawn transparently on top. The tracker gets
+ * its own frame stream (ImageReader / UVC callback) — so display and tracking
+ * run on separate paths and never throttle each other.
  *
- * Controls: TAP = lock (or tap a mover in MOTION mode). Buttons top-right: MODE
- * (LOCK/MOTION) and SRC (PHONE/UVC). Cue chips bottom. LONG-PRESS = reset.
+ * Feed: SRC button toggles PHONE (built-in camera) or UVC (the analog dongle,
+ * feed-faithful to the Pi's sensor chain). Controls: TAP = lock (or a mover in
+ * MOTION mode). Buttons top-right: MODE, SRC. Cue chips bottom. LONG-PRESS reset.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var view: TrackerOverlayView
     private val tracker = LockTracker()
     private var source: FrameSource? = null
+    private var displayTexture: SurfaceTexture? = null
 
-    // Camera source — PHONE (built-in, always works) or UVC (the dongle). Default
-    // PHONE so the tracker is testable out of the box; SRC button toggles. UVC is
-    // the feed-faithful path when the dongle cooperates.
     private var srcKind = SrcKind.PHONE
     private val camPerm = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) reallyStart() }
 
-    // Each chip = a fused cue set for the tracker. "FUSE" combines structure +
-    // colour + brightness so lock survives when any single cue goes flat.
-    // FUSE = luma + chroma (both scale-robust) — the simulation-validated default
-    // (best or tied in every scenario). edge is a scale-fragile SPECIALIST kept
-    // as a single-cue chip for same-brightness targets, not in the blend.
+    // FUSE = luma + chroma (both scale-robust) — the simulation-validated default.
+    // edge is a scale-fragile specialist kept as a single-cue chip, not in FUSE.
     private val cueModes = listOf(
         CueMode("FUSE",      listOf(CropFilter.NONE, CropFilter.CHROMA)),
         CueMode("off",       listOf(CropFilter.NONE)),
@@ -62,14 +61,12 @@ class MainActivity : AppCompatActivity() {
     private var filterIdx = 0
     private val needColor get() = cueModes[filterIdx].cues.contains(CropFilter.CHROMA)
 
-    // Pending designation [cx, cy, size] in frame coords (from a tap or a blob).
     @Volatile private var pendingDesignate: FloatArray? = null
     private var lastMs = 0L
     private var fps = 0f
     private var loggedSize = false
-    private var lumaBuf = FloatArray(0)     // reused per frame — no per-frame alloc
+    private var lumaBuf = FloatArray(0)
 
-    // MOTION mode — acquire targets by movement (works when colour/texture can't).
     @Volatile private var motionMode = false
     private val motion = MotionDetector()
     @Volatile private var lastBlobs: List<MotionDetector.Blob> = emptyList()
@@ -77,20 +74,22 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val texture = TextureView(this)
         view = TrackerOverlayView(this)
-        setContentView(view)
+        val root = FrameLayout(this).apply { addView(texture); addView(view) }  // overlay on top
+        setContentView(root)
+
         tracker.setCues(cueModes[filterIdx].cues)
         view.setFilters(cueModes.map { it.label })
+        view.setSrc(srcKind.name)
 
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent) = true    // required to receive the rest
+            override fun onDown(e: MotionEvent) = true
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // Priority: source button, mode button, filter chip, then a tap.
                 if (view.srcButtonAt(e.x, e.y)) {
                     srcKind = if (srcKind == SrcKind.PHONE) SrcKind.UVC else SrcKind.PHONE
-                    view.setSrc(srcKind.name)
-                    startSource()
-                    return true
+                    view.setSrc(srcKind.name); startSource(); return true
                 }
                 if (view.modeButtonAt(e.x, e.y)) {
                     motionMode = !motionMode
@@ -102,7 +101,6 @@ class MainActivity : AppCompatActivity() {
 
                 val fp = view.viewToFrame(e.x, e.y) ?: return true
                 if (motionMode) {
-                    // Tap a mover to lock it: hand its box to the tracker + switch to LOCK.
                     val b = lastBlobs.firstOrNull {
                         fp.first in it.x.toFloat()..(it.x + it.w).toFloat() &&
                         fp.second in it.y.toFloat()..(it.y + it.h).toFloat()
@@ -118,49 +116,51 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                filterIdx = (filterIdx + 1) % cueModes.size   // quick cycle, still available
-                tracker.setCues(cueModes[filterIdx].cues)
-                return true
+                filterIdx = (filterIdx + 1) % cueModes.size
+                tracker.setCues(cueModes[filterIdx].cues); return true
             }
             override fun onLongPress(e: MotionEvent) { tracker.reset(); motion.reset() }
         })
         view.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev); true }
 
-        view.setSrc(srcKind.name)
-        startSource()
+        // Start the camera once the display surface exists.
+        texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                displayTexture = st; startSource()
+            }
+            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+            override fun onSurfaceTextureDestroyed(st: SurfaceTexture) = true
+            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+        }
     }
 
-    /** (Re)start the selected camera source. PHONE needs CAMERA permission; UVC
-     *  is handled by the library on attach. Toggling re-registers the UVC monitor,
-     *  which also picks up an already-plugged dongle. */
     private fun startSource() {
         source?.stop(); source = null
         if (srcKind == SrcKind.PHONE &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED) {
-            camPerm.launch(Manifest.permission.CAMERA)
-            return
+            camPerm.launch(Manifest.permission.CAMERA); return
         }
         reallyStart()
     }
 
     private fun reallyStart() {
-        source = when (srcKind) {
+        val src = when (srcKind) {
             SrcKind.PHONE -> Camera2FrameSource(this)
             SrcKind.UVC   -> UvcFrameSource(this)
-        }.also { it.start(::onFrame) }
+        }
+        source = src
+        src.start(::onFrame, displayTexture)
     }
 
-    /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay. */
+    /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay graphics.
+     *  (Display is handled by the TextureView directly; this is tracker-only.) */
     private fun onFrame(nv21: ByteArray, w: Int, h: Int) {
         if (!loggedSize) { loggedSize = true; Log.i("MainActivity", "frame ${w}x$h  nv21=${nv21.size}") }
         val now = SystemClock.elapsedRealtime()
         if (lastMs != 0L) fps = 0.9f * fps + 0.1f * (1000f / max(1L, now - lastMs))
         lastMs = now
 
-        // Chroma is only needed by the tracker once it has (or is about to get) a
-        // target AND a colour cue is active — building 3 planes every frame while
-        // just aiming is wasted work. Otherwise reuse one luma buffer (no alloc).
         val wantChroma = !motionMode && needColor && (tracker.hasTarget || pendingDesignate != null)
         val gf = if (wantChroma) {
             GrayFrame.fromNv21(nv21, w, h)
@@ -172,16 +172,14 @@ class MainActivity : AppCompatActivity() {
 
         val res: LockTracker.Result?
         if (motionMode) {
-            lastBlobs = motion.detect(gf)      // acquire by movement; no lock update
-            res = null
+            lastBlobs = motion.detect(gf); res = null
         } else {
             pendingDesignate?.let { d ->
                 tracker.designate(gf, d[0], d[1], d[2]); pendingDesignate = null
             }
-            res = tracker.update(gf)
-            lastBlobs = emptyList()
+            res = tracker.update(gf); lastBlobs = emptyList()
         }
-        view.submit(nv21, w, h, res, filterIdx, fps, motionMode, lastBlobs)
+        view.submit(w, h, res, filterIdx, fps, motionMode, lastBlobs)
     }
 
     override fun onDestroy() {

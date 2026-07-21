@@ -33,6 +33,7 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
     @Volatile private var h = 0
 
     private var gotFrame = false
+    private var reuseBuf = ByteArray(0)          // reused per callback — no per-frame alloc
 
     private val frameCb = object : IFrameCallback {
         override fun onFrame(frame: ByteBuffer) {
@@ -41,13 +42,14 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
             if (ww == 0 || hh == 0) { Log.w(TAG, "frame but size 0 — previewSize null"); return }
             if (frame.capacity() < ww * hh) return
             if (!gotFrame) { gotFrame = true; Log.i(TAG, "FIRST FRAME ${ww}x$hh cap=${frame.capacity()}") }
-            // Pass the FULL NV21 frame (Y + VU) so the pipeline has colour; Y is
-            // the first w*h bytes, chroma follows. GrayFrame.fromNv21 splits it.
+            // Full NV21 (Y + VU) so the pipeline has colour. Reuse the buffer;
+            // it's consumed synchronously in cb() before the next callback (single
+            // callback thread), so allocating ~460KB per frame was pure waste.
             val take = minOf(frame.capacity(), ww * hh * 3 / 2)
-            val buf = ByteArray(take)
+            if (reuseBuf.size != take) reuseBuf = ByteArray(take)
             frame.position(0)
-            frame.get(buf, 0, take)
-            cb(buf, ww, hh)
+            frame.get(reuseBuf, 0, take)
+            cb(reuseBuf, ww, hh)
         }
     }
 

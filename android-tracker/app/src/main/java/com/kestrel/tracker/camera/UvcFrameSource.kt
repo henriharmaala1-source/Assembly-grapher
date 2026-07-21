@@ -23,6 +23,8 @@ import java.nio.ByteBuffer
  * to need a small tweak against the resolved library version — it's isolated
  * here behind FrameSource, so nothing else is affected.
  */
+private const val TAG = "UvcFrameSource"
+
 class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSource {
 
     private var helper: CameraHelper? = null
@@ -30,12 +32,15 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
     @Volatile private var w = 0
     @Volatile private var h = 0
 
+    private var gotFrame = false
+
     private val frameCb = object : IFrameCallback {
         override fun onFrame(frame: ByteBuffer) {
             val cb = onFrame ?: return
             val ww = w; val hh = h
-            if (ww == 0 || hh == 0) return
+            if (ww == 0 || hh == 0) { Log.w(TAG, "frame but size 0 — previewSize null"); return }
             if (frame.capacity() < ww * hh) return
+            if (!gotFrame) { gotFrame = true; Log.i(TAG, "FIRST FRAME ${ww}x$hh cap=${frame.capacity()}") }
             // Pass the FULL NV21 frame (Y + VU) so the pipeline has colour; Y is
             // the first w*h bytes, chroma follows. GrayFrame.fromNv21 splits it.
             val take = minOf(frame.capacity(), ww * hh * 3 / 2)
@@ -48,30 +53,33 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
 
     private val stateCb = object : ICameraHelper.StateCallback {
         override fun onAttach(device: UsbDevice?) {
+            Log.i(TAG, "onAttach ${device?.deviceName}")
             device ?: return
             helper?.selectDevice(device)      // pick the dongle that attached
         }
         override fun onDeviceOpen(device: UsbDevice?, isFirstOpen: Boolean) {
+            Log.i(TAG, "onDeviceOpen first=$isFirstOpen -> openCamera()")
             helper?.openCamera()
         }
         override fun onCameraOpen(device: UsbDevice?) {
             helper?.let { hpr ->
                 hpr.startPreview()
-                hpr.previewSize?.let { w = it.width; h = it.height }
+                val ps = hpr.previewSize
+                if (ps != null) { w = ps.width; h = ps.height } else { w = 640; h = 480 }
                 hpr.setFrameCallback(frameCb, UVCCamera.PIXEL_FORMAT_NV21)
-                Log.i("UvcFrameSource", "UVC preview ${w}x$h")
+                Log.i(TAG, "onCameraOpen -> preview ${w}x$h (previewSize=$ps)")
             }
         }
-        override fun onCameraClose(device: UsbDevice?) {}
-        override fun onDeviceClose(device: UsbDevice?) {}
-        override fun onDetach(device: UsbDevice?) { w = 0; h = 0 }
-        override fun onCancel(device: UsbDevice?) {}
+        override fun onCameraClose(device: UsbDevice?) { Log.i(TAG, "onCameraClose") }
+        override fun onDeviceClose(device: UsbDevice?) { Log.i(TAG, "onDeviceClose") }
+        override fun onDetach(device: UsbDevice?) { Log.i(TAG, "onDetach"); w = 0; h = 0 }
+        override fun onCancel(device: UsbDevice?) { Log.w(TAG, "onCancel — USB permission denied?") }
     }
 
     override fun start(onFrame: (ByteArray, Int, Int) -> Unit) {
         this.onFrame = onFrame
         helper = CameraHelper().also { it.setStateCallback(stateCb) }
-        Log.i("UvcFrameSource", "waiting for UVC dongle attach")
+        Log.i(TAG, "start(): waiting for UVC dongle attach")
     }
 
     override fun stop() {

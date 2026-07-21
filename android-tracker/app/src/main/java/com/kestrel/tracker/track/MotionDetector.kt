@@ -8,12 +8,12 @@ import kotlin.math.abs
  * road). A running-average background is subtracted from each frame; what's left
  * is what moved. Connected-components on that mask gives candidate boxes.
  *
- * HONEST LIMITATION: this assumes a roughly stationary camera. Under ego-motion
- * (the drone translating) the whole scene "moves" and swamps the difference.
- * That's fine for move-stop-sense, which ACQUIRES while stationary (SETTLE/THINK)
- * — exactly when this is clean. Global motion compensation (warp the background
- * by the dominant shift before differencing) is the upgrade for moving-camera
- * MTI; not done here.
+ * EGO-MOTION: with `egoComp` on (default), sparse optical flow estimates the
+ * camera's own translation each frame and shifts the accumulated background to
+ * match before differencing — so only INDEPENDENTLY-moving objects survive, and
+ * MOTION acquisition works on a drifting/vibrating drone, not just a still one.
+ * (Global-translation model; good at 50–800 m where parallax is small. Turn off
+ * for a genuinely fixed camera to save the flow cost.)
  *
  * Pure Kotlin on GrayFrame — unit-testable, ports to the onboard tracker.
  */
@@ -25,21 +25,36 @@ class MotionDetector {
     var minAreaFrac = 0.0008f // ignore blobs smaller than this fraction of frame
     var learnRate = 0.02f     // background EMA; low so movers aren't absorbed
     var maxBlobs = 12
+    var egoComp = true        // cancel camera motion before differencing
 
     private val W = 160        // work resolution (cheap connected-components)
     private val H = 120
     private var bg: FloatArray? = null
+    private var prev: FloatArray? = null              // previous work frame, for flow
+    private val flow = OpticalFlow()
+    var lastFlow = 0f to 0f; private set              // last ego-motion (dx,dy), work px
 
-    fun reset() { bg = null }
+    fun reset() { bg = null; prev = null; lastFlow = 0f to 0f }
 
     fun detect(frame: GrayFrame): List<Blob> {
         val small = frame.cropResample(0f, 0f, frame.w.toFloat(), frame.h.toFloat(), W, H)
         val cur = small.d
         val b = bg
-        if (b == null) { bg = cur.copyOf(); return emptyList() }   // first frame = seed
+        if (b == null) { bg = cur.copyOf(); prev = cur.copyOf(); return emptyList() }
+
+        // Ego-motion: estimate the camera's own shift and align the background to
+        // the current view, so the frame-diff only lights up independent movers.
+        if (egoComp) {
+            prev?.let { p ->
+                val (dx, dy) = flow.estimate(GrayFrame(p, W, H), GrayFrame(cur, W, H))
+                lastFlow = dx to dy
+                OpticalFlow.shift(b, W, H, dx, dy)
+            }
+        }
 
         val mask = BooleanArray(W * H) { abs(cur[it] - b[it]) > threshold }
         for (i in cur.indices) b[i] = (1 - learnRate) * b[i] + learnRate * cur[i]
+        prev = cur.copyOf()
 
         val minArea = (minAreaFrac * W * H).toInt().coerceAtLeast(6)
         val comps = connectedComponents(mask).filter { it[4] >= minArea }

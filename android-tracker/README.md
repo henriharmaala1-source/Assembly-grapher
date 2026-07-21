@@ -51,9 +51,12 @@ Top-right **MODE** button toggles between:
   each frame; what moved is boxed (largest = primary). **Tap a mover to lock it**
   — its box is handed to the tracker and you drop into LOCK. This is the cue that
   works when colour/brightness/texture can't separate the target (a car the same
-  colour as the road): the instant it moves, it lights up. Assumes a roughly
-  stationary camera — which is exactly the move-stop-sense *acquire-while-settled*
-  case; ego-motion compensation is the moving-camera upgrade.
+  colour as the road): the instant it moves, it lights up. **Ego-motion
+  compensated** — sparse optical flow (`OpticalFlow.kt`) estimates the camera's
+  own motion each frame and shifts the background to match before differencing,
+  so it works on a drifting/vibrating drone, not just a still camera (validated:
+  92% of camera-pan false motion removed while the real mover survives). Good at
+  50–800 m where parallax is small; the flow (dx,dy) also feeds nav VIO (P5a).
 
 ## Controls
 

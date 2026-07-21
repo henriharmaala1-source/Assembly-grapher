@@ -72,7 +72,9 @@ class TrackerOverlayView(context: Context) : View(context) {
     fun submit(nv21: ByteArray, w: Int, h: Int, r: LockTracker.Result?, filterIdx: Int,
                fps: Float, motionMode: Boolean, blobs: List<MotionDetector.Blob>) {
         frameW = w; frameH = h
-        val dw = (w / 2).coerceAtLeast(1); val dh = (h / 2).coerceAtLeast(1)
+        // Full-res display now that the tracker is cheap — half-res looked bad and
+        // the display was never the real bottleneck (the NCC search was).
+        val dw = w; val dh = h
         if (dispW != dw || dispH != dh) {
             dispW = dw; dispH = dh; dispPx = IntArray(dw * dh)
             frameBmp = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888)

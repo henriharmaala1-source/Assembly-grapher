@@ -5,7 +5,15 @@ scenarios with known ground truth to measure tracking quality and drive fixes.
 Whatever wins here gets ported back to LockTracker.kt."""
 import numpy as np
 
-CROP, TMPL, MARGIN, SEARCH, STRIDE = 128, 40, 2.2, 30, 2
+import os
+# Perf params overridable via env for A/B. Smaller template + coarser stride +
+# tighter base search cut NCC cost (~positions x template^2) several-fold; the
+# sub-pixel parabolic refine covers the coarser grid.
+CROP   = int(os.environ.get('CROP', 128))
+TMPL   = int(os.environ.get('TMPL', 40))
+MARGIN = 2.2
+SEARCH = int(os.environ.get('SEARCH', 30))
+STRIDE = int(os.environ.get('STRIDE', 2))
 SCALES = [0.9, 1.0, 1.11]
 LOSS_TIMEOUT, TMPL_EMA = 20, 0.08
 PSR_LOCK, PSR_WARN = 5.5, 3.8

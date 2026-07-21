@@ -7,7 +7,9 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
 import android.media.ImageReader
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -36,6 +38,10 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
     private var handler: Handler? = null
     private var onFrame: ((ByteArray, Int, Int) -> Unit)? = null
     private var displaySurface: Surface? = null
+    private var reqBuilder: CaptureRequest.Builder? = null
+    private var zoom = 1f
+    private var maxZoom = 1f
+    private var camId: String? = null
 
     override fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?) {
         this.onFrame = onFrame
@@ -43,6 +49,12 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         handler = Handler(thread!!.looper)
 
         val id = pickCameraId() ?: run { Log.e("Camera2", "no camera found"); return }
+        camId = id
+        maxZoom = if (Build.VERSION.SDK_INT >= 30)
+            mgr.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 1f
+        else 1f
+        Log.i("Camera2", "max zoom ${maxZoom}x")
         val size = pickSize(id)
         reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener({ r -> deliver(r) }, handler)
@@ -103,14 +115,31 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         cam.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) {
                 session = s
-                val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                    .apply { targets.forEach { addTarget(it) } }.build()
-                s.setRepeatingRequest(req, null, handler)
+                val b = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                targets.forEach { b.addTarget(it) }
+                applyZoom(b)
+                reqBuilder = b
+                s.setRepeatingRequest(b.build(), null, handler)
             }
             override fun onConfigureFailed(s: CameraCaptureSession) {
                 Log.e("Camera2", "session configure failed")
             }
         }, handler)
+    }
+
+    private fun applyZoom(b: CaptureRequest.Builder) {
+        if (Build.VERSION.SDK_INT >= 30 && maxZoom > 1f)
+            b.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom.coerceIn(1f, maxZoom))
+    }
+
+    /** Real sensor zoom (crops the sensor → full-quality magnification). Zooms
+     *  both the display surface and the tracker frames together. */
+    override fun setZoom(ratio: Float) {
+        zoom = ratio
+        val s = session ?: return
+        val b = reqBuilder ?: return
+        applyZoom(b)
+        try { s.setRepeatingRequest(b.build(), null, handler) } catch (_: Exception) {}
     }
 
     private var nv21Buf = ByteArray(0)     // reused per frame — no per-frame alloc

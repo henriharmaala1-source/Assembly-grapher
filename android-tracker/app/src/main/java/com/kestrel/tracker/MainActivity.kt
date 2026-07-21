@@ -44,6 +44,8 @@ class MainActivity : AppCompatActivity() {
     private var displayTexture: SurfaceTexture? = null
 
     private var srcKind = SrcKind.PHONE
+    private val zoomLevels = floatArrayOf(1f, 2f, 4f)   // Camera2 clamps to the sensor max
+    private var zoomIdx = 0
     private val camPerm = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) reallyStart() }
@@ -87,6 +89,12 @@ class MainActivity : AppCompatActivity() {
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (view.zoomButtonAt(e.x, e.y)) {
+                    zoomIdx = (zoomIdx + 1) % zoomLevels.size
+                    source?.setZoom(zoomLevels[zoomIdx])
+                    view.setZoom("${zoomLevels[zoomIdx].toInt()}x")
+                    return true
+                }
                 if (view.srcButtonAt(e.x, e.y)) {
                     srcKind = if (srcKind == SrcKind.PHONE) SrcKind.UVC else SrcKind.PHONE
                     view.setSrc(srcKind.name); startSource(); return true
@@ -151,6 +159,7 @@ class MainActivity : AppCompatActivity() {
         }
         source = src
         src.start(::onFrame, displayTexture)
+        src.setZoom(zoomLevels[zoomIdx])   // reapply zoom across source switches
     }
 
     /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay graphics.

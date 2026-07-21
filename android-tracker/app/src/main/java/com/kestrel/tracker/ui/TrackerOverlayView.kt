@@ -43,6 +43,8 @@ class TrackerOverlayView(context: Context) : View(context) {
 
     private var srcLabel = "PHONE"
     private val srcRect = RectF()
+    private var zoomLabel = "1x"
+    private val zoomRect = RectF()
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 34f; color = Color.WHITE }
@@ -56,6 +58,8 @@ class TrackerOverlayView(context: Context) : View(context) {
     fun modeButtonAt(vx: Float, vy: Float): Boolean = modeRect.contains(vx, vy)
     fun setSrc(label: String) { srcLabel = label }
     fun srcButtonAt(vx: Float, vy: Float): Boolean = srcRect.contains(vx, vy)
+    fun setZoom(label: String) { zoomLabel = label }
+    fun zoomButtonAt(vx: Float, vy: Float): Boolean = zoomRect.contains(vx, vy)
 
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
 
@@ -162,6 +166,12 @@ class TrackerOverlayView(context: Context) : View(context) {
         val sxb = width - sw - 16f; val syb = my + bh + 8f
         srcRect.set(sxb, syb, sxb + sw, syb + bh)
         button(canvas, srcRect, sl, sxb, syb, bh, Color.argb(200, 70, 45, 20), Color.rgb(240, 190, 120))
+
+        val zl = "ZOOM: $zoomLabel"
+        val zw = text.measureText(zl) + 36f
+        val zx = width - zw - 16f; val zy = syb + bh + 8f
+        zoomRect.set(zx, zy, zx + zw, zy + bh)
+        button(canvas, zoomRect, zl, zx, zy, bh, Color.argb(200, 30, 60, 30), Color.rgb(150, 230, 150))
     }
 
     private fun button(c: Canvas, rect: RectF, label: String, x: Float, y: Float, bh: Float,

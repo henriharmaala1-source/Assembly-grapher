@@ -15,4 +15,6 @@ import android.graphics.SurfaceTexture
 interface FrameSource {
     fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?)
     fun stop()
+    /** Set optical/sensor zoom ratio (1 = none). No-op for fixed-lens sources. */
+    fun setZoom(ratio: Float) {}
 }

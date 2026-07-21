@@ -78,7 +78,9 @@ object BlobFinder {
         }
         val b = best ?: return null
         val bcx = x0 + (b[0] + b[2]) / 2f; val bcy = y0 + (b[1] + b[3]) / 2f
-        val size = maxOf(b[2] - b[0] + 1, b[3] - b[1] + 1).toFloat().coerceAtLeast(16f)
+        // Margin for context + a floor so the crop isn't tiny/over-zoomed (which
+        // leaves too small a search window to survive movement).
+        val size = (maxOf(b[2] - b[0] + 1, b[3] - b[1] + 1) * 1.3f).coerceAtLeast(48f)
         return floatArrayOf(bcx, bcy, size)
     }
 

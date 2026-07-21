@@ -54,11 +54,13 @@ class LockTracker {
     private val SEARCH = 22
     private val STRIDE = 3
     private val SCALES = floatArrayOf(0.9f, 1.0f, 1.11f)
-    private val LOSS_TIMEOUT = 20
+    private val LOSS_TIMEOUT = 45      // frames of coasting before giving up (longer hold)
     private val TMPL_EMA = 0.08f
 
     private var templates: Array<FloatArray> = arrayOf()
     private var tmplNorms: FloatArray = floatArrayOf()
+    private var anchors: Array<FloatArray> = arrayOf()    // original views, fixed — anti-drift
+    private var anchorNorms: FloatArray = floatArrayOf()
     private var lumaTmpl: FloatArray = floatArrayOf()   // dedicated luma template for scale
     private var lumaNorm = 0f
     private var lastRawCrop: GrayFrame? = null      // for rebuilding templates on cue change
@@ -72,6 +74,7 @@ class LockTracker {
     val hasTarget get() = state == State.LOCKED || state == State.COASTING
 
     fun reset() { templates = arrayOf(); tmplNorms = floatArrayOf()
+                  anchors = arrayOf(); anchorNorms = floatArrayOf()
                   lumaTmpl = floatArrayOf(); lumaNorm = 0f; lastRawCrop = null
                   state = State.IDLE; badFrames = 0; conf = 0f }
 
@@ -85,7 +88,7 @@ class LockTracker {
 
     fun designate(frame: GrayFrame, px: Float, py: Float, size: Float = 64f) {
         bcx = px; bcy = py
-        bsize = size.coerceIn(12f, minOf(frame.w, frame.h).toFloat())
+        bsize = size.coerceIn(36f, minOf(frame.w, frame.h).toFloat())
         val crop = workingCropRaw(frame, bcx, bcy, bsize)
         lastRawCrop = crop
         buildTemplates(crop)
@@ -116,7 +119,12 @@ class LockTracker {
         var anyWeight = 0f
         for (ci in cues.indices) {
             val cueCrop = Filters.apply(crop, cues[ci])
-            val resp = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw)
+            // Match against BOTH the adaptive template and the fixed anchor; take
+            // the better per position — the anchor re-anchors when the adaptive
+            // has drifted, extending how long the lock survives.
+            val respA = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw)
+            val respB = responseMap(cueCrop, anchors[ci], anchorNorms[ci], g0, g1, gw)
+            val resp = FloatArray(respA.size) { if (respA[it] > respB[it]) respA[it] else respB[it] }
             // Prediction-proximity: down-weight a cue whose peak drifts off-centre
             // (a distractor lock, or a confidently-wrong edge under scale — PSR
             // alone can't catch a sharp-but-wrong peak).
@@ -160,6 +168,10 @@ class LockTracker {
             normPatch(Filters.apply(rawCrop, cues[ci]), CROP / 2f, CROP / 2f, TMPL)
         }
         tmplNorms = FloatArray(cues.size) { normOf(templates[it]) }
+        // Fixed anchors = the original views. Matching against anchor-OR-adaptive
+        // stops the adaptive template drifting onto background over a long hold.
+        anchors = Array(cues.size) { templates[it].copyOf() }
+        anchorNorms = tmplNorms.copyOf()
         // Dedicated luma template — scale estimation runs on luma (the
         // scale-robust channel); edge blurs under downsample and mis-scales.
         lumaTmpl = normPatch(rawCrop, CROP / 2f, CROP / 2f, TMPL)   // rawCrop.d = luma
@@ -244,7 +256,7 @@ class LockTracker {
             val ncc = dot(p, t) / (normOf(t) * (normOf(p) + 1e-6f))
             if (ncc > best) { best = ncc; bestS = s }
         }
-        bsize = (bsize * (1f + (bestS - 1f) * 0.5f)).coerceIn(12f, minOf(crop.w * 4, 2000).toFloat())
+        bsize = (bsize * (1f + (bestS - 1f) * 0.5f)).coerceIn(36f, minOf(crop.w * 4, 2000).toFloat())
     }
 
     /** Conditional spatial prior: if a rival peak exists (an identical distractor

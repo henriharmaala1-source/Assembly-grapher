@@ -75,9 +75,16 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         val map = mgr.getCameraCharacteristics(id)
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
         val sizes = map?.getOutputSizes(ImageFormat.YUV_420_888)
-        // Closest to 640x480 — small enough for a fast tracker loop.
-        return sizes?.minByOrNull { kotlin.math.abs(it.width * it.height - 640 * 480) }
+        // CAP at 640x480: a bigger frame makes every per-pixel pass (colour
+        // render, chroma build) proportionally slower for no tracking benefit
+        // (the tracker works on a 128px crop regardless). Largest size <= cap;
+        // else the smallest offered.
+        val cap = 640 * 480
+        val chosen = sizes?.filter { it.width * it.height <= cap }?.maxByOrNull { it.width * it.height }
+            ?: sizes?.minByOrNull { it.width * it.height }
             ?: Size(640, 480)
+        Log.i("Camera2", "preview size ${chosen.width}x${chosen.height}")
+        return chosen
     }
 
     private fun startSession(cam: CameraDevice) {

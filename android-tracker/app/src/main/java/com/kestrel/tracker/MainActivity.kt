@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -65,6 +66,8 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var pendingDesignate: FloatArray? = null
     private var lastMs = 0L
     private var fps = 0f
+    private var loggedSize = false
+    private var lumaBuf = FloatArray(0)     // reused per frame — no per-frame alloc
 
     // MOTION mode — acquire targets by movement (works when colour/texture can't).
     @Volatile private var motionMode = false
@@ -150,16 +153,22 @@ class MainActivity : AppCompatActivity() {
 
     /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay. */
     private fun onFrame(nv21: ByteArray, w: Int, h: Int) {
+        if (!loggedSize) { loggedSize = true; Log.i("MainActivity", "frame ${w}x$h  nv21=${nv21.size}") }
         val now = SystemClock.elapsedRealtime()
         if (lastMs != 0L) fps = 0.9f * fps + 0.1f * (1000f / max(1L, now - lastMs))
         lastMs = now
 
-        // Split out chroma only when an active cue needs it — otherwise a cheap
-        // luma-only frame keeps the tracker loop fast.
-        val gf = if (!motionMode && needColor)
+        // Chroma is only needed by the tracker once it has (or is about to get) a
+        // target AND a colour cue is active — building 3 planes every frame while
+        // just aiming is wasted work. Otherwise reuse one luma buffer (no alloc).
+        val wantChroma = !motionMode && needColor && (tracker.hasTarget || pendingDesignate != null)
+        val gf = if (wantChroma) {
             GrayFrame.fromNv21(nv21, w, h)
-        else
-            GrayFrame(FloatArray(w * h) { (nv21[it].toInt() and 0xFF).toFloat() }, w, h)
+        } else {
+            if (lumaBuf.size != w * h) lumaBuf = FloatArray(w * h)
+            for (i in 0 until w * h) lumaBuf[i] = (nv21[i].toInt() and 0xFF).toFloat()
+            GrayFrame(lumaBuf, w, h)
+        }
 
         val res: LockTracker.Result?
         if (motionMode) {

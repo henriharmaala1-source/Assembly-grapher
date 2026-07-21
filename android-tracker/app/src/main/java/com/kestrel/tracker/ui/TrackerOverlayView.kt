@@ -80,11 +80,24 @@ class TrackerOverlayView(context: Context) : View(context) {
         return (vx * frameW / width) to (vy * frameH / height)
     }
 
+    /** Crop -> bitmap in COLOUR when the crop carries chroma (YUV->RGB), else grey. */
     private fun grayToBitmap(g: GrayFrame): Bitmap {
         val px = IntArray(g.w * g.h)
-        for (i in px.indices) {
-            val v = g.d[i].toInt().coerceIn(0, 255)
-            px[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+        val cu = g.cu; val cv = g.cv
+        if (cu != null && cv != null) {
+            for (i in px.indices) {
+                val y = g.d[i].toInt()
+                val u = cu[i]; val v = cv[i]                 // centred (-128..127)
+                val r = (y + 1.402f * v).toInt().coerceIn(0, 255)
+                val gg = (y - 0.344f * u - 0.714f * v).toInt().coerceIn(0, 255)
+                val b = (y + 1.772f * u).toInt().coerceIn(0, 255)
+                px[i] = (0xFF shl 24) or (r shl 16) or (gg shl 8) or b
+            }
+        } else {
+            for (i in px.indices) {
+                val v = g.d[i].toInt().coerceIn(0, 255)
+                px[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+            }
         }
         return Bitmap.createBitmap(px, g.w, g.h, Bitmap.Config.ARGB_8888)
     }

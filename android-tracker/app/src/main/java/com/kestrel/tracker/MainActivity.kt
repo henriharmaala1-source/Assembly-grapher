@@ -50,14 +50,17 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) reallyStart() }
 
-    // FUSE = luma + chroma (both scale-robust) — the simulation-validated default.
-    // edge is a scale-fragile specialist kept as a single-cue chip, not in FUSE.
+    // FUSE = structure (edge) + colour (chroma) + brightness (luma), each weighted
+    // by its own confidence AND agreement with the prediction every frame — so
+    // edge helps on structured targets (real-footage feedback) but the per-cue
+    // gating stops a scale-drifted edge from dragging the lock. L+C keeps the
+    // pure luma+chroma option (best on fast pure-zoom); single chips for A/B.
     private val cueModes = listOf(
-        CueMode("FUSE",      listOf(CropFilter.NONE, CropFilter.CHROMA)),
+        CueMode("FUSE",      listOf(CropFilter.NONE, CropFilter.CHROMA, CropFilter.EDGE)),
+        CueMode("L+C",       listOf(CropFilter.NONE, CropFilter.CHROMA)),
         CueMode("off",       listOf(CropFilter.NONE)),
         CueMode("edge",      listOf(CropFilter.EDGE)),
         CueMode("chroma",    listOf(CropFilter.CHROMA)),
-        CueMode("sharpen",   listOf(CropFilter.SHARPEN)),
         CueMode("threshold", listOf(CropFilter.THRESHOLD)),
     )
     private var filterIdx = 0

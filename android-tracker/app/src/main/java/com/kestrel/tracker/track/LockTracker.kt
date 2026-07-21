@@ -148,9 +148,9 @@ class LockTracker {
             bcx = pcx; bcy = pcy
             badFrames++
             state = if (badFrames >= LOSS_TIMEOUT) State.LOST else State.COASTING
-            if (state == State.LOST) { reset(); return result(Filters.apply(crop, cues[0])) }
+            if (state == State.LOST) { reset(); return result(crop) }   // raw crop → colour PiP
         }
-        return result(Filters.apply(crop, cues[0]))
+        return result(crop)   // raw crop (luma+chroma) → colour PiP
     }
 
     // --- fusion helpers ------------------------------------------------------

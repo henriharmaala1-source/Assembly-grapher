@@ -103,26 +103,35 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         }, handler)
     }
 
+    private var nv21Buf = ByteArray(0)     // reused per frame — no per-frame alloc
+
     private fun deliver(r: ImageReader) {
         val img = r.acquireLatestImage() ?: return
         try {
             val w = img.width; val h = img.height
-            val plane = img.planes[0]              // Y plane = luminance
-            val buf = plane.buffer
-            val rowStride = plane.rowStride
-            // Emit NV21: fill Y, leave UV neutral (grey). This fallback path is
-            // luma-only — colour display / the chroma filter light up on the UVC
-            // (dongle) path, which delivers real chroma.
-            val nv21 = ByteArray(w * h * 3 / 2)
-            if (rowStride == w) {
-                buf.get(nv21, 0, w * h)
-            } else {
-                for (row in 0 until h) {
-                    buf.position(row * rowStride)
-                    buf.get(nv21, row * w, w)
+            val ySize = w * h
+            if (nv21Buf.size != ySize * 3 / 2) nv21Buf = ByteArray(ySize * 3 / 2)
+            val nv21 = nv21Buf
+
+            // Y plane (row-stride aware).
+            val yP = img.planes[0]; val yb = yP.buffer; val yRow = yP.rowStride
+            if (yRow == w) { yb.get(nv21, 0, ySize) }
+            else for (row in 0 until h) { yb.position(row * yRow); yb.get(nv21, row * w, w) }
+
+            // Real chroma: pack the U/V planes into NV21's VU order (colour feed).
+            val uP = img.planes[1]; val vP = img.planes[2]
+            val ub = uP.buffer; val vb = vP.buffer
+            val uRow = uP.rowStride; val uPix = uP.pixelStride
+            val vRow = vP.rowStride; val vPix = vP.pixelStride
+            var pos = ySize
+            for (row in 0 until h / 2) {
+                val uBase = row * uRow; val vBase = row * vRow
+                for (col in 0 until w / 2) {
+                    val vi = vBase + col * vPix; val ui = uBase + col * uPix
+                    nv21[pos++] = if (vi < vb.limit()) vb.get(vi) else 128.toByte()   // V
+                    nv21[pos++] = if (ui < ub.limit()) ub.get(ui) else 128.toByte()   // U
                 }
             }
-            for (i in w * h until nv21.size) nv21[i] = 128.toByte()   // neutral chroma
             onFrame?.invoke(nv21, w, h)
         } finally {
             img.close()

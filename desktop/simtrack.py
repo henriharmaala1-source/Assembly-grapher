@@ -100,6 +100,8 @@ class Tracker:
         for c in self.cues:
             t=norm_patch(apply_cue(crop,c), CROP/2, CROP/2, TMPL)
             self.tmpl.append(t); self.tn.append(nrm(t))
+        # fixed ANCHORS = the original views (anti-drift; used alone in wide search).
+        self.anchor=[t.copy() for t in self.tmpl]; self.an=list(self.tn)
         # FIX 1: dedicated LUMA template for scale (edge channel is unreliable
         # for scale — approach scenario showed 22px vs 1.7px).
         self.tl=norm_patch(crop['y'], CROP/2, CROP/2, TMPL); self.tln=nrm(self.tl)
@@ -131,7 +133,13 @@ class Tracker:
         #      toward the prediction. Fixes the identical-distractor case.
         fused=None; anyw=0; sig_p=None; cc=None
         for ci,c in enumerate(self.cues):
-            r,_=ncc_map(apply_cue(crop,c),self.tmpl[ci],self.tn[ci],g0,g1,stride_eff)
+            chan=apply_cue(crop,c)
+            # anchor alone during a wide re-acquire; anchor-OR-adaptive otherwise.
+            rb,_=ncc_map(chan,self.anchor[ci],self.an[ci],g0,g1,stride_eff)
+            if wide: r=rb
+            else:
+                ra,_=ncc_map(chan,self.tmpl[ci],self.tn[ci],g0,g1,stride_eff)
+                r=np.maximum(ra,rb)
             gw=r.shape[0]; cc=(gw-1)/2
             if sig_p is None: sig_p = gw/1.4 if self.bad>0 else gw/2.5
             pk=np.unravel_index(np.argmax(r),r.shape)
@@ -177,7 +185,8 @@ class Tracker:
         else:
             self.vx*=0.6; self.vy*=0.6          # coast decelerates instead of flying off
             self.bcx,self.bcy=pcx,pcy; self.bad+=1
-            self.state='LOST' if self.bad>=LOSS_TIMEOUT else 'COASTING'
+            self.state=('LOST' if self.bad>=LOSS_TIMEOUT else
+                        'SEARCHING' if wide else 'COASTING')
         ax=self.x+self.vx*int(self.latency+0.5); ay=self.y+self.vy*int(self.latency+0.5)
         return self.bcx,self.bcy,self.bsize,self.conf,self.state,ax,ay
     def _scale(self,crop,cx,cy):

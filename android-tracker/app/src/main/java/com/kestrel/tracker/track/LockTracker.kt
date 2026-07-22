@@ -26,7 +26,10 @@ import kotlin.math.sqrt
  */
 class LockTracker {
 
-    enum class State { IDLE, LOCKED, COASTING, LOST }
+    // COASTING = briefly lost, riding the constant-velocity prediction in the
+    // normal crop. SEARCHING = coasting has failed; the search has zoomed out and
+    // is scanning a wide region with the fixed ANCHOR templates to re-acquire.
+    enum class State { IDLE, LOCKED, COASTING, SEARCHING, LOST }
 
     data class Result(
         val state: State,
@@ -72,7 +75,7 @@ class LockTracker {
     var state = State.IDLE; private set
     var conf = 0f; private set
 
-    val hasTarget get() = state == State.LOCKED || state == State.COASTING
+    val hasTarget get() = state == State.LOCKED || state == State.COASTING || state == State.SEARCHING
 
     fun reset() { templates = arrayOf(); tmplNorms = floatArrayOf()
                   anchors = arrayOf(); anchorNorms = floatArrayOf()
@@ -135,12 +138,17 @@ class LockTracker {
         var anyWeight = 0f
         for (ci in cues.indices) {
             val cueCrop = Filters.apply(crop, cues[ci])
-            // Match against BOTH the adaptive template and the fixed anchor; take
-            // the better per position — the anchor re-anchors when the adaptive
-            // has drifted, extending how long the lock survives.
-            val respA = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw, strideEff)
+            // Match against the fixed ANCHOR, and (only when NOT wide-searching)
+            // also the adaptive template, taking the better per position — the
+            // anchor re-anchors when the adaptive has drifted, extending the lock.
+            // During a wide re-acquire we use the ANCHOR ALONE: the adaptive may
+            // have drifted onto background before we lost the target, and letting a
+            // drifted template drive a big coarse scan is how you re-lock onto junk.
             val respB = responseMap(cueCrop, anchors[ci], anchorNorms[ci], g0, g1, gw, strideEff)
-            val resp = FloatArray(respA.size) { if (respA[it] > respB[it]) respA[it] else respB[it] }
+            val resp = if (wide) respB else {
+                val respA = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw, strideEff)
+                FloatArray(respA.size) { if (respA[it] > respB[it]) respA[it] else respB[it] }
+            }
             // Prediction-proximity: down-weight a cue whose peak drifts off-centre
             // (a distractor lock, or a confidently-wrong edge under scale — PSR
             // alone can't catch a sharp-but-wrong peak).
@@ -178,7 +186,11 @@ class LockTracker {
             cf.decay(0.6f)                 // coast decelerates instead of flying off
             bcx = pcx; bcy = pcy
             badFrames++
-            state = if (badFrames >= LOSS_TIMEOUT) State.LOST else State.COASTING
+            state = when {
+                badFrames >= LOSS_TIMEOUT -> State.LOST
+                wide -> State.SEARCHING    // zoomed-out anchor scan, target not yet re-found
+                else -> State.COASTING     // still riding the prediction in the normal crop
+            }
             if (state == State.LOST) { reset(); return result(crop) }   // raw crop → colour PiP
         }
         // The PiP crop is re-centred on the CORRECTED box position (bcx,bcy), not

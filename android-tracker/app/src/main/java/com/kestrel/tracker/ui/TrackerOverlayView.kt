@@ -123,11 +123,12 @@ class TrackerOverlayView(context: Context) : View(context) {
                     fx((b.x + b.w).toFloat()), fy((b.y + b.h).toFloat()), p)
             }
         } else if (frameW > 0 && r != null &&
-                   (r.state == LockTracker.State.LOCKED || r.state == LockTracker.State.COASTING)) {
-            val col = when {
-                r.state == LockTracker.State.COASTING -> Color.rgb(255, 180, 0)
-                r.conf >= 0.5f -> Color.rgb(40, 230, 70)
-                else -> Color.rgb(0, 200, 255)
+                   (r.state == LockTracker.State.LOCKED || r.state == LockTracker.State.COASTING ||
+                    r.state == LockTracker.State.SEARCHING)) {
+            val col = when (r.state) {
+                LockTracker.State.SEARCHING -> Color.rgb(255, 70, 70)   // red: scanning wide to re-find
+                LockTracker.State.COASTING -> Color.rgb(255, 180, 0)    // amber: riding prediction
+                else -> if (r.conf >= 0.5f) Color.rgb(40, 230, 70) else Color.rgb(0, 200, 255)
             }
             p.style = Paint.Style.STROKE; p.strokeWidth = 3f; p.color = col
             canvas.drawRect(fx(r.x.toFloat()), fy(r.y.toFloat()),

@@ -5,6 +5,27 @@ Review of `track/LockTracker.kt` (+ `Filters`, `MotionDetector`, `OpticalFlow`,
 `desktop/simtrack.py` (a faithful Python mirror of the tracker); every change
 should be A/B'd there first, then on real recorded footage.
 
+## STATUS (2026-07): P0-A … P2-B all implemented + validated
+
+All six planned items are done, each A/B'd in `simtrack.py` and ported to Kotlin
+(the pure-Kotlin `track/` files type-check; `Mosse.kt` was compiled and run to
+verify its FFT numerically):
+- **P0-A** SEARCHING state + anchor-only wide re-acquire — `LockTracker.State`,
+  `wide` search path.
+- **P0-B** real-footage eval harness — `desktop/eval_tracker.py` (centre error,
+  hold-time, re-acquire, id-switches; `--video`/`--labels` or `--synthetic`).
+- **P1-A** optical-flow ego-motion feed-forward — `OpticalFlow` wired into
+  `update()`, consensus-gated (sim pan: edge 3.7→0.4px, zero change elsewhere).
+- **P1-B** appearance bank — diverse-pose keyframes, clean-view add + targeted
+  consult (non-regressing; real-footage robustness).
+- **P2-A** MOSSE/FFT correlation filter — `track/Mosse.kt` (validated matcher,
+  ~4.4× cheaper than NCC for equal coverage; **not the default yet** — measured
+  swap pending real footage via P0-B).
+- **P2-B** occlusion-aware adaptation — PSR-drop detector freezes adaptation +
+  scale (sim noisy-occlusion edge 91→98%).
+
+The prose below is the original review, kept for rationale.
+
 ## What's good (don't touch without cause)
 
 The design is a sound, layered correlation tracker:

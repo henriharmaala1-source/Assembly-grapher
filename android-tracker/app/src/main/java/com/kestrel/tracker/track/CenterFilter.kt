@@ -18,9 +18,13 @@ class CenterFilter(private val alpha: Float = 0.5f, private val beta: Float = 0.
         x = px; y = py; vx = 0f; vy = 0f; initialized = true
     }
 
-    /** Advance one step with no measurement (coast). Returns predicted (x,y). */
-    fun predict(): Pair<Float, Float> {
-        x += vx; y += vy
+    /** Advance one step. `edx,edy` is this frame's EGO-motion (camera pan) from
+     *  optical flow — added to POSITION here, not folded into velocity, so the
+     *  crop follows the pan immediately while `vx,vy` stay target-relative (no
+     *  double-counting: the correction residual is measured against this
+     *  ego-inclusive prediction, so only target motion updates the velocity). */
+    fun predict(edx: Float = 0f, edy: Float = 0f): Pair<Float, Float> {
+        x += vx + edx; y += vy + edy
         return x to y
     }
 

@@ -98,7 +98,7 @@ class Tracker:
         crop=crop_raw(frame,px,py,self.bsize)
         self._build(crop)
         self.x=px; self.y=py; self.vx=0.0; self.vy=0.0
-        self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0
+        self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0; self.prevY=frame['y']; self.occluded=False
     def _build(self, crop):
         self.tmpl=[]; self.tn=[]
         for c in self.cues:
@@ -114,8 +114,25 @@ class Tracker:
         self.kf=[[] for _ in self.cues]; self.kfn=[[] for _ in self.cues]
         self.tl=norm_patch(crop['y'], CROP/2, CROP/2, TMPL); self.tln=nrm(self.tl)
     def update(self, frame):
-        # predict (alpha-beta)
-        self.x+=self.vx; self.y+=self.vy; pcx,pcy=self.x,self.y
+        # P1-A ego-motion feed-forward: estimate the camera pan (prev->cur, median
+        # grid flow — target rejected as outlier) and add it to the PREDICTION so a
+        # pan doesn't push the target out of the crop before the filter catches up.
+        # Added to position, not velocity, so vx,vy stay target-relative (no double-
+        # count). Gated on grid-flow CONSENSUS (inlier fraction): high on a rigid
+        # pan, low under noise / a big occluder — so it's a clean no-op except on a
+        # real camera pan. Capped so a bad estimate can't throw the crop.
+        edx=edy=0.0
+        if EGO and getattr(self,'prevY',None) is not None and self.prevY.shape==frame['y'].shape:
+            fx,fy,cons=ego_estimate(self.prevY, frame['y'])
+            if cons<EGO_CONS: fx=fy=0.0            # distrust low-consensus flow (noise/occluder)
+            # Deadband: sub-EGO_DEAD flow is matching jitter (the NCC search absorbs it).
+            if abs(fx)<EGO_DEAD: fx=0.0
+            if abs(fy)<EGO_DEAD: fy=0.0
+            cap=self.bsize*MARGIN*0.4
+            edx=float(np.clip(fx,-cap,cap)); edy=float(np.clip(fy,-cap,cap))
+        self.prevY=frame['y']
+        # predict (alpha-beta + ego)
+        self.x+=self.vx+edx; self.y+=self.vy+edy; pcx,pcy=self.x,self.y
         # zoom the search out (see LockTracker.kt) — only AFTER normal coasting has
         # failed for FOV_DELAY frames (early coasting rides the const-vel prediction
         # onto the target; zooming out early hurts). Coarser stride holds cost flat.
@@ -191,6 +208,7 @@ class Tracker:
         occluded = self.psrema>0 and curpsr < OCC_FRAC*self.psrema
         if (not occluded) and curpsr>PSR_LOCK:
             self.psrema = curpsr if self.psrema<=0 else 0.9*self.psrema+0.1*curpsr
+        self.occluded = occluded
         # re-locking from a wide search demands a strong match (avoid background locks)
         accept = PSR_LOCK if wide else PSR_WARN
         if anyw>0 and self.conf>=psr2conf(accept):
@@ -244,12 +262,47 @@ class Tracker:
         frl=norm_patch(crop['y'],cx,cy,TMPL)
         self.tl=(1-TMPL_EMA)*self.tl+TMPL_EMA*frl; self.tln=nrm(self.tl)
 
+EGO = int(os.environ.get("EGO", 1))           # P1-A: ego-motion feed-forward on/off (A/B)
+EGO_DEAD = 1.5                                # ignore sub-1.5px flow (noise, not a real pan)
+EGO_CONS = 0.6                                # min grid-flow consensus to trust the ego estimate
+
+def ego_estimate(prev, cur, patch=5, search=12, gx=8, gy=6, minvar=40):
+    """Mirror of OpticalFlow.kt: median grid-SSD displacement prev->cur (the
+    ego/camera motion; the moving target is an outlier the median rejects).
+    matchTemplate(TM_SQDIFF) gives the SSD surface per grid point fast."""
+    import cv2
+    H,W = prev.shape; m=patch+search
+    if W<=2*m or H<=2*m: return 0.0,0.0
+    dxs=[]; dys=[]
+    for j in range(1,gy+1):
+        for i in range(1,gx+1):
+            cx=m+(W-2*m)*i//(gx+1); cy=m+(H-2*m)*j//(gy+1)
+            tp=prev[cy-patch:cy+patch+1, cx-patch:cx+patch+1]
+            if tp.var()<minvar: continue
+            reg=cur[cy-m:cy+m+1, cx-m:cx+m+1]
+            res=cv2.matchTemplate(reg.astype(np.float32), tp.astype(np.float32), cv2.TM_SQDIFF)
+            mn=np.unravel_index(np.argmin(res), res.shape)
+            dys.append(mn[0]-search); dxs.append(mn[1]-search)
+    if len(dxs)<4: return 0.0,0.0,0.0
+    dxs=np.array(dxs); dys=np.array(dys); mdx=np.median(dxs); mdy=np.median(dys)
+    # consensus = fraction of grid points agreeing with the median (inliers). High
+    # on a rigid camera pan; low under noise or a large independently-moving
+    # occluder — so it, not the target's state, tells us when to trust the ego.
+    cons=float(np.mean(np.hypot(dxs-mdx, dys-mdy) <= 2.0))
+    return float(mdx), float(mdy), cons
+
 # ---- scenario generation (RGB -> y,u,v) ----
 rng = np.random.RandomState(42)
 BGT = rng.rand(240,320).astype(np.float32)*40+60   # textured background luma
+# Wide background for PAN scenarios, from a SEPARATE RNG so adding it doesn't
+# perturb the global rng state (which would shift every other scenario's noise).
+BGT_WIDE = np.random.RandomState(7).rand(240,640).astype(np.float32)*40+60
 
-def make_frame(H,W, tgt, extra=None, noise=6, occ=None, mark_ang=0.0):
-    y = resample(BGT,0,0,BGT.shape[1],BGT.shape[0],W,H).copy()
+def make_frame(H,W, tgt, extra=None, noise=6, occ=None, mark_ang=0.0, bg_off=None):
+    if bg_off is None:
+        y = resample(BGT,0,0,BGT.shape[1],BGT.shape[0],W,H).copy()
+    else:                                    # PAN: sample a moving window of the wide bg
+        y = resample(BGT_WIDE, bg_off[0], bg_off[1], W, H, W, H).copy()
     u = np.zeros((H,W),np.float32); v=np.zeros((H,W),np.float32)
     def stamp(cx,cy,rad,lum,cu,cv,ang=0.0):
         x0=int(cx-rad);x1=int(cx+rad);y0=int(cy-rad);y1=int(cy+rad)
@@ -343,6 +396,17 @@ def sc_rotate():
         cx=90+i*1.5; cy=120.0; ang=i*0.12          # ~0.12 rad/frame → >1 full turn
         gt.append((cx,cy)); fr.append(make_frame(240,320,(cx,cy,16,150,40,-30),mark_ang=ang))
     return fr,gt
+def sc_pan():
+    # Fast camera PAN: the (nearly world-fixed) target sweeps across the frame with
+    # the background at 8 px/frame — fast enough that constant-velocity prediction
+    # lags and the target drifts toward the search-window edge. Ego-motion
+    # feed-forward should recover the pan and keep the crop centred.
+    fr=[];gt=[]
+    for i in range(40):
+        pan=8.0*i; cx=250-8.0*i+0.3*i; cy=120.0    # target rides the pan (+ slight own drift)
+        gt.append((cx,cy))
+        fr.append(make_frame(240,320,(cx,cy,15,150,40,-30),bg_off=(pan,0.0)))
+    return fr,gt
 def sc_reacq():
     # Target is occluded for a stretch AND keeps moving fast behind the occluder,
     # so it REAPPEARS well outside the normal crop (bsize*2.2). Only the coasting
@@ -356,7 +420,7 @@ def sc_reacq():
 
 SCEN = dict(translate=sc_translate, approach=sc_approach, occlusion=sc_occlusion,
             distractor=sc_distractor, fast=sc_fast, noisy_occ=sc_noisy_occ, reacq=sc_reacq,
-            rotate=sc_rotate)
+            rotate=sc_rotate, pan=sc_pan)
 CUESETS = {'none':['none'], 'edge':['edge'],
            'FUSE3':['edge','chroma','none'],   # incl. edge (scale-fragile)
            'L+C':['none','chroma']}            # luma+chroma, both scale-robust

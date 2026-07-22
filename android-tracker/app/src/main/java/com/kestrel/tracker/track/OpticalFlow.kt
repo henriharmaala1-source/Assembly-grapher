@@ -23,8 +23,14 @@ class OpticalFlow {
     var gridX = 8; var gridY = 6
     var minVar = 40f        // skip flat (ambiguous) patches
 
+    /** Fraction of grid points that agreed with the median of the last estimate()
+     *  — high on a rigid camera pan, low under noise or a large independently-
+     *  moving occluder. A caller trusts the ego translation only when this is high. */
+    var consensus = 0f; private set
+
     /** Global translation (dx,dy) mapping `prev` onto `cur`, in px (0,0 if weak). */
     fun estimate(prev: GrayFrame, cur: GrayFrame): Pair<Float, Float> {
+        consensus = 0f
         val w = prev.w; val h = prev.h
         val m = patch + search
         if (w <= 2 * m || h <= 2 * m) return 0f to 0f
@@ -41,7 +47,12 @@ class OpticalFlow {
             dxs.add(bdx.toFloat()); dys.add(bdy.toFloat())
         }
         if (dxs.size < 4) return 0f to 0f
-        return median(dxs) to median(dys)
+        // median on COPIES so the original dxs/dys pairing survives for consensus.
+        val mdx = median(ArrayList(dxs)); val mdy = median(ArrayList(dys))
+        var inl = 0
+        for (i in dxs.indices) if (kotlin.math.hypot(dxs[i] - mdx, dys[i] - mdy) <= 2f) inl++
+        consensus = inl.toFloat() / dxs.size
+        return mdx to mdy
     }
 
     private fun patchVar(g: GrayFrame, cx: Int, cy: Int): Float {

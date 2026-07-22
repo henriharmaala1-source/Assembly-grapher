@@ -65,6 +65,8 @@ class LockTracker {
     private val KF_THRESH = 0.55f      // bank a view only if < this NCC-similar to every slot (diversity)
     private val KF_ADD_CONF = 0.80f    // ...and only on a very clean lock (anti-contamination)
     private val OCC_FRAC = 0.55f       // P2-B: PSR below this × clean-baseline = occluded
+    private val EGO_CONS = 0.6f        // P1-A: min grid-flow consensus to trust the ego estimate
+    private val EGO_DEAD = 1.5f        // ...and ignore sub-1.5px flow (jitter, not a real pan)
 
     private var templates: Array<FloatArray> = arrayOf()
     private var tmplNorms: FloatArray = floatArrayOf()
@@ -81,6 +83,8 @@ class LockTracker {
     private val cf = CenterFilter()
     private var badFrames = 0
     private var psrEma = 0f            // P2-B: running clean-lock PSR baseline (occlusion detector)
+    private val flow = OpticalFlow()   // P1-A: ego-motion (camera pan) estimate
+    private var prevFrame: GrayFrame? = null
     var state = State.IDLE; private set
     var conf = 0f; private set
 
@@ -90,6 +94,7 @@ class LockTracker {
                   anchors = arrayOf(); anchorNorms = floatArrayOf()
                   keyframes = arrayOf(); keyframeNorms = arrayOf()
                   lumaTmpl = floatArrayOf(); lumaNorm = 0f; lastRawCrop = null
+                  prevFrame = null
                   state = State.IDLE; badFrames = 0; conf = 0f }
 
     /** Change the fused cue set. If locked, templates are rebuilt from the last
@@ -107,13 +112,36 @@ class LockTracker {
         lastRawCrop = crop
         buildTemplates(crop)
         cf.start(px, py)
-        badFrames = 0; conf = 1f; state = State.LOCKED; psrEma = 0f
+        badFrames = 0; conf = 1f; state = State.LOCKED; psrEma = 0f; prevFrame = frame
     }
 
     fun update(frame: GrayFrame): Result {
-        if (templates.isEmpty()) return Result(State.IDLE, 0,0,0,0, 0f, 0f,0f, 0f,0f, null)
+        if (templates.isEmpty()) { prevFrame = frame; return Result(State.IDLE, 0,0,0,0, 0f, 0f,0f, 0f,0f, null) }
 
-        val (pcx, pcy) = cf.predict()
+        // P1-A: estimate ego-motion (camera pan) from the previous→current frame and
+        // feed it forward into the prediction, so a pan doesn't push the target out
+        // of the search crop before the filter catches up. The median-flow estimate
+        // rejects the (independently-moving) target as an outlier. Gated on flow
+        // CONSENSUS (grid points agreeing with the median): high on a rigid pan, low
+        // under noise or a large occluder — so this fires only on a real camera pan
+        // and is a clean no-op on a static/noisy feed (sim: pan edge 0.4px @100%,
+        // zero change on every other scenario). Deadband drops sub-pixel jitter;
+        // cap stops a bad estimate throwing the crop.
+        val prev = prevFrame
+        var edx = 0f; var edy = 0f
+        if (prev != null && prev.w == frame.w && prev.h == frame.h) {
+            val (fx0, fy0) = flow.estimate(prev, frame)
+            if (flow.consensus >= EGO_CONS) {
+                var fx = fx0; var fy = fy0
+                if (kotlin.math.abs(fx) < EGO_DEAD) fx = 0f
+                if (kotlin.math.abs(fy) < EGO_DEAD) fy = 0f
+                val cap = bsize * MARGIN * 0.4f        // never shift more than ~0.4 crop
+                edx = fx.coerceIn(-cap, cap); edy = fy.coerceIn(-cap, cap)
+            }
+        }
+        prevFrame = frame
+
+        val (pcx, pcy) = cf.predict(edx, edy)
 
         // ZOOM THE SEARCH OUT — but only once normal coasting has clearly FAILED.
         // For the first few lost frames the constant-velocity prediction still

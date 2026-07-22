@@ -64,6 +64,7 @@ class LockTracker {
     private val K_KEYFRAMES = 2        // extra keyframe slots per cue
     private val KF_THRESH = 0.55f      // bank a view only if < this NCC-similar to every slot (diversity)
     private val KF_ADD_CONF = 0.80f    // ...and only on a very clean lock (anti-contamination)
+    private val OCC_FRAC = 0.55f       // P2-B: PSR below this × clean-baseline = occluded
 
     private var templates: Array<FloatArray> = arrayOf()
     private var tmplNorms: FloatArray = floatArrayOf()
@@ -79,6 +80,7 @@ class LockTracker {
     private var bsize = 0f
     private val cf = CenterFilter()
     private var badFrames = 0
+    private var psrEma = 0f            // P2-B: running clean-lock PSR baseline (occlusion detector)
     var state = State.IDLE; private set
     var conf = 0f; private set
 
@@ -105,7 +107,7 @@ class LockTracker {
         lastRawCrop = crop
         buildTemplates(crop)
         cf.start(px, py)
-        badFrames = 0; conf = 1f; state = State.LOCKED
+        badFrames = 0; conf = 1f; state = State.LOCKED; psrEma = 0f
     }
 
     fun update(frame: GrayFrame): Result {
@@ -183,7 +185,17 @@ class LockTracker {
             for (i in resp.indices) fused[i] += w * resp[i]
         }
         if (anyWeight > 0f) applyDistractorPrior(fused, gw, cc)
-        conf = if (anyWeight > 0f) psrToConf(psrOf(fused, gw)) else 0f
+        val curPsr = if (anyWeight > 0f) psrOf(fused, gw) else 0f
+        conf = if (anyWeight > 0f) psrToConf(curPsr) else 0f
+
+        // P2-B occlusion detection: a sharp PSR drop vs the running CLEAN baseline
+        // is the occlusion signature (the peak collapses, energy spreads). While
+        // occluded we still track the visible part for POSITION, but freeze
+        // appearance adaptation, keyframe banking and scale — the template can't
+        // drift onto the occluder and wreck recovery. Baseline learns on clean frames.
+        val occluded = psrEma > 0f && curPsr < OCC_FRAC * psrEma
+        if (!occluded && curPsr > psrLock)
+            psrEma = if (psrEma <= 0f) curPsr else 0.9f * psrEma + 0.1f * curPsr
 
         // Re-locking from a zoomed-out (wide) search demands a STRONG match — a
         // coarse scan over a large area would otherwise re-lock onto background.
@@ -200,8 +212,8 @@ class LockTracker {
             // so a single bad frame can't launch the box across the screen.
             cf.clampSpeed(bsize * 0.9f)
             bcx = cf.x; bcy = cf.y
-            updateScale(crop, cxCrop, cyCrop)
-            if (conf >= confLock()) adaptTemplates(crop, cxCrop, cyCrop)
+            if (!occluded) updateScale(crop, cxCrop, cyCrop)   // P2-B: hold scale under occlusion
+            if (conf >= confLock() && !occluded) adaptTemplates(crop, cxCrop, cyCrop)
             state = State.LOCKED; badFrames = 0
         } else {
             cf.decay(0.6f)                 // coast decelerates instead of flying off

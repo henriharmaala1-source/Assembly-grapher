@@ -22,6 +22,7 @@ KF_THRESH = 0.55
 KF_ADD_CONF = 0.80                            # bank a keyframe only on a very clean lock (anti-contamination)
 PSR_LOCK, PSR_WARN = 5.5, 3.8
 SIZE_FLOOR = 36.0                             # matches LockTracker.kt (anti over-zoom)
+OCC_FRAC = 0.55                               # P2-B: PSR below this x clean-baseline = occluded
 
 def resample(a, rx, ry, rw, rh, oW, oH):
     H, W = a.shape
@@ -97,7 +98,7 @@ class Tracker:
         crop=crop_raw(frame,px,py,self.bsize)
         self._build(crop)
         self.x=px; self.y=py; self.vx=0.0; self.vy=0.0
-        self.bad=0; self.conf=1; self.state='LOCKED'
+        self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0
     def _build(self, crop):
         self.tmpl=[]; self.tn=[]
         for c in self.cues:
@@ -180,8 +181,16 @@ class Tracker:
                 sig=gw/1.5 if self.bad>0 else gw/2.6
                 yy,xx=np.mgrid[0:gw,0:gw]
                 fused=fused*np.exp(-(((xx-cc)**2+(yy-cc)**2)/(2*sig*sig))).astype(np.float32)
-            self.conf=psr2conf(psr_of(fused))
-        else: self.conf=0
+            curpsr=psr_of(fused); self.conf=psr2conf(curpsr)
+        else: curpsr=0.0; self.conf=0
+        # P2-B occlusion detection: a sharp PSR drop vs the running CLEAN baseline
+        # is the occlusion signature (peak collapses, energy spreads). While
+        # occluded we still track the visible part for POSITION, but freeze
+        # appearance adaptation, keyframe banking and scale — so the template can't
+        # drift onto the occluder and wreck recovery. Baseline learns on clean frames.
+        occluded = self.psrema>0 and curpsr < OCC_FRAC*self.psrema
+        if (not occluded) and curpsr>PSR_LOCK:
+            self.psrema = curpsr if self.psrema<=0 else 0.9*self.psrema+0.1*curpsr
         # re-locking from a wide search demands a strong match (avoid background locks)
         accept = PSR_LOCK if wide else PSR_WARN
         if anyw>0 and self.conf>=psr2conf(accept):
@@ -195,8 +204,8 @@ class Tracker:
             spd=np.hypot(self.vx,self.vy); vmax=self.bsize*0.9
             if spd>vmax>0: k=vmax/spd; self.vx*=k; self.vy*=k
             self.bcx,self.bcy=self.x,self.y
-            self._scale(crop,cxc,cyc)
-            if self.conf>=psr2conf(PSR_LOCK): self._adapt(crop,cxc,cyc)
+            if not occluded: self._scale(crop,cxc,cyc)                 # P2-B: hold scale under occlusion
+            if self.conf>=psr2conf(PSR_LOCK) and not occluded: self._adapt(crop,cxc,cyc)
             self.state='LOCKED'; self.bad=0
         else:
             self.vx*=0.6; self.vy*=0.6          # coast decelerates instead of flying off

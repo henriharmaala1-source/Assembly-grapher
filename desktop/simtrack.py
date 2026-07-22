@@ -17,6 +17,9 @@ STRIDE = int(os.environ.get('STRIDE', 3))
 SCALES = [0.9, 1.0, 1.11]
 LOSS_TIMEOUT, TMPL_EMA = 45, 0.08
 FOV_DELAY = 6                                 # coasting frames before search zooms out
+K_KEYFRAMES = 2                               # P1-B: diverse-pose keyframes beyond anchor+adaptive
+KF_THRESH = 0.55
+KF_ADD_CONF = 0.80                            # bank a keyframe only on a very clean lock (anti-contamination)
 PSR_LOCK, PSR_WARN = 5.5, 3.8
 SIZE_FLOOR = 36.0                             # matches LockTracker.kt (anti over-zoom)
 
@@ -102,8 +105,12 @@ class Tracker:
             self.tmpl.append(t); self.tn.append(nrm(t))
         # fixed ANCHORS = the original views (anti-drift; used alone in wide search).
         self.anchor=[t.copy() for t in self.tmpl]; self.an=list(self.tn)
-        # FIX 1: dedicated LUMA template for scale (edge channel is unreliable
-        # for scale — approach scenario showed 22px vs 1.7px).
+        # P1-B appearance bank: per cue, extra diverse-pose KEYFRAMES (slots 2..K),
+        # added only when a confident view is sufficiently DIFFERENT from every
+        # stored slot. Response = max over {anchor, adaptive, keyframes}. Holds a
+        # target through pose/lighting swings that a lone EMA template smears over,
+        # and can't drift (each keyframe is a real observed view).
+        self.kf=[[] for _ in self.cues]; self.kfn=[[] for _ in self.cues]
         self.tl=norm_patch(crop['y'], CROP/2, CROP/2, TMPL); self.tln=nrm(self.tl)
     def update(self, frame):
         # predict (alpha-beta)
@@ -134,12 +141,21 @@ class Tracker:
         fused=None; anyw=0; sig_p=None; cc=None
         for ci,c in enumerate(self.cues):
             chan=apply_cue(crop,c)
-            # anchor alone during a wide re-acquire; anchor-OR-adaptive otherwise.
+            # anchor alone during a wide re-acquire; max over the appearance bank
+            # {anchor, adaptive, keyframes} otherwise.
             rb,_=ncc_map(chan,self.anchor[ci],self.an[ci],g0,g1,stride_eff)
             if wide: r=rb
             else:
                 ra,_=ncc_map(chan,self.tmpl[ci],self.tn[ci],g0,g1,stride_eff)
                 r=np.maximum(ra,rb)
+                # Keyframes are a TARGETED fallback, not always-on: consult them only
+                # while locked (bad==0, target present — not during occlusion) AND the
+                # primary anchor+adaptive response is weak (PSR<lock — the signature
+                # of a pose shift the primary can't match). Always-on max just raises
+                # the response noise floor and hurt occlusion/noisy cases in sim.
+                if self.bad==0 and self.kf[ci] and psr_of(r)<PSR_LOCK:
+                    for kf,kfn in zip(self.kf[ci],self.kfn[ci]):
+                        rk,_=ncc_map(chan,kf,kfn,g0,g1,stride_eff); r=np.maximum(r,rk)
             gw=r.shape[0]; cc=(gw-1)/2
             if sig_p is None: sig_p = gw/1.4 if self.bad>0 else gw/2.5
             pk=np.unravel_index(np.argmax(r),r.shape)
@@ -202,8 +218,20 @@ class Tracker:
         self.bsize=float(np.clip(self.bsize*(1+(bs-1)*0.5),SIZE_FLOOR,min(crop['y'].shape[0]*4,2000)))
     def _adapt(self,crop,cx,cy):
         for ci,c in enumerate(self.cues):
-            fr=norm_patch(apply_cue(crop,c),cx,cy,TMPL)
+            fr=norm_patch(apply_cue(crop,c),cx,cy,TMPL); fn=nrm(fr)
+            # EMA-update the adaptive slot (fast recent appearance), as before.
             self.tmpl[ci]=(1-TMPL_EMA)*self.tmpl[ci]+TMPL_EMA*fr; self.tn[ci]=nrm(self.tmpl[ci])
+            # P1-B: bank this view as a KEYFRAME iff (1) the fused lock is VERY clean
+            # (conf>=KF_ADD_CONF and no recent miss — excludes partial-occlusion /
+            # ambiguous views that would poison the bank) AND (2) it's a genuinely
+            # new appearance (below KF_THRESH similarity to every stored slot, so the
+            # bank stays diverse, not full of near-duplicates). Evict oldest when full.
+            if self.conf>=KF_ADD_CONF and self.bad==0:
+                slots=[(self.anchor[ci],self.an[ci]),(self.tmpl[ci],self.tn[ci])]+list(zip(self.kf[ci],self.kfn[ci]))
+                maxsim=max((fr*t).sum()/(fn*tn) for t,tn in slots)
+                if maxsim < KF_THRESH:
+                    self.kf[ci].append(fr); self.kfn[ci].append(fn)
+                    if len(self.kf[ci])>K_KEYFRAMES: self.kf[ci].pop(0); self.kfn[ci].pop(0)
         frl=norm_patch(crop['y'],cx,cy,TMPL)
         self.tl=(1-TMPL_EMA)*self.tl+TMPL_EMA*frl; self.tln=nrm(self.tl)
 
@@ -211,24 +239,26 @@ class Tracker:
 rng = np.random.RandomState(42)
 BGT = rng.rand(240,320).astype(np.float32)*40+60   # textured background luma
 
-def make_frame(H,W, tgt, extra=None, noise=6, occ=None):
+def make_frame(H,W, tgt, extra=None, noise=6, occ=None, mark_ang=0.0):
     y = resample(BGT,0,0,BGT.shape[1],BGT.shape[0],W,H).copy()
     u = np.zeros((H,W),np.float32); v=np.zeros((H,W),np.float32)
-    def stamp(cx,cy,rad,lum,cu,cv,tex=True):
+    def stamp(cx,cy,rad,lum,cu,cv,ang=0.0):
         x0=int(cx-rad);x1=int(cx+rad);y0=int(cy-rad);y1=int(cy+rad)
         x0=max(0,x0);y0=max(0,y0);x1=min(W,x1);y1=min(H,y1)
+        mx=cx+rad*0.4*np.cos(ang); my=cy+rad*0.4*np.sin(ang)   # off-centre mark, rotatable
         for yy in range(y0,y1):
             for xx in range(x0,x1):
                 # Scale-STABLE structure: bright core + off-centre mark, sized as
                 # a fraction of the target so its edges scale with it (like a real
-                # object outline, not a fixed-frequency texture).
+                # object outline, not a fixed-frequency texture). The mark's ANGLE
+                # models target rotation / pose change (appearance shift).
                 d=np.hypot(xx-cx,yy-cy)/max(rad,1)
                 t = 45 if d<0.45 else 0
-                if abs(xx-(cx+rad*0.4))<rad*0.18 and abs(yy-cy)<rad*0.18: t=-35
+                if abs(xx-mx)<rad*0.18 and abs(yy-my)<rad*0.18: t=-35
                 y[yy,xx]=np.clip(lum+t,0,255); u[yy,xx]=cu; v[yy,xx]=cv
     cx,cy,rad,lum,cu,cv = tgt
     if extra: stamp(*extra)
-    stamp(cx,cy,rad,lum,cu,cv)
+    stamp(cx,cy,rad,lum,cu,cv,mark_ang)
     if occ:
         ox,oy,orad=occ
         x0=max(0,int(ox-orad));x1=min(W,int(ox+orad));y0=max(0,int(oy-orad));y1=min(H,int(oy+orad))
@@ -295,6 +325,15 @@ def sc_noisy_occ():
         gt.append((cx,cy)); fr.append(make_frame(240,320,(cx,cy,14,150,40,-30),occ=occ,noise=16))
     return fr,gt
 
+def sc_rotate():
+    # Target slowly drifts while its appearance ROTATES through a full turn — a
+    # single EMA-adaptive template smears across poses and drops lock; a diverse
+    # appearance bank should hold it by keeping distinct pose keyframes.
+    fr=[];gt=[]
+    for i in range(60):
+        cx=90+i*1.5; cy=120.0; ang=i*0.12          # ~0.12 rad/frame → >1 full turn
+        gt.append((cx,cy)); fr.append(make_frame(240,320,(cx,cy,16,150,40,-30),mark_ang=ang))
+    return fr,gt
 def sc_reacq():
     # Target is occluded for a stretch AND keeps moving fast behind the occluder,
     # so it REAPPEARS well outside the normal crop (bsize*2.2). Only the coasting
@@ -307,7 +346,8 @@ def sc_reacq():
     return fr,gt
 
 SCEN = dict(translate=sc_translate, approach=sc_approach, occlusion=sc_occlusion,
-            distractor=sc_distractor, fast=sc_fast, noisy_occ=sc_noisy_occ, reacq=sc_reacq)
+            distractor=sc_distractor, fast=sc_fast, noisy_occ=sc_noisy_occ, reacq=sc_reacq,
+            rotate=sc_rotate)
 CUESETS = {'none':['none'], 'edge':['edge'],
            'FUSE3':['edge','chroma','none'],   # incl. edge (scale-fragile)
            'L+C':['none','chroma']}            # luma+chroma, both scale-robust

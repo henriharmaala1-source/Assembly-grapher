@@ -60,11 +60,18 @@ class LockTracker {
     private val LOSS_TIMEOUT = 45      // frames of coasting before giving up (longer hold)
     private val FOV_DELAY = 6          // coasting frames before the search zooms out to re-find
     private val TMPL_EMA = 0.08f
+    // P1-B appearance bank: diverse-pose keyframes beyond anchor+adaptive.
+    private val K_KEYFRAMES = 2        // extra keyframe slots per cue
+    private val KF_THRESH = 0.55f      // bank a view only if < this NCC-similar to every slot (diversity)
+    private val KF_ADD_CONF = 0.80f    // ...and only on a very clean lock (anti-contamination)
 
     private var templates: Array<FloatArray> = arrayOf()
     private var tmplNorms: FloatArray = floatArrayOf()
     private var anchors: Array<FloatArray> = arrayOf()    // original views, fixed — anti-drift
     private var anchorNorms: FloatArray = floatArrayOf()
+    // P1-B: per-cue bank of diverse-pose keyframes (fixed once captured, can't drift).
+    private var keyframes: Array<MutableList<FloatArray>> = arrayOf()
+    private var keyframeNorms: Array<MutableList<Float>> = arrayOf()
     private var lumaTmpl: FloatArray = floatArrayOf()   // dedicated luma template for scale
     private var lumaNorm = 0f
     private var lastRawCrop: GrayFrame? = null      // for rebuilding templates on cue change
@@ -79,6 +86,7 @@ class LockTracker {
 
     fun reset() { templates = arrayOf(); tmplNorms = floatArrayOf()
                   anchors = arrayOf(); anchorNorms = floatArrayOf()
+                  keyframes = arrayOf(); keyframeNorms = arrayOf()
                   lumaTmpl = floatArrayOf(); lumaNorm = 0f; lastRawCrop = null
                   state = State.IDLE; badFrames = 0; conf = 0f }
 
@@ -147,7 +155,20 @@ class LockTracker {
             val respB = responseMap(cueCrop, anchors[ci], anchorNorms[ci], g0, g1, gw, strideEff)
             val resp = if (wide) respB else {
                 val respA = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw, strideEff)
-                FloatArray(respA.size) { if (respA[it] > respB[it]) respA[it] else respB[it] }
+                val m = FloatArray(respA.size) { if (respA[it] > respB[it]) respA[it] else respB[it] }
+                // P1-B: consult diverse keyframes only as a TARGETED fallback — while
+                // locked (badFrames==0, target present, not occluded) AND the primary
+                // anchor+adaptive response is weak (PSR<lock, the pose-shift signature).
+                // Always-on max just raises the response noise floor (sim: hurt
+                // occlusion/noisy). The clean-view add-gate keeps the bank uncorrupted.
+                val kf = keyframes[ci]
+                if (badFrames == 0 && kf.isNotEmpty() && psrOf(m, gw) < psrLock) {
+                    for (k in kf.indices) {
+                        val rk = responseMap(cueCrop, kf[k], keyframeNorms[ci][k], g0, g1, gw, strideEff)
+                        for (i in m.indices) if (rk[i] > m[i]) m[i] = rk[i]
+                    }
+                }
+                m
             }
             // Prediction-proximity: down-weight a cue whose peak drifts off-centre
             // (a distractor lock, or a confidently-wrong edge under scale — PSR
@@ -216,6 +237,8 @@ class LockTracker {
         // stops the adaptive template drifting onto background over a long hold.
         anchors = Array(cues.size) { templates[it].copyOf() }
         anchorNorms = tmplNorms.copyOf()
+        keyframes = Array(cues.size) { mutableListOf() }
+        keyframeNorms = Array(cues.size) { mutableListOf() }
         // Dedicated luma template — scale estimation runs on luma (the
         // scale-robust channel); edge blurs under downsample and mis-scales.
         lumaTmpl = normPatch(rawCrop, CROP / 2f, CROP / 2f, TMPL)   // rawCrop.d = luma
@@ -223,15 +246,34 @@ class LockTracker {
     }
 
     private fun adaptTemplates(rawCrop: GrayFrame, cx: Float, cy: Float) {
+        // Only bank keyframes on a very clean lock — a partial-occlusion / ambiguous
+        // view has degraded PSR, so this conf gate keeps a contaminated patch out of
+        // the bank (sim: without it, an occluder-half keyframe wrecked recovery).
+        val canBank = conf >= KF_ADD_CONF && badFrames == 0
         for (ci in cues.indices) {
             val fresh = normPatch(Filters.apply(rawCrop, cues[ci]), cx, cy, TMPL)
             val cur = templates[ci]
             for (i in cur.indices) cur[i] = (1f - TMPL_EMA) * cur[i] + TMPL_EMA * fresh[i]
             tmplNorms[ci] = normOf(cur)
+            if (canBank) maybeBankKeyframe(ci, fresh)
         }
         val fl = normPatch(rawCrop, cx, cy, TMPL)
         for (i in lumaTmpl.indices) lumaTmpl[i] = (1f - TMPL_EMA) * lumaTmpl[i] + TMPL_EMA * fl[i]
         lumaNorm = normOf(lumaTmpl)
+    }
+
+    /** Add `fresh` as a keyframe iff it's a genuinely new appearance (below
+     *  KF_THRESH NCC-similarity to every current slot — anchor, adaptive, existing
+     *  keyframes), keeping the bank diverse. Evict the oldest keyframe when full. */
+    private fun maybeBankKeyframe(ci: Int, fresh: FloatArray) {
+        val fn = normOf(fresh)
+        var maxSim = dot(fresh, anchors[ci]) / (fn * anchorNorms[ci])
+        maxSim = maxOf(maxSim, dot(fresh, templates[ci]) / (fn * tmplNorms[ci]))
+        val kf = keyframes[ci]; val kn = keyframeNorms[ci]
+        for (k in kf.indices) maxSim = maxOf(maxSim, dot(fresh, kf[k]) / (fn * kn[k]))
+        if (maxSim >= KF_THRESH) return
+        kf.add(fresh.copyOf()); kn.add(fn)
+        if (kf.size > K_KEYFRAMES) { kf.removeAt(0); kn.removeAt(0) }
     }
 
     /** NCC of a template over the search grid → response map (gw×gw). Stride is

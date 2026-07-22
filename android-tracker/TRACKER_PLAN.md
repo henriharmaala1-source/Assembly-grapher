@@ -24,6 +24,55 @@ verify its FFT numerically):
 - **P2-B** occlusion-aware adaptation — PSR-drop detector freezes adaptation +
   scale (sim noisy-occlusion edge 91→98%).
 
+## STATUS (2026-07, round 2): literature-research Tier-1 items implemented
+
+A follow-up review researched classical tracker literature (DSST, STAPLE,
+CSR-DCF, KCF, TLD) for techniques worth porting into this architecture — full
+research + rationale in the session transcript, summary here. Five Tier-1
+items implemented, each A/B'd in `simtrack.py`, ported to Kotlin (type-checks
+clean):
+
+- **Box-excluded, forward-backward-gated optical flow** (`OpticalFlow.kt`) —
+  ego-motion grid points inside the tracked box are skipped (a
+  large/dominant target could otherwise win the median vote), and every
+  surviving point is re-matched backward (TLD-style FB check) before being
+  trusted — an unreliable/aliased match is discarded before it can pollute
+  the median or consensus. Confirmed harmless in sim (byte-identical where
+  it doesn't fire); the intended failure case (a texture-rich target
+  dominating the frame) isn't reproducible with the sim's smooth synthetic
+  targets, so the benefit is argued from the mechanism, not measured — worth
+  checking on real footage via `eval_tracker.py` once available.
+- **STAPLE-style histogram appearance cue** — a chroma (fg/bg) score with NO
+  spatial layout at all, fused into the same weighted-sum as every NCC cue.
+  **The single biggest win of this round**: sim `occlusion` scenario went
+  from 51%→95% lock (single-cue), 59%→82–95% across every cue set, because
+  the histogram cue survives the occlusion boundary where spatial NCC can't.
+  Requires chroma (skipped gracefully on luma-only frames) and gated to the
+  normal-FOV search only (skipped during the SEARCHING wide re-acquire).
+  **Tuning note:** an unbounded weight let it dominate over a merely-*noisy*
+  (not truly occluded) spatial cue and regressed the noisy-feed case
+  (98%→86% lock) — damping it to `HIST_WEIGHT_CAP=0.5` (closer to STAPLE's
+  own fixed-α fusion) recovered that case *and* kept most of the occlusion
+  win; the sweep (1.0/0.5/0.3/0.15) was non-monotonic (a knife-edge
+  argmax-flip effect), so 0.5 is an empirically swept value, not derived.
+- **Early cue termination** — skip remaining cues once one is already
+  overwhelmingly dominant (PSR > 10); a straightforward frame-cost win.
+- **Diversity-preserving keyframe eviction** — the appearance bank now
+  evicts the most *redundant* slot (highest similarity to another kept
+  slot) when full, instead of blindly evicting the oldest.
+
+**Deferred from the same research round** (documented, not implemented):
+discrete rotation search, DSST-style scale-decision smoothing, CSR-DCF-style
+per-pixel reliability-weighted NCC for partial occlusion, MotionDetector
+wired into lost-recovery as true re-detection, a richer multi-signal
+confidence metric, and debug visualization (per-cue/fused/flow-field views).
+A separate research pass concluded a small CNN re-identification embedding
+is *not* worth adding yet — real gap (distractor discrimination) but a
+different scope of work (training pipeline, not parameter tuning) and an
+unresolved domain-transfer risk on our analog/thermal capture; ranked below
+all of the above, revisit only after real-footage validation shows
+distractors as a recurring failure mode.
+
 The prose below is the original review, kept for rationale.
 
 ## What's good (don't touch without cause)

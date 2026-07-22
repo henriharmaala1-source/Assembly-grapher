@@ -67,6 +67,18 @@ class LockTracker {
     private val OCC_FRAC = 0.55f       // P2-B: PSR below this × clean-baseline = occluded
     private val EGO_CONS = 0.6f        // P1-A: min grid-flow consensus to trust the ego estimate
     private val EGO_DEAD = 1.5f        // ...and ignore sub-1.5px flow (jitter, not a real pan)
+    private val EARLY_TERM_PSR = 10f   // skip remaining cues once one is this dominant
+    // STAPLE-style histogram cue (chroma fg/bg, no spatial layout — survives
+    // deformation/rotation that breaks the spatial NCC cues). Requires chroma
+    // (skipped when the frame is luma-only) and only during a normal-FOV search.
+    private val HIST_BINS = 64         // 8x8 quantized (cu,cv)
+    private val HIST_LAMBDA = 1f
+    private val HIST_EMA = 0.08f
+    // Sim-swept: 1.0 let the histogram DOMINATE over a merely-noisy (not truly
+    // occluded) spatial cue (regressed noisy-feed lock 98%->86%); 0.5 keeps most
+    // of the real occlusion win (lock 51%->95% on the hardest case) while fully
+    // recovering — even improving — the noisy case (98%->100%).
+    private val HIST_WEIGHT_CAP = 0.5f
 
     private var templates: Array<FloatArray> = arrayOf()
     private var tmplNorms: FloatArray = floatArrayOf()
@@ -77,6 +89,8 @@ class LockTracker {
     private var keyframeNorms: Array<MutableList<Float>> = arrayOf()
     private var lumaTmpl: FloatArray = floatArrayOf()   // dedicated luma template for scale
     private var lumaNorm = 0f
+    private var histFg: FloatArray = floatArrayOf()   // histogram cue: per-bin fg/bg pseudo-counts
+    private var histBg: FloatArray = floatArrayOf()
     private var lastRawCrop: GrayFrame? = null      // for rebuilding templates on cue change
     private var bcx = 0f; private var bcy = 0f
     private var bsize = 0f
@@ -94,6 +108,7 @@ class LockTracker {
                   anchors = arrayOf(); anchorNorms = floatArrayOf()
                   keyframes = arrayOf(); keyframeNorms = arrayOf()
                   lumaTmpl = floatArrayOf(); lumaNorm = 0f; lastRawCrop = null
+                  histFg = floatArrayOf(); histBg = floatArrayOf()
                   prevFrame = null
                   state = State.IDLE; badFrames = 0; conf = 0f }
 
@@ -130,7 +145,9 @@ class LockTracker {
         val prev = prevFrame
         var edx = 0f; var edy = 0f
         if (prev != null && prev.w == frame.w && prev.h == frame.h) {
-            val (fx0, fy0) = flow.estimate(prev, frame)
+            // Exclude the CURRENT box from the flow grid — a large/dominant target's
+            // own motion could otherwise win the median vote with high consensus.
+            val (fx0, fy0) = flow.estimate(prev, frame, bcx, bcy, bsize * MARGIN * 0.5f)
             if (flow.consensus >= EGO_CONS) {
                 var fx = fx0; var fy = fy0
                 if (kotlin.math.abs(fx) < EGO_DEAD) fx = 0f
@@ -207,10 +224,34 @@ class LockTracker {
             for (i in resp.indices) if (resp[i] > pv) { pv = resp[i]; pk = i }
             val dxp = pk % gw - cc; val dyp = pk / gw - cc
             val prox = kotlin.math.exp(-(dxp * dxp + dyp * dyp) / (2f * sigP * sigP))
-            val w = (psrOf(resp, gw) - 3f).coerceAtLeast(0f) * prox
+            val cuePsr = psrOf(resp, gw)
+            val w = (cuePsr - 3f).coerceAtLeast(0f) * prox
             if (w <= 0f) continue
             anyWeight += w
             for (i in resp.indices) fused[i] += w * resp[i]
+            // Early termination: once one cue is already overwhelmingly dominant
+            // (well past the lock threshold), the remaining cues' NCC is spent for
+            // negligible marginal fusion weight — skip them this frame.
+            if (cuePsr > EARLY_TERM_PSR) break
+        }
+        // STAPLE-style histogram cue — chroma fg/bg, no spatial layout, so it
+        // survives deformation/rotation the spatial NCC cues above can't. Only
+        // during a normal-FOV search (crop is CROP-sized, matching how the fg/bg
+        // masks were built) and only when the frame carries chroma; the wide
+        // re-acquire stays anchor-NCC-only as before. Weight is damped
+        // (HIST_WEIGHT_CAP) — letting it compete unbounded let it dominate over a
+        // merely-noisy (not truly occluded) spatial cue (sim-confirmed regression).
+        if (!wide && crop.cu != null && crop.cv != null && histFg.isNotEmpty()) {
+            val hresp = histResponse(crop, g0, g1, gw, strideEff)
+            var hpk = 0; var hpv = hresp[0]
+            for (i in hresp.indices) if (hresp[i] > hpv) { hpv = hresp[i]; hpk = i }
+            val hdxp = hpk % gw - cc; val hdyp = hpk / gw - cc
+            val hprox = kotlin.math.exp(-(hdxp * hdxp + hdyp * hdyp) / (2f * sigP * sigP))
+            val hw = (psrOf(hresp, gw) - 3f).coerceAtLeast(0f) * hprox * HIST_WEIGHT_CAP
+            if (hw > 0f) {
+                anyWeight += hw
+                for (i in hresp.indices) fused[i] += hw * hresp[i]
+            }
         }
         if (anyWeight > 0f) applyDistractorPrior(fused, gw, cc)
         val curPsr = if (anyWeight > 0f) psrOf(fused, gw) else 0f
@@ -283,6 +324,10 @@ class LockTracker {
         // scale-robust channel); edge blurs under downsample and mis-scales.
         lumaTmpl = normPatch(rawCrop, CROP / 2f, CROP / 2f, TMPL)   // rawCrop.d = luma
         lumaNorm = normOf(lumaTmpl)
+        if (rawCrop.cu != null && rawCrop.cv != null) {
+            val (fg, bg) = histCountsAt(rawCrop, CROP / 2f, CROP / 2f)
+            histFg = fg; histBg = bg
+        } else { histFg = floatArrayOf(); histBg = floatArrayOf() }
     }
 
     private fun adaptTemplates(rawCrop: GrayFrame, cx: Float, cy: Float) {
@@ -300,11 +345,21 @@ class LockTracker {
         val fl = normPatch(rawCrop, cx, cy, TMPL)
         for (i in lumaTmpl.indices) lumaTmpl[i] = (1f - TMPL_EMA) * lumaTmpl[i] + TMPL_EMA * fl[i]
         lumaNorm = normOf(lumaTmpl)
+        // Refresh the histogram cue only on this same very-clean gate — an
+        // occlusion-tainted or ambiguous frame must not corrupt the cumulative
+        // fg/bg model (same anti-contamination lesson as the keyframe bank).
+        if (canBank && rawCrop.cu != null && rawCrop.cv != null && histFg.isNotEmpty()) {
+            val (fg, bg) = histCountsAt(rawCrop, cx, cy)
+            for (i in 0 until HIST_BINS) {
+                histFg[i] = (1f - HIST_EMA) * histFg[i] + HIST_EMA * fg[i]
+                histBg[i] = (1f - HIST_EMA) * histBg[i] + HIST_EMA * bg[i]
+            }
+        }
     }
 
     /** Add `fresh` as a keyframe iff it's a genuinely new appearance (below
      *  KF_THRESH NCC-similarity to every current slot — anchor, adaptive, existing
-     *  keyframes), keeping the bank diverse. Evict the oldest keyframe when full. */
+     *  keyframes), keeping the bank diverse. */
     private fun maybeBankKeyframe(ci: Int, fresh: FloatArray) {
         val fn = normOf(fresh)
         var maxSim = dot(fresh, anchors[ci]) / (fn * anchorNorms[ci])
@@ -313,7 +368,80 @@ class LockTracker {
         for (k in kf.indices) maxSim = maxOf(maxSim, dot(fresh, kf[k]) / (fn * kn[k]))
         if (maxSim >= KF_THRESH) return
         kf.add(fresh.copyOf()); kn.add(fn)
-        if (kf.size > K_KEYFRAMES) { kf.removeAt(0); kn.removeAt(0) }
+        if (kf.size > K_KEYFRAMES) {
+            // Evict the most REDUNDANT slot (highest similarity to some other kept
+            // slot), not simply the oldest — keeps distinct poses (front+side)
+            // instead of whichever happens to be newest.
+            var worstIdx = 0; var worstSim = -1f
+            for (i in kf.indices) {
+                var s = -1f
+                for (j in kf.indices) if (j != i) {
+                    val sim = dot(kf[i], kf[j]) / (kn[i] * kn[j])
+                    if (sim > s) s = sim
+                }
+                if (s > worstSim) { worstSim = s; worstIdx = i }
+            }
+            kf.removeAt(worstIdx); kn.removeAt(worstIdx)
+        }
+    }
+
+    // --- STAPLE-style histogram appearance cue --------------------------------
+
+    private fun histBinIndex(crop: GrayFrame, idx: Int): Int {
+        val cu = (((crop.cu!![idx] + 128f) / 32f).toInt()).coerceIn(0, 7)
+        val cv = (((crop.cv!![idx] + 128f) / 32f).toInt()).coerceIn(0, 7)
+        return cu * 8 + cv
+    }
+
+    /** fg/bg per-bin pixel counts: fg = TMPL box centred at (cx,cy) — the ACTUAL
+     *  found position, not the crop centre (which drifts from prediction error). */
+    private fun histCountsAt(crop: GrayFrame, cx: Float, cy: Float): Pair<FloatArray, FloatArray> {
+        val fg = FloatArray(HIST_BINS); val bg = FloatArray(HIST_BINS)
+        val half = TMPL / 2f; val bgMargin = TMPL * 0.75f
+        for (y in 0 until crop.h) for (x in 0 until crop.w) {
+            val dx = kotlin.math.abs(x - cx); val dy = kotlin.math.abs(y - cy)
+            val idx = y * crop.w + x
+            if (dx <= half && dy <= half) fg[histBinIndex(crop, idx)] += 1f
+            else if (dx > half + bgMargin || dy > half + bgMargin) bg[histBinIndex(crop, idx)] += 1f
+        }
+        return fg to bg
+    }
+
+    /** Per-candidate-position mean fg-probability, via an integral image so cost
+     *  is O(crop + positions) instead of O(positions x template^2) like NCC. */
+    private fun histResponse(crop: GrayFrame, g0: Int, g1: Int, gw: Int, stride: Int): FloatArray {
+        val w = crop.w; val h = crop.h
+        val beta = FloatArray(w * h)
+        for (i in beta.indices) {
+            val b = histBinIndex(crop, i)
+            beta[i] = histFg[b] / (histFg[b] + histBg[b] + HIST_LAMBDA)
+        }
+        val ii = FloatArray((w + 1) * (h + 1))
+        for (y in 0 until h) {
+            var rowSum = 0f
+            for (x in 0 until w) {
+                rowSum += beta[y * w + x]
+                ii[(y + 1) * (w + 1) + (x + 1)] = ii[y * (w + 1) + (x + 1)] + rowSum
+            }
+        }
+        val resp = FloatArray(gw * gw); val half = TMPL / 2
+        var gy = 0; var y = g0
+        while (y <= g1 && gy < gw) {
+            var gx = 0; var x = g0
+            while (x <= g1 && gx < gw) {
+                val x0 = (x - half).coerceIn(0, w); val y0 = (y - half).coerceIn(0, h)
+                val x1 = (x + half).coerceIn(0, w); val y1 = (y + half).coerceIn(0, h)
+                val area = (x1 - x0) * (y1 - y0)
+                if (area > 0) {
+                    val s = ii[y1 * (w + 1) + x1] - ii[y0 * (w + 1) + x1] -
+                            ii[y1 * (w + 1) + x0] + ii[y0 * (w + 1) + x0]
+                    resp[gy * gw + gx] = s / area
+                }
+                gx++; x += stride
+            }
+            gy++; y += stride
+        }
+        return resp
     }
 
     /** NCC of a template over the search grid → response map (gw×gw). Stride is

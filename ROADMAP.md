@@ -451,6 +451,47 @@ fed by the Pi tracker's box coordinates.
   incoming video with no sync disturbance; then end-to-end with the Pi tracker
   driving a live analog feed through to a VTX/monitor.
 
+### P6.8 — Port the validated lock-on tracker onto onboard `LockOnTracker` (idea, **unscheduled**, L)
+The onboard `LOCK_ON` mode (`lock_tracker.{hpp,cpp}`, wraps OpenCV's
+`TrackerCSRT`/`TrackerKCF`/legacy `TrackerMOSSE` behind a Kalman filter +
+single-template NCC re-detect) works, but is a materially simpler design than
+the tracker validated (in sim, then on `android-tracker/`) across the P0–P2
+round in `android-tracker/TRACKER_PLAN.md`. That doc's whole premise — "Pure
+Kotlin on GrayFrame, ports to the onboard C++ tracker" — points at this file.
+Not yet done; this entry records the gap and the plan.
+- **What's already equivalent (no change needed):** `LKFlowTracker`'s
+  forward-backward-validated Lucas-Kanade flow (`FB_MAX_ERR = 1.5f`) is the
+  same TLD-style self-consistency check just added to the Kotlin/sim
+  `OpticalFlow` — independent convergence on the same technique, good
+  evidence it's sound.
+- **The gap, concretely — onboard has:** one OpenCV backend at a time (no
+  cue fusion), one template (no anchor+adaptive+keyframe bank), single-frame
+  NCC re-detection at a fixed threshold (no wide-FOV `SEARCHING` state, no
+  anchor-vs-drifted-template distinction), no ego-motion compensation feeding
+  the Kalman prediction, no occlusion-aware freeze (the template updates on a
+  confidence gate but doesn't distinguish "occluded" from "just uncertain"),
+  no histogram/appearance-bank cues.
+- **The plan:** replace the OpenCV-backend wrapping in `LockOnTracker` with
+  the validated pure-math design (multi-cue NCC fusion + anchor/adaptive/
+  keyframe bank + PSR-gated occlusion freeze + consensus-gated ego-motion +
+  STAPLE-style histogram cue + `SEARCHING` wide re-acquire) — this drops the
+  dependency on `cv::TrackerCSRT`/`KCF`/legacy `MOSSE` (opaque, less tunable)
+  in favour of code we've measured and understand. `track/Mosse.kt`'s own
+  FFT-based filter is a ready-made alternative to `cv::legacy::TrackerMOSSE`
+  if/when the NCC-cost ceiling is actually hit (still gated behind
+  measurement per P2-A's own status).
+- **Order:** validate on **real onboard camera footage** first (P0-B's
+  `eval_tracker.py` harness — point it at Pi/onboard capture, not just the
+  phone/dongle clips) before touching flight-tested C++; only port pieces
+  that hold up. Land alongside/after P4a's recorder so a regression here is
+  debuggable from a black-box replay, not just a field report.
+- **Accept:** the onboard C++ port passes the same acceptance bar as the
+  Kotlin port did — a `test_lock_tracker`-style suite mirroring
+  `simtrack.py`'s scenarios (translate/occlusion/distractor/rotate/pan), plus
+  a real-footage `eval_tracker.py` run showing hold-time/re-acquire-rate ≥
+  the current CSRT/KCF baseline on the same clips before it replaces the
+  flight-used path.
+
 ---
 
 ## Dependency graph (summary)

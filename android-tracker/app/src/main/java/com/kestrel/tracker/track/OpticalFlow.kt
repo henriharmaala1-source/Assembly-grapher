@@ -22,14 +22,28 @@ class OpticalFlow {
     var search = 12         // half-size of the search window
     var gridX = 8; var gridY = 6
     var minVar = 40f        // skip flat (ambiguous) patches
+    var fbSearch = 4        // backward-match half-window (TLD-style FB check)
+    var fbMaxError = 1.5f   // discard a point if the round trip exceeds this
 
     /** Fraction of grid points that agreed with the median of the last estimate()
      *  — high on a rigid camera pan, low under noise or a large independently-
      *  moving occluder. A caller trusts the ego translation only when this is high. */
     var consensus = 0f; private set
 
-    /** Global translation (dx,dy) mapping `prev` onto `cur`, in px (0,0 if weak). */
-    fun estimate(prev: GrayFrame, cur: GrayFrame): Pair<Float, Float> {
+    /** Global translation (dx,dy) mapping `prev` onto `cur`, in px (0,0 if weak).
+     *
+     *  `exCx,exCy,exHalf` EXCLUDE grid points inside the current tracked box (half
+     *  size in px, 0 = no exclusion) — if the target is a large fraction of the
+     *  frame, its own motion could otherwise win the median vote with high
+     *  consensus even though it isn't camera pan at all.
+     *
+     *  Each surviving point is also checked FORWARD-BACKWARD (TLD-style): the
+     *  found position is re-matched back toward its origin; a round trip that
+     *  doesn't return close to the start means the match was ambiguous (aliased
+     *  texture, not real motion) and is discarded before it can pollute the
+     *  median/consensus. */
+    fun estimate(prev: GrayFrame, cur: GrayFrame,
+                exCx: Float = -1f, exCy: Float = -1f, exHalf: Float = 0f): Pair<Float, Float> {
         consensus = 0f
         val w = prev.w; val h = prev.h
         val m = patch + search
@@ -38,12 +52,23 @@ class OpticalFlow {
         for (gy in 1..gridY) for (gx in 1..gridX) {
             val cx = m + (w - 2 * m) * gx / (gridX + 1)
             val cy = m + (h - 2 * m) * gy / (gridY + 1)
+            if (exHalf > 0f && kotlin.math.abs(cx - exCx) <= exHalf && kotlin.math.abs(cy - exCy) <= exHalf)
+                continue                                            // skip the tracked target region
             if (patchVar(prev, cx, cy) < minVar) continue          // skip flat
             var best = Float.MAX_VALUE; var bdx = 0; var bdy = 0
             for (oy in -search..search) for (ox in -search..search) {
                 val s = ssd(prev, cx, cy, cur, cx + ox, cy + oy)
                 if (s < best) { best = s; bdx = ox; bdy = oy }
             }
+            if (best == Float.MAX_VALUE) continue                  // no valid forward match (edge)
+            // forward-backward check: re-match the found patch in `cur` back toward
+            // the origin in `prev` — a large round-trip error means an unreliable point.
+            var bestBack = Float.MAX_VALUE; var bbx = 0; var bby = 0
+            for (oy in -fbSearch..fbSearch) for (ox in -fbSearch..fbSearch) {
+                val s = ssd(cur, cx + bdx, cy + bdy, prev, cx + ox, cy + oy)
+                if (s < bestBack) { bestBack = s; bbx = ox; bby = oy }
+            }
+            if (kotlin.math.hypot(bbx.toFloat(), bby.toFloat()) > fbMaxError) continue
             dxs.add(bdx.toFloat()); dys.add(bdy.toFloat())
         }
         if (dxs.size < 4) return 0f to 0f

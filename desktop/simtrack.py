@@ -23,6 +23,7 @@ KF_ADD_CONF = 0.80                            # bank a keyframe only on a very c
 PSR_LOCK, PSR_WARN = 5.5, 3.8
 SIZE_FLOOR = 36.0                             # matches LockTracker.kt (anti over-zoom)
 OCC_FRAC = 0.55                               # P2-B: PSR below this x clean-baseline = occluded
+EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 def resample(a, rx, ry, rw, rh, oW, oH):
     H, W = a.shape
@@ -113,6 +114,7 @@ class Tracker:
         # and can't drift (each keyframe is a real observed view).
         self.kf=[[] for _ in self.cues]; self.kfn=[[] for _ in self.cues]
         self.tl=norm_patch(crop['y'], CROP/2, CROP/2, TMPL); self.tln=nrm(self.tl)
+        self.histfg, self.histbg = hist_counts_at(crop, CROP/2, CROP/2)   # STAPLE-style cue
     def update(self, frame):
         # P1-A ego-motion feed-forward: estimate the camera pan (prev->cur, median
         # grid flow — target rejected as outlier) and add it to the PREDICTION so a
@@ -123,7 +125,10 @@ class Tracker:
         # real camera pan. Capped so a bad estimate can't throw the crop.
         edx=edy=0.0
         if EGO and getattr(self,'prevY',None) is not None and self.prevY.shape==frame['y'].shape:
-            fx,fy,cons=ego_estimate(self.prevY, frame['y'])
+            # exclude the CURRENT box from the flow grid — a large/dominant target's
+            # own motion could otherwise win the median vote with high consensus.
+            ex=(self.bcx, self.bcy, self.bsize*MARGIN*0.5)
+            fx,fy,cons=ego_estimate(self.prevY, frame['y'], ex=ex)
             if cons<EGO_CONS: fx=fy=0.0            # distrust low-consensus flow (noise/occluder)
             # Deadband: sub-EGO_DEAD flow is matching jitter (the NCC search absorbs it).
             if abs(fx)<EGO_DEAD: fx=0.0
@@ -182,9 +187,35 @@ class Tracker:
             #     so the cue on the predicted target wins. PSR alone can't — a
             #     sharp-but-wrong peak has high PSR.
             prox=np.exp(-(((pk[1]-cc)**2+(pk[0]-cc)**2)/(2*sig_p*sig_p)))
-            w=max(0,psr_of(r)-3)*prox
+            cue_psr=psr_of(r)
+            w=max(0,cue_psr-3)*prox
             if w<=0: continue
             anyw+=w; fused=r*w if fused is None else fused+r*w
+            # Early termination: once one cue is already overwhelmingly dominant
+            # (well past the lock threshold), the remaining cues' NCC is spent for
+            # negligible marginal fusion weight — skip them this frame.
+            if cue_psr>EARLY_TERM_PSR: break
+        # STAPLE-style histogram cue (chroma fg/bg, no spatial layout — survives
+        # deformation/rotation that breaks the spatial NCC cues above). Only
+        # during a normal-FOV search (crop is CROP-sized, matching how the fg/bg
+        # masks were built); the wide re-acquire stays anchor-NCC-only as before.
+        if not wide and getattr(self,'histfg',None) is not None:
+            hr=hist_response(crop, self.histfg, self.histbg, g0, g1, stride_eff)
+            hgw=hr.shape[0]
+            if cc is None: cc=(hgw-1)/2
+            if sig_p is None: sig_p = hgw/1.4 if self.bad>0 else hgw/2.5
+            hpk=np.unravel_index(np.argmax(hr),hr.shape)
+            hprox=np.exp(-(((hpk[1]-cc)**2+(hpk[0]-cc)**2)/(2*sig_p*sig_p)))
+            # Damped, STAPLE-style: the histogram's box-summed peak is less
+            # spatially precise than a real spatial-NCC peak, so letting it compete
+            # on fully equal footing (unbounded self-assessed PSR) let it DOMINATE
+            # fusion whenever a spatial cue was merely noisy (not truly occluded) —
+            # sim-confirmed regression on noisy_occ/edge (98%->86% lock). Capping its
+            # weight keeps it a genuine contributor (still wins the `occlusion`
+            # scenario) without letting it override an otherwise-working spatial cue.
+            hw=max(0,psr_of(hr)-3)*hprox*HIST_WEIGHT_CAP
+            if hw>0:
+                anyw+=hw; fused=hr*hw if fused is None else fused+hr*hw
         if anyw>0:
             gw=fused.shape[0]
             # (b) conditional prior for IDENTICAL distractors (appearance can't
@@ -258,31 +289,74 @@ class Tracker:
                 maxsim=max((fr*t).sum()/(fn*tn) for t,tn in slots)
                 if maxsim < KF_THRESH:
                     self.kf[ci].append(fr); self.kfn[ci].append(fn)
-                    if len(self.kf[ci])>K_KEYFRAMES: self.kf[ci].pop(0); self.kfn[ci].pop(0)
+                    if len(self.kf[ci])>K_KEYFRAMES:
+                        # Evict the most REDUNDANT slot (highest similarity to some
+                        # other kept slot), not simply the oldest — keeps distinct
+                        # poses (front+side) instead of just whichever is newest.
+                        kf,kn=self.kf[ci],self.kfn[ci]
+                        worst_i=0; worst_s=-1.0
+                        for i in range(len(kf)):
+                            s=max(((kf[i]*kf[j]).sum()/(kn[i]*kn[j]) for j in range(len(kf)) if j!=i), default=-1.0)
+                            if s>worst_s: worst_s=s; worst_i=i
+                        kf.pop(worst_i); kn.pop(worst_i)
         frl=norm_patch(crop['y'],cx,cy,TMPL)
         self.tl=(1-TMPL_EMA)*self.tl+TMPL_EMA*frl; self.tln=nrm(self.tl)
+        # Refresh the histogram cue only on a very clean lock (same anti-
+        # contamination gate as keyframe banking) — an occlusion-tainted or
+        # ambiguous frame must not corrupt the cumulative fg/bg model.
+        if self.conf>=KF_ADD_CONF and self.bad==0:
+            fg,bg = hist_counts_at(crop, cx, cy)
+            self.histfg = (1-HIST_EMA)*self.histfg + HIST_EMA*fg
+            self.histbg = (1-HIST_EMA)*self.histbg + HIST_EMA*bg
 
 EGO = int(os.environ.get("EGO", 1))           # P1-A: ego-motion feed-forward on/off (A/B)
 EGO_DEAD = 1.5                                # ignore sub-1.5px flow (noise, not a real pan)
 EGO_CONS = 0.6                                # min grid-flow consensus to trust the ego estimate
 
-def ego_estimate(prev, cur, patch=5, search=12, gx=8, gy=6, minvar=40):
+FB_SEARCH = 4                                 # backward-match half-window (TLD-style FB check)
+FB_MAX_ERR = 1.5                              # discard a grid point if the round trip exceeds this
+
+def ego_estimate(prev, cur, patch=5, search=12, gx=8, gy=6, minvar=40, ex=None):
     """Mirror of OpticalFlow.kt: median grid-SSD displacement prev->cur (the
     ego/camera motion; the moving target is an outlier the median rejects).
-    matchTemplate(TM_SQDIFF) gives the SSD surface per grid point fast."""
+    matchTemplate(TM_SQDIFF) gives the SSD surface per grid point fast.
+
+    ex=(cx,cy,half) EXCLUDES grid points inside the current tracked box — if the
+    target is a large fraction of the frame, its own motion can otherwise win the
+    median vote (high "consensus") even though it isn't camera pan at all.
+
+    Each surviving point is also checked FORWARD-BACKWARD (TLD-style): re-match
+    the found position back toward its origin; a round trip that doesn't return
+    close to the start means the match was ambiguous (aliased texture, not real
+    motion) and is discarded before it can pollute the median/consensus.
+    """
     import cv2
     H,W = prev.shape; m=patch+search
-    if W<=2*m or H<=2*m: return 0.0,0.0
+    if W<=2*m or H<=2*m: return 0.0,0.0,0.0
     dxs=[]; dys=[]
     for j in range(1,gy+1):
         for i in range(1,gx+1):
             cx=m+(W-2*m)*i//(gx+1); cy=m+(H-2*m)*j//(gy+1)
+            if ex is not None:
+                excx,excy,exhalf = ex
+                if exhalf>0 and abs(cx-excx)<=exhalf and abs(cy-excy)<=exhalf: continue
             tp=prev[cy-patch:cy+patch+1, cx-patch:cx+patch+1]
             if tp.var()<minvar: continue
             reg=cur[cy-m:cy+m+1, cx-m:cx+m+1]
             res=cv2.matchTemplate(reg.astype(np.float32), tp.astype(np.float32), cv2.TM_SQDIFF)
             mn=np.unravel_index(np.argmin(res), res.shape)
-            dys.append(mn[0]-search); dxs.append(mn[1]-search)
+            bdy=mn[0]-search; bdx=mn[1]-search
+            # forward-backward check: match the found patch in `cur` back against `prev`
+            fcx,fcy=cx+bdx,cy+bdy
+            if fcx-m<0 or fcy-m<0 or fcx+m>=W or fcy+m>=H: continue
+            bp=cur[fcy-patch:fcy+patch+1, fcx-patch:fcx+patch+1]
+            breg=prev[cy-FB_SEARCH-patch:cy+FB_SEARCH+patch+1, cx-FB_SEARCH-patch:cx+FB_SEARCH+patch+1]
+            if breg.shape[0]!=bp.shape[0]+2*FB_SEARCH or breg.shape[1]!=bp.shape[1]+2*FB_SEARCH: continue
+            bres=cv2.matchTemplate(breg.astype(np.float32), bp.astype(np.float32), cv2.TM_SQDIFF)
+            bmn=np.unravel_index(np.argmin(bres), bres.shape)
+            fberr=np.hypot(bmn[0]-FB_SEARCH, bmn[1]-FB_SEARCH)
+            if fberr>FB_MAX_ERR: continue          # forward match wasn't self-consistent — discard
+            dxs.append(float(bdx)); dys.append(float(bdy))
     if len(dxs)<4: return 0.0,0.0,0.0
     dxs=np.array(dxs); dys=np.array(dys); mdx=np.median(dxs); mdy=np.median(dys)
     # consensus = fraction of grid points agreeing with the median (inliers). High
@@ -290,6 +364,61 @@ def ego_estimate(prev, cur, patch=5, search=12, gx=8, gy=6, minvar=40):
     # occluder — so it, not the target's state, tells us when to trust the ego.
     cons=float(np.mean(np.hypot(dxs-mdx, dys-mdy) <= 2.0))
     return float(mdx), float(mdy), cons
+
+# ---- STAPLE-style histogram appearance cue ---------------------------------
+# Complements the spatial NCC cues: a chroma-histogram foreground/background
+# score has NO spatial layout at all, so it survives deformation/rotation that
+# breaks template correlation, at the cost of being weaker under illumination
+# change (a known, accepted STAPLE trade-off). Fused into the SAME weighted-sum
+# fusion as every other cue via its own PSR (peak-sharpness), not a fixed ratio
+# — consistent with how every other cue here self-assesses its own weight.
+HIST_BINS = 64            # 8x8 quantized (cu,cv)
+HIST_HALF = TMPL / 2.0    # fg region = centred TMPL box (matches the anchor template)
+HIST_BG_MARGIN = TMPL * 0.75   # buffer beyond fg excluded from bg (avoid boundary contamination)
+HIST_LAMBDA = 1.0
+HIST_EMA = 0.08
+HIST_WEIGHT_CAP = float(os.environ.get('HIST_WEIGHT_CAP', 0.5))   # sim-swept sweet spot: 1.0 let
+# histogram dominate over a merely-noisy (not truly occluded) spatial cue (noisy_occ/edge
+# 98%->86% lock); 0.5 keeps most of the real occlusion win while fully recovering (even
+# improving) the noisy case (edge 98%->100%, L+C 77%->89%).
+
+def hist_bin_idx(crop):
+    cu = np.clip(((crop['u'] + 128) / 32).astype(int), 0, 7)
+    cv = np.clip(((crop['v'] + 128) / 32).astype(int), 0, 7)
+    return cu * 8 + cv
+
+def hist_counts_at(crop, cx, cy):
+    """fg/bg per-bin pixel counts, fg = TMPL box centred at (cx,cy) — the ACTUAL
+    found position, not the crop centre (which drifts from prediction error)."""
+    H, W = crop['y'].shape
+    yy, xx = np.mgrid[0:H, 0:W]
+    dx = np.abs(xx - cx); dy = np.abs(yy - cy)
+    fgm = (dx <= HIST_HALF) & (dy <= HIST_HALF)
+    bgm = (dx > HIST_HALF + HIST_BG_MARGIN) | (dy > HIST_HALF + HIST_BG_MARGIN)
+    bins = hist_bin_idx(crop)
+    fg = np.bincount(bins[fgm], minlength=HIST_BINS).astype(np.float32)
+    bg = np.bincount(bins[bgm], minlength=HIST_BINS).astype(np.float32)
+    return fg, bg
+
+def hist_response(crop, histfg, histbg, g0, g1, stride):
+    """Per-candidate-position mean fg-probability, via an integral image so cost
+    is O(crop + positions) instead of O(positions x template^2) like NCC."""
+    bins = hist_bin_idx(crop)
+    beta = histfg[bins] / (histfg[bins] + histbg[bins] + HIST_LAMBDA)
+    ii = np.zeros((beta.shape[0] + 1, beta.shape[1] + 1), np.float32)
+    ii[1:, 1:] = np.cumsum(np.cumsum(beta, axis=0), axis=1)
+    gs = np.arange(g0, g1 + 1, stride); gw = len(gs); half = TMPL // 2
+    H, W = beta.shape
+    resp = np.zeros((gw, gw), np.float32)
+    for gj, cy in enumerate(gs):
+        for gi, cx in enumerate(gs):
+            x0 = max(0, cx - half); y0 = max(0, cy - half)
+            x1 = min(W, cx + half); y1 = min(H, cy + half)
+            area = (x1 - x0) * (y1 - y0)
+            if area <= 0: continue
+            s = ii[y1, x1] - ii[y0, x1] - ii[y1, x0] + ii[y0, x0]
+            resp[gj, gi] = s / area
+    return resp
 
 # ---- scenario generation (RGB -> y,u,v) ----
 rng = np.random.RandomState(42)
@@ -407,6 +536,19 @@ def sc_pan():
         gt.append((cx,cy))
         fr.append(make_frame(240,320,(cx,cy,15,150,40,-30),bg_off=(pan,0.0)))
     return fr,gt
+def sc_pan_large():
+    # Same camera pan as sc_pan, but the target is LARGE relative to the FULL
+    # FRAME (flow sampling runs on the whole incoming frame, not the crop — a
+    # target must dominate the FRAME, not just the crop, to bias the grid median).
+    # rad=90 in a 320x240 frame is a close-range/orbit-style shot (~56% of frame
+    # width) — stresses whether the target's own motion corrupts the ego-motion
+    # median (it shouldn't: box exclusion should keep the flow grid off it).
+    fr=[];gt=[]
+    for i in range(40):
+        pan=6.0*i; cx=170-6.0*i+0.3*i; cy=120.0
+        gt.append((cx,cy))
+        fr.append(make_frame(240,320,(cx,cy,90,150,40,-30),bg_off=(pan,0.0)))
+    return fr,gt
 def sc_reacq():
     # Target is occluded for a stretch AND keeps moving fast behind the occluder,
     # so it REAPPEARS well outside the normal crop (bsize*2.2). Only the coasting
@@ -420,7 +562,7 @@ def sc_reacq():
 
 SCEN = dict(translate=sc_translate, approach=sc_approach, occlusion=sc_occlusion,
             distractor=sc_distractor, fast=sc_fast, noisy_occ=sc_noisy_occ, reacq=sc_reacq,
-            rotate=sc_rotate, pan=sc_pan)
+            rotate=sc_rotate, pan=sc_pan, pan_large=sc_pan_large)
 CUESETS = {'none':['none'], 'edge':['edge'],
            'FUSE3':['edge','chroma','none'],   # incl. edge (scale-fragile)
            'L+C':['none','chroma']}            # luma+chroma, both scale-robust

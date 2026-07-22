@@ -410,6 +410,47 @@ prove out.
   keyed by setting label, debounced switch, safe-default-on-uncertainty),
   with model-gating as a separate, later step.
 
+### P6.7 — Precise analog-video overlay: MCU + LM1881 keyer (idea, **unscheduled experiment**, M hardware+firmware)
+Improve the OSD elements on the operator's analog VTX feed beyond what iNAV can
+draw. iNAV's OSD is a MAX7456 **character cell** grid (~30×16): it can only
+stamp font glyphs on a coarse grid, and stock firmware has no path to position
+an element from external target data. A tracker's bounding box therefore
+quantizes to ~11 px steps and jumps cell-to-cell. This item gets **pixel-precise,
+smoothly-moving** overlay elements (bounding box, reticle) onto the analog feed,
+fed by the Pi tracker's box coordinates.
+- **Placement:** the keyer MCU sits **between the FC's video-out and the VTX**
+  (`camera → FC [telemetry OSD] → MCU [tracker box] → VTX`), so the FC's own
+  OSD and the tracker box stack without conflict.
+- **Method — genlock + analog key, no digitizing.** It never decodes/re-encodes
+  the video (no framebuffer, no decoder/encoder chips, **near-zero latency**).
+  An **LM1881** (8-pin, ~$1.50) separates H/V sync + odd-even field; the MCU
+  times exact pixel positions along each scanline and drives a fast analog
+  switch/transistor to pull the video line to white/black **only** at the
+  box-edge pixels — the original analog passes through untouched everywhere else.
+- **MCU: RP2350 (Pico 2).** Its PIO does the cycle-precise, sync-genlocked pixel
+  timing this needs (the hard part) almost for free. Pi → MCU over UART/SPI: a
+  few bytes of box coords per frame; the MCU redraws the outline each field.
+  (STM32G4 is the fewest-chips alternative — an on-chip comparator separates
+  sync without the LM1881 — at the cost of more timing firmware than PIO.)
+- **Consistency with the tracker:** the box drawn this field is last field's CV
+  result **projected forward** — exactly the tracker's existing latency
+  compensation (`aimX/aimY`, `latencyFrames`), so algorithm and overlay agree.
+- **Caveats (honest):** monochrome outline only — a filled/colour box needs the
+  heavier digitize→draw→re-encode seeker (decoder + MCU with DCMI/LTDC +
+  encoder, ~1-frame latency), deferred; and robust sync separation is the one
+  real engineering risk — the LM1881 makes it a non-issue, a bare-comparator
+  approach is where the debugging time goes.
+- **Cheap first cut (no added hardware):** a small **iNAV firmware fork** — a
+  custom MSP element that positions box glyphs on the existing MAX7456 from
+  Pi-fed coords — already gives a *coarse* (grid-snapped, ~10-30 Hz) box using
+  the OSD chip that's already in the FC's video path. That's the low-effort
+  version; this P6.7 keyer is the precise upgrade for when the coarse box isn't
+  enough. Both are pure operator-display situational awareness (within §7).
+- **Accept:** bench — feed a known CVBS source + synthetic box coords over UART,
+  scope the output showing a stable, pixel-positioned outline genlocked to the
+  incoming video with no sync disturbance; then end-to-end with the Pi tracker
+  driving a live analog feed through to a VTX/monitor.
+
 ---
 
 ## Dependency graph (summary)

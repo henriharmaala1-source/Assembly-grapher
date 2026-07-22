@@ -361,9 +361,13 @@ CUESETS = {'none':['none'], 'edge':['edge'],
            'FUSE3':['edge','chroma','none'],   # incl. edge (scale-fragile)
            'L+C':['none','chroma']}            # luma+chroma, both scale-robust
 
-print(f"{'scenario':<11}{'cues':<7}{'mean':>7}{'p90':>7}{'max':>7}{'lock%':>7}")
-for sname,sfn in SCEN.items():
-    for cname,cues in CUESETS.items():
-        r=run(sfn,cues)
-        print(f"{sname:<11}{cname:<7}{r['mean']:7.1f}{r['p90']:7.1f}{r['mx']:7.1f}{r['lockpct']:7.0f}")
-    print()
+def main():
+    print(f"{'scenario':<11}{'cues':<7}{'mean':>7}{'p90':>7}{'max':>7}{'lock%':>7}")
+    for sname,sfn in SCEN.items():
+        for cname,cues in CUESETS.items():
+            r=run(sfn,cues)
+            print(f"{sname:<11}{cname:<7}{r['mean']:7.1f}{r['p90']:7.1f}{r['mx']:7.1f}{r['lockpct']:7.0f}")
+        print()
+
+if __name__ == '__main__':      # importable (eval_tracker reuses Tracker/SCEN/CUESETS)
+    main()

@@ -44,7 +44,6 @@ class MainActivity : AppCompatActivity() {
     private val tracker = LockTracker()
     private var source: FrameSource? = null
     private var displayTexture: SurfaceTexture? = null
-    private var transformSet = false
 
     private var srcKind = SrcKind.PHONE
     private val zoomLevels = floatArrayOf(1f, 2f, 4f)   // Camera2 clamps to the sensor max
@@ -73,6 +72,9 @@ class MainActivity : AppCompatActivity() {
     private var lastMs = 0L
     private var fps = 0f
     private var loggedSize = false
+    // frame size the display transform is set for (written UI thread, read cam thread)
+    @Volatile private var fitW = 0
+    @Volatile private var fitH = 0
     private var lumaBuf = FloatArray(0)
 
     // Three tap modes: LOCK (precise box at the tap), BLOB (find the distinct
@@ -177,21 +179,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Aspect-correct the TextureView (fit-center) to match the overlay mapping.
-     *  Rotation is separate (needs the sensor orientation, which is now logged). */
-    private fun fitCenter(pw: Int, ph: Int) {
+     *  Returns false if the view isn't laid out yet, so the caller retries on the
+     *  next frame. Rotation is separate (needs the sensor orientation, logged). */
+    private fun fitCenter(pw: Int, ph: Int): Boolean {
         val vw = texture.width; val vh = texture.height
-        if (vw == 0 || vh == 0) { transformSet = false; return }
+        if (vw == 0 || vh == 0) return false
         val scale = minOf(vw.toFloat() / pw, vh.toFloat() / ph)
         val m = android.graphics.Matrix()
         m.setScale(pw * scale / vw, ph * scale / vh, vw / 2f, vh / 2f)
         texture.setTransform(m)
+        return true
     }
 
     /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay graphics.
      *  (Display is handled by the TextureView directly; this is tracker-only.) */
     private fun onFrame(nv21: ByteArray, w: Int, h: Int) {
         if (!loggedSize) { loggedSize = true; Log.i("MainActivity", "frame ${w}x$h  nv21=${nv21.size}") }
-        if (!transformSet) { transformSet = true; runOnUiThread { fitCenter(w, h) } }
+        // Re-fit whenever the frame size changes (source switch, webcam renegotiates
+        // resolution) — a stale transform would offset the box from the shown feed.
+        if (w != fitW || h != fitH) runOnUiThread { if (fitCenter(w, h)) { fitW = w; fitH = h } }
         val now = SystemClock.elapsedRealtime()
         if (lastMs != 0L) fps = 0.9f * fps + 0.1f * (1000f / max(1L, now - lastMs))
         lastMs = now

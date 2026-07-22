@@ -55,6 +55,7 @@ class LockTracker {
     private val STRIDE = 3
     private val SCALES = floatArrayOf(0.9f, 1.0f, 1.11f)
     private val LOSS_TIMEOUT = 45      // frames of coasting before giving up (longer hold)
+    private val FOV_DELAY = 6          // coasting frames before the search zooms out to re-find
     private val TMPL_EMA = 0.08f
 
     private var templates: Array<FloatArray> = arrayOf()
@@ -100,19 +101,34 @@ class LockTracker {
         if (templates.isEmpty()) return Result(State.IDLE, 0,0,0,0, 0f, 0f,0f, 0f,0f, null)
 
         val (pcx, pcy) = cf.predict()
-        val crop = workingCropRaw(frame, pcx, pcy, bsize)
+
+        // ZOOM THE SEARCH OUT — but only once normal coasting has clearly FAILED.
+        // For the first few lost frames the constant-velocity prediction still
+        // rides along with the target, so the normal crop re-finds it; zooming out
+        // early only adds a coarser peak and a bigger area to false-lock onto
+        // (sim-confirmed: it hurt re-acquire until delayed + gated). After
+        // FOV_DELAY misses, widen the FOV (up to ~3×) by covering more frame area
+        // in a proportionally larger pixel buffer — target keeps its apparent SIZE
+        // so the template still matches — with a coarser stride to hold cost flat.
+        val wide = badFrames >= FOV_DELAY
+        val fov = if (wide) minOf(1f + 0.3f * (badFrames - FOV_DELAY + 1), 3f) else 1f
+        val cropPix = if (fov > 1f) ((CROP * fov).toInt() / 2) * 2 else CROP   // even
+        val strideEff = maxOf(1, (STRIDE * fov).toInt())
+        val regionW = bsize * MARGIN * fov
+        val crop = frame.cropResample(pcx - regionW / 2f, pcy - regionW / 2f,
+                                      regionW, regionW, cropPix, cropPix)
 
         // Search window: base + velocity, opened fully while coasting to re-find.
         val velCrop = cf.speed * CROP / (bsize * MARGIN)
-        val maxHalf = CROP / 2 - TMPL / 2
+        val maxHalf = cropPix / 2 - TMPL / 2
         val searchHalf =
             if (badFrames > 0) maxHalf
             else (SEARCH + velCrop * 2f).toInt().coerceIn(SEARCH, maxHalf)
 
         // Fuse per-cue response maps (simulation-tuned).
-        val c0 = CROP / 2
+        val c0 = cropPix / 2
         val g0 = c0 - searchHalf; val g1 = c0 + searchHalf
-        val gw = (g1 - g0) / STRIDE + 1
+        val gw = (g1 - g0) / strideEff + 1
         val cc = (gw - 1) / 2f
         val sigP = if (badFrames > 0) gw / 1.4f else gw / 2.5f
         val fused = FloatArray(gw * gw)
@@ -122,8 +138,8 @@ class LockTracker {
             // Match against BOTH the adaptive template and the fixed anchor; take
             // the better per position — the anchor re-anchors when the adaptive
             // has drifted, extending how long the lock survives.
-            val respA = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw)
-            val respB = responseMap(cueCrop, anchors[ci], anchorNorms[ci], g0, g1, gw)
+            val respA = responseMap(cueCrop, templates[ci], tmplNorms[ci], g0, g1, gw, strideEff)
+            val respB = responseMap(cueCrop, anchors[ci], anchorNorms[ci], g0, g1, gw, strideEff)
             val resp = FloatArray(respA.size) { if (respA[it] > respB[it]) respA[it] else respB[it] }
             // Prediction-proximity: down-weight a cue whose peak drifts off-centre
             // (a distractor lock, or a confidently-wrong edge under scale — PSR
@@ -140,25 +156,41 @@ class LockTracker {
         if (anyWeight > 0f) applyDistractorPrior(fused, gw, cc)
         conf = if (anyWeight > 0f) psrToConf(psrOf(fused, gw)) else 0f
 
-        if (anyWeight > 0f && conf >= confFloor()) {
+        // Re-locking from a zoomed-out (wide) search demands a STRONG match — a
+        // coarse scan over a large area would otherwise re-lock onto background.
+        val acceptConf = if (wide) confLock() else confFloor()
+        if (anyWeight > 0f && conf >= acceptConf) {
             val (sx, sy) = subPixelPeak(fused, gw)
-            val cxCrop = g0 + sx * STRIDE
-            val cyCrop = g0 + sy * STRIDE
-            val rw = bsize * MARGIN
-            val nx = pcx + (cxCrop / CROP - 0.5f) * rw
-            val ny = pcy + (cyCrop / CROP - 0.5f) * rw
-            cf.correct(nx, ny); bcx = cf.x; bcy = cf.y
+            val cxCrop = g0 + sx * strideEff
+            val cyCrop = g0 + sy * strideEff
+            val nx = pcx + (cxCrop / cropPix - 0.5f) * regionW
+            val ny = pcy + (cyCrop / cropPix - 0.5f) * regionW
+            cf.correct(nx, ny)
+            // A real target can't cross more than ~0.9× its own size per frame at
+            // 30 fps; anything faster is a noisy peak pumping the velocity. Cap it
+            // so a single bad frame can't launch the box across the screen.
+            cf.clampSpeed(bsize * 0.9f)
+            bcx = cf.x; bcy = cf.y
             updateScale(crop, cxCrop, cyCrop)
-            lastRawCrop = crop
             if (conf >= confLock()) adaptTemplates(crop, cxCrop, cyCrop)
             state = State.LOCKED; badFrames = 0
         } else {
+            cf.decay(0.6f)                 // coast decelerates instead of flying off
             bcx = pcx; bcy = pcy
             badFrames++
             state = if (badFrames >= LOSS_TIMEOUT) State.LOST else State.COASTING
             if (state == State.LOST) { reset(); return result(crop) }   // raw crop → colour PiP
         }
-        return result(crop)   // raw crop (luma+chroma) → colour PiP
+        // The PiP crop is re-centred on the CORRECTED box position (bcx,bcy), not
+        // the pre-correction prediction the search ran on — otherwise an inflated
+        // velocity (or a wide-search re-acquire near the crop edge) leaves the box
+        // on target while the PiP looks elsewhere. Search/adapt/scale above kept
+        // the prediction-centred `crop` (where the match happened); only what we
+        // show — and lastRawCrop, now target-centred for cleaner cue-switch
+        // rebuilds — uses this. Coasting: bcx==pcx, so it's the same region.
+        val shown = workingCropRaw(frame, bcx, bcy, bsize)
+        if (state == State.LOCKED) lastRawCrop = shown
+        return result(shown)   // raw crop (luma+chroma), box-centred → colour PiP
     }
 
     // --- fusion helpers ------------------------------------------------------
@@ -190,18 +222,20 @@ class LockTracker {
         lumaNorm = normOf(lumaTmpl)
     }
 
-    /** NCC of a template over the search grid → response map (gw×gw). */
+    /** NCC of a template over the search grid → response map (gw×gw). Stride is
+     *  passed in — it widens (coarser) while coasting so the zoomed-out re-acquire
+     *  search stays the same cost as a normal-FOV locked search. */
     private fun responseMap(crop: GrayFrame, tmpl: FloatArray, tn: Float,
-                            g0: Int, g1: Int, gw: Int): FloatArray {
+                            g0: Int, g1: Int, gw: Int, stride: Int): FloatArray {
         val resp = FloatArray(gw * gw)
         var gy = 0; var y = g0
-        while (y <= g1) {
+        while (y <= g1 && gy < gw) {
             var gx = 0; var x = g0
-            while (x <= g1) {
+            while (x <= g1 && gx < gw) {
                 resp[gy * gw + gx] = nccAt(crop, x.toFloat(), y.toFloat(), tmpl, tn)
-                gx++; x += STRIDE
+                gx++; x += stride
             }
-            gy++; y += STRIDE
+            gy++; y += stride
         }
         return resp
     }
@@ -248,14 +282,19 @@ class LockTracker {
     /** Scale on LUMA (crop.d) — the scale-robust channel; edge mis-scales. */
     private fun updateScale(crop: GrayFrame, cx: Float, cy: Float) {
         val t = lumaTmpl
-        var best = -2f; var bestS = 1f
+        var best = -2f; var bestS = 1f; var ncc1 = 0f
         for (s in SCALES) {
             val ts = TMPL * s
             val patch = crop.cropResample(cx - ts / 2f, cy - ts / 2f, ts, ts, TMPL, TMPL)
             val p = meanSub(patch.d)
             val ncc = dot(p, t) / (normOf(t) * (normOf(p) + 1e-6f))
+            if (s == 1f) ncc1 = ncc
             if (ncc > best) { best = ncc; bestS = s }
         }
+        // Dead-band: only rescale if a non-unity scale CLEARLY beats staying put.
+        // Without this, feed noise makes 0.9 win by a hair most frames and the box
+        // ratchets down to the floor every time (over-zoom + a tiny, unstable lock).
+        if (bestS != 1f && best < ncc1 + 0.03f) bestS = 1f
         bsize = (bsize * (1f + (bestS - 1f) * 0.5f)).coerceIn(36f, minOf(crop.w * 4, 2000).toFloat())
     }
 

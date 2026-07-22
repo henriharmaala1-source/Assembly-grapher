@@ -10,13 +10,15 @@ import os
 # tighter base search cut NCC cost (~positions x template^2) several-fold; the
 # sub-pixel parabolic refine covers the coarser grid.
 CROP   = int(os.environ.get('CROP', 128))
-TMPL   = int(os.environ.get('TMPL', 40))
+TMPL   = int(os.environ.get('TMPL', 28))     # matches LockTracker.kt
 MARGIN = 2.2
-SEARCH = int(os.environ.get('SEARCH', 30))
-STRIDE = int(os.environ.get('STRIDE', 2))
+SEARCH = int(os.environ.get('SEARCH', 22))
+STRIDE = int(os.environ.get('STRIDE', 3))
 SCALES = [0.9, 1.0, 1.11]
-LOSS_TIMEOUT, TMPL_EMA = 20, 0.08
+LOSS_TIMEOUT, TMPL_EMA = 45, 0.08
+FOV_DELAY = 6                                 # coasting frames before search zooms out
 PSR_LOCK, PSR_WARN = 5.5, 3.8
+SIZE_FLOOR = 36.0                             # matches LockTracker.kt (anti over-zoom)
 
 def resample(a, rx, ry, rw, rh, oW, oH):
     H, W = a.shape
@@ -51,8 +53,8 @@ def norm_patch(chan, cx, cy, sz):
     p = resample(chan, cx-sz/2, cy-sz/2, sz, sz, sz, sz)
     return ms(p)
 
-def ncc_map(chan, tmpl, tn, g0, g1):
-    gs = np.arange(g0, g1+1, STRIDE); gw = len(gs)
+def ncc_map(chan, tmpl, tn, g0, g1, stride=STRIDE):
+    gs = np.arange(g0, g1+1, stride); gw = len(gs)
     resp = np.full((gw,gw), -2.0, np.float32); h = TMPL//2
     for gj,cy in enumerate(gs):
         for gi,cx in enumerate(gs):
@@ -88,7 +90,7 @@ class Tracker:
         self.cues=cues; self.latency=latency
         self.tmpl=None; self.state='IDLE'; self.bad=0; self.conf=0
     def designate(self, frame, px, py, size):
-        self.bcx=px; self.bcy=py; self.bsize=float(np.clip(size,12,min(frame['y'].shape)))
+        self.bcx=px; self.bcy=py; self.bsize=float(np.clip(size,SIZE_FLOOR,min(frame['y'].shape)))
         crop=crop_raw(frame,px,py,self.bsize)
         self._build(crop)
         self.x=px; self.y=py; self.vx=0.0; self.vy=0.0
@@ -104,11 +106,20 @@ class Tracker:
     def update(self, frame):
         # predict (alpha-beta)
         self.x+=self.vx; self.y+=self.vy; pcx,pcy=self.x,self.y
-        crop=crop_raw(frame,pcx,pcy,self.bsize)
+        # zoom the search out (see LockTracker.kt) — only AFTER normal coasting has
+        # failed for FOV_DELAY frames (early coasting rides the const-vel prediction
+        # onto the target; zooming out early hurts). Coarser stride holds cost flat.
+        wide = self.bad >= FOV_DELAY
+        fov = min(1+0.3*(self.bad-FOV_DELAY+1), 3.0) if wide else 1.0
+        croppix = (int(CROP*fov)//2)*2 if fov>1 else CROP
+        stride_eff = max(1, int(STRIDE*fov))
+        regionw = self.bsize*MARGIN*fov
+        crop = {k: resample(frame[k], pcx-regionw/2, pcy-regionw/2, regionw, regionw, croppix, croppix)
+                for k in ('y','u','v')}
         speed=np.hypot(self.vx,self.vy); velcrop=speed*CROP/(self.bsize*MARGIN)
-        maxhalf=CROP//2-TMPL//2
+        maxhalf=croppix//2-TMPL//2
         half = maxhalf if self.bad>0 else int(np.clip(SEARCH+velcrop*2,SEARCH,maxhalf))
-        c0=CROP//2; g0=c0-half; g1=c0+half
+        c0=croppix//2; g0=c0-half; g1=c0+half
         # FIX 2: ANCHOR-CONSENSUS fusion + conditional prior.
         #  (a) Each cue's response, peak, PSR. The most-confident cue is the
         #      ANCHOR (luma during scale, edge on a same-brightness target — it
@@ -120,7 +131,7 @@ class Tracker:
         #      toward the prediction. Fixes the identical-distractor case.
         fused=None; anyw=0; sig_p=None; cc=None
         for ci,c in enumerate(self.cues):
-            r,_=ncc_map(apply_cue(crop,c),self.tmpl[ci],self.tn[ci],g0,g1)
+            r,_=ncc_map(apply_cue(crop,c),self.tmpl[ci],self.tn[ci],g0,g1,stride_eff)
             gw=r.shape[0]; cc=(gw-1)/2
             if sig_p is None: sig_p = gw/1.4 if self.bad>0 else gw/2.5
             pk=np.unravel_index(np.argmax(r),r.shape)
@@ -147,28 +158,39 @@ class Tracker:
                 fused=fused*np.exp(-(((xx-cc)**2+(yy-cc)**2)/(2*sig*sig))).astype(np.float32)
             self.conf=psr2conf(psr_of(fused))
         else: self.conf=0
-        if anyw>0 and self.conf>=psr2conf(PSR_WARN):
-            sx,sy=subpix(fused); gs=np.arange(g0,g1+1,STRIDE)
-            cxc=g0+sx*STRIDE; cyc=g0+sy*STRIDE; rw=self.bsize*MARGIN
-            nx=pcx+(cxc/CROP-0.5)*rw; ny=pcy+(cyc/CROP-0.5)*rw
+        # re-locking from a wide search demands a strong match (avoid background locks)
+        accept = PSR_LOCK if wide else PSR_WARN
+        if anyw>0 and self.conf>=psr2conf(accept):
+            sx,sy=subpix(fused)
+            cxc=g0+sx*stride_eff; cyc=g0+sy*stride_eff
+            nx=pcx+(cxc/croppix-0.5)*regionw; ny=pcy+(cyc/croppix-0.5)*regionw
             # correct
             rx=nx-self.x; ry=ny-self.y; self.x+=0.5*rx; self.y+=0.5*ry; self.vx+=0.15*rx; self.vy+=0.15*ry
+            # velocity cap: a noisy peak can inject a big residual and the constant-
+            # velocity prediction then compounds it until the crop flies off target.
+            spd=np.hypot(self.vx,self.vy); vmax=self.bsize*0.9
+            if spd>vmax>0: k=vmax/spd; self.vx*=k; self.vy*=k
             self.bcx,self.bcy=self.x,self.y
             self._scale(crop,cxc,cyc)
             if self.conf>=psr2conf(PSR_LOCK): self._adapt(crop,cxc,cyc)
             self.state='LOCKED'; self.bad=0
         else:
+            self.vx*=0.6; self.vy*=0.6          # coast decelerates instead of flying off
             self.bcx,self.bcy=pcx,pcy; self.bad+=1
             self.state='LOST' if self.bad>=LOSS_TIMEOUT else 'COASTING'
         ax=self.x+self.vx*int(self.latency+0.5); ay=self.y+self.vy*int(self.latency+0.5)
         return self.bcx,self.bcy,self.bsize,self.conf,self.state,ax,ay
     def _scale(self,crop,cx,cy):
-        chan=crop['y']; t=self.tl; best=-2;bs=1.0   # FIX 1: scale on luma
+        chan=crop['y']; t=self.tl; best=-2;bs=1.0; n1=0.0   # FIX 1: scale on luma
         for s in SCALES:
             ts=TMPL*s; p=ms(resample(chan,cx-ts/2,cy-ts/2,ts,ts,TMPL,TMPL))
             n=(p*t).sum()/(nrm(t)*nrm(p))
+            if s==1.0: n1=n
             if n>best:best=n;bs=s
-        self.bsize=float(np.clip(self.bsize*(1+(bs-1)*0.5),12,min(crop['y'].shape[0]*4,2000)))
+        # dead-band: only rescale on a clear win over staying put, else feed noise
+        # ratchets the box down to the floor every frame (over-zoom, unstable lock).
+        if bs!=1.0 and best<n1+0.03: bs=1.0
+        self.bsize=float(np.clip(self.bsize*(1+(bs-1)*0.5),SIZE_FLOOR,min(crop['y'].shape[0]*4,2000)))
     def _adapt(self,crop,cx,cy):
         for ci,c in enumerate(self.cues):
             fr=norm_patch(apply_cue(crop,c),cx,cy,TMPL)
@@ -252,9 +274,31 @@ def sc_fast():
         cx=40+i*9.0; cy=120.0
         gt.append((cx,cy)); fr.append(make_frame(240,320,(cx,cy,14,150,40,-30)))
     return fr,gt
+def sc_noisy_occ():
+    # High sensor noise (webcam-like) + a brief occlusion mid-run — the exact
+    # setup that lets a spurious peak pump the velocity and send the box
+    # "wandering off in random directions" out of frame. Runaway shows up as a
+    # huge max error; the velocity cap + coast decay should bound it.
+    fr=[];gt=[]
+    for i in range(45):
+        cx=70+i*4.0; cy=110.0+18*np.sin(i*0.4)          # gentle curve (not const-vel)
+        occ=(cx,cy,24) if 18<=i<=24 else None
+        gt.append((cx,cy)); fr.append(make_frame(240,320,(cx,cy,14,150,40,-30),occ=occ,noise=16))
+    return fr,gt
+
+def sc_reacq():
+    # Target is occluded for a stretch AND keeps moving fast behind the occluder,
+    # so it REAPPEARS well outside the normal crop (bsize*2.2). Only the coasting
+    # FOV zoom-out can re-find it. Without it, the box coasts off and never re-locks.
+    fr=[];gt=[]
+    for i in range(45):
+        cx=60+i*7.0; cy=120.0
+        occ=(60+16*7.0, cy, 30) if 14<=i<=26 else None   # occluder fixed; target drives on
+        gt.append((cx,cy)); fr.append(make_frame(240,320,(cx,cy,14,150,40,-30),occ=occ))
+    return fr,gt
 
 SCEN = dict(translate=sc_translate, approach=sc_approach, occlusion=sc_occlusion,
-            distractor=sc_distractor, fast=sc_fast)
+            distractor=sc_distractor, fast=sc_fast, noisy_occ=sc_noisy_occ, reacq=sc_reacq)
 CUESETS = {'none':['none'], 'edge':['edge'],
            'FUSE3':['edge','chroma','none'],   # incl. edge (scale-fragile)
            'L+C':['none','chroma']}            # luma+chroma, both scale-robust

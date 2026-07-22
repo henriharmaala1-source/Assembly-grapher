@@ -35,5 +35,19 @@ class CenterFilter(private val alpha: Float = 0.5f, private val beta: Float = 0.
     /** Where the centre is projected `steps` frames ahead. */
     fun project(steps: Int): Pair<Float, Float> = (x + vx * steps) to (y + vy * steps)
 
+    /** Cap the per-frame velocity. A noisy peak can inject a huge residual into
+     *  `correct()`, and the constant-velocity prediction then compounds it frame
+     *  after frame until the crop flies off the target ("box wanders away"). A
+     *  ceiling (sized from the target) keeps a real fast target moving while
+     *  stopping the runaway. */
+    fun clampSpeed(maxV: Float) {
+        val s = kotlin.math.sqrt(vx * vx + vy * vy)
+        if (s > maxV && s > 1e-6f) { val k = maxV / s; vx *= k; vy *= k }
+    }
+
+    /** Bleed off velocity while coasting so a lost target's crop decelerates to a
+     *  stop near the last sighting instead of sailing out of frame on stale speed. */
+    fun decay(f: Float) { vx *= f; vy *= f }
+
     val speed: Float get() = kotlin.math.sqrt(vx * vx + vy * vy)
 }

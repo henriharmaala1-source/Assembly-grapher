@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
@@ -19,15 +20,17 @@ import com.kestrel.tracker.track.MotionDetector
  * (GPU, sharp, native rate), so this view does NO per-pixel work and never
  * touches the frame delivery rate.
  *
- * Coordinates: the TextureView stretches the frame to fill the view, so frame→
- * view is a non-uniform scale (sx=width/frameW, sy=height/frameH); viewToFrame
- * inverts it. Tracking runs on the undistorted frame, so only the display shows
- * any aspect stretch.
+ * Coordinates: `frameToView()` is the ONE canonical frame→view transform (frame
+ * rotation + fit-center). This same transform is used to set the TextureView's
+ * display matrix (in MainActivity) and to draw the box + map taps here — so the
+ * box and the shown image can never disagree. Tracking still runs on the raw
+ * (unrotated) frame; only the display/overlay are rotated, cheaply, in the GPU.
  */
 class TrackerOverlayView(context: Context) : View(context) {
 
     private var frameW = 0
     private var frameH = 0
+    private var frameRot = 0          // display rotation (0/90/180/270), set by MainActivity
 
     private var pipBmp: Bitmap? = null
     private var result: LockTracker.Result? = null
@@ -46,6 +49,8 @@ class TrackerOverlayView(context: Context) : View(context) {
     private val srcRect = RectF()
     private var zoomLabel = "1x"
     private val zoomRect = RectF()
+    private var rotLabel = "0"
+    private val rotRect = RectF()
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 34f; color = Color.WHITE }
@@ -62,8 +67,30 @@ class TrackerOverlayView(context: Context) : View(context) {
     fun srcButtonAt(vx: Float, vy: Float): Boolean = srcRect.contains(vx, vy)
     fun setZoom(label: String) { zoomLabel = label }
     fun zoomButtonAt(vx: Float, vy: Float): Boolean = zoomRect.contains(vx, vy)
+    fun setRot(label: String) { rotLabel = label }
+    fun rotButtonAt(vx: Float, vy: Float): Boolean = rotRect.contains(vx, vy)
+    fun setFrameRotation(deg: Int) { frameRot = ((deg % 360) + 360) % 360; postInvalidate() }
 
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
+
+    companion object {
+        /** THE canonical frame→view transform: rotate the frame by `rot` degrees
+         *  about its centre, then fit-center it in the view. Shared verbatim by the
+         *  overlay (box draw + tap inverse) and the TextureView display matrix, so
+         *  the two can never drift apart. */
+        fun frameToView(rot: Int, fw: Int, fh: Int, vw: Int, vh: Int): Matrix {
+            val swap = rot % 180 != 0
+            val effW = if (swap) fh else fw           // rotated bounding box
+            val effH = if (swap) fw else fh
+            val s = minOf(vw.toFloat() / effW, vh.toFloat() / effH)   // fit-center scale
+            val m = Matrix()
+            m.postTranslate(-fw / 2f, -fh / 2f)       // frame centre → origin
+            m.postRotate(rot.toFloat())               // rotate about origin
+            m.postScale(s, s)
+            m.postTranslate(vw / 2f, vh / 2f)         // → view centre
+            return m
+        }
+    }
 
     /** Called from the camera thread each tracker frame. No image data — the
      *  TextureView shows the feed; this only updates the overlay graphics. */
@@ -76,12 +103,14 @@ class TrackerOverlayView(context: Context) : View(context) {
         postInvalidate()
     }
 
-    /** Map a touch point (view px) back to frame px (inverts the fit-center). */
+    /** Map a touch point (view px) back to frame px (inverts frameToView, so taps
+     *  land on the right frame pixel whatever the display rotation is). */
     fun viewToFrame(vx: Float, vy: Float): Pair<Float, Float>? {
         if (frameW == 0 || width == 0 || height == 0) return null
-        val s = minOf(width.toFloat() / frameW, height.toFloat() / frameH)
-        val ox = (width - frameW * s) / 2f; val oy = (height - frameH * s) / 2f
-        return ((vx - ox) / s) to ((vy - oy) / s)
+        val inv = Matrix()
+        if (!frameToView(frameRot, frameW, frameH, width, height).invert(inv)) return null
+        val pt = floatArrayOf(vx, vy); inv.mapPoints(pt)
+        return pt[0] to pt[1]
     }
 
     /** Crop -> bitmap in COLOUR when the crop carries chroma (YUV->RGB), else grey. */
@@ -107,11 +136,9 @@ class TrackerOverlayView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        // Aspect-correct fit-center (matches the TextureView transform).
-        val s = if (frameW > 0) minOf(width.toFloat() / frameW, height.toFloat() / frameH) else 1f
-        val ox = (width - frameW * s) / 2f; val oy = (height - frameH * s) / 2f
-        fun fx(x: Float) = ox + x * s
-        fun fy(y: Float) = oy + y * s
+        // ONE canonical frame→view transform (rotation + fit-center) — identical to
+        // the TextureView's display matrix, so the box tracks the shown image.
+        val m = if (frameW > 0) frameToView(frameRot, frameW, frameH, width, height) else Matrix()
 
         val r = result
         if (frameW > 0 && motionMode) {
@@ -119,8 +146,8 @@ class TrackerOverlayView(context: Context) : View(context) {
                 val primary = idx == 0
                 p.style = Paint.Style.STROKE; p.strokeWidth = if (primary) 3f else 2f
                 p.color = if (primary) Color.rgb(60, 220, 255) else Color.rgb(90, 150, 170)
-                canvas.drawRect(fx(b.x.toFloat()), fy(b.y.toFloat()),
-                    fx((b.x + b.w).toFloat()), fy((b.y + b.h).toFloat()), p)
+                val rf = RectF(b.x.toFloat(), b.y.toFloat(), (b.x + b.w).toFloat(), (b.y + b.h).toFloat())
+                m.mapRect(rf); canvas.drawRect(rf, p)
             }
         } else if (frameW > 0 && r != null &&
                    (r.state == LockTracker.State.LOCKED || r.state == LockTracker.State.COASTING ||
@@ -131,15 +158,19 @@ class TrackerOverlayView(context: Context) : View(context) {
                 else -> if (r.conf >= 0.5f) Color.rgb(40, 230, 70) else Color.rgb(0, 200, 255)
             }
             p.style = Paint.Style.STROKE; p.strokeWidth = 3f; p.color = col
-            canvas.drawRect(fx(r.x.toFloat()), fy(r.y.toFloat()),
-                fx((r.x + r.w).toFloat()), fy((r.y + r.h).toFloat()), p)
-            val ccx = fx((r.x + r.w / 2).toFloat()); val ccy = fy((r.y + r.h / 2).toFloat())
+            val rf = RectF(r.x.toFloat(), r.y.toFloat(), (r.x + r.w).toFloat(), (r.y + r.h).toFloat())
+            m.mapRect(rf); canvas.drawRect(rf, p)
+            // map centre, prediction and aim points through the same transform
+            val pts = floatArrayOf((r.x + r.w / 2).toFloat(), (r.y + r.h / 2).toFloat(),
+                                   r.predX, r.predY, r.aimX, r.aimY)
+            m.mapPoints(pts)
+            val ccx = pts[0]; val ccy = pts[1]
             canvas.drawLine(ccx - 16, ccy, ccx + 16, ccy, p)
             canvas.drawLine(ccx, ccy - 16, ccx, ccy + 16, p)
             p.strokeWidth = 2f
-            canvas.drawLine(ccx, ccy, fx(r.predX), fy(r.predY), p)
+            canvas.drawLine(ccx, ccy, pts[2], pts[3], p)
             // latency-compensated aim (magenta ✕)
-            val ax = fx(r.aimX); val ay = fy(r.aimY)
+            val ax = pts[4]; val ay = pts[5]
             p.color = Color.rgb(255, 0, 200)
             canvas.drawLine(ax - 12, ay - 12, ax + 12, ay + 12, p)
             canvas.drawLine(ax - 12, ay + 12, ax + 12, ay - 12, p)
@@ -191,6 +222,12 @@ class TrackerOverlayView(context: Context) : View(context) {
         val zx = width - zw - 16f; val zy = syb + bh + 8f
         zoomRect.set(zx, zy, zx + zw, zy + bh)
         button(canvas, zoomRect, zl, zx, zy, bh, Color.argb(200, 30, 60, 30), Color.rgb(150, 230, 150))
+
+        val rl = "ROT: ${rotLabel}°"
+        val rw = text.measureText(rl) + 36f
+        val rx = width - rw - 16f; val ry = zy + bh + 8f
+        rotRect.set(rx, ry, rx + rw, ry + bh)
+        button(canvas, rotRect, rl, rx, ry, bh, Color.argb(200, 60, 30, 60), Color.rgb(220, 150, 230))
     }
 
     private fun button(c: Canvas, rect: RectF, label: String, x: Float, y: Float, bh: Float,

@@ -35,7 +35,8 @@ import kotlin.math.max
  *
  * Feed: SRC button toggles PHONE (built-in camera) or UVC (the analog dongle,
  * feed-faithful to the Pi's sensor chain). Controls: TAP = lock (or a mover in
- * MOTION mode). Buttons top-right: MODE, SRC. Cue chips bottom. LONG-PRESS reset.
+ * MOTION mode). Buttons top-right: MODE, SRC, ZOOM, ROT (cycles the display
+ * rotation until the feed is upright). Cue chips bottom. LONG-PRESS reset.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -44,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private val tracker = LockTracker()
     private var source: FrameSource? = null
     private var displayTexture: SurfaceTexture? = null
+    private var rotationDeg = 0   // display rotation; defaults to the sensor orientation, ROT button cycles
 
     private var srcKind = SrcKind.PHONE
     private val zoomLevels = floatArrayOf(1f, 2f, 4f)   // Camera2 clamps to the sensor max
@@ -111,6 +113,12 @@ class MainActivity : AppCompatActivity() {
                     srcKind = if (srcKind == SrcKind.PHONE) SrcKind.UVC else SrcKind.PHONE
                     view.setSrc(srcKind.name); startSource(); return true
                 }
+                if (view.rotButtonAt(e.x, e.y)) {
+                    rotationDeg = (rotationDeg + 90) % 360      // cycle 0→90→180→270 until upright
+                    view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString())
+                    fitW = 0; fitH = 0                          // force the display transform to re-apply
+                    return true
+                }
                 if (view.modeButtonAt(e.x, e.y)) {
                     mode = TrackMode.values()[(mode.ordinal + 1) % TrackMode.values().size]
                     if (mode == TrackMode.MOTION) motion.reset()
@@ -176,17 +184,24 @@ class MainActivity : AppCompatActivity() {
         source = src
         src.start(::onFrame, displayTexture)
         src.setZoom(zoomLevels[zoomIdx])   // reapply zoom across source switches
+        // Default the display rotation to the phone sensor's mount orientation (the
+        // usual portrait-phone/landscape-sensor tilt); the dongle feed is already
+        // upright (0). The ROT button overrides either if the default is wrong.
+        rotationDeg = (src as? Camera2FrameSource)?.sensorOrientation ?: 0
+        view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString())
+        fitW = 0; fitH = 0                 // re-fit the display transform for the new source/rotation
     }
 
-    /** Aspect-correct the TextureView (fit-center) to match the overlay mapping.
-     *  Returns false if the view isn't laid out yet, so the caller retries on the
-     *  next frame. Rotation is separate (needs the sensor orientation, logged). */
+    /** Set the TextureView display matrix = the SAME canonical frame→view transform
+     *  the overlay draws the box with (rotation + fit-center), composed with the
+     *  inverse of the view's default fill so it lands correctly. Because both come
+     *  from `frameToView`, the shown image and the box rotate together and stay
+     *  aligned. Returns false if the view isn't laid out yet (caller retries). */
     private fun fitCenter(pw: Int, ph: Int): Boolean {
         val vw = texture.width; val vh = texture.height
         if (vw == 0 || vh == 0) return false
-        val scale = minOf(vw.toFloat() / pw, vh.toFloat() / ph)
-        val m = android.graphics.Matrix()
-        m.setScale(pw * scale / vw, ph * scale / vh, vw / 2f, vh / 2f)
+        val m = TrackerOverlayView.frameToView(rotationDeg, pw, ph, vw, vh)
+        m.preScale(pw.toFloat() / vw, ph.toFloat() / vh)   // undo the default fill: M = frameToView · fill⁻¹
         texture.setTransform(m)
         return true
     }

@@ -43,6 +43,10 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
     private var maxZoom = 1f
     private var camId: String? = null
 
+    /** Sensor mount rotation (0/90/180/270) — the default display rotation the
+     *  preview needs so the feed shows upright. Read synchronously in start(). */
+    var sensorOrientation = 0; private set
+
     override fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?) {
         this.onFrame = onFrame
         thread = HandlerThread("cam").also { it.start() }
@@ -54,8 +58,9 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
             mgr.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 1f
         else 1f
-        Log.i("Camera2", "max zoom ${maxZoom}x  sensor orientation " +
-            "${mgr.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION)}")
+        sensorOrientation =
+            mgr.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        Log.i("Camera2", "max zoom ${maxZoom}x  sensor orientation $sensorOrientation")
         val size = pickSize(id)
         reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener({ r -> deliver(r) }, handler)

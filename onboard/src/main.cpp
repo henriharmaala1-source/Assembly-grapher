@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
     // Hand the FC to its own I/O thread so a slow/hung camera can't stall RC
     // (iNAV failsafes below ~5 Hz). From here the fly loop talks only to fcLink.
     FcLink fcLink(std::move(fc));
-    fcLink.configure(assistMode, tune.rthAuxIdx, tune.rthAuxUs);
+    fcLink.configure(assistMode, tune.rthAuxIdx, tune.rthAuxUs, tune.battCells);
     if (tune.rt.enable) fcLink.setRealtime(tune.rt.fcLinkPrio, tune.rt.controlCpu);  // F9
     fcLink.start();
 
@@ -493,9 +493,12 @@ int main(int argc, char** argv) {
         cctx.frameW = frame.cols; cctx.frameH = frame.rows; cctx.dt = (float)dt;
         wm.with([&](WorldState& s) { cmd = modes.tick(s, cctx, rthTrigger); });
 
-        // On the dry→live engage edge in assist mode, latch the operator's
-        // current sticks so the takeover starts from their hands, not neutral.
-        if (allowControl && !wasAllow && assistMode && fcLink.haveFc()) fcLink.latchBaseline();
+        // On the dry→live engage edge, latch the operator's current channels. In
+        // assist this makes the stick takeover bumpless; in TOTAL autonomy it is
+        // the AUX (arm/mode switch) fallback if live MSP_RC ever drops out — so
+        // it must NOT be gated on assist, or total autonomy has no AUX source at
+        // all and the backend has to refuse to send.
+        if (allowControl && !wasAllow && fcLink.haveFc()) fcLink.latchBaseline();
         wasAllow = allowControl;
 
         // Hand intent to the I/O thread. Failsafe → RTH; a released command

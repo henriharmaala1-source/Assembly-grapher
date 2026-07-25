@@ -91,6 +91,8 @@ class LockTracker {
     private var lumaNorm = 0f
     private var histFg: FloatArray = floatArrayOf()   // histogram cue: per-bin fg/bg pseudo-counts
     private var histBg: FloatArray = floatArrayOf()
+    private var histBeta = FloatArray(0)   // reused per-frame scratch (no alloc on the frame thread)
+    private var histII   = FloatArray(0)   // reused integral image
     private var lastRawCrop: GrayFrame? = null      // for rebuilding templates on cue change
     private var bcx = 0f; private var bcy = 0f
     private var bsize = 0f
@@ -411,12 +413,21 @@ class LockTracker {
      *  is O(crop + positions) instead of O(positions x template^2) like NCC. */
     private fun histResponse(crop: GrayFrame, g0: Int, g1: Int, gw: Int, stride: Int): FloatArray {
         val w = crop.w; val h = crop.h
-        val beta = FloatArray(w * h)
+        // Reused scratch — these are ~64 KB each at CROP=128, and this runs on the
+        // frame-delivery thread, so allocating them per frame would push ~4 MB/s of
+        // garbage through the exact path the 30 fps target depends on (same reason
+        // Camera2FrameSource/UvcFrameSource/MainActivity all reuse their buffers).
+        if (histBeta.size != w * h) histBeta = FloatArray(w * h)
+        if (histII.size != (w + 1) * (h + 1)) histII = FloatArray((w + 1) * (h + 1))
+        val beta = histBeta; val ii = histII
         for (i in beta.indices) {
             val b = histBinIndex(crop, i)
             beta[i] = histFg[b] / (histFg[b] + histBg[b] + HIST_LAMBDA)
         }
-        val ii = FloatArray((w + 1) * (h + 1))
+        // NOTE: row 0 and column 0 of `ii` must stay zero (the box-sum reads them
+        // as the integral-image border). The fill below only ever writes
+        // (y+1, x+1), so they stay zero across reuse — do not "optimise" the
+        // indexing here without re-zeroing that border.
         for (y in 0 until h) {
             var rowSum = 0f
             for (x in 0 until w) {

@@ -59,6 +59,34 @@ int main() {
     MspBackend fc;
     CHECK(fc.connect(sname, 115200));
 
+    { // SAFETY: with no operator RC seen and no baseline, the AUX (arm/mode
+      // switch) positions are unknown. Synthesising them would write the arm
+      // channel — disarming the aircraft in flight — so the backend must refuse
+      // to send at all rather than invent switch values.
+        ControlCmd c; c.valid = true; c.roll = 0.5f;
+        CHECK(!fc.sendControl(c));                   // refused: AUX unknown
+        CHECK(drainMaster(mfd).empty());             // nothing on the wire
+    }
+
+    { // Feed operator RC (MSP_RC) so the backend knows the real switch positions.
+      // AUX1 (index 4) = 1800 µs stands in for a HIGH arm switch.
+        const uint16_t opRc[8] = {1500, 1500, 1200, 1500, 1800, 1000, 1700, 1000};
+        uint8_t p[16];
+        for (int i = 0; i < 8; ++i) { p[i*2] = opRc[i] & 0xFF; p[i*2+1] = opRc[i] >> 8; }
+        uint8_t f[32]; int k = 0;
+        f[k++] = '$'; f[k++] = 'M'; f[k++] = '>'; f[k++] = 16; f[k++] = 105;  // MSP_RC
+        uint8_t crc = 16 ^ 105;
+        for (int i = 0; i < 16; ++i) { f[k++] = p[i]; crc ^= p[i]; }
+        f[k++] = crc;
+        CHECK(write(mfd, f, k) == k);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        fc.tick();                                   // drain + decode
+        FcTelemetry t{}; fc.poll(t);
+        CHECK(t.rcCount >= 8);
+        CHECK(t.rc[4] == 1800);
+        drainMaster(mfd);                            // discard telemetry polls
+    }
+
     { // control frame: v1 header, AETR order, µs mapping, XOR checksum
         ControlCmd c;
         c.valid = true; c.roll = 0.5f; c.pitch = -0.2f; c.yaw = 1.0f; c.throttle = 0.f;
@@ -75,7 +103,12 @@ int main() {
             CHECK(ch(1) == 1400);                    // E: pitch -0.2
             CHECK(ch(2) == 1500);                    // T at index 2 (AETR!) 0 = hold
             CHECK(ch(3) == 2000);                    // R: yaw +1.0
-            for (int i = 4; i < 8; ++i) CHECK(ch(i) == 1000);   // AUX low
+            // AUX must MIRROR the operator's live switches, never be synthesised:
+            // writing 1000 here pulls a high arm switch low = disarm in flight.
+            CHECK(ch(4) == 1800);                    // arm switch preserved
+            CHECK(ch(5) == 1000);
+            CHECK(ch(6) == 1700);                    // mode switch preserved
+            CHECK(ch(7) == 1000);
             uint8_t crc = 0;
             for (size_t i = 3; i < 21; ++i) crc ^= b[i];
             CHECK(crc == b[21]);
@@ -137,7 +170,9 @@ int main() {
                 auto ch = [&](int i) { return (uint16_t)(b[5 + 2 * i] | (b[6 + 2 * i] << 8)); };
                 CHECK(ch(0) == 1500 && ch(1) == 1500);   // sticks neutral
                 CHECK(ch(6) == 1850);                    // RTH AUX driven high
-                CHECK(ch(4) == 1000 && ch(5) == 1000);   // other AUX untouched
+                // Other AUX still mirror the operator — crucially the ARM switch
+                // stays high, so the aircraft remains armed to fly the return.
+                CHECK(ch(4) == 1800 && ch(5) == 1000);
             }
         }
         CHECK(fc.setMode(FcMode::ANGLE));            // any other mode releases it
@@ -146,9 +181,59 @@ int main() {
             const auto b = drainMaster(mfd);
             if (b.size() == 22) {
                 auto ch = [&](int i) { return (uint16_t)(b[5 + 2 * i] | (b[6 + 2 * i] << 8)); };
-                CHECK(ch(6) == 1000);                    // back to baseline low
+                CHECK(ch(6) == 1700);                    // back to the operator's switch
             }
         }
+    }
+
+    { // Battery state-of-charge must be PER CELL. A fixed 3S divisor reads ~1.00
+      // all the way down on a 4S/6S pack, so the low-battery → RTH failsafe
+      // (ModeManager: vehBattery < rtl_batt_pct) could never fire.
+        auto sendAnalog = [&](float volts) {
+            const uint8_t p[7] = {(uint8_t)std::lround(volts * 10.f), 0, 0, 0, 0, 0, 0};
+            uint8_t f[16]; int k = 0;
+            f[k++] = '$'; f[k++] = 'M'; f[k++] = '>'; f[k++] = 7; f[k++] = 110;  // MSP_ANALOG
+            uint8_t crc = 7 ^ 110;
+            for (int i = 0; i < 7; ++i) { f[k++] = p[i]; crc ^= p[i]; }
+            f[k++] = crc;
+            CHECK(write(mfd, f, k) == k);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            fc.tick();
+            FcTelemetry t{}; fc.poll(t);
+            drainMaster(mfd);
+            return t.battPct;
+        };
+
+        MspBackend fc6;                              // explicit 6S pack
+        int m6 = -1, s6 = -1; char n6[128];
+        CHECK(openpty(&m6, &s6, n6, nullptr, nullptr) == 0);
+        fcntl(m6, F_SETFL, O_NONBLOCK);
+        CHECK(fc6.connect(n6, 115200));
+        fc6.setBatteryCells(6);
+        {
+            const uint8_t p[7] = {(uint8_t)std::lround(21.0f * 10.f), 0, 0, 0, 0, 0, 0};
+            uint8_t f[16]; int k = 0;
+            f[k++] = '$'; f[k++] = 'M'; f[k++] = '>'; f[k++] = 7; f[k++] = 110;
+            uint8_t crc = 7 ^ 110;
+            for (int i = 0; i < 7; ++i) { f[k++] = p[i]; crc ^= p[i]; }
+            f[k++] = crc;
+            CHECK(write(m6, f, k) == k);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            fc6.tick();
+            FcTelemetry t{}; fc6.poll(t);
+            // 21.0 V / 6 = 3.50 V/cell → (3.50-3.3)/0.9 ≈ 0.22, i.e. "land now",
+            // NOT the 1.00 the old fixed-3S maths reported.
+            CHECK(t.battPct > 0.15f && t.battPct < 0.30f);
+        }
+        fc6.disconnect(); close(m6); close(s6);
+
+        // Unconfigured (cells=0) → inferred from the first reading. 22.2 V ≈ 6S
+        // → 3.70 V/cell → (3.70-3.3)/0.9 ≈ 0.44 (nominal LiPo, mid-pack).
+        // The old fixed-3S maths saturated at 1.00 here, hiding the whole
+        // discharge curve from the failsafe.
+        const float pct = sendAnalog(22.2f);
+        CHECK(pct > 0.35f && pct < 0.55f);
+        CHECK(pct < 1.0f);
     }
 
     fc.disconnect();

@@ -47,6 +47,11 @@ public:
     // the FC's own RC-loss failsafe). No-op on backends with a real mode API.
     virtual void setRthChannel(int /*idx*/, int /*us*/) {}
 
+    // Battery cell count, for backends that only report pack voltage and must
+    // derive per-cell state of charge themselves (the low-battery → RTH
+    // failsafe depends on it). <=0 means "infer from the first reading".
+    virtual void setBatteryCells(int /*cells*/) {}
+
     // Inject a companion-computed position into the FC's navigation estimator.
     // MSP backend: MSP2_SENSOR_GPS (no ACK). Requires gps_provider=MSP on the FC.
     virtual bool feedExternalGps(const ExtGps& /*fix*/) { return false; }

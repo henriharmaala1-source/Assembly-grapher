@@ -22,6 +22,9 @@
 //   controller.cruise      = 0.22
 //   mission.step_m         = 3.0
 //   failsafe.rth_aux       = 4          # 0-based AUX index driven on RTH
+//   safety.batt_cells      = 6          # pack cell count (0 = infer); the
+//                                       # low-battery RTH is per-cell, so a
+//                                       # wrong count disables that failsafe
 //
 // Precedence: CLI flags (main.cpp) win over the config file, which wins over
 // the built-in defaults. Unknown keys in the file are warned about (typo catch).
@@ -59,6 +62,12 @@ struct Tunables {
     // Failsafe → iNAV RTH via an AUX channel (consumed by the MSP backend, P2.1).
     int  rthAuxIdx = -1;    // 0-based AUX index to drive on RTH; <0 = disabled
     int  rthAuxUs  = 1800;  // µs to write on that channel when RTH is active
+
+    // Battery cell count — the MSP backend only gets pack voltage, so it needs
+    // this to compute per-cell state of charge for the low-battery failsafe.
+    // 0 = infer from the first reading (~3.8 V/cell). Set it explicitly if the
+    // pack can be plugged in already depleted, where inference would guess low.
+    int  battCells = 0;
 
     // Camera geometry — FPV cameras are up-tilted; the monocular corridor/grid
     // scan is suppressed when the effective elevation leaves the usable window.

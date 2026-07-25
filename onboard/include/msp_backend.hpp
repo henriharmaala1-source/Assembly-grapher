@@ -36,6 +36,10 @@ public:
     // frame (iNAV flies NAV RTH); any other mode releases it. Returns false — so
     // the caller can fall back to release — when no RTH channel is configured.
     void setRthChannel(int idx, int us) override { rthAuxIdx_ = idx; rthAuxUs_ = us; }
+
+    // Battery cell count for the per-cell state-of-charge that drives the
+    // low-battery failsafe. <=0 = infer from the first voltage reading.
+    void setBatteryCells(int cells) override { battCells_ = cells; }
     bool setMode(FcMode m) override;
 
 private:
@@ -67,6 +71,8 @@ private:
     uint16_t baseline_[8]{};
     uint16_t rc_[18]{};
     int      rcCount_       = 0;
+    bool     warnedNoAux_   = false;   // one-shot: refused to send, AUX unknown
+    int      battCells_     = 0;       // <=0 = infer from first voltage reading
 
     // Failsafe RTH-via-AUX (P2.1). While rthActive_, sendControl forces the
     // configured channel high so iNAV enters NAV RTH; the arm channel is left at

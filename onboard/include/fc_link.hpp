@@ -33,10 +33,11 @@ public:
     bool haveFc() const { return (bool)fc_; }
 
     // One-time backend setup; call before start().
-    void configure(bool assist, int rthAuxIdx, int rthAuxUs) {
+    void configure(bool assist, int rthAuxIdx, int rthAuxUs, int battCells = 0) {
         if (!fc_) return;
         fc_->setAssistMode(assist);
         fc_->setRthChannel(rthAuxIdx, rthAuxUs);
+        fc_->setBatteryCells(battCells);
     }
 
     // Real-time scheduling for the I/O thread (F9); applied when the thread

@@ -135,6 +135,7 @@ Tunables load_tunables(Config& c) {
     // --- failsafe RTH AUX (P2.1) ---
     t.rthAuxIdx = c.i("failsafe.rth_aux",    t.rthAuxIdx);
     t.rthAuxUs  = c.i("failsafe.rth_aux_us", t.rthAuxUs);
+    t.battCells = c.i("safety.batt_cells",   t.battCells);
 
     // --- camera geometry (monocular tilt handling) ---
     t.cameraMountTiltDeg = c.f("camera.mount_tilt_deg",    t.cameraMountTiltDeg);

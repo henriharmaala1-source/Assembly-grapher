@@ -151,6 +151,23 @@ bool MspBackend::setMode(FcMode m) {
 
 bool MspBackend::sendControl(const ControlCmd& cmd) {
     if (!connected_ || !cmd.valid) return false;
+
+    // AUX channels carry the operator's SWITCHES — arm, flight mode, RTH. We do
+    // not own them, and MSP_SET_RAW_RC overrides ALL channels, so synthesising a
+    // value here writes those switches too: a made-up 1000 µs on the arm channel
+    // disarms the aircraft in flight. Refuse to build a frame until their real
+    // positions are known (live MSP_RC, or a latched baseline). Failing to send
+    // is safe — iNAV's own RC-loss failsafe takes the aircraft.
+    if (rcCount_ < 8 && !baselineValid_) {
+        if (!warnedNoAux_) {
+            warnedNoAux_ = true;
+            std::fprintf(stderr,
+                "[msp] NOT sending RC: operator AUX positions unknown (rcCount=%d, no "
+                "baseline). Refusing to synthesise switch channels.\n", rcCount_);
+        }
+        return false;
+    }
+
     // AETR: [Roll, Pitch, Throttle, Yaw, AUX1..AUX4]. Throttle is index 2.
     uint16_t ch[8];
     if (assist_ && baselineValid_) {
@@ -160,15 +177,19 @@ bool MspBackend::sendControl(const ControlCmd& cmd) {
         ch[1] = addDelta(baseline_[1], cmd.pitch);
         ch[2] = addDelta(baseline_[2], cmd.throttle);
         ch[3] = addDelta(baseline_[3], cmd.yaw);
-        for (int i = 4; i < 8; ++i) ch[i] = baseline_[i];   // operator AUX passes through
     } else {
         // Total autonomy: absolute sticks from neutral; the OS is the source.
         ch[0] = axisToUs(cmd.roll);
         ch[1] = axisToUs(cmd.pitch);
         ch[2] = thrToUs(cmd.throttle);
         ch[3] = axisToUs(cmd.yaw);
-        for (int i = 4; i < 8; ++i) ch[i] = baselineValid_ ? baseline_[i] : 1000;
     }
+    // AUX pass-through, identical in BOTH modes: mirror the operator's switches.
+    // Prefer the LIVE positions (MSP_RC) — these are switches, not sticks, so
+    // there is no bumpless-takeover reason to hold a stale latched value; if the
+    // pilot flips a mode switch mid-flight we must not fight it. The latched
+    // baseline is only the fallback for channels live RC doesn't cover.
+    for (int i = 4; i < 8; ++i) ch[i] = (i < rcCount_) ? rc_[i] : baseline_[i];
     // Failsafe RTH overlay: drive the configured AUX channel high so iNAV enters
     // NAV RTH. Sticks are left as commanded (the caller sends neutral); the arm
     // channel is untouched so the aircraft stays armed for the return.
@@ -271,9 +292,22 @@ void MspBackend::onMessage(uint8_t cmd, const std::vector<uint8_t>& p) {
             if (p.size() >= 7) {
                 tel_.battV = p[0] / 10.f;                     // 0.1V steps
                 const int rssi = rdU16(p, 3);                // 0..1023
-                // Rough 3S–6S → [0,1]; refine per pack. Used only for failsafe cue.
+                // Per-CELL state of charge. This drives the low-battery → RTH
+                // failsafe, so the cell count must be right: a fixed 3S divisor
+                // reads ~1.00 all the way down on a 4S/6S pack, and the failsafe
+                // never fires. Cells come from config, or are inferred once from
+                // the first plausible reading (packs are ~3.0–4.2 V/cell).
+                if (battCells_ <= 0 && tel_.battV > 1.f) {
+                    battCells_ = std::max(1, std::min(12,
+                                     (int)std::lround(tel_.battV / 3.8f)));
+                    std::printf("[msp] battery: %.1f V -> assuming %dS "
+                                "(set safety.batt_cells to override)\n",
+                                tel_.battV, battCells_);
+                }
+                const int cells = battCells_ > 0 ? battCells_ : 3;
+                const float vpc = tel_.battV / cells;
                 tel_.battPct = std::max(0.f, std::min(1.f,
-                                  (tel_.battV - 3.3f * 3) / (4.2f * 3 - 3.3f * 3)));
+                                  (vpc - 3.3f) / (4.2f - 3.3f)));
                 (void)rssi;
             }
             break;

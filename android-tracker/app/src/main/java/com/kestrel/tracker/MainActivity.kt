@@ -4,11 +4,13 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.TextureView
 import android.widget.FrameLayout
 import androidx.activity.result.contract.ActivityResultContracts
@@ -184,12 +186,44 @@ class MainActivity : AppCompatActivity() {
         source = src
         src.start(::onFrame, displayTexture)
         src.setZoom(zoomLevels[zoomIdx])   // reapply zoom across source switches
-        // Default the display rotation to the phone sensor's mount orientation (the
-        // usual portrait-phone/landscape-sensor tilt); the dongle feed is already
-        // upright (0). The ROT button overrides either if the default is wrong.
-        rotationDeg = (src as? Camera2FrameSource)?.sensorOrientation ?: 0
+        rotationDeg = autoRotationDeg(src)
         view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString())
         fitW = 0; fitH = 0                 // re-fit the display transform for the new source/rotation
+    }
+
+    /** Current rotation of the DEVICE display relative to its natural orientation. */
+    private fun displayRotationDeg(): Int {
+        @Suppress("DEPRECATION")
+        val r = if (Build.VERSION.SDK_INT >= 30) display?.rotation
+                else windowManager.defaultDisplay.rotation
+        return when (r) {
+            Surface.ROTATION_90  -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else                 -> 0
+        }
+    }
+
+    /**
+     * How far to rotate the camera frame so it appears upright ON SCREEN.
+     *
+     * SENSOR_ORIENTATION alone is NOT the answer: it is defined as the rotation
+     * needed when the device is in its NATURAL orientation (portrait on a phone).
+     * This activity is locked to `screenOrientation="landscape"`, which forces the
+     * display 90° or 270° away from natural — so using the sensor value raw
+     * over-rotates by exactly that much, and a landscape 640×480 frame gets turned
+     * into a 3:4 portrait strip filling only ~29% of a landscape screen (measured
+     * from a real device screenshot: 668×888 in a 2263×888 view).
+     *
+     * The standard back-camera formula subtracts the display rotation. The UVC
+     * dongle is not mounted in the phone at all, so its feed is already upright.
+     */
+    private fun autoRotationDeg(src: FrameSource): Int {
+        val sensor = (src as? Camera2FrameSource)?.sensorOrientation ?: return 0
+        val disp = displayRotationDeg()
+        val rot = ((sensor - disp) % 360 + 360) % 360
+        Log.i("MainActivity", "rotation: sensor=$sensor display=$disp -> frame rotation=$rot")
+        return rot
     }
 
     /** Set the TextureView display matrix = the SAME canonical frame→view transform

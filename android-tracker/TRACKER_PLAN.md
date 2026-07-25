@@ -61,8 +61,35 @@ clean):
   evicts the most *redundant* slot (highest similarity to another kept
   slot) when full, instead of blindly evicting the oldest.
 
+## CLOSED WITHOUT IMPLEMENTING: discrete rotation search
+
+Rotation search was ranked the top deferred item ("the strongest valid
+criticism", from the DSST/KCF/CSR-DCF literature review). **Measured, and it
+does not reproduce — the item is struck, not deferred.**
+
+Tested in the sim against progressively harsher rotation:
+
+| case | result |
+|---|---|
+| continuous camera roll 30 / 60 / 120 °/s | 100 % lock, mean err ≤ 3.2 px |
+| snap roll 450 °/s | 100 % lock |
+| roll **through a 15-frame occlusion** (adaptation frozen, re-acquire runs off the stale fixed anchor ~45° out) | 100 % lock |
+| **elongated 4:1 bar** target (chosen because a near-symmetric blob is an unfairly easy test) at 60 / 180 / 450 °/s | 100 % lock, worst mean err ~10 px |
+
+Why the literature's criticism doesn't transfer: it targets DSST/KCF-family
+trackers, which match against a *single* filter. This tracker already has two
+mechanisms that absorb rotation — the **EMA-adaptive template** re-learns the
+rotating appearance faster than rotation accumulates, and the **P1-B keyframe
+bank** stores distinct rotated poses. A discrete rotation search would roughly
+triple per-cue NCC cost for no measurable gain.
+
+Caveat, stated honestly: these are synthetic targets on a synthetic
+background. If real footage ever shows a rotation-driven loss, reopen this —
+but do not build it on the literature's say-so alone, which is what the
+original ranking was based on.
+
 **Deferred from the same research round** (documented, not implemented):
-discrete rotation search, DSST-style scale-decision smoothing, CSR-DCF-style
+DSST-style scale-decision smoothing, CSR-DCF-style
 per-pixel reliability-weighted NCC for partial occlusion, MotionDetector
 wired into lost-recovery as true re-detection, a richer multi-signal
 confidence metric, and debug visualization (per-cue/fused/flow-field views).

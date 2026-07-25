@@ -26,6 +26,17 @@ public:
     // Predicted centre `steps` frames into the future (no state change).
     cv::Point2f project(float steps) const;
 
+    // Bound the per-frame velocity. A noisy/false measurement injects a large
+    // residual, and constant-velocity prediction then COMPOUNDS it every frame
+    // until the box sails off the target ("wanders away in a straight line").
+    // A ceiling sized from the target keeps a genuinely fast target moving while
+    // stopping the runaway.
+    void clampVelocity(float maxPxPerFrame);
+
+    // Bleed velocity off while coasting, so a lost target's box decelerates to a
+    // stop near the last sighting instead of flying out of frame on stale speed.
+    void decayVelocity(float factor);
+
     bool initialized() const { return initialized_; }
 
 private:

@@ -1,5 +1,7 @@
 #include "kalman_center.hpp"
 
+#include <cmath>
+
 KalmanCenter::KalmanCenter() : kf_(4, 2, 0, CV_32F) {
     // Constant-velocity transition: x' = x + vx, y' = y + vy
     kf_.transitionMatrix = (cv::Mat_<float>(4, 4) <<
@@ -47,4 +49,21 @@ cv::Point2f KalmanCenter::velocity() const {
 cv::Point2f KalmanCenter::project(float steps) const {
     const auto p = position(), v = velocity();
     return {p.x + v.x * steps, p.y + v.y * steps};
+}
+
+void KalmanCenter::clampVelocity(float maxPxPerFrame) {
+    if (!initialized_ || maxPxPerFrame <= 0.f) return;
+    float& vx = kf_.statePost.at<float>(2);
+    float& vy = kf_.statePost.at<float>(3);
+    const float s = std::sqrt(vx * vx + vy * vy);
+    if (s > maxPxPerFrame && s > 1e-6f) {
+        const float k = maxPxPerFrame / s;
+        vx *= k; vy *= k;
+    }
+}
+
+void KalmanCenter::decayVelocity(float factor) {
+    if (!initialized_) return;
+    kf_.statePost.at<float>(2) *= factor;
+    kf_.statePost.at<float>(3) *= factor;
 }

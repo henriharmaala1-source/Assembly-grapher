@@ -47,6 +47,11 @@ public:
     static constexpr int   LOSS_TIMEOUT       = 15;    // frames → LOST
     static constexpr float REACQUIRE_THRESH   = 0.45f; // NCC threshold
     static constexpr int   TMPL_UPDATE_FRAMES = 30;    // refresh template
+    // Cost guards on the re-detection search (it lives in the scheduler's
+    // alwaysOn slot, which is unbudgeted, so it must bound itself).
+    static constexpr float REACQUIRE_MAX_RADIUS   = 200.f; // px; caps the search ROI
+    static constexpr int   REACQUIRE_COLD_INTERVAL = 5;    // retry every Nth frame once LOST
+    static constexpr float COAST_DECAY            = 0.6f;  // velocity bleed-off while coasting
 
     bool init(const cv::Mat& frame, cv::Point center,
               Backend backend, int boxSize);

@@ -183,7 +183,9 @@ float LockOnTracker::computeNCC(const cv::Mat& frame,
 float LockOnTracker::searchRadius() const {
     const auto v     = kalman_.velocity();
     const float speed = std::sqrt(v.x * v.x + v.y * v.y);
-    return std::max(80.f, 60.f + speed * lossFrames_ * 1.5f);
+    // Hard cap: unbounded growth turns this into a full-frame search (at 8 px/
+    // frame it covers 640x480 within ~1 s of the loss) run every frame forever.
+    return std::clamp(60.f + speed * lossFrames_ * 1.5f, 80.f, REACQUIRE_MAX_RADIUS);
 }
 
 cv::Rect LockOnTracker::templateSearch(const cv::Mat& frame,
@@ -296,6 +298,13 @@ void LockOnTracker::update(const cv::Mat& frame) {
     if (ok) {
         // Step 3a: Tracker succeeded — fuse center with Kalman.
         kalman_.correct(rect_center(box));
+        // A real target cannot cross more than ~0.9x its own size per frame at
+        // 30 fps; anything faster is a noisy/false measurement pumping the
+        // velocity, which the constant-velocity model then compounds until the
+        // box flies off screen. Bound it. (Same defect and fix as the Kotlin
+        // tracker's CenterFilter::clampSpeed, where it was measured to cut
+        // worst-case error from 220 px to 24 px on a noisy feed.)
+        kalman_.clampVelocity(std::max(bbox_.width, bbox_.height) * 0.9f);
         bbox_ = box;
         ++age_;
         if (lossFrames_ > 0) ++totalLosses_;
@@ -309,9 +318,19 @@ void LockOnTracker::update(const cv::Mat& frame) {
         // Step 3b: Tracker failed — try template re-detection.
         ++lossFrames_;
         if (lossFrames_ >= LOSS_TIMEOUT) locked_ = false;
+        // Coast decelerates instead of sailing off on stale velocity.
+        kalman_.decayVelocity(COAST_DECAY);
 
+        // Cost guard. searchRadius() grows with lossFrames_ without bound, so
+        // after a permanent loss this degenerates into a FULL-FRAME
+        // matchTemplate every single frame, forever — and the tracker sits in
+        // the scheduler's alwaysOn slot, which runs unconditionally and ignores
+        // the per-tick budget, so nothing upstream can throttle it. Once we've
+        // given up on a quick re-acquire, retry on a cold cadence instead.
+        const bool coldRetry = lossFrames_ >= LOSS_TIMEOUT &&
+                               (lossFrames_ % REACQUIRE_COLD_INTERVAL) != 0;
         float    score = 0.f;
-        cv::Rect found = templateSearch(frame, score);
+        cv::Rect found = coldRetry ? cv::Rect() : templateSearch(frame, score);
 
         if (!found.empty()) {
             // Re-acquired — reinit primary tracker at found location.

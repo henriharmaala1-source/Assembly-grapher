@@ -20,11 +20,20 @@ FOV_DELAY = 6                                 # coasting frames before search zo
 K_KEYFRAMES = 2                               # P1-B: diverse-pose keyframes beyond anchor+adaptive
 KF_THRESH = 0.55
 KF_ADD_CONF = 0.80                            # bank a keyframe only on a very clean lock (anti-contamination)
-PSR_LOCK, PSR_WARN = 5.5, 3.8
+PSR_LOCK = float(os.environ.get('PSR_LOCK', 5.5))
+PSR_WARN = float(os.environ.get('PSR_WARN', 3.8))
 SIZE_FLOOR = 36.0                             # matches LockTracker.kt (anti over-zoom)
 OCC_FRAC = 0.55                               # P2-B: PSR below this x clean-baseline = occluded
 OCC_ENTER = 2                                 # consecutive low frames before declaring occlusion
 OCC_MAX = 20                                  # after this many, re-baseline (not an occluder)
+ACQUIRE_OPEN = int(os.environ.get('ACQUIRE_OPEN', 0))   # measured: widening at designate HURT (10%->1%)
+# Both of these are MEASURED-AND-REJECTED experiments, kept only so the result is
+# reproducible. Default OFF. On realistic footage (SNR-calibrated, 1/f background):
+#   ACQUIRE_OPEN=5  -> f_maneuver 10%->1%   (a wide window at designate false-locks
+#                      on self-similar background rather than finding a fast target)
+#   VEL_FOV_K=6     -> g_occlusion 79%->32% (velocity-scaled FOV wrecks occlusion
+#                      recovery; mean across hard clips 53%->45%)
+VEL_FOV_K = float(os.environ.get('VEL_FOV_K', 0.0))   # FOV growth per unit speed   # frames after designate to search wide
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 def resample(a, rx, ry, rw, rh, oW, oH):
@@ -101,7 +110,7 @@ class Tracker:
         crop=crop_raw(frame,px,py,self.bsize)
         self._build(crop)
         self.x=px; self.y=py; self.vx=0.0; self.vy=0.0
-        self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0; self.prevY=frame['y']; self.occluded=False; self.occlow=0
+        self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0; self.prevY=frame['y']; self.occluded=False; self.occlow=0; self.since=0
     def _build(self, crop):
         self.tmpl=[]; self.tn=[]
         for c in self.cues:
@@ -143,16 +152,37 @@ class Tracker:
         # zoom the search out (see LockTracker.kt) — only AFTER normal coasting has
         # failed for FOV_DELAY frames (early coasting rides the const-vel prediction
         # onto the target; zooming out early hurts). Coarser stride holds cost flat.
-        wide = self.bad >= FOV_DELAY
-        fov = min(1+0.3*(self.bad-FOV_DELAY+1), 3.0) if wide else 1.0
+        # The FIELD OF VIEW must cover where the target can plausibly be, so it has
+        # to scale with SPEED -- not only with elapsed loss frames. Measured on
+        # realistic footage (f_maneuver, ~18 px/frame at the 36 px size floor): the
+        # crop spans only 79 frame-px, so the target clears the ENTIRE crop 3 frames
+        # after a miss, while the loss-driven expansion waits for FOV_DELAY=6. By
+        # then it is 108 px away and unrecoverable -- no search-window or threshold
+        # tweak inside that crop can help, which is why widening the window and
+        # raising PSR_WARN both failed to move this case.
+        # Expanding cropPix with fov keeps px-per-world-unit constant, so the
+        # template still matches; the coarser stride holds the cost flat.
+        speed=np.hypot(self.vx,self.vy)
+        fov_vel = float(np.clip(1.0 + VEL_FOV_K*speed/(self.bsize*MARGIN), 1.0, 3.0))
+        wide = self.bad >= FOV_DELAY          # 'wide' still means LOST (anchor-only + strict accept)
+        fov_lost = min(1+0.3*(self.bad-FOV_DELAY+1), 3.0) if wide else 1.0
+        fov = max(fov_vel, fov_lost)
         croppix = (int(CROP*fov)//2)*2 if fov>1 else CROP
         stride_eff = max(1, int(STRIDE*fov))
         regionw = self.bsize*MARGIN*fov
         crop = {k: resample(frame[k], pcx-regionw/2, pcy-regionw/2, regionw, regionw, croppix, croppix)
                 for k in ('y','u','v')}
-        speed=np.hypot(self.vx,self.vy); velcrop=speed*CROP/(self.bsize*MARGIN)
+        velcrop=speed*CROP/(self.bsize*MARGIN)
         maxhalf=croppix//2-TMPL//2
-        half = maxhalf if self.bad>0 else int(np.clip(SEARCH+velcrop*2,SEARCH,maxhalf))
+        # Search width must track PREDICTION UNCERTAINTY. It is highest right
+        # after designate: the alpha-beta filter has no velocity estimate yet, so
+        # velcrop is 0 and the window collapses to its base -- only +/-13.6 frame
+        # px at the size floor, which a fast target clears on frame ONE (measured
+        # on f_maneuver: target moved 17.8 px and was never seen again). Treat the
+        # just-designated case like coasting and open up until velocity settles.
+        self.since += 1
+        wideOpen = self.bad>0 or self.since <= ACQUIRE_OPEN
+        half = maxhalf if wideOpen else int(np.clip(SEARCH+velcrop*2,SEARCH,maxhalf))
         c0=croppix//2; g0=c0-half; g1=c0+half
         # FIX 2: ANCHOR-CONSENSUS fusion + conditional prior.
         #  (a) Each cue's response, peak, PSR. The most-confident cue is the

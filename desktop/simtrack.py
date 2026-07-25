@@ -23,6 +23,8 @@ KF_ADD_CONF = 0.80                            # bank a keyframe only on a very c
 PSR_LOCK, PSR_WARN = 5.5, 3.8
 SIZE_FLOOR = 36.0                             # matches LockTracker.kt (anti over-zoom)
 OCC_FRAC = 0.55                               # P2-B: PSR below this x clean-baseline = occluded
+OCC_ENTER = 2                                 # consecutive low frames before declaring occlusion
+OCC_MAX = 20                                  # after this many, re-baseline (not an occluder)
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 def resample(a, rx, ry, rw, rh, oW, oH):
@@ -99,7 +101,7 @@ class Tracker:
         crop=crop_raw(frame,px,py,self.bsize)
         self._build(crop)
         self.x=px; self.y=py; self.vx=0.0; self.vy=0.0
-        self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0; self.prevY=frame['y']; self.occluded=False
+        self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0; self.prevY=frame['y']; self.occluded=False; self.occlow=0
     def _build(self, crop):
         self.tmpl=[]; self.tn=[]
         for c in self.cues:
@@ -236,7 +238,22 @@ class Tracker:
         # occluded we still track the visible part for POSITION, but freeze
         # appearance adaptation, keyframe banking and scale — so the template can't
         # drift onto the occluder and wreck recovery. Baseline learns on clean frames.
-        occluded = self.psrema>0 and curpsr < OCC_FRAC*self.psrema
+        # Hysteresis, both ends (the bare threshold was wrong in two ways):
+        #  ENTER: a single-frame PSR dip is sensor noise, not an occluder. Require
+        #    OCC_ENTER consecutive low frames before freezing adaptation.
+        #  EXIT : the baseline could only ratchet UP -- it was only updated while
+        #    NOT occluded -- so a target that legitimately gets harder (receding,
+        #    fading, low contrast) parks PSR in the band [psrLock, OCC_FRAC*ema]
+        #    and stays "occluded" FOREVER, with adaptation and scale frozen for
+        #    the rest of the flight. An occlusion is transient by definition; a
+        #    lasting drop is a changed target, so after OCC_MAX frames give up and
+        #    re-baseline to the new normal.
+        low = self.psrema>0 and curpsr < OCC_FRAC*self.psrema
+        self.occlow = (self.occlow+1) if low else 0
+        if self.occlow > OCC_MAX:
+            self.psrema = curpsr          # not an occluder -- this IS the target now
+            self.occlow = 0
+        occluded = OCC_ENTER <= self.occlow <= OCC_MAX
         if (not occluded) and curpsr>PSR_LOCK:
             self.psrema = curpsr if self.psrema<=0 else 0.9*self.psrema+0.1*curpsr
         self.occluded = occluded
@@ -536,6 +553,18 @@ def sc_pan():
         gt.append((cx,cy))
         fr.append(make_frame(240,320,(cx,cy,15,150,40,-30),bg_off=(pan,0.0)))
     return fr,gt
+def sc_recede():
+    # Target flies AWAY: it shrinks and its contrast against the background falls,
+    # so the response PSR legitimately declines while the lock stays perfectly
+    # valid. Scale adaptation is exactly what this needs -- and exactly what the
+    # occlusion detector freezes if its baseline can only ratchet upward.
+    fr=[];gt=[]
+    for i in range(55):
+        cx=160.0+i*0.6; cy=120.0
+        rad=max(7.0, 30.0-i*0.45)            # 30px -> 7px over the run
+        lum=150-i*0.9                        # fades toward the ~80 background
+        gt.append((cx,cy)); fr.append(make_frame(240,320,(cx,cy,rad,lum,30,-20)))
+    return fr,gt
 def sc_pan_large():
     # Same camera pan as sc_pan, but the target is LARGE relative to the FULL
     # FRAME (flow sampling runs on the whole incoming frame, not the crop — a
@@ -562,7 +591,7 @@ def sc_reacq():
 
 SCEN = dict(translate=sc_translate, approach=sc_approach, occlusion=sc_occlusion,
             distractor=sc_distractor, fast=sc_fast, noisy_occ=sc_noisy_occ, reacq=sc_reacq,
-            rotate=sc_rotate, pan=sc_pan, pan_large=sc_pan_large)
+            rotate=sc_rotate, pan=sc_pan, pan_large=sc_pan_large, recede=sc_recede)
 CUESETS = {'none':['none'], 'edge':['edge'],
            'FUSE3':['edge','chroma','none'],   # incl. edge (scale-fragile)
            'L+C':['none','chroma']}            # luma+chroma, both scale-robust

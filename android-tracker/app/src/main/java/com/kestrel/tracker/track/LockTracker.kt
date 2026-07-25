@@ -65,6 +65,8 @@ class LockTracker {
     private val KF_THRESH = 0.55f      // bank a view only if < this NCC-similar to every slot (diversity)
     private val KF_ADD_CONF = 0.80f    // ...and only on a very clean lock (anti-contamination)
     private val OCC_FRAC = 0.55f       // P2-B: PSR below this × clean-baseline = occluded
+    private val OCC_ENTER = 2          // consecutive low frames before declaring occlusion
+    private val OCC_MAX = 20           // after this many, re-baseline (it's not an occluder)
     private val EGO_CONS = 0.6f        // P1-A: min grid-flow consensus to trust the ego estimate
     private val EGO_DEAD = 1.5f        // ...and ignore sub-1.5px flow (jitter, not a real pan)
     private val EARLY_TERM_PSR = 10f   // skip remaining cues once one is this dominant
@@ -99,6 +101,7 @@ class LockTracker {
     private val cf = CenterFilter()
     private var badFrames = 0
     private var psrEma = 0f            // P2-B: running clean-lock PSR baseline (occlusion detector)
+    private var occLow = 0             // consecutive sub-threshold frames (occlusion hysteresis)
     private val flow = OpticalFlow()   // P1-A: ego-motion (camera pan) estimate
     private var prevFrame: GrayFrame? = null
     var state = State.IDLE; private set
@@ -112,7 +115,7 @@ class LockTracker {
                   lumaTmpl = floatArrayOf(); lumaNorm = 0f; lastRawCrop = null
                   histFg = floatArrayOf(); histBg = floatArrayOf()
                   prevFrame = null
-                  state = State.IDLE; badFrames = 0; conf = 0f }
+                  state = State.IDLE; badFrames = 0; conf = 0f; psrEma = 0f; occLow = 0 }
 
     /** Change the fused cue set. If locked, templates are rebuilt from the last
      *  crop so lock survives the switch (lets you A/B cues without re-tapping). */
@@ -129,7 +132,7 @@ class LockTracker {
         lastRawCrop = crop
         buildTemplates(crop)
         cf.start(px, py)
-        badFrames = 0; conf = 1f; state = State.LOCKED; psrEma = 0f; prevFrame = frame
+        badFrames = 0; conf = 1f; state = State.LOCKED; psrEma = 0f; occLow = 0; prevFrame = frame
     }
 
     fun update(frame: GrayFrame): Result {
@@ -264,7 +267,24 @@ class LockTracker {
         // occluded we still track the visible part for POSITION, but freeze
         // appearance adaptation, keyframe banking and scale — the template can't
         // drift onto the occluder and wreck recovery. Baseline learns on clean frames.
-        val occluded = psrEma > 0f && curPsr < OCC_FRAC * psrEma
+        //
+        // HYSTERESIS on both ends — a bare threshold was wrong in two ways:
+        //  ENTER: a one-frame PSR dip is sensor noise, not an occluder. Requiring
+        //    OCC_ENTER consecutive low frames removed ~half the false positives
+        //    (sim, receding target with no occluder: 20%→0% single-cue, 35%→19%
+        //    fused) with real-occlusion behaviour byte-identical.
+        //  EXIT: the baseline could only ratchet UP — it was updated *only while
+        //    not occluded* — so a target that legitimately gets harder (recedes,
+        //    fades, loses contrast) parks its PSR in the band
+        //    [psrLock, OCC_FRAC*psrEma] and is then flagged occluded FOREVER, with
+        //    adaptation and scale frozen for the rest of the flight and no way
+        //    back. An occlusion is transient by definition; a lasting drop means
+        //    the target changed, so after OCC_MAX frames re-baseline to the new
+        //    normal instead of suppressing adaptation indefinitely.
+        val low = psrEma > 0f && curPsr < OCC_FRAC * psrEma
+        occLow = if (low) occLow + 1 else 0
+        if (occLow > OCC_MAX) { psrEma = curPsr; occLow = 0 }   // not an occluder — this IS the target now
+        val occluded = occLow in OCC_ENTER..OCC_MAX
         if (!occluded && curPsr > psrLock)
             psrEma = if (psrEma <= 0f) curPsr else 0.9f * psrEma + 0.1f * curPsr
 

@@ -11,9 +11,17 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
 
+        <!-- No screenOrientation lock. It used to be "landscape", which forced a
+             landscape window onto camera content that needs a 90/270 rotation when
+             the phone is held in portrait — the frame could then only ever render
+             as a 3:4 strip using ~29% of the screen (measured 668x888 in a
+             2263x888 view). Letting the window follow the device makes the window
+             shape match the content, so the feed fills it in BOTH orientations.
+             configChanges keeps the activity (and the camera session) alive across
+             rotation instead of tearing it down and restarting the stream. -->
         <activity
             android:name=".MainActivity"
-            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>

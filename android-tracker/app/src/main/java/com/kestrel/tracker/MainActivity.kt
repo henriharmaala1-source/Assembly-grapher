@@ -47,7 +47,12 @@ class MainActivity : AppCompatActivity() {
     private val tracker = LockTracker()
     private var source: FrameSource? = null
     private var displayTexture: SurfaceTexture? = null
-    private var rotationDeg = 0   // display rotation; defaults to the sensor orientation, ROT button cycles
+    // rotationDeg = auto (sensor - display) + rotOffset. Recomputed every re-fit so
+    // it tracks device rotation; rotOffset is the user's ROT-button correction and
+    // PERSISTS across rotations and source switches (it used to be overwritten on
+    // every reallyStart(), so a manual fix never survived a SRC toggle).
+    private var rotationDeg = 0
+    private var rotOffset = 0
 
     private var srcKind = SrcKind.PHONE
     private val zoomLevels = floatArrayOf(1f, 2f, 4f)   // Camera2 clamps to the sensor max
@@ -126,9 +131,8 @@ class MainActivity : AppCompatActivity() {
                     view.setSrc(srcKind.name); startSource(); return true
                 }
                 if (view.rotButtonAt(e.x, e.y)) {
-                    rotationDeg = (rotationDeg + 90) % 360      // cycle 0→90→180→270 until upright
-                    view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString())
-                    fitW = 0; fitH = 0                          // force the display transform to re-apply
+                    rotOffset = (rotOffset + 90) % 360          // persistent correction on top of auto
+                    invalidateTransform()                       // re-fit picks it up next frame
                     return true
                 }
                 if (view.modeButtonAt(e.x, e.y)) {
@@ -172,7 +176,9 @@ class MainActivity : AppCompatActivity() {
             override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
                 displayTexture = st; startSource()
             }
-            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+                invalidateTransform()          // view resized (rotation) -> re-fit
+            }
             override fun onSurfaceTextureDestroyed(st: SurfaceTexture) = true
             override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
         }
@@ -196,10 +202,19 @@ class MainActivity : AppCompatActivity() {
         source = src
         src.start(::onFrame, displayTexture)
         src.setZoom(zoomLevels[zoomIdx])   // reapply zoom across source switches
-        rotationDeg = autoRotationDeg(src)
-        view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString())
-        fitW = 0; fitH = 0                 // re-fit the display transform for the new source/rotation
+        invalidateTransform()              // fitCenter() recomputes rotation for the new source
     }
+
+    /** Device rotated. The activity survives (configChanges) so the camera keeps
+     *  streaming; we only need to recompute the preview transform for the new
+     *  window shape and display rotation. */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        invalidateTransform()
+    }
+
+    /** Force the display transform + rotation to be recomputed on the next frame. */
+    private fun invalidateTransform() { fitW = 0; fitH = 0 }
 
     /** Current rotation of the DEVICE display relative to its natural orientation. */
     private fun displayRotationDeg(): Int {
@@ -228,7 +243,7 @@ class MainActivity : AppCompatActivity() {
      * The standard back-camera formula subtracts the display rotation. The UVC
      * dongle is not mounted in the phone at all, so its feed is already upright.
      */
-    private fun autoRotationDeg(src: FrameSource): Int {
+    private fun autoRotationDeg(src: FrameSource?): Int {
         val sensor = (src as? Camera2FrameSource)?.sensorOrientation ?: return 0
         val disp = displayRotationDeg()
         val rot = ((sensor - disp) % 360 + 360) % 360
@@ -244,6 +259,13 @@ class MainActivity : AppCompatActivity() {
     private fun fitCenter(pw: Int, ph: Int): Boolean {
         val vw = texture.width; val vh = texture.height
         if (vw == 0 || vh == 0) return false
+        // Recompute the rotation HERE, not once at source start: the display
+        // rotation changes when the device is turned, and the activity now
+        // survives that (configChanges), so a value cached at start-up goes stale.
+        // rotOffset is the user's ROT-button correction and rides on top, so it
+        // persists across rotations and source switches.
+        rotationDeg = ((autoRotationDeg(source) + rotOffset) % 360 + 360) % 360
+        runOnUiThread { view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString()) }
         val m = TrackerOverlayView.frameToView(rotationDeg, pw, ph, vw, vh)
         m.preScale(pw.toFloat() / vw, ph.toFloat() / vh)   // undo the default fill: M = frameToView · fill⁻¹
         texture.setTransform(m)

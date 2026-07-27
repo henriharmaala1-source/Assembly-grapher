@@ -65,9 +65,11 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener({ r -> deliver(r) }, handler)
         }
-        // Display surface (GPU preview) sized to the camera output.
+        // Display surface (GPU preview) — its own, much higher resolution. Sharing
+        // the tracker's 640x480 here is what made the preview look compressed.
         if (display != null) {
-            display.setDefaultBufferSize(size.width, size.height)
+            val ds = pickDisplaySize(id, size)
+            display.setDefaultBufferSize(ds.width, ds.height)
             displaySurface = Surface(display)
         }
         try {
@@ -109,7 +111,34 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         val chosen = sizes?.filter { it.width * it.height <= cap }?.maxByOrNull { it.width * it.height }
             ?: sizes?.minByOrNull { it.width * it.height }
             ?: Size(640, 480)
-        Log.i("Camera2", "preview size ${chosen.width}x${chosen.height}")
+        Log.i("Camera2", "tracker size ${chosen.width}x${chosen.height}")
+        return chosen
+    }
+
+    /** Resolution for the DISPLAY surface — deliberately much higher than the
+     *  tracker's.
+     *
+     *  The two outputs are independent: the ImageReader feeds Kotlin (so its size
+     *  drives every per-pixel pass and must stay small), while the display Surface
+     *  is consumed by the GPU and costs the CPU nothing. Pinning both to 640x480
+     *  made the preview look heavily compressed once it was upscaled onto a
+     *  2400px-wide screen — for no benefit at all.
+     *
+     *  Must keep the SAME ASPECT RATIO as the tracker size: the display transform
+     *  is derived from the tracker dimensions, and a same-aspect buffer reduces the
+     *  composition to a uniform scale (so the image stays geometrically correct and
+     *  the tracked box still lines up). A different aspect would squash it. */
+    private fun pickDisplaySize(id: String, trackerSize: Size): Size {
+        val map = mgr.getCameraCharacteristics(id)
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val sizes = map?.getOutputSizes(SurfaceTexture::class.java) ?: return trackerSize
+        val targetAr = trackerSize.width.toFloat() / trackerSize.height
+        val cap = 1920 * 1440                       // plenty sharp; bounds bandwidth/power
+        val chosen = sizes
+            .filter { kotlin.math.abs(it.width.toFloat() / it.height - targetAr) < 0.02f }
+            .filter { it.width * it.height <= cap }
+            .maxByOrNull { it.width * it.height } ?: trackerSize
+        Log.i("Camera2", "display size ${chosen.width}x${chosen.height} (aspect-matched)")
         return chosen
     }
 

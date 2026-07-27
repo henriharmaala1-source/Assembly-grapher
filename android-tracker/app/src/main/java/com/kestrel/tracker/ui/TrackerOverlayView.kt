@@ -177,8 +177,18 @@ class TrackerOverlayView(context: Context) : View(context) {
             // zoom PiP top-right
             pipBmp?.let { pip ->
                 val px1 = width - PIP - 16f; val py1 = 16f
+                // The PiP crop comes straight out of the tracker, i.e. in RAW FRAME
+                // orientation — but the main video and the box are drawn through
+                // frameToView, which rotates by frameRot. Blitting the crop
+                // unrotated made the mini feed appear turned relative to the big
+                // one, so tapping a target showed a seemingly different place in
+                // the PiP even though the lock itself was correct. Apply the SAME
+                // rotation. The destination is square, so 90/270 still fits.
+                canvas.save()
+                canvas.rotate(frameRot.toFloat(), px1 + PIP / 2f, py1 + PIP / 2f)
                 canvas.drawBitmap(pip, Rect(0, 0, pip.width, pip.height),
                     RectF(px1, py1, px1 + PIP, py1 + PIP), null)
+                canvas.restore()
                 p.color = Color.LTGRAY; p.strokeWidth = 2f
                 canvas.drawRect(px1, py1, px1 + PIP, py1 + PIP, p)
                 p.color = Color.rgb(240, 40, 40); p.style = Paint.Style.FILL

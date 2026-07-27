@@ -177,6 +177,12 @@ class MainActivity : AppCompatActivity() {
                 displayTexture = st; startSource()
             }
             override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+                // TextureView just overwrote the SurfaceTexture's default buffer
+                // size with the VIEW size (it does that in onSizeChanged, right
+                // before calling us). Put the camera's own preview size back,
+                // otherwise the buffer aspect stops matching the tracker frame and
+                // the picture is squashed after a rotation.
+                source?.onDisplayViewResized()
                 invalidateTransform()          // view resized (rotation) -> re-fit
             }
             override fun onSurfaceTextureDestroyed(st: SurfaceTexture) = true
@@ -243,11 +249,14 @@ class MainActivity : AppCompatActivity() {
      * The standard back-camera formula subtracts the display rotation. The UVC
      * dongle is not mounted in the phone at all, so its feed is already upright.
      */
+    private var lastSensor = 0                 // for the on-screen geometry read-out
+    private var lastDisp = 0
+
     private fun autoRotationDeg(src: FrameSource?): Int {
-        val sensor = (src as? Camera2FrameSource)?.sensorOrientation ?: return 0
-        val disp = displayRotationDeg()
-        val rot = ((sensor - disp) % 360 + 360) % 360
-        Log.i("MainActivity", "rotation: sensor=$sensor display=$disp -> frame rotation=$rot")
+        lastDisp = displayRotationDeg()
+        lastSensor = (src as? Camera2FrameSource)?.sensorOrientation ?: 0
+        val rot = if (src is Camera2FrameSource) ((lastSensor - lastDisp) % 360 + 360) % 360 else 0
+        Log.i("MainActivity", "rotation: sensor=$lastSensor display=$lastDisp -> frame rotation=$rot")
         return rot
     }
 
@@ -267,8 +276,42 @@ class MainActivity : AppCompatActivity() {
         rotationDeg = ((autoRotationDeg(source) + rotOffset) % 360 + 360) % 360
         runOnUiThread { view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString()) }
         val m = TrackerOverlayView.frameToView(rotationDeg, pw, ph, vw, vh)
+
+        // Geometry read-out, shown on screen. Every "is it rotated / squashed /
+        // letterboxed" question reduces to these numbers, and a photo of the phone
+        // carries them — no cable, no logcat, no inference from a picture of a desk.
+        val corners = floatArrayOf(0f, 0f, pw.toFloat(), 0f, pw.toFloat(), ph.toFloat(), 0f, ph.toFloat())
+        m.mapPoints(corners)
+        var x0 = corners[0]; var x1 = corners[0]; var y0 = corners[1]; var y1 = corners[1]
+        for (i in 0 until 4) {
+            val x = corners[i * 2]; val y = corners[i * 2 + 1]
+            if (x < x0) x0 = x; if (x > x1) x1 = x
+            if (y < y0) y0 = y; if (y > y1) y1 = y
+        }
+        val rw = (x1 - x0).toInt(); val rh = (y1 - y0).toInt()
+        val (bw, bh) = source?.displayBufferSize ?: (0 to 0)
+        val fill = if (vw > 0 && vh > 0) 100L * rw * rh / (vw.toLong() * vh) else 0
+        // An upright frame that is portrait inside a landscape window (or vice
+        // versa) is not a preference — it is a CONTRADICTION. The rotation says the
+        // device is one way up and the window shape says the other, which can only
+        // happen when the window is not following the device. Name it, so the
+        // failure is legible from a photo instead of being inferred from a desk.
+        val uprightPortrait = (rotationDeg % 180 != 0) == (pw >= ph)
+        val windowPortrait = vh > vw
+        val bad = if (uprightPortrait != windowPortrait) "  <<MISMATCH" else ""
+        // The buffer must share the tracker frame's aspect or the picture is
+        // squashed and the box is offset (16:9 is a vertical CROP of 4:3 here).
+        val skew = if (bw > 0 && kotlin.math.abs(bw.toFloat() / bh - pw.toFloat() / ph) > 0.02f)
+            "  <<ASPECT" else ""
+        val diag = "cam ${pw}x$ph ${"%.2f".format(pw.toFloat() / ph)}  " +
+            "buf ${bw}x$bh  view ${vw}x$vh  " +
+            "sens $lastSensor disp $lastDisp off $rotOffset rot $rotationDeg  " +
+            "img ${rw}x$rh ${fill}%$bad$skew"
+        Log.i("MainActivity", diag)
+
         m.preScale(pw.toFloat() / vw, ph.toFloat() / vh)   // undo the default fill: M = frameToView · fill⁻¹
         texture.setTransform(m)
+        runOnUiThread { view.setDiag(diag) }
         return true
     }
 

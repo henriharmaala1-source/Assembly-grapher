@@ -38,6 +38,14 @@ class UvcFrameSource(@Suppress("unused") private val context: Context) : FrameSo
     private var gotFrame = false
     private var reuseBuf = ByteArray(0)          // reused per callback — no per-frame alloc
 
+    override val displayBufferSize: Pair<Int, Int> get() = w to h
+
+    /** TextureView resets the SurfaceTexture's buffer size to the view size on
+     *  every resize; put the dongle's own preview size back. */
+    override fun onDisplayViewResized() {
+        if (w > 0 && h > 0) displayTex?.setDefaultBufferSize(w, h)
+    }
+
     private val frameCb = object : IFrameCallback {
         override fun onFrame(frame: ByteBuffer) {
             val cb = onFrame ?: return

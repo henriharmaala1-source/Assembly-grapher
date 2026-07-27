@@ -17,4 +17,15 @@ interface FrameSource {
     fun stop()
     /** Set optical/sensor zoom ratio (1 = none). No-op for fixed-lens sources. */
     fun setZoom(ratio: Float) {}
+    /** The view holding the display SurfaceTexture was resized (device rotation).
+     *
+     *  TextureView.onSizeChanged calls `setDefaultBufferSize(viewW, viewH)` on the
+     *  SurfaceTexture it owns — silently discarding the size we chose for the
+     *  preview stream. That never mattered while the activity was orientation-
+     *  locked (the view never resized); now that the window follows the device it
+     *  happens on every rotation, so the source must re-assert its own size. */
+    fun onDisplayViewResized() {}
+    /** Resolution of the preview (display) buffer, for the on-screen diagnostics.
+     *  0x0 when there is no display surface yet. */
+    val displayBufferSize: Pair<Int, Int> get() = 0 to 0
 }

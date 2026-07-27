@@ -54,6 +54,11 @@ class TrackerOverlayView(context: Context) : View(context) {
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 34f; color = Color.WHITE }
+    /** Geometry read-out. On screen rather than in logcat so a single photo of the
+     *  device settles every "is the preview rotated / squashed / letterboxed"
+     *  question without anyone having to attach a cable. */
+    private val small = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 24f; color = Color.rgb(150, 210, 255) }
+    private var diag = ""
     private val PIP = 300
 
     fun setFilters(names: List<String>) { filterNames = names }
@@ -70,6 +75,7 @@ class TrackerOverlayView(context: Context) : View(context) {
     fun setRot(label: String) { rotLabel = label }
     fun rotButtonAt(vx: Float, vy: Float): Boolean = rotRect.contains(vx, vy)
     fun setFrameRotation(deg: Int) { frameRot = ((deg % 360) + 360) % 360; postInvalidate() }
+    fun setDiag(s: String) { diag = s; postInvalidate() }
 
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
 
@@ -206,6 +212,7 @@ class TrackerOverlayView(context: Context) : View(context) {
             "$st   conf ${((r?.conf ?: 0f) * 100).toInt()}%   ${fname(filterIdx)}   ${fps.toInt()} fps"
         }
         canvas.drawText(hud, 24f, 44f, text)
+        if (diag.isNotEmpty()) canvas.drawText(diag, 24f, 74f, small)
         canvas.drawText(
             if (motionMode) "tap a mover to lock" else "tap target=lock   long-press=reset",
             24f, height - 24f, text)

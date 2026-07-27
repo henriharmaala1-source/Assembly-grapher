@@ -47,6 +47,20 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
      *  preview needs so the feed shows upright. Read synchronously in start(). */
     var sensorOrientation = 0; private set
 
+    private var displaySize: Size? = null
+    private var displayTex: SurfaceTexture? = null
+
+    override val displayBufferSize: Pair<Int, Int>
+        get() = displaySize?.let { it.width to it.height } ?: (0 to 0)
+
+    /** TextureView clobbers the SurfaceTexture's default buffer size with the VIEW
+     *  size on every resize; re-assert ours so the preview keeps its own
+     *  resolution and aspect after a device rotation. */
+    override fun onDisplayViewResized() {
+        val ds = displaySize ?: return
+        displayTex?.setDefaultBufferSize(ds.width, ds.height)
+    }
+
     override fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?) {
         this.onFrame = onFrame
         thread = HandlerThread("cam").also { it.start() }
@@ -61,14 +75,16 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         sensorOrientation =
             mgr.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
         Log.i("Camera2", "max zoom ${maxZoom}x  sensor orientation $sensorOrientation")
-        val size = pickSize(id)
+        val (size, ds) = pickSizes(id)
         reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
             setOnImageAvailableListener({ r -> deliver(r) }, handler)
         }
-        // Display surface (GPU preview) — its own, much higher resolution. Sharing
-        // the tracker's 640x480 here is what made the preview look compressed.
+        // Display surface (GPU preview) — same aspect as the tracker stream, but an
+        // order of magnitude more pixels. Sharing the tracker's size here is what
+        // made the preview look blocky once it was upscaled onto a 2400px screen.
         if (display != null) {
-            val ds = pickDisplaySize(id, size)
+            displaySize = ds
+            displayTex = display
             display.setDefaultBufferSize(ds.width, ds.height)
             displaySurface = Surface(display)
         }
@@ -99,47 +115,69 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         return back ?: ids.firstOrNull()
     }
 
-    private fun pickSize(id: String): Size {
+    /**
+     * Choose the tracker and display resolutions TOGETHER.
+     *
+     * Two hard constraints, and they interact — which is why this is one function
+     * and not two:
+     *
+     *  1. SAME ASPECT RATIO. The tracked box is drawn with a transform derived from
+     *     the TRACKER frame size but composited over the DISPLAY buffer. Equal
+     *     aspect makes that composition a uniform scale, so the image stays
+     *     geometrically correct and the box lands on the target. Mismatched aspect
+     *     squashes the picture (circles render as ovals) AND offsets the box,
+     *     because on this sensor 16:9 is a vertical crop of 4:3 — different fields
+     *     of view, not just different shapes.
+     *
+     *  2. WIDESCREEN WINS. This is a visual target-search rig: the operator needs
+     *     the widest field of view that fills the phone's (very wide, ~2.5:1)
+     *     screen. A 4:3 feed letterboxes hard. So we prefer the widest aspect the
+     *     camera offers in BOTH stream types, and only fall back to 4:3 if there is
+     *     no wide option.
+     *
+     * Sizes then differ by an order of magnitude on purpose: the ImageReader feeds
+     * Kotlin, so its pixel count drives every per-pixel pass and must stay small;
+     * the display Surface is consumed by the GPU and costs the CPU nothing.
+     */
+    private fun pickSizes(id: String): Pair<Size, Size> {
         val map = mgr.getCameraCharacteristics(id)
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        val sizes = map?.getOutputSizes(ImageFormat.YUV_420_888)
-        // CAP at 640x480: a bigger frame makes every per-pixel pass (colour
-        // render, chroma build) proportionally slower for no tracking benefit
-        // (the tracker works on a 128px crop regardless). Largest size <= cap;
-        // else the smallest offered.
-        val cap = 640 * 480
-        val chosen = sizes?.filter { it.width * it.height <= cap }?.maxByOrNull { it.width * it.height }
-            ?: sizes?.minByOrNull { it.width * it.height }
-            ?: Size(640, 480)
-        Log.i("Camera2", "tracker size ${chosen.width}x${chosen.height}")
-        return chosen
-    }
+        val yuv = map?.getOutputSizes(ImageFormat.YUV_420_888)?.toList().orEmpty()
+        val tex = map?.getOutputSizes(SurfaceTexture::class.java)?.toList().orEmpty()
+        if (yuv.isEmpty() || tex.isEmpty()) {
+            Log.w("Camera2", "no stream sizes advertised; falling back to 640x480")
+            return Size(640, 480) to Size(640, 480)
+        }
 
-    /** Resolution for the DISPLAY surface — deliberately much higher than the
-     *  tracker's.
-     *
-     *  The two outputs are independent: the ImageReader feeds Kotlin (so its size
-     *  drives every per-pixel pass and must stay small), while the display Surface
-     *  is consumed by the GPU and costs the CPU nothing. Pinning both to 640x480
-     *  made the preview look heavily compressed once it was upscaled onto a
-     *  2400px-wide screen — for no benefit at all.
-     *
-     *  Must keep the SAME ASPECT RATIO as the tracker size: the display transform
-     *  is derived from the tracker dimensions, and a same-aspect buffer reduces the
-     *  composition to a uniform scale (so the image stays geometrically correct and
-     *  the tracked box still lines up). A different aspect would squash it. */
-    private fun pickDisplaySize(id: String, trackerSize: Size): Size {
-        val map = mgr.getCameraCharacteristics(id)
-            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        val sizes = map?.getOutputSizes(SurfaceTexture::class.java) ?: return trackerSize
-        val targetAr = trackerSize.width.toFloat() / trackerSize.height
-        val cap = 1920 * 1440                       // plenty sharp; bounds bandwidth/power
-        val chosen = sizes
-            .filter { kotlin.math.abs(it.width.toFloat() / it.height - targetAr) < 0.02f }
-            .filter { it.width * it.height <= cap }
-            .maxByOrNull { it.width * it.height } ?: trackerSize
-        Log.i("Camera2", "display size ${chosen.width}x${chosen.height} (aspect-matched)")
-        return chosen
+        fun ar(s: Size) = s.width.toFloat() / s.height
+        // Aspect ratios offered by BOTH stream types (0.02 tolerance covers
+        // 1024x576 vs 1920x1080 style rounding).
+        val shared = yuv.map { ar(it) }
+            .filter { a -> tex.any { kotlin.math.abs(ar(it) - a) < 0.02f } }
+            .distinctBy { kotlin.math.round(it * 50f) }
+        // Widest available, but ignore anything sillier than 2.4:1 (some sensors
+        // advertise ultra-wide letterbox modes that throw away most of the sensor).
+        val target = shared.filter { it <= 2.4f }.maxOrNull() ?: (4f / 3f)
+
+        fun matching(list: List<Size>) = list.filter { kotlin.math.abs(ar(it) - target) < 0.02f }
+
+        // Tracker: cap the PIXEL COUNT, not the width — at 16:9 that lands on
+        // 640x360, which is 25% less per-pixel work than the old 640x480 while
+        // seeing more of the world horizontally.
+        val trackCap = 640 * 400
+        val track = matching(yuv).filter { it.width * it.height <= trackCap }
+            .maxByOrNull { it.width * it.height }
+            ?: matching(yuv).minByOrNull { it.width * it.height }
+            ?: yuv.minByOrNull { it.width * it.height }!!
+
+        val dispCap = 1920 * 1080                   // plenty sharp; bounds bandwidth/power
+        val disp = matching(tex).filter { it.width * it.height <= dispCap }
+            .maxByOrNull { it.width * it.height } ?: track
+
+        Log.i("Camera2", "aspect ${"%.3f".format(target)} " +
+            "(shared: ${shared.joinToString { "%.2f".format(it) }})  " +
+            "tracker ${track.width}x${track.height}  display ${disp.width}x${disp.height}")
+        return track to disp
     }
 
     private fun startSession(cam: CameraDevice) {

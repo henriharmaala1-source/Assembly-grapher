@@ -266,7 +266,17 @@ class MainActivity : AppCompatActivity() {
     private fun autoRotationDeg(src: FrameSource?): Int {
         lastDisp = displayRotationDeg()
         lastSensor = (src as? Camera2FrameSource)?.sensorOrientation ?: 0
-        val rot = if (src is Camera2FrameSource) ((lastSensor - lastDisp) % 360 + 360) % 360 else 0
+        // (display - sensor), NOT the (sensor - display) the Camera2 docs state.
+        // The doc formula is in the CAMERA convention, where a positive angle is
+        // counter-clockwise; this rotation is applied with Matrix.postRotate, which
+        // is CLOCKWISE-positive in screen coordinates (y grows downward). Same
+        // rotation, opposite sign.
+        //
+        // Measured on the device, not derived: sensor=90, display=0 needed rot=270
+        // to come out upright (the HUD showed the operator dialling in off=180 on
+        // top of an auto of 90). (0 - 90) mod 360 = 270. The old form gave 90 and
+        // rendered the feed on its side.
+        val rot = if (src is Camera2FrameSource) ((lastDisp - lastSensor) % 360 + 360) % 360 else 0
         Log.i("MainActivity", "rotation: sensor=$lastSensor display=$lastDisp -> frame rotation=$rot")
         return rot
     }
@@ -399,7 +409,7 @@ class MainActivity : AppCompatActivity() {
         // `trk` the whole tracker update including flow. Anything the three don't
         // account for is delivery/GC/display — which is exactly the distinction
         // needed to tell "too much work" from "stalled waiting on buffers".
-        view.setTiming(tBuildMs, tracker.tFlowMs, tTrackMs)
+        view.setTiming(tBuildMs, tracker.tFlowMs, tracker.tCropMs, tracker.tCueMs, tTrackMs)
         view.submit(w, h, res, filterIdx, fps, motionMode, lastBlobs)
     }
 

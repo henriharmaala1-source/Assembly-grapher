@@ -78,8 +78,11 @@ class TrackerOverlayView(context: Context) : View(context) {
     fun setDiag(s: String) { diag = s; postInvalidate() }
 
     private var tNv = 0f; private var tFlow = 0f; private var tTrk = 0f
+    private var tCrop = 0f; private var tCue = 0f
     /** Per-stage cost in ms (EMA). Drawn under the geometry line. */
-    fun setTiming(nv: Float, flow: Float, trk: Float) { tNv = nv; tFlow = flow; tTrk = trk }
+    fun setTiming(nv: Float, flow: Float, crop: Float, cue: Float, trk: Float) {
+        tNv = nv; tFlow = flow; tCrop = crop; tCue = cue; tTrk = trk
+    }
 
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
 
@@ -186,7 +189,12 @@ class TrackerOverlayView(context: Context) : View(context) {
             canvas.drawLine(ax - 12, ay + 12, ax + 12, ay - 12, p)
             // zoom PiP top-right
             pipBmp?.let { pip ->
-                val px1 = width - PIP - 16f; val py1 = 16f
+                // BOTTOM-right, not top-right: the MODE/SRC/ZOOM/ROT buttons stack
+                // down the top-right corner and were drawn over the PiP, hiding the
+                // one view that shows what the tracker is actually matching against.
+                // Sits clear of the filter chips (bottom-LEFT) too.
+                val px1 = width - PIP - 16f
+                val py1 = height - PIP - 150f
                 // The PiP crop comes straight out of the tracker, i.e. in RAW FRAME
                 // orientation — but the main video and the box are drawn through
                 // frameToView, which rotates by frameRot. Blitting the crop
@@ -204,7 +212,8 @@ class TrackerOverlayView(context: Context) : View(context) {
                 p.color = Color.rgb(240, 40, 40); p.style = Paint.Style.FILL
                 canvas.drawRect(px1 + PIP / 2 - 4, py1 + PIP / 2 - 4,
                     px1 + PIP / 2 + 4, py1 + PIP / 2 + 4, p)
-                canvas.drawText("ZOOM ${fname(filterIdx)}", px1, py1 + PIP + 30, text)
+                // Label ABOVE the PiP now that the PiP sits at the bottom.
+                canvas.drawText("ZOOM ${fname(filterIdx)}", px1, py1 - 10f, text)
             }
         }
 
@@ -222,8 +231,10 @@ class TrackerOverlayView(context: Context) : View(context) {
         // large `other` means the pipeline is stalling, not computing.
         val budget = if (fps > 0.5f) 1000f / fps else 0f
         canvas.drawText(
-            "nv %.1f  flow %.1f  trk %.1f  other %.1f  = %.1f ms/frame"
-                .format(tNv, tFlow, tTrk, (budget - tNv - tTrk).coerceAtLeast(0f), budget),
+            "nv %.1f  flow %.1f  crop %.1f  cue %.1f  rest %.1f  trk %.1f  other %.1f  = %.1f ms"
+                .format(tNv, tFlow, tCrop, tCue,
+                    (tTrk - tFlow - tCrop - tCue).coerceAtLeast(0f),
+                    tTrk, (budget - tNv - tTrk).coerceAtLeast(0f), budget),
             24f, 100f, small)
         canvas.drawText(
             if (motionMode) "tap a mover to lock" else "tap target=lock   long-press=reset",

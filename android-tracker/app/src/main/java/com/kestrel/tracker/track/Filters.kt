@@ -14,13 +14,19 @@ enum class CropFilter { NONE, STRETCH, EDGE, THRESHOLD, SHARPEN, CHROMA }
 
 object Filters {
 
-    fun apply(g: GrayFrame, f: CropFilter): GrayFrame = when (f) {
+    /** `dst`, when supplied and EXACTLY g.w*g.h long, receives the result instead
+     *  of a fresh array. The two cues the fusion modes actually use (EDGE, CHROMA)
+     *  honour it; on a 384x384 wide-search crop each one is 590 KB of otherwise
+     *  per-frame garbage. Exact size is required, not merely sufficient: several
+     *  filters below derive statistics from `g.d.size`, so a longer buffer would
+     *  fold stale tail values into a histogram or percentile. */
+    fun apply(g: GrayFrame, f: CropFilter, dst: FloatArray? = null): GrayFrame = when (f) {
         CropFilter.NONE      -> g
         CropFilter.STRETCH   -> stretch(g)     // percentile contrast stretch (CLAHE-lite)
-        CropFilter.EDGE      -> sobel(g)       // gradient magnitude — structure
+        CropFilter.EDGE      -> sobel(g, dst)  // gradient magnitude — structure
         CropFilter.THRESHOLD -> otsu(g)        // hot-blob binary — thermal style
         CropFilter.SHARPEN   -> sharpen(g)
-        CropFilter.CHROMA    -> chroma(g)      // colourfulness — colour-distinct target pops
+        CropFilter.CHROMA    -> chroma(g, dst) // colourfulness — colour-distinct target pops
     }
 
     /** Track on colour instead of luma: per-pixel chroma magnitude
@@ -28,12 +34,13 @@ object Filters {
      *  pops even when they're the same brightness. Brightness-invariant (helps
      *  under changing light); wraparound-free (unlike hue), so NCC behaves.
      *  Passthrough to luma if the frame carries no colour (e.g. thermal). */
-    private fun chroma(g: GrayFrame): GrayFrame {
+    private fun chroma(g: GrayFrame, dst: FloatArray? = null): GrayFrame {
         val cu = g.cu; val cv = g.cv
         if (cu == null || cv == null) return g
-        val out = FloatArray(g.d.size) {
-            (sqrt(cu[it] * cu[it] + cv[it] * cv[it]) * 1.41f).coerceIn(0f, 255f)
-        }
+        val n = g.w * g.h
+        val out = if (dst != null && dst.size == n) dst else FloatArray(n)
+        for (i in 0 until n) out[i] =
+            (sqrt(cu[i] * cu[i] + cv[i] * cv[i]) * 1.41f).coerceIn(0f, 255f)
         return GrayFrame(out, g.w, g.h, cu, cv)
     }
 
@@ -49,8 +56,13 @@ object Filters {
         return GrayFrame(out, g.w, g.h)
     }
 
-    private fun sobel(g: GrayFrame): GrayFrame {
-        val w = g.w; val h = g.h; val out = FloatArray(w * h)
+    private fun sobel(g: GrayFrame, dst: FloatArray? = null): GrayFrame {
+        val w = g.w; val h = g.h; val n = w * h
+        val out = if (dst != null && dst.size == n) dst else FloatArray(n)
+        // The loop below skips the 1px border. A fresh array is zero there; a
+        // REUSED one still holds the previous frame's edges, which would sit in the
+        // response map as a stationary phantom. Clear it.
+        java.util.Arrays.fill(out, 0f)
         for (y in 1 until h - 1) for (x in 1 until w - 1) {
             val gx = -g.at(x-1,y-1) - 2*g.at(x-1,y) - g.at(x-1,y+1) +
                       g.at(x+1,y-1) + 2*g.at(x+1,y) + g.at(x+1,y+1)

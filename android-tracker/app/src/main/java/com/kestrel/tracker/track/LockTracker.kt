@@ -105,8 +105,34 @@ class LockTracker {
     private val flow = OpticalFlow()   // P1-A: ego-motion (camera pan) estimate
     private var prevFrame: GrayFrame? = null
 
-    /** Milliseconds spent in the ego-motion flow per frame (EMA). Read by the HUD. */
+    /** Per-stage cost in ms (EMA), read by the HUD. Split this finely because the
+     *  stages scale with different things: `flow` and `crop` with the camera stream
+     *  size, `cue` with crop size x template^2 x cues. Whatever the three do not
+     *  account for is scale estimation, adaptation and the histogram cue. */
     var tFlowMs = 0f; private set
+    var tCropMs = 0f; private set
+    var tCueMs = 0f; private set
+
+    // Reused search scratch. The wide re-acquire crop is 384x384, so a fresh
+    // luma+chroma crop is 1.77 MB and each filtered cue another 590 KB — roughly
+    // 3 MB of garbage per frame, on the camera-delivery thread, which is the same
+    // order that previously turned 31 fps into 7. The measured arithmetic (~3.8M
+    // multiply-adds) cannot account for the 132 ms the HUD reported; allocation
+    // can. Sized EXACTLY (not "at least"), because some filters derive statistics
+    // from array length.
+    private var cropD = FloatArray(0)
+    private var cropU = FloatArray(0)
+    private var cropV = FloatArray(0)
+    private var filtBuf = FloatArray(0)
+
+    private fun ensureScratch(n: Int, colour: Boolean) {
+        if (cropD.size != n) cropD = FloatArray(n)
+        if (filtBuf.size != n) filtBuf = FloatArray(n)
+        if (colour) {
+            if (cropU.size != n) cropU = FloatArray(n)
+            if (cropV.size != n) cropV = FloatArray(n)
+        }
+    }
     var state = State.IDLE; private set
     var conf = 0f; private set
 
@@ -189,8 +215,13 @@ class LockTracker {
         val cropPix = if (fov > 1f) ((CROP * fov).toInt() / 2) * 2 else CROP   // even
         val strideEff = maxOf(1, (STRIDE * fov).toInt())
         val regionW = bsize * MARGIN * fov
-        val crop = frame.cropResample(pcx - regionW / 2f, pcy - regionW / 2f,
-                                      regionW, regionW, cropPix, cropPix)
+        val tCrop0 = System.nanoTime()
+        ensureScratch(cropPix * cropPix, frame.hasColor)
+        val crop = frame.cropResampleInto(pcx - regionW / 2f, pcy - regionW / 2f,
+                                          regionW, regionW, cropPix, cropPix,
+                                          cropD, cropU, cropV)
+        tCropMs = 0.9f * tCropMs + 0.1f * ((System.nanoTime() - tCrop0) / 1e6f)
+        val tCue0 = System.nanoTime()
 
         // Search window: base + velocity, opened fully while coasting to re-find.
         val velCrop = cf.speed * CROP / (bsize * MARGIN)
@@ -208,7 +239,10 @@ class LockTracker {
         val fused = FloatArray(gw * gw)
         var anyWeight = 0f
         for (ci in cues.indices) {
-            val cueCrop = Filters.apply(crop, cues[ci])
+            // One shared filter buffer is enough: only one filtered cue is live at
+            // a time (the anchor/adaptive/keyframe matches for cue `ci` all finish
+            // before cue ci+1 is built).
+            val cueCrop = Filters.apply(crop, cues[ci], filtBuf)
             // Match against the fixed ANCHOR, and (only when NOT wide-searching)
             // also the adaptive template, taking the better per position — the
             // anchor re-anchors when the adaptive has drifted, extending the lock.
@@ -250,6 +284,7 @@ class LockTracker {
             // negligible marginal fusion weight — skip them this frame.
             if (cuePsr > EARLY_TERM_PSR) break
         }
+        tCueMs = 0.9f * tCueMs + 0.1f * ((System.nanoTime() - tCue0) / 1e6f)
         // STAPLE-style histogram cue — chroma fg/bg, no spatial layout, so it
         // survives deformation/rotation the spatial NCC cues above can't. Only
         // during a normal-FOV search (crop is CROP-sized, matching how the fg/bg
@@ -369,7 +404,10 @@ class LockTracker {
         // the bank (sim: without it, an occluder-half keyframe wrecked recovery).
         val canBank = conf >= KF_ADD_CONF && badFrames == 0
         for (ci in cues.indices) {
-            val fresh = normPatch(Filters.apply(rawCrop, cues[ci]), cx, cy, TMPL)
+            // Safe to share filtBuf with the search loop: that loop has finished
+            // with its filtered cues by the time adaptation runs, and only one
+            // filtered frame is live here at a time too.
+            val fresh = normPatch(Filters.apply(rawCrop, cues[ci], filtBuf), cx, cy, TMPL)
             val cur = templates[ci]
             for (i in cur.indices) cur[i] = (1f - TMPL_EMA) * cur[i] + TMPL_EMA * fresh[i]
             tmplNorms[ci] = normOf(cur)

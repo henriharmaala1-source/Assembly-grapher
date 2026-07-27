@@ -11,21 +11,19 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
 
-        <!-- PORTRAIT ONLY. The rig is used one way up, so pin the window there and
-             the whole class of orientation bugs goes away with it: the display
-             rotation is then always 0 (natural), so the preview rotation reduces to
-             the constant SENSOR_ORIENTATION and can no longer disagree with the
-             window shape. Every failure so far came from that disagreement — a
-             window that did not follow the device ("landscape", or no
-             screenOrientation at all while system auto-rotate is OFF) turned an
-             upright frame into a 30%-of-screen strip.
-             A 16:9 stream rotated upright fills ~85% of a portrait window, against
-             64% for 4:3 — so portrait does not cost field of view here, it gains it.
-             configChanges stays: it costs nothing and keeps the camera session alive
-             if the window is ever resized (split screen, foldable). -->
+        <!-- sensorLandscape: landscape only, but BOTH ways up.
+             Landscape is what the rig is used in. Plain "landscape" would pin one
+             specific way up and then break the moment the phone is turned the other
+             way — the display rotation would say 270 while the window stayed at 90,
+             and that disagreement between window and device is precisely what
+             produced every preview bug so far (an upright frame rendered as a
+             30%-of-screen strip). sensorLandscape keeps the window landscape AND
+             lets it follow the device, so the rotation term stays honest.
+             configChanges keeps the camera session alive across the 90<->270 flip
+             instead of tearing the stream down and restarting it. -->
         <activity
             android:name=".MainActivity"
-            android:screenOrientation="portrait"
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:launchMode="singleTop"
             android:exported="true">

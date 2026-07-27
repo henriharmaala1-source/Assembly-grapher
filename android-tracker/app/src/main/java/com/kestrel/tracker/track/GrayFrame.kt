@@ -17,10 +17,28 @@ class GrayFrame(
     /** Region (rx,ry,rw,rh) resampled to (outW,outH), bilinear. Chroma is
      *  resampled too when present, so a colour filter on the crop still works. */
     fun cropResample(rx: Float, ry: Float, rw: Float, rh: Float,
-                     outW: Int, outH: Int): GrayFrame {
-        val outD = FloatArray(outW * outH)
-        val outU = if (cu != null) FloatArray(outW * outH) else null
-        val outV = if (cv != null) FloatArray(outW * outH) else null
+                     outW: Int, outH: Int): GrayFrame =
+        cropResampleInto(rx, ry, rw, rh, outW, outH, null, null, null)
+
+    /**
+     * As [cropResample], but writes into CALLER-OWNED buffers when they are
+     * supplied and large enough (only the first outW*outH entries are touched).
+     *
+     * This exists purely to keep the tracker off the allocator. In a wide
+     * re-acquire the crop is 384x384, so a fresh luma+chroma set is 1.77 MB —
+     * every frame, on the camera-delivery thread. That is the same order as the
+     * per-frame garbage that previously collapsed the app from 31 fps to 7, and it
+     * lands in the same place: GC pauses attributed to the tracker, with the
+     * measured arithmetic (a few million multiply-adds) nowhere near able to
+     * explain the time.
+     */
+    fun cropResampleInto(rx: Float, ry: Float, rw: Float, rh: Float,
+                         outW: Int, outH: Int,
+                         dstD: FloatArray?, dstU: FloatArray?, dstV: FloatArray?): GrayFrame {
+        val n = outW * outH
+        val outD = if (dstD != null && dstD.size >= n) dstD else FloatArray(n)
+        val outU = if (cu == null) null else if (dstU != null && dstU.size >= n) dstU else FloatArray(n)
+        val outV = if (cv == null) null else if (dstV != null && dstV.size >= n) dstV else FloatArray(n)
         val sx = rw / outW
         val sy = rh / outH
         for (j in 0 until outH) {

@@ -79,7 +79,17 @@ class MainActivity : AppCompatActivity() {
     // frame size the display transform is set for (written UI thread, read cam thread)
     @Volatile private var fitW = 0
     @Volatile private var fitH = 0
-    private var lumaBuf = FloatArray(0)
+    // PING-PONG frame buffers. Two sets, alternated every frame, because
+    // LockTracker keeps `prevFrame` for the ego-motion flow: with a single shared
+    // buffer prev.d and cur.d are the SAME array, so flow compares a frame against
+    // itself and always reports zero motion (P1-A was silently dead in luma mode).
+    // Reusing them also removes GrayFrame.fromNv21's 3.5 MiB/frame of allocation,
+    // which was ~105 MiB/s of garbage on the camera thread and the real reason the
+    // frame rate collapsed from 31 to 7 fps the moment a target was locked.
+    private val bufD = arrayOf(FloatArray(0), FloatArray(0))
+    private val bufU = arrayOf(FloatArray(0), FloatArray(0))
+    private val bufV = arrayOf(FloatArray(0), FloatArray(0))
+    private var bufIdx = 0
 
     // Three tap modes: LOCK (precise box at the tap), BLOB (find the distinct
     // blob near the tap — forgiving), MOTION (acquire movers, tap one to lock).
@@ -240,6 +250,35 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
+    /** NV21 -> GrayFrame with NO per-frame array allocation.
+     *
+     *  Alternates between two buffer sets so the frame the tracker kept as
+     *  `prevFrame` is never the one we're overwriting — that aliasing is what made
+     *  the ego-motion flow see zero movement. Only the small GrayFrame wrapper is
+     *  allocated (a few dozen bytes); the 1.2 MiB planes are reused. */
+    private fun buildFrame(nv21: ByteArray, w: Int, h: Int, color: Boolean): GrayFrame {
+        val n = w * h
+        bufIdx = bufIdx xor 1
+        if (bufD[bufIdx].size != n) bufD[bufIdx] = FloatArray(n)
+        val d = bufD[bufIdx]
+        for (i in 0 until n) d[i] = (nv21[i].toInt() and 0xFF).toFloat()
+        if (!color || nv21.size < n + n / 2) return GrayFrame(d, w, h)
+
+        if (bufU[bufIdx].size != n) bufU[bufIdx] = FloatArray(n)
+        if (bufV[bufIdx].size != n) bufV[bufIdx] = FloatArray(n)
+        val cu = bufU[bufIdx]; val cv = bufV[bufIdx]
+        for (j in 0 until h) {
+            val uvRow = n + (j shr 1) * w
+            val row = j * w
+            for (i in 0 until w) {
+                val uv = uvRow + (i and 1.inv())            // (i/2)*2; NV21 = V,U
+                cv[row + i] = ((nv21[uv].toInt() and 0xFF) - 128).toFloat()
+                cu[row + i] = ((nv21[uv + 1].toInt() and 0xFF) - 128).toFloat()
+            }
+        }
+        return GrayFrame(d, w, h, cu, cv)
+    }
+
     /** Camera-thread callback: NV21 -> GrayFrame -> tracker -> overlay graphics.
      *  (Display is handled by the TextureView directly; this is tracker-only.) */
     private fun onFrame(nv21: ByteArray, w: Int, h: Int) {
@@ -252,13 +291,7 @@ class MainActivity : AppCompatActivity() {
         lastMs = now
 
         val wantChroma = !motionMode && needColor && (tracker.hasTarget || pendingDesignate != null)
-        val gf = if (wantChroma) {
-            GrayFrame.fromNv21(nv21, w, h)
-        } else {
-            if (lumaBuf.size != w * h) lumaBuf = FloatArray(w * h)
-            for (i in 0 until w * h) lumaBuf[i] = (nv21[i].toInt() and 0xFF).toFloat()
-            GrayFrame(lumaBuf, w, h)
-        }
+        val gf = buildFrame(nv21, w, h, wantChroma)
 
         val res: LockTracker.Result?
         if (motionMode) {

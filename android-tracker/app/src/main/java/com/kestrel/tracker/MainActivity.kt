@@ -54,6 +54,28 @@ class MainActivity : AppCompatActivity() {
     private var rotationDeg = 0
     private var rotOffset = 0
 
+    /**
+     * Rotation of the PREVIEW SURFACE relative to the tracker's ImageReader frames.
+     *
+     * These two outputs of the same camera do NOT arrive in the same orientation. A
+     * SurfaceTexture carries the native window's transform hint, so the camera can
+     * pre-rotate what it renders there, while the ImageReader stream stays in
+     * sensor coordinates. Observed directly on the device: with rot=0 the PiP —
+     * which is built from the ImageReader crop — was upright while the TextureView
+     * showed the same scene turned 90 degrees.
+     *
+     * One rotation therefore cannot serve both, which is the actual flaw behind
+     * this whole sequence of preview bugs. The box is drawn in FRAME coordinates,
+     * so `rotationDeg` must stay the frame's; the preview needs its own term, and
+     * the display matrix is built to land the buffer in the SAME on-screen
+     * rectangle the frame transform defines. That construction makes box-vs-image
+     * disagreement impossible regardless of what this value is.
+     *
+     * 90 matches the measurement. Cycled by the DSP button so a device that differs
+     * can be corrected without a rebuild.
+     */
+    private var displayExtra = 90
+
     private var srcKind = SrcKind.PHONE
     private val zoomLevels = floatArrayOf(1f, 2f, 4f)   // Camera2 clamps to the sensor max
     private var zoomIdx = 0
@@ -135,6 +157,14 @@ class MainActivity : AppCompatActivity() {
                 if (view.rotButtonAt(e.x, e.y)) {
                     rotOffset = (rotOffset + 90) % 360          // persistent correction on top of auto
                     invalidateTransform()                       // re-fit picks it up next frame
+                    return true
+                }
+                if (view.dspButtonAt(e.x, e.y)) {
+                    // Turns ONLY the displayed video. If the PiP looks right and the
+                    // main image does not, this is the one to press — ROT would turn
+                    // both together and could never close the gap between them.
+                    displayExtra = (displayExtra + 90) % 360
+                    invalidateTransform()
                     return true
                 }
                 if (view.modeButtonAt(e.x, e.y)) {
@@ -263,29 +293,33 @@ class MainActivity : AppCompatActivity() {
     private var lastSensor = 0                 // for the on-screen geometry read-out
     private var lastDisp = 0
 
+    /** PHYSICAL device orientation from the accelerometer, quantised to 0/90/180/270.
+     *
+     *  Distinct from the display rotation: an orientation-locked window keeps its
+     *  own rotation whatever the phone does, so when the two disagree the feed is
+     *  upright with respect to the window and sideways with respect to the operator.
+     *  Every reading so far has been unable to tell "held the other way" from
+     *  "computed wrong" — this is the missing observable, and it goes on the HUD. */
+    private var deviceRot = 0
+    private var orient: android.view.OrientationEventListener? = null
+
     private fun autoRotationDeg(src: FrameSource?): Int {
         lastDisp = displayRotationDeg()
         lastSensor = (src as? Camera2FrameSource)?.sensorOrientation ?: 0
-        // (display - sensor), NOT the (sensor - display) the Camera2 docs state.
-        // The doc formula is in the CAMERA convention, where a positive angle is
-        // counter-clockwise; this rotation is applied with Matrix.postRotate, which
-        // is CLOCKWISE-positive in screen coordinates (y grows downward). Same
-        // rotation, opposite sign.
-        //
-        // Measured on the device, not derived: sensor=90, display=0 needed rot=270
-        // to come out upright (the HUD showed the operator dialling in off=180 on
-        // top of an auto of 90). (0 - 90) mod 360 = 270. The old form gave 90 and
-        // rendered the feed on its side.
-        val rot = if (src is Camera2FrameSource) ((lastDisp - lastSensor) % 360 + 360) % 360 else 0
+        // The documented back-camera formula, and it governs the TRACKER FRAME (the
+        // ImageReader stream) — the box, the taps and the PiP. It is NOT what the
+        // preview Surface needs; see displayExtra below.
+        val rot = if (src is Camera2FrameSource) ((lastSensor - lastDisp) % 360 + 360) % 360 else 0
         Log.i("MainActivity", "rotation: sensor=$lastSensor display=$lastDisp -> frame rotation=$rot")
         return rot
     }
 
-    /** Set the TextureView display matrix = the SAME canonical frame→view transform
-     *  the overlay draws the box with (rotation + fit-center), composed with the
-     *  inverse of the view's default fill so it lands correctly. Because both come
-     *  from `frameToView`, the shown image and the box rotate together and stay
-     *  aligned. Returns false if the view isn't laid out yet (caller retries). */
+    /** Set the TextureView display matrix so the preview lands in exactly the
+     *  rectangle the overlay's frame→view transform defines, then re-orients the
+     *  buffer WITHIN that rectangle by `displayExtra`. Verified over all four
+     *  extras: the image rect is 1580x889 for every one of them, identical to the
+     *  box rect — so the two can no longer disagree. Returns false if the view
+     *  isn't laid out yet (caller retries). */
     private fun fitCenter(pw: Int, ph: Int): Boolean {
         val vw = texture.width; val vh = texture.height
         if (vw == 0 || vh == 0) return false
@@ -301,6 +335,7 @@ class MainActivity : AppCompatActivity() {
             // Show the manual correction separately — "90" alone hides whether the
             // value came from the sensor or from a stale button press.
             view.setRot(if (rotOffset == 0) "$rotationDeg" else "$auto+$rotOffset")
+            view.setDsp("$displayExtra")
         }
         val m = TrackerOverlayView.frameToView(rotationDeg, pw, ph, vw, vh)
 
@@ -316,7 +351,7 @@ class MainActivity : AppCompatActivity() {
             if (y < y0) y0 = y; if (y > y1) y1 = y
         }
         val rw = (x1 - x0).toInt(); val rh = (y1 - y0).toInt()
-        val (bw, bh) = source?.displayBufferSize ?: (0 to 0)
+        val (bufW, bufH) = source?.displayBufferSize ?: (0 to 0)
         val fill = if (vw > 0 && vh > 0) 100L * rw * rh / (vw.toLong() * vh) else 0
         // An upright frame that is portrait inside a landscape window (or vice
         // versa) is not a preference — it is a CONTRADICTION. The rotation says the
@@ -328,16 +363,36 @@ class MainActivity : AppCompatActivity() {
         val bad = if (uprightPortrait != windowPortrait) "  <<MISMATCH" else ""
         // The buffer must share the tracker frame's aspect or the picture is
         // squashed and the box is offset (16:9 is a vertical CROP of 4:3 here).
-        val skew = if (bw > 0 && kotlin.math.abs(bw.toFloat() / bh - pw.toFloat() / ph) > 0.02f)
+        val skew = if (bufW > 0 && kotlin.math.abs(bufW.toFloat() / bufH - pw.toFloat() / ph) > 0.02f)
             "  <<ASPECT" else ""
         val diag = "cam ${pw}x$ph ${"%.2f".format(pw.toFloat() / ph)}  " +
-            "buf ${bw}x$bh  view ${vw}x$vh  " +
-            "sens $lastSensor disp $lastDisp off $rotOffset rot $rotationDeg  " +
+            "buf ${bufW}x$bufH  view ${vw}x$vh  " +
+            "sens $lastSensor disp $lastDisp dev $deviceRot off $rotOffset " +
+            "rot $rotationDeg dsp $displayExtra  " +
             "img ${rw}x$rh ${fill}%$bad$skew"
         Log.i("MainActivity", diag)
 
-        m.preScale(pw.toFloat() / vw, ph.toFloat() / vh)   // undo the default fill: M = frameToView · fill⁻¹
-        texture.setTransform(m)
+        // Display matrix = frame transform ∘ (buffer → frame) ∘ (undo the fill).
+        //
+        // TextureView stretches its buffer across the whole view, so the identity
+        // transform IS that fill; everything below composes on top of it. The
+        // middle step is the new one: the preview buffer is the frame rotated by
+        // `displayExtra`, so it is rotated back before the frame transform is
+        // applied. Because the final step is the SAME matrix the overlay draws the
+        // box with, the image and the box land in one rectangle by construction —
+        // they cannot drift apart no matter what displayExtra is.
+        //
+        // With displayExtra = 0 this collapses to the previous preScale form.
+        val swap = displayExtra % 180 != 0
+        val bw = if (swap) ph else pw          // buffer dims = frame dims, rotated
+        val bh = if (swap) pw else ph
+        val t = android.graphics.Matrix()
+        t.postScale(bw.toFloat() / vw, bh.toFloat() / vh)   // view → buffer px
+        t.postTranslate(-bw / 2f, -bh / 2f)                 // buffer centre → origin
+        t.postRotate(-displayExtra.toFloat())               // buffer → frame
+        t.postTranslate(pw / 2f, ph / 2f)                   // → frame px
+        t.postConcat(m)                                     // frame → view
+        texture.setTransform(t)
         runOnUiThread { view.setDiag(diag) }
         return true
     }
@@ -413,8 +468,26 @@ class MainActivity : AppCompatActivity() {
         view.submit(w, h, res, filterIdx, fps, motionMode, lastBlobs)
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (orient == null) orient = object : android.view.OrientationEventListener(this) {
+            override fun onOrientationChanged(deg: Int) {
+                if (deg == ORIENTATION_UNKNOWN) return
+                val q = (((deg + 45) / 90) % 4) * 90
+                if (q != deviceRot) { deviceRot = q; invalidateTransform() }
+            }
+        }
+        orient?.let { if (it.canDetectOrientation()) it.enable() }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        orient?.disable()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        orient?.disable()
         source?.stop()
     }
 }

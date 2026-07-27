@@ -51,6 +51,8 @@ class TrackerOverlayView(context: Context) : View(context) {
     private val zoomRect = RectF()
     private var rotLabel = "0"
     private val rotRect = RectF()
+    private var dspLabel = "90"
+    private val dspRect = RectF()
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 34f; color = Color.WHITE }
@@ -74,6 +76,10 @@ class TrackerOverlayView(context: Context) : View(context) {
     fun zoomButtonAt(vx: Float, vy: Float): Boolean = zoomRect.contains(vx, vy)
     fun setRot(label: String) { rotLabel = label }
     fun rotButtonAt(vx: Float, vy: Float): Boolean = rotRect.contains(vx, vy)
+    /** DSP = rotation of the preview SURFACE relative to the tracker frames. ROT
+     *  turns the frame (box, taps, PiP); DSP turns only the displayed video. */
+    fun setDsp(label: String) { dspLabel = label }
+    fun dspButtonAt(vx: Float, vy: Float): Boolean = dspRect.contains(vx, vy)
     fun setFrameRotation(deg: Int) { frameRot = ((deg % 360) + 360) % 360; postInvalidate() }
     fun setDiag(s: String) { diag = s; postInvalidate() }
 
@@ -268,6 +274,12 @@ class TrackerOverlayView(context: Context) : View(context) {
         val rx = width - rw - 16f; val ry = zy + bh + 8f
         rotRect.set(rx, ry, rx + rw, ry + bh)
         button(canvas, rotRect, rl, rx, ry, bh, Color.argb(200, 60, 30, 60), Color.rgb(220, 150, 230))
+
+        val dl = "DSP: ${dspLabel}°"
+        val dw = text.measureText(dl) + 36f
+        val dx = width - dw - 16f; val dy = ry + bh + 8f
+        dspRect.set(dx, dy, dx + dw, dy + bh)
+        button(canvas, dspRect, dl, dx, dy, bh, Color.argb(200, 20, 55, 55), Color.rgb(130, 225, 225))
     }
 
     private fun button(c: Canvas, rect: RectF, label: String, x: Float, y: Float, bh: Float,

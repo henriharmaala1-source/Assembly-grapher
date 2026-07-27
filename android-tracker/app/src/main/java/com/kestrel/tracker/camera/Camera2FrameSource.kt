@@ -150,33 +150,50 @@ class Camera2FrameSource(private val context: Context) : FrameSource {
         }
 
         fun ar(s: Size) = s.width.toFloat() / s.height
+
+        // The tracker stream's PIXEL COUNT is the single biggest lever on frame
+        // rate: every luma/chroma conversion and the ego-motion flow scale with it
+        // linearly. This cap is hard.
+        val trackCap = 640 * 400
+        val dispCap = 1920 * 1080                   // plenty sharp; bounds bandwidth/power
+
         // Aspect ratios offered by BOTH stream types (0.02 tolerance covers
         // 1024x576 vs 1920x1080 style rounding).
         val shared = yuv.map { ar(it) }
             .filter { a -> tex.any { kotlin.math.abs(ar(it) - a) < 0.02f } }
             .distinctBy { kotlin.math.round(it * 50f) }
-        // Widest available, but ignore anything sillier than 2.4:1 (some sensors
-        // advertise ultra-wide letterbox modes that throw away most of the sensor).
-        val target = shared.filter { it <= 2.4f }.maxOrNull() ?: (4f / 3f)
 
-        fun matching(list: List<Size>) = list.filter { kotlin.math.abs(ar(it) - target) < 0.02f }
+        fun of(list: List<Size>, a: Float) = list.filter { kotlin.math.abs(ar(it) - a) < 0.02f }
 
-        // Tracker: cap the PIXEL COUNT, not the width — at 16:9 that lands on
-        // 640x360, which is 25% less per-pixel work than the old 640x480 while
-        // seeing more of the world horizontally.
-        val trackCap = 640 * 400
-        val track = matching(yuv).filter { it.width * it.height <= trackCap }
+        // An aspect is only a CANDIDATE if it has a tracker size within the cap.
+        // Choosing the widest aspect first and sizing afterwards is what produced a
+        // 2520x1080 tracker stream on this phone: 21:9 was the widest offered, but
+        // its smallest stream is 2.7 MEGAPIXELS — 8.9x the work of 640x480, and
+        // measured at 8 fps on the device. Width is worth having only when it is
+        // cheap; correctness of the frame rate comes first.
+        val usable = shared
+            .filter { it <= 2.4f }                  // ignore silly letterbox crop modes
+            .mapNotNull { a ->
+                val t = of(yuv, a).filter { it.width * it.height <= trackCap }
+                    .maxByOrNull { it.width * it.height } ?: return@mapNotNull null
+                a to t
+            }
+        val (target, track) = usable.maxByOrNull { it.first }              // widest that is cheap
+            ?: ((4f / 3f) to (yuv.minByOrNull { it.width * it.height }!!)) // nothing fits: smallest
+
+        val disp = of(tex, ar(track)).filter { it.width * it.height <= dispCap }
             .maxByOrNull { it.width * it.height }
-            ?: matching(yuv).minByOrNull { it.width * it.height }
-            ?: yuv.minByOrNull { it.width * it.height }!!
-
-        val dispCap = 1920 * 1080                   // plenty sharp; bounds bandwidth/power
-        val disp = matching(tex).filter { it.width * it.height <= dispCap }
-            .maxByOrNull { it.width * it.height } ?: track
+            ?: of(tex, ar(track)).minByOrNull { it.width * it.height }
+            ?: track
 
         Log.i("Camera2", "aspect ${"%.3f".format(target)} " +
-            "(shared: ${shared.joinToString { "%.2f".format(it) }})  " +
-            "tracker ${track.width}x${track.height}  display ${disp.width}x${disp.height}")
+            "(shared: ${shared.joinToString { "%.2f".format(it) }}; " +
+            "cheap: ${usable.joinToString { "%.2f".format(it.first) }})  " +
+            "tracker ${track.width}x${track.height} (${track.width * track.height / 1000}k px)  " +
+            "display ${disp.width}x${disp.height}")
+        if (track.width * track.height > trackCap)
+            Log.w("Camera2", "tracker stream ${track.width}x${track.height} EXCEEDS the " +
+                "${trackCap / 1000}k-px budget — no cheaper size is offered; expect a low frame rate")
         return track to disp
     }
 

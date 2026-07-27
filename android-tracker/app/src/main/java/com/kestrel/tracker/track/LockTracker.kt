@@ -104,6 +104,9 @@ class LockTracker {
     private var occLow = 0             // consecutive sub-threshold frames (occlusion hysteresis)
     private val flow = OpticalFlow()   // P1-A: ego-motion (camera pan) estimate
     private var prevFrame: GrayFrame? = null
+
+    /** Milliseconds spent in the ego-motion flow per frame (EMA). Read by the HUD. */
+    var tFlowMs = 0f; private set
     var state = State.IDLE; private set
     var conf = 0f; private set
 
@@ -147,6 +150,7 @@ class LockTracker {
         // and is a clean no-op on a static/noisy feed (sim: pan edge 0.4px @100%,
         // zero change on every other scenario). Deadband drops sub-pixel jitter;
         // cap stops a bad estimate throwing the crop.
+        val tFlow0 = System.nanoTime()
         val prev = prevFrame
         var edx = 0f; var edy = 0f
         if (prev != null && prev.w == frame.w && prev.h == frame.h) {
@@ -162,6 +166,13 @@ class LockTracker {
             }
         }
         prevFrame = frame
+        // Per-stage cost, EMA-smoothed. The ego-motion flow is a full-FRAME pass
+        // (grid search over the whole image) while everything below it works on a
+        // 128px crop, so it scales with the camera stream size while the rest does
+        // not — which makes it the first thing to look at whenever the stream
+        // resolution changes. Surfaced on the HUD so the split is measured, not
+        // assumed.
+        tFlowMs = 0.9f * tFlowMs + 0.1f * ((System.nanoTime() - tFlow0) / 1e6f)
 
         val (pcx, pcy) = cf.predict(edx, edy)
 

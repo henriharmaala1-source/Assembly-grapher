@@ -80,6 +80,8 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var pendingDesignate: FloatArray? = null
     private var lastMs = 0L
     private var fps = 0f
+    private var tBuildMs = 0f
+    private var tTrackMs = 0f
     private var loggedSize = false
     // frame size the display transform is set for (written UI thread, read cam thread)
     @Volatile private var fitW = 0
@@ -167,7 +169,16 @@ class MainActivity : AppCompatActivity() {
                 filterIdx = (filterIdx + 1) % cueModes.size
                 tracker.setCues(cueModes[filterIdx].cues); return true
             }
-            override fun onLongPress(e: MotionEvent) { tracker.reset(); motion.reset() }
+            override fun onLongPress(e: MotionEvent) {
+                // Long-press ROT clears the manual correction. The offset persists
+                // across rotations and source switches by design, which means a
+                // correction made while the AUTO value was wrong keeps overriding
+                // it after the auto value is fixed — exactly the stale "off 270"
+                // that turned a correct rot=0 into a 16%-of-screen strip. There has
+                // to be a way back to zero that isn't cycling four times.
+                if (view.rotButtonAt(e.x, e.y)) { rotOffset = 0; invalidateTransform(); return }
+                tracker.reset(); motion.reset()
+            }
         })
         view.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev); true }
 
@@ -274,7 +285,13 @@ class MainActivity : AppCompatActivity() {
         // rotOffset is the user's ROT-button correction and rides on top, so it
         // persists across rotations and source switches.
         rotationDeg = ((autoRotationDeg(source) + rotOffset) % 360 + 360) % 360
-        runOnUiThread { view.setFrameRotation(rotationDeg); view.setRot(rotationDeg.toString()) }
+        val auto = ((rotationDeg - rotOffset) % 360 + 360) % 360
+        runOnUiThread {
+            view.setFrameRotation(rotationDeg)
+            // Show the manual correction separately — "90" alone hides whether the
+            // value came from the sensor or from a stale button press.
+            view.setRot(if (rotOffset == 0) "$rotationDeg" else "$auto+$rotOffset")
+        }
         val m = TrackerOverlayView.frameToView(rotationDeg, pw, ph, vw, vh)
 
         // Geometry read-out, shown on screen. Every "is it rotated / squashed /
@@ -356,7 +373,10 @@ class MainActivity : AppCompatActivity() {
         lastMs = now
 
         val wantChroma = !motionMode && needColor && (tracker.hasTarget || pendingDesignate != null)
+        val tb0 = System.nanoTime()
         val gf = buildFrame(nv21, w, h, wantChroma)
+        val tb1 = System.nanoTime()
+        tBuildMs = 0.9f * tBuildMs + 0.1f * ((tb1 - tb0) / 1e6f)
 
         val res: LockTracker.Result?
         if (motionMode) {
@@ -370,8 +390,16 @@ class MainActivity : AppCompatActivity() {
                 } else tracker.designate(gf, d[0], d[1], d[2])
                 pendingDesignate = null
             }
+            val tt0 = System.nanoTime()
             res = tracker.update(gf); lastBlobs = emptyList()
+            tTrackMs = 0.9f * tTrackMs + 0.1f * ((System.nanoTime() - tt0) / 1e6f)
         }
+        // Cost breakdown on the HUD. `nv` is the NV21→float conversion (scales with
+        // the stream size), `flow` the ego-motion full-frame pass (also scales),
+        // `trk` the whole tracker update including flow. Anything the three don't
+        // account for is delivery/GC/display — which is exactly the distinction
+        // needed to tell "too much work" from "stalled waiting on buffers".
+        view.setTiming(tBuildMs, tracker.tFlowMs, tTrackMs)
         view.submit(w, h, res, filterIdx, fps, motionMode, lastBlobs)
     }
 

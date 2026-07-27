@@ -77,6 +77,10 @@ class TrackerOverlayView(context: Context) : View(context) {
     fun setFrameRotation(deg: Int) { frameRot = ((deg % 360) + 360) % 360; postInvalidate() }
     fun setDiag(s: String) { diag = s; postInvalidate() }
 
+    private var tNv = 0f; private var tFlow = 0f; private var tTrk = 0f
+    /** Per-stage cost in ms (EMA). Drawn under the geometry line. */
+    fun setTiming(nv: Float, flow: Float, trk: Float) { tNv = nv; tFlow = flow; tTrk = trk }
+
     private fun fname(i: Int) = filterNames.getOrElse(i) { "?" }
 
     companion object {
@@ -213,6 +217,14 @@ class TrackerOverlayView(context: Context) : View(context) {
         }
         canvas.drawText(hud, 24f, 44f, text)
         if (diag.isNotEmpty()) canvas.drawText(diag, 24f, 74f, small)
+        // Budget line: at 30 fps the whole frame must fit in 33 ms. `other` is what
+        // the measured stages do NOT explain — GC, camera delivery, display — so a
+        // large `other` means the pipeline is stalling, not computing.
+        val budget = if (fps > 0.5f) 1000f / fps else 0f
+        canvas.drawText(
+            "nv %.1f  flow %.1f  trk %.1f  other %.1f  = %.1f ms/frame"
+                .format(tNv, tFlow, tTrk, (budget - tNv - tTrk).coerceAtLeast(0f), budget),
+            24f, 100f, small)
         canvas.drawText(
             if (motionMode) "tap a mover to lock" else "tap target=lock   long-press=reset",
             24f, height - 24f, text)

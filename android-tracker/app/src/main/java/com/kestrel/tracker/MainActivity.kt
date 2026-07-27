@@ -249,16 +249,16 @@ class MainActivity : AppCompatActivity() {
     /**
      * How far to rotate the camera frame so it appears upright ON SCREEN.
      *
-     * SENSOR_ORIENTATION alone is NOT the answer: it is defined as the rotation
-     * needed when the device is in its NATURAL orientation (portrait on a phone).
-     * This activity is locked to `screenOrientation="landscape"`, which forces the
-     * display 90° or 270° away from natural — so using the sensor value raw
-     * over-rotates by exactly that much, and a landscape 640×480 frame gets turned
-     * into a 3:4 portrait strip filling only ~29% of a landscape screen (measured
-     * from a real device screenshot: 668×888 in a 2263×888 view).
+     * SENSOR_ORIENTATION is defined as the rotation needed when the device is in
+     * its NATURAL orientation, and the activity is pinned to portrait — which on a
+     * phone IS natural — so the display rotation is 0 and this reduces to the
+     * sensor constant. The subtraction is kept rather than hard-coded because the
+     * value is then still correct if the window is ever resized/rotated anyway
+     * (split screen, foldable), and because it makes the two terms visible in the
+     * diagnostics instead of collapsing them into one unexplained number.
      *
-     * The standard back-camera formula subtracts the display rotation. The UVC
-     * dongle is not mounted in the phone at all, so its feed is already upright.
+     * The UVC dongle is not mounted in the phone at all, so its feed is already
+     * upright and gets no rotation.
      */
     private var lastSensor = 0                 // for the on-screen geometry read-out
     private var lastDisp = 0

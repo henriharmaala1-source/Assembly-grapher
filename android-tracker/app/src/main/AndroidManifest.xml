@@ -11,24 +11,21 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
 
-        <!-- fullSensor, NOT unspecified and NOT "landscape".
-             The preview rotation is (SENSOR_ORIENTATION - displayRotation). That
-             formula only yields a frame whose ASPECT matches the window when the
-             window orientation follows the DEVICE. Two ways that breaks:
-               - "landscape" (what this used to be) pins the window while the phone
-                 is held portrait;
-               - omitting screenOrientation pins the window to the natural
-                 orientation whenever the user has system auto-rotate switched OFF.
-             Either way an upright 4:3 frame renders as a 3:4 strip. Measured from a
-             real screenshot: 668x891 inside a 2245x891 window — 30% of the screen,
-             exactly what rot=270 predicts. fullSensor makes the window follow the
-             physical device regardless of the auto-rotate setting, so window and
-             frame aspect agree and the feed fills the screen either way up.
-             configChanges keeps the activity (and the camera session) alive across
-             rotation instead of tearing it down and restarting the stream. -->
+        <!-- PORTRAIT ONLY. The rig is used one way up, so pin the window there and
+             the whole class of orientation bugs goes away with it: the display
+             rotation is then always 0 (natural), so the preview rotation reduces to
+             the constant SENSOR_ORIENTATION and can no longer disagree with the
+             window shape. Every failure so far came from that disagreement — a
+             window that did not follow the device ("landscape", or no
+             screenOrientation at all while system auto-rotate is OFF) turned an
+             upright frame into a 30%-of-screen strip.
+             A 16:9 stream rotated upright fills ~85% of a portrait window, against
+             64% for 4:3 — so portrait does not cost field of view here, it gains it.
+             configChanges stays: it costs nothing and keeps the camera session alive
+             if the window is ever resized (split screen, foldable). -->
         <activity
             android:name=".MainActivity"
-            android:screenOrientation="fullSensor"
+            android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:launchMode="singleTop"
             android:exported="true">

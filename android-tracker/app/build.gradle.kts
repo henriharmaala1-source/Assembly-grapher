@@ -35,6 +35,12 @@ dependencies {
     // that DO expose UVC via Camera2.
     implementation("com.herohan:UVCAndroid:1.0.13")
 
+    // Learned tracker (OnnxSiameseTracker.kt). ONNX Runtime rather than the
+    // OpenCV Android SDK: ~15 MB against OpenCV's 30-40 MB per ABI, it exposes
+    // NNAPI/XNNPACK, and OpenCV's own model card warns its DNN backend has
+    // "poor support for the transformer architecture for now".
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.2")
     implementation("androidx.appcompat:appcompat:1.7.0")

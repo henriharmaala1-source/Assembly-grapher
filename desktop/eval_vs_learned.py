@@ -317,3 +317,62 @@ def run_conf_gated(frames_bgr, gt, designate, cues, on_thresh, make_tracker):
     m = et.metrics(errs, states, on_thresh, gt is not None)
     m['fallback_pct'] = 100.0 * fb / max(1, n - fi0 - 1)
     return m
+
+
+# ---------------------------------------------------------------------------
+# NCC-LED gate: the classical tracker drives, the network rescues.
+#
+# The inverse of run_conf_gated, and motivated by what the desktop viewer showed
+# on real analog footage: the classical tracker holds a visibly TIGHTER box, so
+# its aim point is better whenever it is working -- while the network is the one
+# that survives close range, where the classical one dropped the lock.
+#
+# It is also cheaper. The network only runs on frames where the classical
+# tracker is NOT healthy, so the common case costs one tracker instead of two.
+#
+# The subtlety is the re-seed. A Siamese tracker searches around its own
+# previous box, so a network left idle for fifty frames wakes up looking in the
+# wrong place. It is therefore re-pointed at the classical tracker's last known
+# box before being asked -- but its TEMPLATE is left alone, still the one taken
+# at designation. Re-initialising instead would grab a fresh template from
+# whatever frame the failure happened on, which is the worst possible moment to
+# choose a new appearance model.
+# ---------------------------------------------------------------------------
+def run_ncc_led(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
+                conf_floor=0.25):
+    n = len(frames_bgr)
+    fi0, cx0, cy0, sz0 = designate
+    yuv = [et.bgr_to_yuvdict(f) for f in frames_bgr]
+    h, w = frames_bgr[0].shape[:2]
+
+    ncc = st.Tracker(cues); ncc.designate(yuv[fi0], cx0, cy0, sz0)
+    net = make_tracker()
+    net.init(frames_bgr[fi0], (int(cx0 - sz0 / 2), int(cy0 - sz0 / 2), int(sz0), int(sz0)))
+
+    errs = np.full(n, np.nan, np.float32); states = ['IDLE'] * n
+    net_frames = 0
+    for i in range(fi0 + 1, n):
+        bx, by, bs, conf, state, ax, ay = ncc.update(yuv[i])
+        healthy = (state == 'LOCKED') and conf >= conf_floor
+        if healthy:
+            cx, cy = bx, by
+            states[i] = state
+        else:
+            # re-point (not re-init) at the classical tracker's last box
+            net.rect = [int(bx - bs / 2), int(by - bs / 2), max(2, int(bs)), max(2, int(bs))]
+            ok, box = net.update(frames_bgr[i])
+            net_frames += 1
+            if ok:
+                cx = box[0] + box[2] / 2.0; cy = box[1] + box[3] / 2.0
+                sz = max(box[2], box[3])
+                ncc.designate(yuv[i], cx, cy, sz)     # hand the lock back
+                states[i] = 'LOCKED'
+            else:
+                cx, cy = bx, by
+                states[i] = state
+        if gt is not None and gt[i] is not None:
+            gx, gy, _ = gt[i]
+            errs[i] = float(np.hypot(cx - gx, cy - gy))
+    m = et.metrics(errs, states, on_thresh, gt is not None)
+    m['net_pct'] = 100.0 * net_frames / max(1, n - fi0 - 1)
+    return m

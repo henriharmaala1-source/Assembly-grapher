@@ -94,7 +94,32 @@ class SiameseOnnxTracker:
     MEAN = np.array([0.485, 0.456, 0.406], np.float32) * 255.0
     STD = np.array([0.229, 0.224, 0.225], np.float32) * 255.0
 
-    def __init__(self, model_path, score_threshold=0.20, search_factor=None, hann=True):
+    def __init__(self, model_path, score_threshold=0.20, search_factor=None, hann=True,
+                 size_lr=1.0, max_scale_step=1.05):
+        # SIZE DAMPING. The box-regression head is unconstrained, and its output
+        # feeds the next crop: a size over-estimate enlarges the crop, which
+        # enlarges the next estimate. That is positive feedback with nothing
+        # opposing it, and on real footage the box inflates until it covers most
+        # of the frame while the tracker still reports LOCKED.
+        #
+        # Two brakes were tried. Only one survived the battery:
+        #
+        #                        raw head   step 1.05   lr.25   lr.10
+        #   MEAN on-target          85%        88%       82%     83%
+        #   median box / gt        0.93x      0.93x     0.99x   0.99x
+        #
+        #   max_scale_step  hard cap on the per-frame size ratio. 1.05 = 5%/frame.
+        #                   Stops the runaway AND gains 3 points: c_lowcontrast
+        #                   84 -> 100, i_worst 70 -> 87.
+        #   size_lr         EMA on the accepted size. DEFAULTS OFF (1.0). It
+        #                   produces a nicer median box (0.99x) but is too slow
+        #                   for real scale change -- z_below_floor collapses
+        #                   54% -> 13% and e_recede's box ends 1.5x oversized.
+        #                   A prettier number on the wrong axis.
+        #
+        # Set max_scale_step=0 for the raw, undamped head.
+        self.size_lr = float(size_lr)
+        self.max_scale_step = float(max_scale_step)
         # search_factor / hann are exposed because the INSTALLED OpenCV binary
         # does not match the published source: reverse-engineering it against
         # cv2.TrackerVit put the best fit at factor 3 without the Hann window,
@@ -192,10 +217,21 @@ class SiameseOnnxTracker:
 
         x0 = self.rect[0] + _trunc_div2(self.rect[2] - crop_sz)
         y0 = self.rect[1] + _trunc_div2(self.rect[3] - crop_sz)
-        self.rect = [int(math.floor((cx - w / 2) * crop_sz + x0)),
-                     int(math.floor((cy - h / 2) * crop_sz + y0)),
-                     int(math.floor(w * crop_sz)),
-                     int(math.floor(h * crop_sz))]
+        nw = w * crop_sz
+        nh = h * crop_sz
+        ow, oh = float(self.rect[2]), float(self.rect[3])
+        if self.max_scale_step > 1.0 and ow > 0 and oh > 0:
+            nw = min(max(nw, ow / self.max_scale_step), ow * self.max_scale_step)
+            nh = min(max(nh, oh / self.max_scale_step), oh * self.max_scale_step)
+        if self.size_lr < 1.0:
+            nw = (1.0 - self.size_lr) * ow + self.size_lr * nw
+            nh = (1.0 - self.size_lr) * oh + self.size_lr * nh
+        # Centre from the decoded position and the ACCEPTED size, so damping the
+        # size cannot shift the box off the peak the network actually found.
+        ccx = cx * crop_sz + x0
+        ccy = cy * crop_sz + y0
+        self.rect = [int(math.floor(ccx - nw / 2)), int(math.floor(ccy - nh / 2)),
+                     max(2, int(round(nw))), max(2, int(round(nh)))]
         return True, tuple(self.rect)
 
     def getTrackingScore(self):

@@ -49,6 +49,24 @@ import kotlin.math.sqrt
 class OnnxSiameseTracker(
     modelBytes: ByteArray,
     private val scoreThreshold: Float = 0.20f,
+    /**
+     * Hard cap on the per-frame box size ratio. 1.05 = 5% per frame.
+     *
+     * The box-regression head is unconstrained and its output feeds the NEXT
+     * crop, so an over-estimate enlarges the crop, which enlarges the next
+     * estimate — positive feedback with nothing opposing it. Observed on real
+     * footage: the box inflates until it covers most of the frame while the
+     * tracker still reports LOCKED, because "LOCKED" here only means score >
+     * 0.20 and says nothing about the box.
+     *
+     * Measured on the battery: 85% undamped -> 88% with this cap (c_lowcontrast
+     * 84 -> 100, i_worst 70 -> 87). An EMA on the size was also tried and is
+     * NOT used — it gives a nicer median box but is too slow for genuine scale
+     * change, collapsing z_below_floor from 54% to 13%.
+     *
+     * 0 disables the cap.
+     */
+    private val maxScaleStep: Float = 1.05f,
 ) {
     data class Box(val x: Int, val y: Int, val w: Int, val h: Int)
 
@@ -147,10 +165,18 @@ class OnnxSiameseTracker(
         // NOTE: x0/y0 come from the box BEFORE this update, matching the C++.
         val x0 = rect.x + truncDiv2(rect.w - cropSz)
         val y0 = rect.y + truncDiv2(rect.h - cropSz)
-        rect = Box(floor((cx - w / 2) * cropSz + x0).toInt(),
-                   floor((cy - h / 2) * cropSz + y0).toInt(),
-                   floor(w * cropSz).toInt().coerceAtLeast(2),
-                   floor(h * cropSz).toInt().coerceAtLeast(2))
+        var nw = w * cropSz
+        var nh = h * cropSz
+        if (maxScaleStep > 1f && rect.w > 0 && rect.h > 0) {
+            nw = nw.coerceIn(rect.w / maxScaleStep, rect.w * maxScaleStep)
+            nh = nh.coerceIn(rect.h / maxScaleStep, rect.h * maxScaleStep)
+        }
+        // Centre from the decoded position and the ACCEPTED size, so clamping
+        // the size cannot shift the box off the peak the network actually found.
+        val ccx = cx * cropSz + x0
+        val ccy = cy * cropSz + y0
+        rect = Box(floor(ccx - nw / 2).toInt(), floor(ccy - nh / 2).toInt(),
+                   nw.toInt().coerceAtLeast(2), nh.toInt().coerceAtLeast(2))
         return rect
     }
 

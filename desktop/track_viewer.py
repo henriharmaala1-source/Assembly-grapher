@@ -189,7 +189,13 @@ class TriTracker:
         self.g_ncc = st.Tracker(self.cues); self.g_ncc.designate(yuv, cx, cy, size)
         self.n_ncc = st.Tracker(self.cues); self.n_ncc.designate(yuv, cx, cy, size)
         self.n_bad = 0
-        self.dcf = DCFTracker(channels=('y', 'u', 'v'))
+        # LUMA ONLY. Measured on the battery: y 78%, y+g 77%, y+uv 76%,
+        # y+g+uv 77% -- adding channels costs accuracy AND time (1.8 ms -> 4.4).
+        # The extra channels were tried because ablating CSRT attributed its
+        # whole lead to a colour descriptor; that did not reproduce here, in
+        # either framework. Wiring y+u+v anyway would be shipping the variant my
+        # own measurement rejected.
+        self.dcf = DCFTracker(channels=('y',))
         self.dcf.init(yuv, cx, cy, size)
         if HAVE_CSRT:
             self.csrt = cv2.TrackerCSRT_create()

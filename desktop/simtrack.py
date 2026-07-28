@@ -56,6 +56,21 @@ def apply_cue(crop, cue):
     if cue == 'none': return crop['y']
     if cue == 'edge': return sobel(crop['y'])
     if cue == 'chroma': return np.minimum(np.hypot(crop['u'],crop['v'])*1.41,255).astype(np.float32)
+    # HUE-PRESERVING cues. 'chroma' above is chroma MAGNITUDE -- one dimension,
+    # which separates saturated from unsaturated and cannot tell red from blue.
+    # Ablating OpenCV's CSRT showed its entire 18-point advantage over this
+    # tracker is a colour descriptor that keeps hue (+11 points), while the
+    # famous parts -- the ADMM spatial reliability map, channel weights, HOG,
+    # the 33-scale search -- contribute 0, 0, +1 and +1. So the cheap version of
+    # that finding is simply to stop throwing hue away: U and V carried as
+    # SEPARATE signed channels span the chroma plane instead of collapsing it to
+    # a radius. NCC is zero-mean normalised, so the signed range is fine as-is.
+    if cue == 'cu': return crop['u'].astype(np.float32)
+    if cue == 'cv': return crop['v'].astype(np.float32)
+    # Opponent pair rotated 45 deg: catches hues that lie along a U or V axis and
+    # would be near-constant in one of the two channels above.
+    if cue == 'co1': return ((crop['u'] + crop['v']) * 0.7071).astype(np.float32)
+    if cue == 'co2': return ((crop['u'] - crop['v']) * 0.7071).astype(np.float32)
     return crop['y']
 
 def ms(a): return a - a.mean()
@@ -624,7 +639,12 @@ SCEN = dict(translate=sc_translate, approach=sc_approach, occlusion=sc_occlusion
             rotate=sc_rotate, pan=sc_pan, pan_large=sc_pan_large, recede=sc_recede)
 CUESETS = {'none':['none'], 'edge':['edge'],
            'FUSE3':['edge','chroma','none'],   # incl. edge (scale-fragile)
-           'L+C':['none','chroma']}            # luma+chroma, both scale-robust
+           'L+C':['none','chroma'],            # luma+chroma, both scale-robust
+           # --- hue-preserving variants (see apply_cue) ---
+           'HUE':   ['edge','cu','cv','none'],       # chroma magnitude -> U,V
+           'HUE2':  ['none','cu','cv'],              # drop edge, keep it cheap
+           'HUE4':  ['none','cu','cv','co1','co2'],  # + 45-deg opponent pair
+           'HUEmag':['edge','chroma','cu','cv','none']}  # magnitude AND hue
 
 def main():
     print(f"{'scenario':<11}{'cues':<7}{'mean':>7}{'p90':>7}{'max':>7}{'lock%':>7}")

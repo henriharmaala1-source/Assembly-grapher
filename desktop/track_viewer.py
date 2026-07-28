@@ -372,6 +372,16 @@ class Viewer:
                 continue
             cx, cy, sz, _ = r
             p0 = to_view(cx - sz / 2, cy - sz / 2); p1 = to_view(cx + sz / 2, cy + sz / 2)
+            # NEST the rectangles by a few view pixels each.
+            #
+            # Coincident boxes are the normal case, not an edge case: GATED runs
+            # its own instance of the same network with the same designation, so
+            # while the net is reporting its box is BIT-IDENTICAL to LEARNED's
+            # (verified frame by frame). Drawn plainly, the last and thickest one
+            # painted over the others entirely and LEARNED looked like it was
+            # never drawing a box at all -- only its label showed.
+            k = i * 3
+            p0 = (p0[0] - k, p0[1] - k); p1 = (p1[0] + k, p1[1] + k)
             th = 3 if name == 'GATED' else 2
             cv2.rectangle(c, p0, p1, col, th)
             # Stagger the labels. When two trackers agree their boxes coincide,
@@ -419,6 +429,10 @@ class Viewer:
         if self.tri.gate_fallback:
             cv2.putText(c, "GATE: network declined -> classical", (20, y),
                         FONT, 0.55, (120, 200, 255), 1, cv2.LINE_AA)
+            y += 24
+        elif self.tri.out.get('GATED') and self.tri.out.get('LEARNED'):
+            cv2.putText(c, "GATE: following the network (boxes coincide, drawn nested)",
+                        (20, y), FONT, 0.5, (130, 130, 140), 1, cv2.LINE_AA)
             y += 24
         tot = sum(self.tri.ms.values())
         cv2.putText(c, f"total {tot:5.1f} ms  ->  {1000/max(tot,1e-3):4.1f} fps"

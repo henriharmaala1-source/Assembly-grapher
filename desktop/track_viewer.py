@@ -53,6 +53,7 @@ sys.path.insert(0, HERE)
 import eval_tracker as et                      # noqa: E402
 import simtrack as st                          # noqa: E402
 from siamese_onnx import SiameseOnnxTracker    # noqa: E402
+from dcf_tracker import DCFTracker              # noqa: E402
 
 def _find_model():
     # The model already ships as an Android asset; don't keep a second copy.
@@ -72,6 +73,13 @@ COL_LEARN = (240, 170, 60)     # blue-ish
 COL_GATE = (90, 90, 255)       # red
 COL_CSRT = (60, 230, 240)      # yellow
 COL_GNCC = (200, 120, 255)     # violet
+COL_DCF = (120, 255, 200)      # mint
+
+# DCF is the CSRT-class option that needs NO extra install: pure numpy over the
+# cv2/numpy already present. CSRT lives in opencv_contrib and is unavailable on
+# a machine without pip; this measured 78% on the battery against the classical
+# tracker's 70% and CSRT's 88%, at 1.8 ms against CSRT's 138 ms. So it is most
+# of the discriminative-filter gain, none of the dependency, and 77x cheaper.
 
 # CSRT (CSR-DCF) lives in opencv_contrib, which the plain opencv-python wheel
 # does not ship. It scored 88% on the battery against 70% for this project's
@@ -136,7 +144,7 @@ def list_dir(path, limit=400):
 class TriTracker:
     """The three tracked outputs, all seeded from one designation."""
 
-    ORDER = ('NCC', 'CSRT', 'LEARNED', 'GATE-NET', 'GATE-NCC')
+    ORDER = ('NCC', 'DCF', 'CSRT', 'LEARNED', 'GATE-NET', 'GATE-NCC')
 
     def __init__(self, model_path):
         self.cues = st.CUESETS.get('FUSE3', ['edge', 'chroma', 'none'])
@@ -162,6 +170,7 @@ class TriTracker:
     def reset(self):
         self.ncc = None
         self.csrt = None
+        self.dcf = None
         self.learn = None
         self.g_ncc = None
         self.g_learn = None
@@ -180,6 +189,8 @@ class TriTracker:
         self.g_ncc = st.Tracker(self.cues); self.g_ncc.designate(yuv, cx, cy, size)
         self.n_ncc = st.Tracker(self.cues); self.n_ncc.designate(yuv, cx, cy, size)
         self.n_bad = 0
+        self.dcf = DCFTracker(channels=('y', 'u', 'v'))
+        self.dcf.init(yuv, cx, cy, size)
         if HAVE_CSRT:
             self.csrt = cv2.TrackerCSRT_create()
             self.csrt.init(bgr, rect)
@@ -208,6 +219,13 @@ class TriTracker:
             bx, by, bs, conf, state, ax, ay = self.ncc.update(yuv)
             self.ms['NCC'] = 1000 * (time.perf_counter() - t0)
             self.out['NCC'] = (bx, by, bs, f"{state} {conf*100:.0f}%")
+
+        if self.dcf is not None and self.on['DCF']:
+            t0 = time.perf_counter()
+            r = self.dcf.update(yuv)
+            self.ms['DCF'] = 1000 * (time.perf_counter() - t0)
+            if r:
+                self.out['DCF'] = (r[0], r[1], r[2], f"psr {self.dcf.score:.1f}")
 
         if self.csrt is not None and self.on['CSRT']:
             t0 = time.perf_counter()
@@ -418,7 +436,7 @@ class Viewer:
             p0 = to_view(gx - gs / 2, gy - gs / 2); p1 = to_view(gx + gs / 2, gy + gs / 2)
             cv2.rectangle(c, p0, p1, COL_GT, 1)
 
-        for i, (name, col) in enumerate((('NCC', COL_NCC), ('CSRT', COL_CSRT),
+        for i, (name, col) in enumerate((('NCC', COL_NCC), ('DCF', COL_DCF), ('CSRT', COL_CSRT),
                                          ('LEARNED', COL_LEARN), ('GATE-NET', COL_GATE),
                                          ('GATE-NCC', COL_GNCC))):
             r = self.tri.out.get(name)
@@ -460,7 +478,7 @@ class Viewer:
             return
         y = 56
         self.hud_rows = []
-        for name, col in (('NCC', COL_NCC), ('CSRT', COL_CSRT),
+        for name, col in (('NCC', COL_NCC), ('DCF', COL_DCF), ('CSRT', COL_CSRT),
                           ('LEARNED', COL_LEARN), ('GATE-NET', COL_GATE),
                           ('GATE-NCC', COL_GNCC)):
             self.hud_rows.append(((16, y - 16, 620, 22), name))

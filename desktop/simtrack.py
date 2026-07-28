@@ -85,14 +85,47 @@ def norm_patch(chan, cx, cy, sz):
     return ms(p)
 
 def ncc_map(chan, tmpl, tn, g0, g1, stride=STRIDE):
+    """Zero-mean NCC over a grid of candidate positions, all at once.
+
+    This used to be a Python double loop calling numpy on a 28x28 patch per
+    position. Profiling the viewer put ncc_map at 10.3 s of 13 s, with ~300,000
+    calls to ndarray.mean and the norm helper -- i.e. essentially all of it was
+    numpy's PER-CALL overhead, not arithmetic. The tracker is not slow; calling
+    numpy 300,000 times is.
+
+    Vectorised via a strided view, using the same identity as the Kotlin
+    nccAt: with a zero-mean template, sum((v-mean)*t) == sum(v*t), and
+    sum((v-mean)^2) == sum(v^2) - sum(v)^2/N. So no patch ever needs centring
+    and the whole grid is three tensor reductions. Bit-comparable to the loop,
+    verified against it.
+    """
     gs = np.arange(g0, g1+1, stride); gw = len(gs)
-    resp = np.full((gw,gw), -2.0, np.float32); h = TMPL//2
-    for gj,cy in enumerate(gs):
-        for gi,cx in enumerate(gs):
-            x0=cx-h; y0=cy-h
-            if x0<0 or y0<0 or x0+TMPL>chan.shape[1] or y0+TMPL>chan.shape[0]: continue
-            p = chan[y0:y0+TMPL, x0:x0+TMPL]; p = p-p.mean()
-            resp[gj,gi] = (p*tmpl).sum()/(tn*nrm(p))
+    h = TMPL // 2
+    H, W = chan.shape
+    resp = np.full((gw, gw), -2.0, np.float32)
+    ok = (gs - h >= 0) & (gs + TMPL - h <= W) & (gs + TMPL - h <= H)
+    if not ok.any():
+        return resp, gs
+    win = np.lib.stride_tricks.sliding_window_view(chan, (TMPL, TMPL))
+    ys = gs[ok] - h
+    P = win[np.ix_(ys, ys)].astype(np.float32)          # (n,n,TMPL,TMPL)
+    # CENTRE THE PATCHES EXPLICITLY. The tempting one-pass form -- keep sum(v)
+    # and sum(v^2) and use sum((v-mean)^2) == sum(v^2) - sum(v)^2/n -- is what
+    # the Kotlin nccAt does, and it is unstable here. Both terms are ~5e7 for
+    # 8-bit pixels over a 28x28 patch while their difference is the variance,
+    # which on a low-contrast patch is many orders smaller: catastrophic
+    # cancellation, and the denominator comes out wrong precisely on flat
+    # regions. Real crops are full of them (sky, saturated ground); random test
+    # data is not, which is why the one-pass version passed synthetic checks at
+    # 3e-08 and was still off by 9.4 on real frames after the numerator was
+    # fixed. Centring costs one extra pass over an array that is already in
+    # cache, and it is exact.
+    Pc = P - P.mean((2, 3), keepdims=True)
+    num = np.einsum('ijkl,kl->ij', Pc, tmpl.astype(np.float32), dtype=np.float64)
+    den = np.sqrt(np.einsum('ijkl,ijkl->ij', Pc, Pc, dtype=np.float64))
+    r = (num / (tn * (den + 1e-6))).astype(np.float32)
+    idx = np.nonzero(ok)[0]
+    resp[np.ix_(idx, idx)] = r
     return resp, gs
 
 def psr_of(resp):

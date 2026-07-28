@@ -628,34 +628,46 @@ class LockTracker {
         val h = TMPL / 2
         val x0 = (cx - h).toInt(); val y0 = (cy - h).toInt()
         if (x0 < 0 || y0 < 0 || x0 + TMPL > crop.w || y0 + TMPL > crop.h) return -2f
-        // SINGLE pass. This is the hottest loop in the tracker — the HUD measured
-        // the cue stage at 101.7 ms while coasting — and it used to walk the 28x28
-        // patch TWICE: once for the mean, once for the dot product and norm. Two
-        // identities remove the first walk outright:
+        // TWO passes, deliberately. An earlier version here folded them into one
+        // using two identities:
+        //     sum((v-mean)*t)  == sum(v*t)                 (template is zero-mean)
+        //     sum((v-mean)^2)  == sum(v^2) - sum(v)^2/N
+        // Both are true in exact arithmetic and both are UNSAFE in floating point
+        // on the inputs this tracker actually sees.
         //
-        //   sum((v-mean)*t) == sum(v*t)              because the template is
-        //                                            zero-mean (normPatch subtracts
-        //                                            it, and an EMA of zero-mean
-        //                                            patches stays zero-mean)
-        //   sum((v-mean)^2) == sum(v^2) - sum(v)^2/N
+        // The template is only zero-mean to rounding (measured sum = -3.7e-04),
+        // which is harmless until the patch is FLAT: then the true numerator is
+        // zero, the denominator is zero, and that rounding residual becomes the
+        // whole numerator divided by nothing. And the variance identity subtracts
+        // two numbers that are both ~5e7 for 8-bit pixels over a 28x28 patch to
+        // get a difference that is orders of magnitude smaller -- catastrophic
+        // cancellation exactly on low-contrast patches.
         //
-        // Verified against the two-pass form on 300 random patches: max relative
-        // difference 1.4e-12. Exact, not approximate — no tracking behaviour
-        // changes. Sums accumulate in Double so the sum-of-squares subtraction
-        // cannot lose significance on a low-contrast patch.
+        // Neither shows up in synthetic tests: random patches are never flat. The
+        // Python mirror was measured against the two-pass form on real frames and
+        // was off by 2.9e+08 in the worst position -- a spurious peak far larger
+        // than any true correlation, which the argmax would take. Real crops are
+        // full of flat regions (sky, saturated ground), so this is a live failure
+        // mode in the search, not a curiosity.
+        //
+        // The saving was one read-only pass. That is not worth a wrong peak.
         val cd = crop.d; val cw = crop.w
-        var s = 0.0; var s2 = 0.0; var dot = 0f
+        var sum = 0f
+        for (j in 0 until TMPL) {
+            var o = (y0 + j) * cw + x0
+            for (i in 0 until TMPL) { sum += cd[o]; o++ }
+        }
+        val mean = sum / (TMPL * TMPL)
+        var dot = 0f; var pn = 0f
         var ti = 0
         for (j in 0 until TMPL) {
             var o = (y0 + j) * cw + x0
             for (i in 0 until TMPL) {
-                val v = cd[o]
-                s += v; s2 += v.toDouble() * v
-                dot += v * t[ti]
+                val v = cd[o] - mean
+                dot += v * t[ti]; pn += v * v
                 o++; ti++
             }
         }
-        val pn = (s2 - s * s / (TMPL * TMPL)).coerceAtLeast(0.0).toFloat()
         return dot / (tn * (sqrt(pn) + 1e-6f))
     }
 

@@ -67,6 +67,26 @@ class OnnxSiameseTracker(
      * 0 disables the cap.
      */
     private val maxScaleStep: Float = 1.05f,
+    /**
+     * Absolute bound on box size as a multiple of the DESIGNATED size.
+     *
+     * The rate cap above is not sufficient, for a structural reason. The search
+     * crop is 4*sqrt(w*h) and the head predicts w RELATIVE TO THAT CROP, so the
+     * fixed point is exactly w_pred = 1/SEARCH_FACTOR = 0.25. Any systematic
+     * over-prediction above that is exponential feedback, and a per-frame cap
+     * only sets how FAST it diverges. Observed on real footage WITH the 5% cap
+     * already in place: a 48 px designation reached about 8x, which is ~43
+     * frames compounding at 1.05.
+     *
+     * 0.25-4x is wide enough for genuine range change and costs nothing on the
+     * battery (88% with it, 88% without, worst box 2.5x so it never binds
+     * there). It converts an unbounded divergence into a bounded error.
+     *
+     * Fixing the size outright (bounds 1.0-1.0) was also measured: 84% against
+     * 88%, losing z_below_floor 54% -> 13%. So the head IS worth having; it just
+     * has to be fenced.
+     */
+    private val scaleBounds: ClosedFloatingPointRange<Float> = 0.25f..4.0f,
 ) {
     data class Box(val x: Int, val y: Int, val w: Int, val h: Int)
 
@@ -89,6 +109,7 @@ class OnnxSiameseTracker(
     private var template: OnnxTensor? = null
 
     private var rect = Box(0, 0, 0, 0)
+    private var initSize = 0f
     var trackingScore = 0f; private set
     val hasTarget get() = template != null
 
@@ -113,6 +134,7 @@ class OnnxSiameseTracker(
     fun designate(nv21: ByteArray, fw: Int, fh: Int, cx: Float, cy: Float, size: Float) {
         val s = size.toInt().coerceAtLeast(2)
         rect = Box((cx - size / 2).toInt(), (cy - size / 2).toInt(), s, s)
+        initSize = sqrt((s * s).toFloat())
         val cropSz = cropSize(rect, TEMPLATE_FACTOR)
         sampleCrop(nv21, fw, fh, rect, cropSz, TEMPLATE_SIZE, templBuf)
         template?.close()
@@ -170,6 +192,11 @@ class OnnxSiameseTracker(
         if (maxScaleStep > 1f && rect.w > 0 && rect.h > 0) {
             nw = nw.coerceIn(rect.w / maxScaleStep, rect.w * maxScaleStep)
             nh = nh.coerceIn(rect.h / maxScaleStep, rect.h * maxScaleStep)
+        }
+        if (initSize > 0f) {
+            val lo = scaleBounds.start * initSize
+            val hi = scaleBounds.endInclusive * initSize
+            nw = nw.coerceIn(lo, hi); nh = nh.coerceIn(lo, hi)
         }
         // Centre from the decoded position and the ACCEPTED size, so clamping
         // the size cannot shift the box off the peak the network actually found.

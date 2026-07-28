@@ -95,7 +95,7 @@ class SiameseOnnxTracker:
     STD = np.array([0.229, 0.224, 0.225], np.float32) * 255.0
 
     def __init__(self, model_path, score_threshold=0.20, search_factor=None, hann=True,
-                 size_lr=1.0, max_scale_step=1.05):
+                 size_lr=1.0, max_scale_step=1.05, scale_bounds=(0.25, 4.0)):
         # SIZE DAMPING. The box-regression head is unconstrained, and its output
         # feeds the next crop: a size over-estimate enlarges the crop, which
         # enlarges the next estimate. That is positive feedback with nothing
@@ -120,6 +120,21 @@ class SiameseOnnxTracker:
         # Set max_scale_step=0 for the raw, undamped head.
         self.size_lr = float(size_lr)
         self.max_scale_step = float(max_scale_step)
+        # ABSOLUTE bound on box size relative to the DESIGNATION.
+        #
+        # The rate cap alone is not enough, and the reason is structural rather
+        # than a tuning matter. The search crop is 4*sqrt(w*h) and the head
+        # predicts w RELATIVE TO THAT CROP, so the fixed point sits exactly at
+        # w_pred = 1/SEARCH_FACTOR = 0.25. Any systematic over-prediction above
+        # that is an exponential feedback loop; a per-frame cap only sets how
+        # FAST it runs away. Observed on real footage with the 5% cap already
+        # in: a 48 px designation reached roughly 8x, which is ~43 frames of
+        # compounding at 1.05.
+        # So the size is also held inside a multiple of the size the operator
+        # actually designated. Wide enough for real range change (0.25x-4x), and
+        # it turns an unbounded divergence into a bounded error.
+        self.scale_bounds = tuple(scale_bounds) if scale_bounds else None
+        self.init_size = 0.0
         # search_factor / hann are exposed because the INSTALLED OpenCV binary
         # does not match the published source: reverse-engineering it against
         # cv2.TrackerVit put the best fit at factor 3 without the Hann window,
@@ -185,6 +200,7 @@ class SiameseOnnxTracker:
     # -- API ---------------------------------------------------------------
     def init(self, image, rect):
         self.rect = [int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])]
+        self.init_size = math.sqrt(max(1.0, float(rect[2]) * float(rect[3])))
         crop, _ = self._crop(image, self.rect, self.TEMPLATE_FACTOR)
         # The template is set ONCE and persists inside the graph for every
         # subsequent forward(). This is what makes it a fixed-template tracker
@@ -226,6 +242,11 @@ class SiameseOnnxTracker:
         if self.size_lr < 1.0:
             nw = (1.0 - self.size_lr) * ow + self.size_lr * nw
             nh = (1.0 - self.size_lr) * oh + self.size_lr * nh
+        if self.scale_bounds and self.init_size > 0:
+            lo = self.scale_bounds[0] * self.init_size
+            hi = self.scale_bounds[1] * self.init_size
+            nw = min(max(nw, lo), hi)
+            nh = min(max(nh, lo), hi)
         # Centre from the decoded position and the ACCEPTED size, so damping the
         # size cannot shift the box off the peak the network actually found.
         ccx = cx * crop_sz + x0

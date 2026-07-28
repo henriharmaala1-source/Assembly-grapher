@@ -15,6 +15,28 @@ android {
         versionName = "0.1"
     }
 
+    // arm64 only. The bytedeco OpenCV artifact carries 82 native libraries per
+    // ABI; without this the APK would balloon by hundreds of megabytes for
+    // architectures this rig never runs on.
+    defaultConfig { ndk { abiFilters += "arm64-v8a" } }
+
+    packaging {
+        jniLibs {
+            // bytedeco and onnxruntime both ship libc++_shared.so.
+            pickFirsts += "**/libc++_shared.so"
+            // Everything CSRT does not need. opencv_tracking pulls core,
+            // imgproc, video, features2d, calib3d, dnn and flann transitively;
+            // the rest is dead weight in the APK.
+            excludes += listOf("**/libopencv_gapi.so", "**/libopencv_stitching.so",
+                               "**/libopencv_photo.so", "**/libopencv_ml.so",
+                               "**/libopencv_objdetect.so", "**/libopencv_highgui.so",
+                               "**/libjniopencv_gapi.so", "**/libjniopencv_stitching.so",
+                               "**/libjniopencv_photo.so", "**/libjniopencv_ml.so",
+                               "**/libjniopencv_objdetect.so", "**/libjniopencv_highgui.so")
+        }
+        resources { excludes += "META-INF/*.kotlin_module" }
+    }
+
     buildTypes {
         release { isMinifyEnabled = false }
     }
@@ -40,6 +62,21 @@ dependencies {
     // NNAPI/XNNPACK, and OpenCV's own model card warns its DNN backend has
     // "poor support for the transformer architecture for now".
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
+
+    // CSRT (CsrtTracker.kt) — the A/B that scored 88% on the battery against
+    // this project's 70%. NOT available from the official OpenCV Android AAR:
+    // that ships only MIL/GOTURN/DaSiamRPN/Nano/Vit, because CSRT lives in
+    // opencv_contrib which the official Android build excludes (verified by
+    // unpacking org.opencv:opencv:4.12.0). bytedeco does carry it —
+    // libopencv_tracking.so, 1.9 MB, arm64-v8a.
+    //
+    // arm64 ONLY, deliberately: the platform artifact would pull every ABI and
+    // add hundreds of MB. UNVERIFIED — this was never compiled; if it fails to
+    // resolve, delete these four lines and CsrtTracker.kt.
+    implementation("org.bytedeco:javacpp:1.5.13")
+    implementation("org.bytedeco:javacpp:1.5.13:android-arm64")
+    implementation("org.bytedeco:opencv:4.13.0-1.5.13")
+    implementation("org.bytedeco:opencv:4.13.0-1.5.13:android-arm64")
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.2")

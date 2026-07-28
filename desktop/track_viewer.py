@@ -9,6 +9,9 @@ drag a box around a target, watch all three trackers run the same footage from
 the same designation at the same time.
 
   NCC     this project's classical pixel tracker (simtrack)
+  CSRT    OpenCV's CSR-DCF -- a discriminative correlation filter that learns
+          online, no network and no model file. Needs opencv-contrib-python;
+          if it is missing the viewer simply runs without it.
   LEARNED the ONNX Siamese network (siamese_onnx)
   GATED   the network leading, with its OWN private NCC as fallback on frames
           where the network declines to answer
@@ -66,6 +69,13 @@ VIDEO_EXT = ('.mp4', '.avi', '.mov', '.mkv', '.m4v', '.webm')
 COL_NCC = (80, 220, 90)        # green
 COL_LEARN = (240, 170, 60)     # blue-ish
 COL_GATE = (90, 90, 255)       # red
+COL_CSRT = (60, 230, 240)      # yellow
+
+# CSRT (CSR-DCF) lives in opencv_contrib, which the plain opencv-python wheel
+# does not ship. It scored 88% on the battery against 70% for this project's
+# tracker and 83% for the network, so it belongs in the comparison -- but its
+# absence must not stop the viewer running.
+HAVE_CSRT = hasattr(cv2, 'TrackerCSRT_create')
 COL_GT = (200, 200, 200)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -135,6 +145,7 @@ class TriTracker:
 
     def reset(self):
         self.ncc = None
+        self.csrt = None
         self.learn = None
         self.g_ncc = None
         self.g_learn = None
@@ -148,6 +159,9 @@ class TriTracker:
         rect = (int(cx - size / 2), int(cy - size / 2), int(size), int(size))
         self.ncc = st.Tracker(self.cues); self.ncc.designate(yuv, cx, cy, size)
         self.g_ncc = st.Tracker(self.cues); self.g_ncc.designate(yuv, cx, cy, size)
+        if HAVE_CSRT:
+            self.csrt = cv2.TrackerCSRT_create()
+            self.csrt.init(bgr, rect)
         self.learn = self._mk_learned()
         self.g_learn = self._mk_learned()
         for t in (self.learn, self.g_learn):
@@ -164,6 +178,22 @@ class TriTracker:
         bx, by, bs, conf, state, ax, ay = self.ncc.update(yuv)
         self.ms['NCC'] = 1000 * (time.perf_counter() - t0)
         self.out['NCC'] = (bx, by, bs, f"{state} {conf*100:.0f}%")
+
+        if self.csrt is not None:
+            t0 = time.perf_counter()
+            try:
+                ok, box = self.csrt.update(bgr)
+            except cv2.error:
+                ok, box = False, (0, 0, 0, 0)     # CSRT throws if the box leaves the frame
+            self.ms['CSRT'] = 1000 * (time.perf_counter() - t0)
+            if ok:
+                self.out['CSRT'] = (box[0] + box[2] / 2, box[1] + box[3] / 2,
+                                    max(box[2], box[3]), "LOCKED")
+            else:
+                # No confidence to report: unlike the network, CSRT exposes no
+                # score, so a failure is all-or-nothing. That is exactly why it
+                # cannot be the one that drives a confidence gate.
+                self.out['CSRT'] = self.out.get('CSRT', (0, 0, 0, ''))[:3] + ("LOST",)
 
         if self.learn is not None:
             t0 = time.perf_counter()
@@ -315,8 +345,8 @@ class Viewer:
             p0 = to_view(gx - gs / 2, gy - gs / 2); p1 = to_view(gx + gs / 2, gy + gs / 2)
             cv2.rectangle(c, p0, p1, COL_GT, 1)
 
-        for i, (name, col) in enumerate((('NCC', COL_NCC), ('LEARNED', COL_LEARN),
-                                         ('GATED', COL_GATE))):
+        for i, (name, col) in enumerate((('NCC', COL_NCC), ('CSRT', COL_CSRT),
+                                         ('LEARNED', COL_LEARN), ('GATED', COL_GATE))):
             r = self.tri.out.get(name)
             if not r:
                 continue
@@ -345,7 +375,8 @@ class Viewer:
                         (20, 56), FONT, 0.6, (150, 190, 240), 1, cv2.LINE_AA)
             return
         y = 56
-        for name, col in (('NCC', COL_NCC), ('LEARNED', COL_LEARN), ('GATED', COL_GATE)):
+        for name, col in (('NCC', COL_NCC), ('CSRT', COL_CSRT),
+                          ('LEARNED', COL_LEARN), ('GATED', COL_GATE)):
             r = self.tri.out.get(name)
             if not r:
                 continue
@@ -377,6 +408,9 @@ class Viewer:
         for k in ('PLAY', 'STEP', 'CLEAR', 'OPEN', 'SAVE', 'FULL', 'QUIT'):
             on = (k == 'SAVE' and self.rec is not None)
             x = self.btn[k].draw(c, x, y, on=on)
+        if not HAVE_CSRT:
+            cv2.putText(c, "no CSRT — pip install opencv-contrib-python to compare it",
+                        (20, self.H - 108), FONT, 0.45, (120, 170, 255), 1, cv2.LINE_AA)
         if not self.tri.have_model:
             cv2.putText(c, "vittrack.onnx not found next to this script — NCC only",
                         (x + 20, y + 22), FONT, 0.5, (120, 170, 255), 1, cv2.LINE_AA)

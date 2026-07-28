@@ -339,7 +339,18 @@ def run_conf_gated(frames_bgr, gt, designate, cues, on_thresh, make_tracker):
 # choose a new appearance model.
 # ---------------------------------------------------------------------------
 def run_ncc_led(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
-                conf_floor=0.25):
+                conf_floor=0.25, trigger='patience', keep_size=True, patience=2):
+    """trigger='coasting' calls the network the moment the classical tracker
+    stops being LOCKED. That measured 82% and, worse, took g_occlusion to 48%
+    -- BELOW the classical tracker alone -- because coasting through an occluder
+    is the thing it does best, and the gate was calling for rescue during the one
+    failure that is not a failure.
+
+    trigger='searching' waits until coasting has actually FAILED (the tracker has
+    zoomed out to re-acquire), so the occlusion machinery gets to finish its job
+    first. keep_size takes only the network's POSITION on handover and keeps the
+    classical tracker's box size, so a loose network box never widens a tight
+    one."""
     n = len(frames_bgr)
     fi0, cx0, cy0, sz0 = designate
     yuv = [et.bgr_to_yuvdict(f) for f in frames_bgr]
@@ -350,10 +361,22 @@ def run_ncc_led(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
     net.init(frames_bgr[fi0], (int(cx0 - sz0 / 2), int(cy0 - sz0 / 2), int(sz0), int(sz0)))
 
     errs = np.full(n, np.nan, np.float32); states = ['IDLE'] * n
-    net_frames = 0
+    net_frames = 0; bad_run = 0
     for i in range(fi0 + 1, n):
         bx, by, bs, conf, state, ax, ay = ncc.update(yuv[i])
-        healthy = (state == 'LOCKED') and conf >= conf_floor
+        if trigger == 'patience':
+            # Fire after `patience` CONSECUTIVE non-LOCKED frames. patience=0 is
+            # the eager version (82%, but g_occlusion 48% -- it rescues during
+            # normal coasting, which is the thing this tracker does best);
+            # waiting for SEARCHING is the opposite failure, firing on ~0% of
+            # frames and collapsing to plain NCC. The useful setting is between.
+            bad = 0 if state == 'LOCKED' else bad_run + 1
+            bad_run = bad
+            healthy = bad <= patience
+        elif trigger == 'searching':
+            healthy = state in ('LOCKED', 'COASTING')
+        else:
+            healthy = (state == 'LOCKED') and conf >= conf_floor
         if healthy:
             cx, cy = bx, by
             states[i] = state
@@ -364,7 +387,7 @@ def run_ncc_led(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
             net_frames += 1
             if ok:
                 cx = box[0] + box[2] / 2.0; cy = box[1] + box[3] / 2.0
-                sz = max(box[2], box[3])
+                sz = bs if keep_size else max(box[2], box[3])
                 ncc.designate(yuv[i], cx, cy, sz)     # hand the lock back
                 states[i] = 'LOCKED'
             else:

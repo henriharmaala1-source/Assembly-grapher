@@ -37,6 +37,7 @@ Controls
   SPACE .................. play / pause          . or , ... step
   F ...................... fullscreen            R ....... clear the lock
   O ...................... back to the browser   S ....... save annotated mp4
+  L ...................... per-frame CSV log of every enabled tracker
   Q / ESC ................ quit
 """
 import os
@@ -70,6 +71,7 @@ COL_NCC = (80, 220, 90)        # green
 COL_LEARN = (240, 170, 60)     # blue-ish
 COL_GATE = (90, 90, 255)       # red
 COL_CSRT = (60, 230, 240)      # yellow
+COL_GNCC = (200, 120, 255)     # violet
 
 # CSRT (CSR-DCF) lives in opencv_contrib, which the plain opencv-python wheel
 # does not ship. It scored 88% on the battery against 70% for this project's
@@ -134,7 +136,7 @@ def list_dir(path, limit=400):
 class TriTracker:
     """The three tracked outputs, all seeded from one designation."""
 
-    ORDER = ('NCC', 'CSRT', 'LEARNED', 'GATED')
+    ORDER = ('NCC', 'CSRT', 'LEARNED', 'GATE-NET', 'GATE-NCC')
 
     def __init__(self, model_path):
         self.cues = st.CUESETS.get('FUSE3', ['edge', 'chroma', 'none'])
@@ -144,6 +146,12 @@ class TriTracker:
         # switch off what you are not looking at is the difference between 5 fps
         # and real-time.
         self.on = {k: True for k in self.ORDER}
+        # Consecutive non-LOCKED frames before GATE-NCC calls the network.
+        # 0 rescues during normal coasting -- which is the thing this tracker
+        # does BEST (g_occlusion fell to 48%, below the classical tracker alone);
+        # waiting for SEARCHING fires on ~0% of frames and collapses to plain
+        # NCC. Swept 0/1/2/3/5 -> 80/76/79/72/71%.
+        self.patience = 2
         self.model = model_path
         self.have_model = os.path.exists(model_path)
         self.reset()
@@ -157,6 +165,9 @@ class TriTracker:
         self.learn = None
         self.g_ncc = None
         self.g_learn = None
+        self.n_ncc = None          # GATE-NCC's own pair
+        self.n_learn = None
+        self.n_bad = 0
         self.out = {}
         self.ms = {}
         self.gate_fallback = False
@@ -167,12 +178,15 @@ class TriTracker:
         rect = (int(cx - size / 2), int(cy - size / 2), int(size), int(size))
         self.ncc = st.Tracker(self.cues); self.ncc.designate(yuv, cx, cy, size)
         self.g_ncc = st.Tracker(self.cues); self.g_ncc.designate(yuv, cx, cy, size)
+        self.n_ncc = st.Tracker(self.cues); self.n_ncc.designate(yuv, cx, cy, size)
+        self.n_bad = 0
         if HAVE_CSRT:
             self.csrt = cv2.TrackerCSRT_create()
             self.csrt.init(bgr, rect)
         self.learn = self._mk_learned()
         self.g_learn = self._mk_learned()
-        for t in (self.learn, self.g_learn):
+        self.n_learn = self._mk_learned()
+        for t in (self.learn, self.g_learn, self.n_learn):
             if t is not None:
                 t.init(bgr, rect)
         self.armed = True
@@ -221,7 +235,7 @@ class TriTracker:
                                    f" {self.learn.getTrackingScore():.2f}")
 
         # GATED: network leads, private NCC covers the frames it declines.
-        if self.g_learn is not None and self.on['GATED']:
+        if self.g_learn is not None and self.on['GATE-NET']:
             t0 = time.perf_counter()
             gbx, gby, gbs, gconf, gstate, _, _ = self.g_ncc.update(yuv)
             ok, box = self.g_learn.update(bgr)
@@ -238,8 +252,44 @@ class TriTracker:
                 cx, cy, sz = gbx, gby, gbs
                 self.gate_fallback = True
                 lbl = f"FALLBACK {gstate}"
-            self.ms['GATED'] = 1000 * (time.perf_counter() - t0)
-            self.out['GATED'] = (cx, cy, sz, lbl)
+            self.ms['GATE-NET'] = 1000 * (time.perf_counter() - t0)
+            self.out['GATE-NET'] = (cx, cy, sz, lbl)
+
+        # GATE-NCC: the classical tracker LEADS, the network rescues.
+        #
+        # The inverse arrangement, and the cheaper one -- the network only runs
+        # when the classical tracker has been unhealthy for `patience` frames,
+        # so the common case costs one tracker instead of two. On the synthetic
+        # battery it loses to GATE-NET at every patience setting tried (best 80%
+        # against 92%), but that metric scores centre error against a 25px
+        # tolerance and CANNOT see box tightness, which is the property the
+        # classical tracker actually wins on in real footage. Both are here so
+        # the choice can be made on real video with the log, not on a metric
+        # that is blind to the difference.
+        if self.n_learn is not None and self.on['GATE-NCC']:
+            t0 = time.perf_counter()
+            nbx, nby, nbs, nconf, nstate, _, _ = self.n_ncc.update(yuv)
+            self.n_bad = 0 if nstate == 'LOCKED' else self.n_bad + 1
+            if self.n_bad <= self.patience:
+                cx, cy, sz = nbx, nby, nbs
+                lbl = f"ncc {nstate} {nconf*100:.0f}%"
+            else:
+                # Re-POINT the network at the classical tracker's last box; do
+                # not re-init, which would take a fresh template from the very
+                # frame the failure happened on.
+                self.n_learn.rect = [int(nbx - nbs / 2), int(nby - nbs / 2),
+                                     max(2, int(nbs)), max(2, int(nbs))]
+                ok, box = self.n_learn.update(bgr)
+                if ok:
+                    cx = box[0] + box[2] / 2.0; cy = box[1] + box[3] / 2.0
+                    sz = nbs                      # keep the CLASSICAL size: a loose
+                    self.n_ncc.designate(yuv, cx, cy, sz)   # net box must not widen it
+                    lbl = f"NET RESCUE {self.n_learn.getTrackingScore():.2f}"
+                else:
+                    cx, cy, sz = nbx, nby, nbs
+                    lbl = f"ncc {nstate} (net declined)"
+            self.ms['GATE-NCC'] = 1000 * (time.perf_counter() - t0)
+            self.out['GATE-NCC'] = (cx, cy, sz, lbl)
 
 
 # ---------------------------------------------------------------------- viewer
@@ -269,7 +319,9 @@ class Viewer:
         self.msg = ""
         self.rec = None
         self.btn = {k: Btn(k) for k in
-                    ('PLAY', 'STEP', 'CLEAR', 'OPEN', 'SAVE', 'FULL', 'QUIT')}
+                    ('PLAY', 'STEP', 'CLEAR', 'OPEN', 'SAVE', 'LOG', 'FULL', 'QUIT')}
+        self.logf = None
+        self.log_rows = 0
 
     # -- video ------------------------------------------------------------
     def open(self, path):
@@ -327,6 +379,7 @@ class Viewer:
         self.idx += 1
         if self.tri.armed:
             self.tri.update(f, et.bgr_to_yuvdict(f))
+        self.write_log()
         if self.rec is not None:
             self.rec.write(cv2.resize(self.compose(), (self.W // 2, self.H // 2)))
         return True
@@ -366,7 +419,8 @@ class Viewer:
             cv2.rectangle(c, p0, p1, COL_GT, 1)
 
         for i, (name, col) in enumerate((('NCC', COL_NCC), ('CSRT', COL_CSRT),
-                                         ('LEARNED', COL_LEARN), ('GATED', COL_GATE))):
+                                         ('LEARNED', COL_LEARN), ('GATE-NET', COL_GATE),
+                                         ('GATE-NCC', COL_GNCC))):
             r = self.tri.out.get(name)
             if not r:
                 continue
@@ -407,7 +461,8 @@ class Viewer:
         y = 56
         self.hud_rows = []
         for name, col in (('NCC', COL_NCC), ('CSRT', COL_CSRT),
-                          ('LEARNED', COL_LEARN), ('GATED', COL_GATE)):
+                          ('LEARNED', COL_LEARN), ('GATE-NET', COL_GATE),
+                          ('GATE-NCC', COL_GNCC)):
             self.hud_rows.append(((16, y - 16, 620, 22), name))
             if not self.tri.on.get(name, True):
                 cv2.putText(c, f"{name:<8} off  (click to enable)", (20, y),
@@ -430,7 +485,7 @@ class Viewer:
             cv2.putText(c, "GATE: network declined -> classical", (20, y),
                         FONT, 0.55, (120, 200, 255), 1, cv2.LINE_AA)
             y += 24
-        elif self.tri.out.get('GATED') and self.tri.out.get('LEARNED'):
+        elif self.tri.out.get('GATE-NET') and self.tri.out.get('LEARNED'):
             cv2.putText(c, "GATE: following the network (boxes coincide, drawn nested)",
                         (20, y), FONT, 0.5, (130, 130, 140), 1, cv2.LINE_AA)
             y += 24
@@ -452,8 +507,8 @@ class Viewer:
                     FONT, 0.5, (190, 190, 200), 1, cv2.LINE_AA)
         x = 20; y = self.H - 60
         self.btn['PLAY'].label = 'PAUSE' if self.playing else 'PLAY'
-        for k in ('PLAY', 'STEP', 'CLEAR', 'OPEN', 'SAVE', 'FULL', 'QUIT'):
-            on = (k == 'SAVE' and self.rec is not None)
+        for k in ('PLAY', 'STEP', 'CLEAR', 'OPEN', 'SAVE', 'LOG', 'FULL', 'QUIT'):
+            on = (k == 'SAVE' and self.rec is not None) or (k == 'LOG' and self.logf is not None)
             x = self.btn[k].draw(c, x, y, on=on)
         if not HAVE_CSRT:
             cv2.putText(c, "no CSRT — pip install opencv-contrib-python to compare it",
@@ -554,12 +609,59 @@ class Viewer:
             self.entries = list_dir(self.browse_dir)
         elif k == 'SAVE':
             self.toggle_record()
+        elif k == 'LOG':
+            self.toggle_log()
         elif k == 'FULL':
             self.fullscreen = not self.fullscreen
             cv2.setWindowProperty('tracker', cv2.WND_PROP_FULLSCREEN,
                                   cv2.WINDOW_FULLSCREEN if self.fullscreen else cv2.WINDOW_NORMAL)
         elif k == 'QUIT':
             self.quit = True
+
+    # ---------------------------------------------------------------- logging
+    def toggle_log(self):
+        """Per-frame CSV of every enabled tracker. Off by default and written
+        only while enabled, so it costs nothing when you are just watching.
+
+        One row per frame per tracker rather than one wide row: trackers can be
+        toggled on and off mid-clip, and a wide layout would silently encode
+        that as blanks in columns whose meaning had changed. Long format stays
+        readable however the run was driven.
+
+        `size` is logged deliberately. The on-target metric in the battery
+        scores centre error against a 25px tolerance and is BLIND to box
+        tightness -- the property the classical tracker actually wins on in real
+        footage. Logging the size is what makes that measurable rather than an
+        impression.
+        """
+        if self.logf is not None:
+            self.logf.close(); self.logf = None
+            self.msg = f"log closed ({self.log_rows} rows)"
+            return
+        if not self.path:
+            self.msg = "open a video first"; return
+        out = os.path.splitext(self.path)[0] + '_trackerlog.csv'
+        self.logf = open(out, 'w', buffering=1)
+        self.logf.write("frame,tracker,cx,cy,size,ms,state,gt_cx,gt_cy,gt_size,err_px\n")
+        self.log_rows = 0
+        self.msg = f"logging -> {os.path.basename(out)}"
+
+    def write_log(self):
+        if self.logf is None or not self.tri.armed:
+            return
+        g = self.gt[self.idx] if (self.gt is not None and 0 <= self.idx < len(self.gt)
+                                  and self.gt[self.idx]) else None
+        for name in self.tri.ORDER:
+            r = self.tri.out.get(name)
+            if not r:
+                continue
+            cx, cy, sz, lbl = r
+            err = f"{np.hypot(cx - g[0], cy - g[1]):.2f}" if g else ''
+            gs = (f"{g[0]:.1f},{g[1]:.1f},{g[2]:.1f}" if g else ',,')
+            # the label can contain commas; quote it
+            self.logf.write(f'{self.idx},{name},{cx:.2f},{cy:.2f},{sz:.1f},'
+                            f'{self.tri.ms.get(name, 0):.2f},"{lbl}",{gs},{err}\n')
+            self.log_rows += 1
 
     def toggle_record(self):
         if self.rec is not None:
@@ -598,8 +700,12 @@ class Viewer:
                 self.action('OPEN')
             elif k == ord('s'):
                 self.action('SAVE')
+            elif k == ord('l'):
+                self.action('LOG')
         if self.rec is not None:
             self.rec.release()
+        if self.logf is not None:
+            self.logf.close()
         cv2.destroyAllWindows()
 
 

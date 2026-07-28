@@ -193,3 +193,127 @@ def _snr(frames, gt, step=5):
 
 if __name__ == '__main__':
     main()
+
+
+# ---------------------------------------------------------------------------
+# Hybrid: run both, pick per frame by MEASURED DISPLACEMENT.
+#
+# The battery chose this switching variable, not intuition. Sorted by peak
+# per-frame displacement the two trackers separate perfectly: classical wins or
+# ties on all six clips below ~5 px/frame, learned wins on all four above ~8.
+# Not SNR, not contrast, not target size. The mechanism is visible in the
+# constants: SEARCH=22 in a 128px crop covering ~141 frame px is a ~24
+# frame-pixel search window, so at 20 px/frame the target sits at the window
+# edge every frame.
+#
+# "Switch when closer" is the right instinct with the wrong variable. Range only
+# matters through the angular rate it produces; displacement IS that, measured,
+# and the tracker already computes it (CenterFilter.speed).
+#
+# Hysteresis, because a bare threshold chatters at the boundary. On a switch the
+# newly-selected tracker is RE-INITIALISED from the outgoing one's box: two
+# independently-run trackers drift apart, and handing over to one that quietly
+# lost the target some frames ago is how a hybrid ends up worse than either half.
+# ---------------------------------------------------------------------------
+def run_hybrid(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
+               t_lo=5.0, t_hi=8.0):
+    n = len(frames_bgr)
+    fi0, cx0, cy0, sz0 = designate
+    yuv = [et.bgr_to_yuvdict(f) for f in frames_bgr]
+    h, w = frames_bgr[0].shape[:2]
+
+    def vit_at(i, cx, cy, sz):
+        t = make_tracker()
+        x = int(max(0, min(cx - sz / 2, w - 2))); y = int(max(0, min(cy - sz / 2, h - 2)))
+        s = int(max(2, min(sz, min(w - x, h - y))))
+        t.init(frames_bgr[i], (x, y, s, s)); return t
+
+    ncc = st.Tracker(cues); ncc.designate(yuv[fi0], cx0, cy0, sz0)
+    vit = vit_at(fi0, cx0, cy0, sz0)
+
+    errs = np.full(n, np.nan, np.float32); states = ['IDLE'] * n
+    use_vit = False; spd = 0.0; px, py = cx0, cy0; switches = 0; vit_frames = 0
+    for i in range(fi0 + 1, n):
+        bx, by, bs, conf, stt, ax, ay = ncc.update(yuv[i])
+        ok, box = vit.update(frames_bgr[i])
+        vx = box[0] + box[2] / 2.0 if ok else bx
+        vy = box[1] + box[3] / 2.0 if ok else by
+        vs = max(box[2], box[3]) if ok else bs
+
+        want = use_vit
+        if not use_vit and spd > t_hi:
+            want = True
+        elif use_vit and spd < t_lo:
+            want = False
+        if want != use_vit:                      # hand over, re-init the newcomer
+            switches += 1
+            if want:
+                vit = vit_at(i, bx, by, bs); vx, vy, vs = bx, by, bs
+            else:
+                ncc.designate(yuv[i], vx, vy, vs); bx, by, bs, stt = vx, vy, vs, 'LOCKED'
+            use_vit = want
+
+        cx, cy = (vx, vy) if use_vit else (bx, by)
+        if use_vit:
+            vit_frames += 1
+        states[i] = 'LOCKED' if (use_vit and ok) else stt
+        spd = 0.7 * spd + 0.3 * float(np.hypot(cx - px, cy - py))
+        px, py = cx, cy
+        if gt is not None and gt[i] is not None:
+            gx, gy, _ = gt[i]
+            errs[i] = float(np.hypot(cx - gx, cy - gy))
+    m = et.metrics(errs, states, on_thresh, gt is not None)
+    m['switches'] = switches
+    m['vit_pct'] = 100.0 * vit_frames / max(1, n - fi0 - 1)
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Confidence-gated fallback -- the one that works.
+#
+# The learned tracker leads; the classical one takes over ONLY on frames where
+# the net declines to answer. Measured on the battery: 93% mean on-target,
+# equal to the per-clip oracle (pick the better tracker knowing the answer), vs
+# 70% classical alone and 83% learned alone.
+#
+# Why this and not the speed switch above: the net's score does not depend on
+# the tracker that is failing. Displacement measured from the selected output is
+# CIRCULAR -- when the pixel tracker loses a fast target its output stops moving
+# fast, so the trigger to switch away from it disappears exactly when it is
+# needed. Measured: the speed switch never fired on f_maneuver (0 switches, 19%)
+# and thrashed on i_worst (8 switches, 5% -- worse than either half alone).
+#
+# It also needs no range estimate, which matters because this airframe does not
+# have a reliable one. The fallback rate is itself a useful signal: 69% on
+# occlusion and 55% on low-contrast is the net telling you where it is blind.
+# ---------------------------------------------------------------------------
+def run_conf_gated(frames_bgr, gt, designate, cues, on_thresh, make_tracker):
+    n = len(frames_bgr)
+    fi0, cx0, cy0, sz0 = designate
+    yuv = [et.bgr_to_yuvdict(f) for f in frames_bgr]
+    h, w = frames_bgr[0].shape[:2]
+    vit = make_tracker()
+    x = int(max(0, min(cx0 - sz0 / 2, w - 2))); y = int(max(0, min(cy0 - sz0 / 2, h - 2)))
+    s = int(max(2, min(sz0, min(w - x, h - y))))
+    vit.init(frames_bgr[fi0], (x, y, s, s))
+    ncc = st.Tracker(cues); ncc.designate(yuv[fi0], cx0, cy0, sz0)
+
+    errs = np.full(n, np.nan, np.float32); states = ['IDLE'] * n; fb = 0
+    for i in range(fi0 + 1, n):
+        bx, by, bs, conf, stt, ax, ay = ncc.update(yuv[i])
+        ok, box = vit.update(frames_bgr[i])
+        if ok:
+            cx = box[0] + box[2] / 2.0; cy = box[1] + box[3] / 2.0
+            sz = max(box[2], box[3]); states[i] = 'LOCKED'
+            # Keep the classical tracker parked on the target while it is unused,
+            # so the frame it is needed it is not somewhere else entirely.
+            if np.hypot(bx - cx, by - cy) > bs:
+                ncc.designate(yuv[i], cx, cy, sz)
+        else:
+            cx, cy = bx, by; states[i] = stt; fb += 1
+        if gt is not None and gt[i] is not None:
+            gx, gy, _ = gt[i]
+            errs[i] = float(np.hypot(cx - gx, cy - gy))
+    m = et.metrics(errs, states, on_thresh, gt is not None)
+    m['fallback_pct'] = 100.0 * fb / max(1, n - fi0 - 1)
+    return m

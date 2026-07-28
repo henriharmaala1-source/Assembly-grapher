@@ -90,17 +90,33 @@ class Btn:
         return x <= mx <= x + w and y <= my <= y + h
 
 
-def find_videos(root, limit=400):
-    """Videos near the script, so the browser has something to show without a
-    file dialog (tkinter is not guaranteed to be installed)."""
+def list_dir(path, limit=400):
+    """One directory's sub-folders and videos, for the in-window browser.
+
+    Navigable rather than a recursive scan of the script folder: real footage
+    lives in ~/Downloads or wherever yt-dlp left it, and a browser that can only
+    see next to the script would mean copying every clip in before it could be
+    opened. Returns [(is_dir, label, fullpath)] with '..' first.
+    """
     out = []
-    for base, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
-        for f in sorted(files):
-            if f.lower().endswith(VIDEO_EXT):
-                out.append(os.path.join(base, f))
-                if len(out) >= limit:
-                    return out
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and parent != os.path.abspath(path):
+        out.append((True, '..', parent))
+    try:
+        names = sorted(os.listdir(path), key=str.lower)
+    except OSError:
+        return out
+    for n in names:
+        if n.startswith('.') or n == '__pycache__':
+            continue
+        full = os.path.join(path, n)
+        if os.path.isdir(full):
+            out.append((True, n + '/', full))
+    for n in names:
+        if n.lower().endswith(VIDEO_EXT):
+            out.append((False, n, os.path.join(path, n)))
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -188,7 +204,8 @@ class Viewer:
     def __init__(self):
         self.canvas = np.zeros((self.H, self.W, 3), np.uint8)
         self.mode = self.MODE_BROWSE
-        self.videos = find_videos(HERE)
+        self.browse_dir = HERE
+        self.entries = list_dir(self.browse_dir)
         self.scroll = 0
         self.cap = None
         self.path = None
@@ -225,12 +242,25 @@ class Viewer:
                 # Ground truth, when the clip has it: the label track makes the
                 # comparison quantitative instead of a vibe.
                 self.gt, _ = et.read_labels(lab, max(1, self.n))
+                probe = cv2.VideoCapture(path)
+                ok, pf = probe.read(); probe.release()
+                if ok and pf.shape[1] > self.MAX_W:
+                    k = self.MAX_W / pf.shape[1]      # labels are in SOURCE px
+                    self.gt = [None if g is None else (g[0]*k, g[1]*k, g[2]*k)
+                               for g in self.gt]
             except Exception:
                 self.gt = None
         self.advance()
         self.mode = self.MODE_PLAY
         self.playing = False
         self.msg = os.path.basename(path) + ("   [labels]" if self.gt else "")
+
+    # Real footage is 1080p or 4K. The learned tracker resamples to fixed crops
+    # so it does not care, but the classical one runs a full-FRAME optical-flow
+    # grid every update, and in Python that scales straight into the seconds.
+    # Cap the decode width; the whole pipeline (designation, boxes, labels) then
+    # works in the same reduced space, so nothing needs rescaling downstream.
+    MAX_W = 960
 
     def advance(self):
         if self.cap is None:
@@ -239,6 +269,10 @@ class Viewer:
         if not ok:
             self.playing = False
             return False
+        if f.shape[1] > self.MAX_W:
+            k = self.MAX_W / f.shape[1]
+            f = cv2.resize(f, (self.MAX_W, int(round(f.shape[0] * k))),
+                           interpolation=cv2.INTER_AREA)
         self.frame = f
         self.idx += 1
         if self.tri.armed:
@@ -351,23 +385,23 @@ class Viewer:
         c = self.canvas
         c[:] = (24, 24, 27)
         cv2.putText(c, "pick a video", (40, 60), FONT, 0.9, (235, 235, 240), 2, cv2.LINE_AA)
-        cv2.putText(c, f"searched {HERE}", (40, 92), FONT, 0.5, (140, 140, 150), 1, cv2.LINE_AA)
+        cv2.putText(c, self.browse_dir, (40, 92), FONT, 0.5, (140, 140, 150), 1, cv2.LINE_AA)
         self.rows = []
-        if not self.videos:
-            cv2.putText(c, "no videos found — drop one next to this script and press O",
-                        (40, 150), FONT, 0.6, (150, 190, 240), 1, cv2.LINE_AA)
         y = 140
-        for i in range(self.scroll, min(len(self.videos), self.scroll + 22)):
-            p = self.videos[i]
+        for i in range(self.scroll, min(len(self.entries), self.scroll + 22)):
+            is_dir, label, full = self.entries[i]
             r = (40, y - 22, self.W - 80, 30)
-            self.rows.append((r, p))
+            self.rows.append((r, is_dir, full))
             cv2.rectangle(c, (r[0], r[1]), (r[0] + r[2], r[1] + r[3]), (38, 38, 43), -1)
-            cv2.putText(c, os.path.relpath(p, HERE), (52, y),
-                        FONT, 0.55, (215, 215, 225), 1, cv2.LINE_AA)
+            col = (170, 200, 245) if is_dir else (215, 215, 225)
+            cv2.putText(c, label, (52, y), FONT, 0.55, col, 1, cv2.LINE_AA)
             y += 34
+        if len(self.entries) <= 1:
+            cv2.putText(c, "nothing here — use '..' to go up", (40, 150),
+                        FONT, 0.6, (150, 190, 240), 1, cv2.LINE_AA)
         x = 40; yb = self.H - 60
         for k in ('OPEN', 'QUIT'):
-            self.btn[k].label = 'RESCAN' if k == 'OPEN' else 'QUIT'
+            self.btn[k].label = 'HOME' if k == 'OPEN' else 'QUIT'
             x = self.btn[k].draw(c, x, yb)
         if self.msg:
             cv2.putText(c, self.msg, (40, self.H - 90), FONT, 0.55,
@@ -378,15 +412,21 @@ class Viewer:
     def on_mouse(self, ev, mx, my, flags, _):
         if self.mode == self.MODE_BROWSE:
             if ev == cv2.EVENT_LBUTTONDOWN:
-                for (rx, ry, rw, rh), p in self.rows:
+                for (rx, ry, rw, rh), is_dir, p in self.rows:
                     if rx <= mx <= rx + rw and ry <= my <= ry + rh:
-                        self.open(p); return
+                        if is_dir:
+                            self.browse_dir = p
+                            self.entries = list_dir(p); self.scroll = 0
+                        else:
+                            self.open(p)
+                        return
                 if self.btn['OPEN'].hit(mx, my):
-                    self.videos = find_videos(HERE); self.msg = f"{len(self.videos)} found"
+                    self.browse_dir = os.path.expanduser('~')
+                    self.entries = list_dir(self.browse_dir); self.scroll = 0
                 elif self.btn['QUIT'].hit(mx, my):
                     self.quit = True
             elif ev == cv2.EVENT_MOUSEWHEEL:
-                self.scroll = max(0, min(len(self.videos) - 1,
+                self.scroll = max(0, min(max(0, len(self.entries) - 1),
                                          self.scroll + (-1 if flags > 0 else 1)))
             return
 
@@ -425,7 +465,7 @@ class Viewer:
             self.tri.reset(); self.msg = "lock cleared"
         elif k == 'OPEN':
             self.mode = self.MODE_BROWSE; self.playing = False
-            self.videos = find_videos(HERE)
+            self.entries = list_dir(self.browse_dir)
         elif k == 'SAVE':
             self.toggle_record()
         elif k == 'FULL':

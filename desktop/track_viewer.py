@@ -134,8 +134,16 @@ def list_dir(path, limit=400):
 class TriTracker:
     """The three tracked outputs, all seeded from one designation."""
 
+    ORDER = ('NCC', 'CSRT', 'LEARNED', 'GATED')
+
     def __init__(self, model_path):
         self.cues = st.CUESETS.get('FUSE3', ['edge', 'chroma', 'none'])
+        # Per-tracker enable. The Python NCC mirror costs ~115 ms on a 960px
+        # frame and GATED runs a SECOND one, so with everything on, ~185 ms of
+        # every ~200 ms frame is that one tracker paid for twice. Being able to
+        # switch off what you are not looking at is the difference between 5 fps
+        # and real-time.
+        self.on = {k: True for k in self.ORDER}
         self.model = model_path
         self.have_model = os.path.exists(model_path)
         self.reset()
@@ -174,12 +182,20 @@ class TriTracker:
     def update(self, bgr, yuv):
         if not self.armed:
             return
-        t0 = time.perf_counter()
-        bx, by, bs, conf, state, ax, ay = self.ncc.update(yuv)
-        self.ms['NCC'] = 1000 * (time.perf_counter() - t0)
-        self.out['NCC'] = (bx, by, bs, f"{state} {conf*100:.0f}%")
+        # Drop the readings of anything switched off. Without this a disabled
+        # tracker keeps its last box and timing on the HUD, so the total ms (and
+        # therefore the fps figure) stays wrong in exactly the direction that
+        # makes the toggle look ineffective.
+        for k in self.ORDER:
+            if not self.on.get(k, True):
+                self.ms.pop(k, None); self.out.pop(k, None)
+        if self.on['NCC']:
+            t0 = time.perf_counter()
+            bx, by, bs, conf, state, ax, ay = self.ncc.update(yuv)
+            self.ms['NCC'] = 1000 * (time.perf_counter() - t0)
+            self.out['NCC'] = (bx, by, bs, f"{state} {conf*100:.0f}%")
 
-        if self.csrt is not None:
+        if self.csrt is not None and self.on['CSRT']:
             t0 = time.perf_counter()
             try:
                 ok, box = self.csrt.update(bgr)
@@ -195,7 +211,7 @@ class TriTracker:
                 # cannot be the one that drives a confidence gate.
                 self.out['CSRT'] = self.out.get('CSRT', (0, 0, 0, ''))[:3] + ("LOST",)
 
-        if self.learn is not None:
+        if self.learn is not None and self.on['LEARNED']:
             t0 = time.perf_counter()
             ok, box = self.learn.update(bgr)
             self.ms['LEARNED'] = 1000 * (time.perf_counter() - t0)
@@ -205,7 +221,7 @@ class TriTracker:
                                    f" {self.learn.getTrackingScore():.2f}")
 
         # GATED: network leads, private NCC covers the frames it declines.
-        if self.g_learn is not None:
+        if self.g_learn is not None and self.on['GATED']:
             t0 = time.perf_counter()
             gbx, gby, gbs, gconf, gstate, _, _ = self.g_ncc.update(yuv)
             ok, box = self.g_learn.update(bgr)
@@ -290,7 +306,11 @@ class Viewer:
     # grid every update, and in Python that scales straight into the seconds.
     # Cap the decode width; the whole pipeline (designation, boxes, labels) then
     # works in the same reduced space, so nothing needs rescaling downstream.
-    MAX_W = 960
+    # 640, not 960. The learned tracker resamples to fixed crops so frame size
+    # never reaches it, but the classical tracker runs a full-FRAME optical-flow
+    # grid every update -- its cost is linear in pixels, and 960px was measured
+    # at 115 ms/frame on real footage against 53 ms on the 320px battery clips.
+    MAX_W = 640
 
     def advance(self):
         if self.cap is None:
@@ -375,10 +395,18 @@ class Viewer:
                         (20, 56), FONT, 0.6, (150, 190, 240), 1, cv2.LINE_AA)
             return
         y = 56
+        self.hud_rows = []
         for name, col in (('NCC', COL_NCC), ('CSRT', COL_CSRT),
                           ('LEARNED', COL_LEARN), ('GATED', COL_GATE)):
+            self.hud_rows.append(((16, y - 16, 620, 22), name))
+            if not self.tri.on.get(name, True):
+                cv2.putText(c, f"{name:<8} off  (click to enable)", (20, y),
+                            FONT, 0.55, (110, 110, 118), 1, cv2.LINE_AA)
+                y += 24
+                continue
             r = self.tri.out.get(name)
             if not r:
+                y += 24
                 continue
             cx, cy, _, lbl = r
             err = ""
@@ -391,6 +419,11 @@ class Viewer:
         if self.tri.gate_fallback:
             cv2.putText(c, "GATE: network declined -> classical", (20, y),
                         FONT, 0.55, (120, 200, 255), 1, cv2.LINE_AA)
+            y += 24
+        tot = sum(self.tri.ms.values())
+        cv2.putText(c, f"total {tot:5.1f} ms  ->  {1000/max(tot,1e-3):4.1f} fps"
+                       "     (click a row to toggle that tracker)",
+                    (20, y + 4), FONT, 0.55, (200, 200, 210), 1, cv2.LINE_AA)
 
     def draw_controls(self, c):
         bar_y = self.H - 96
@@ -468,6 +501,11 @@ class Viewer:
             for k, b in self.btn.items():
                 if b.hit(mx, my):
                     self.action(k); return
+            for (rx, ry, rw, rh), name in getattr(self, 'hud_rows', []):
+                if rx <= mx <= rx + rw and ry <= my <= ry + rh:
+                    self.tri.on[name] = not self.tri.on.get(name, True)
+                    self.msg = f"{name} {'on' if self.tri.on[name] else 'off'}"
+                    return
             sx, sy, sw, sh = self.scrub_rect
             if sx <= mx <= sx + sw and sy - 8 <= my <= sy + sh + 8:
                 self.seek((mx - sx) / max(1, sw) * (self.n - 1)); return

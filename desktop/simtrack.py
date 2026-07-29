@@ -38,6 +38,158 @@ USE_AFFINE_EGO = False
 NBEST = 1                # experiment switch: >1 enables N-best peak selection   # experiment switch; see ego_affine_at
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
+# ---------------------------------------------------------------- LK coasting
+# When the appearance match fails, the tracker coasts on a constant-velocity
+# guess: it stops looking at the image entirely and extrapolates. That is fine
+# for two or three frames and wrong for twenty -- a manoeuvring target's whole
+# problem is that its velocity is NOT constant, which is exactly when the match
+# is most likely to have failed in the first place.
+#
+# Sparse optical flow gives image evidence that costs nothing appearance-wise:
+# corners inside the last good box, tracked forward by Lucas-Kanade, median
+# displacement. It does not care what the target looks like, so it survives the
+# pose change / partial occlusion / motion blur that broke the template.
+#
+# MEASURED, over the whole real-footage battery (eval_lkcoast.py):
+#
+#     clip                    base    with LK
+#     d_pan_shake              71%        69%     consistent small loss
+#     f_maneuver               19%        68%     the reason this exists
+#     g_occlusion              79%        90%
+#     e_recede                100%       100%
+#     MEAN                     70%        77%
+#
+# Read the mean with care. Sweeping LK_MAX_PTS from 6 to 30 gives means of
+# 72,72,69,77,74,67,74,68,75 -- jagged, no plateau, because changing the point
+# set changes WHICH frame re-locks and the trajectory diverges from there. The
+# honest expected value is the average over that sweep, about +2 points, not the
+# +7 the best column shows. What IS consistent, and is why this ships enabled, is
+# the SIGN per clip: f_maneuver improves at 8 of 9 point counts (median 39% vs
+# 19%) and g_occlusion at 7 of 9 (median 90% vs 79%), while d_pan_shake loses
+# 2-7 at every single one. Flow helps when the appearance model fails on a moving
+# or occluded target and mildly hurts when the camera shakes, which is what the
+# mechanism predicts.
+#
+# Cost is not measurable against the NCC: 18.8 vs 19.1 ms/frame.
+LK_ASSIST   = int(os.environ.get('LK_ASSIST', 1))
+# Not resolvable by this battery -- see the jaggedness above. 12 is chosen for
+# cost (the median is over 12 displacements, not 30) from a range where every
+# value beat the baseline, NOT because 12 scored highest.
+LK_MAX_PTS  = int(os.environ.get('LK_MAX_PTS', 12))
+LK_MIN_PTS  = int(os.environ.get('LK_MIN_PTS', 4))   # fewer surviving corners = no verdict
+LK_QUALITY  = float(os.environ.get('LK_QUALITY', 0.01))   # goodFeaturesToTrack threshold, rel. to best corner
+# The four settings below are GATES THAT WERE TRIED AND LOST, kept switchable so
+# the result stays reproducible. Every one was invented to fix e_recede, which
+# the ungated prototype dropped from 100% to 82%; every one cost more elsewhere
+# than it recovered:
+#     +inner 0.7  68%     +fb 1.5  69%     +spread 2.5  63%     +minbox 28  73%
+# against 73% ungated and 75% with the seed-scope fix alone. e_recede's loss was
+# never a missing gate: it was the SEED SCOPE (see LK_FULLSEED). Fix the cause and
+# every gate becomes a pure cost.
+LK_INNER    = float(os.environ.get('LK_INNER', 1.0))      # seed from the INNER fraction of the box
+LK_MIN_BOX  = float(os.environ.get('LK_MIN_BOX', 0.0))    # box side below which corners are background
+LK_FB_MAX   = float(os.environ.get('LK_FB_MAX', 1e9))     # forward-backward round-trip ceiling, px (>=1e6 = off)
+LK_SPREAD   = float(os.environ.get('LK_SPREAD', 1e9))     # median |d - median(d)| ceiling, px
+# Re-seed on EVERY locked frame. Every 4th measured 69% against 75%, and the
+# reason is that the flow reference frame only advances when the points do: a
+# stale seed means tracking from a frame several old at the moment the target is
+# already hard to follow. The seed is a corner detection on a ~60 px sub-image,
+# so there is nothing to save by skipping it.
+LK_REFRESH  = int(os.environ.get('LK_REFRESH', 1))
+# Design switches, kept explicit because the prototype that motivated this
+# feature differed from the obvious integration in three ways at once, and the
+# obvious integration measured WORSE. See eval_lkcoast.py for the sweep.
+# 0 = flow REPLACES the const-vel + ego prediction step
+# 1 = flow ADDS to it (double-counts camera motion, which is wrong on paper)
+# 2 = flow corrects the OUTPUT after the search has already decided, on any
+#     frame that did not lock. Modes 0 and 1 both feed the prediction, so their
+#     correction is thrown away whenever the NCC then accepts a peak -- which on
+#     a clip that alternates LOCKED/COASTING is most of the time. Mode 2 is what
+#     the prototype did, and the difference is 14% vs 62% on f_maneuver.
+LK_MODE     = int(os.environ.get('LK_MODE', 2))
+LK_VFB      = int(os.environ.get('LK_VFB', 0))      # feed the flow displacement back into alpha-beta velocity
+LK_DROP     = int(os.environ.get('LK_DROP', 0))     # 1 = a rejected verdict also kills the point set
+# The flow window has to cover a frame's worth of motion or the pyramid cannot
+# find the point at all. f_maneuver moves ~18 px/frame, so a 15 px window at 2
+# levels -- which looked like a sane cheap default -- simply cannot track it.
+LK_WIN      = int(os.environ.get('LK_WIN', 21))
+LK_LEVELS   = int(os.environ.get('LK_LEVELS', 3))
+# Seed scope. goodFeaturesToTrack's qualityLevel is relative to the STRONGEST
+# CORNER IN THE IMAGE IT IS GIVEN, so the same number means two different things
+# on a full frame under a box mask (relative to the best corner in the scene --
+# strict) and on a cropped sub-image (relative to the best corner in the box --
+# permissive, and on a low-texture target that is whatever noise is present).
+# The sub-image is ~60x cheaper AND it is the better of the two: 75% against 73%,
+# and it is what recovers e_recede from 82% to 100%. The mechanism is the reverse
+# of the guess above. On a shrinking target a full-frame threshold keeps only the
+# corners that are strong relative to the WHOLE SCENE, and those are the
+# high-contrast background edges clipped by the box, not the target -- so flow
+# then measures the background's motion and glues the box to the scene while the
+# target recedes out of it. Box-relative selection keeps the best corners ON THE
+# TARGET, which is what the assist needs, and is also the cheap option.
+LK_FULLSEED = int(os.environ.get('LK_FULLSEED', 0))
+# Seed the point set from the designation itself, so a target lost on the very
+# first frame still has flow available. Sounds obviously right; measured, it
+# costs -- the designation box is the user's rectangle, not a fitted one, so its
+# corners are the least target-specific the tracker will ever hold.
+LK_SEED0    = int(os.environ.get('LK_SEED0', 0))
+# 'lk'  = OpenCV Shi-Tomasi + pyramidal Lucas-Kanade (what the sweep measured)
+# 'ssd' = grid of textured patches + brute-force SSD block match, which is what
+#         LockTracker.kt can actually run: it is pure Kotlin on GrayFrame with no
+#         OpenCV, deliberately, because the same algorithm has to survive the port
+#         to the onboard C++. OpticalFlow.kt already implements exactly this
+#         matcher (early-exit SSD, variance gate, forward-backward check) for
+#         ego-motion, so the port would reuse proven code -- but it is a
+#         DIFFERENT algorithm from the one measured above, so it was measured too
+#         rather than assumed equivalent.
+#
+#         IT IS NOT EQUIVALENT, and the reason is worth the port's attention:
+#
+#             three hard clips        f_maneuver  g_occlusion  e_recede   mean
+#             OpenCV LK                      68%          90%      100%    86%
+#             SSD block match, best          22%          83%      100%    68%
+#             OpenCV LK, output ROUNDED      44%          44%      100%    63%
+#
+#         Two fixes to the portable matcher worked exactly as diagnosed and were
+#         kept: a Shi-Tomasi min-eigenvalue gate in place of the variance gate
+#         took e_recede from 63% to 100% (variance accepts edge patches that
+#         slide, min-eigenvalue rejects them), and a coarse-to-fine pyramid
+#         replaced a wide flat search at a tenth the arithmetic. Neither
+#         recovered f_maneuver.
+#
+#         The third row is why. Rounding the OpenCV displacement to whole pixels
+#         -- changing nothing else -- reproduces the block matcher's score. So
+#         what the assist depends on is SUB-PIXEL displacement, not the matching
+#         method: over a hundred coasting frames, half-pixel rounding errors
+#         integrate into a drift larger than the target.
+#
+#         A block matcher cannot supply that, so the port must implement the
+#         ITERATIVE LK refinement (structure tensor, d <- d + G^-1 b) rather than
+#         reuse OpticalFlow.kt's search. That is still pure arithmetic and still
+#         MCU-portable -- it is just not the code that already exists.
+LK_METHOD   = os.environ.get('LK_METHOD', 'lk')
+SSD_PATCH   = int(os.environ.get('SSD_PATCH', 5))    # half-size of the match patch
+SSD_SEARCH  = int(os.environ.get('SSD_SEARCH', 12))  # half-size of the search window
+SSD_MINVAR  = float(os.environ.get('SSD_MINVAR', 40.0))
+# Patch selection for the portable variant. 'var' is what OpticalFlow.kt already
+# uses; 'eig' is the Shi-Tomasi min-eigenvalue of the structure tensor, which is
+# what OpenCV's goodFeaturesToTrack uses. The difference is the aperture problem:
+# a patch straddling a strong straight EDGE has high variance but is only
+# localisable across the edge, not along it, so a block match slides freely and
+# reports a displacement that is partly arbitrary. min-eigenvalue is small for
+# exactly those patches. It costs three gradient sums per candidate.
+SSD_GATE    = os.environ.get('SSD_GATE', 'eig')
+SSD_MINEIG  = float(os.environ.get('SSD_MINEIG', 8.0))
+SSD_LEVELS  = int(os.environ.get('SSD_LEVELS', 3))   # pyramid levels for the portable matcher
+
+# Temporal averaging of the TRACKING CROP (0/1 = off, else the window length).
+# MEASURED AND REJECTED, default off, kept so the result is reproducible:
+# 70% -> 64/63/58% at N=2/3/4 (eval_tavg_pip.py). It is a genuinely different
+# experiment from the frame-level averaging that also lost -- see the comment at
+# the point of use -- and it loses for a different reason and nearly as much.
+TAVG_PIP    = int(os.environ.get('TAVG_PIP', 0))
+TAVG_TOL    = 0.05         # fractional regionw change that invalidates the buffer
+
 def resample(a, rx, ry, rw, rh, oW, oH):
     H, W = a.shape
     ys = np.clip(ry + (np.arange(oH)+0.5)*(rh/oH), 0, H-1)
@@ -155,12 +307,16 @@ class Tracker:
     def __init__(self, cues, latency=4.5):
         self.cues=cues; self.latency=latency
         self.tmpl=None; self.state='IDLE'; self.bad=0; self.conf=0
+        self.lkpts=None; self.lkgrey=None; self.lkage=0; self.lkused=0
     def designate(self, frame, px, py, size):
         self.bcx=px; self.bcy=py; self.bsize=float(np.clip(size,SIZE_FLOOR,min(frame['y'].shape)))
         crop=crop_raw(frame,px,py,self.bsize)
         self._build(crop)
         self.x=px; self.y=py; self.vx=0.0; self.vy=0.0
         self.bad=0; self.conf=1; self.state='LOCKED'; self.psrema=0.0; self.prevY=frame['y']; self.occluded=False; self.occlow=0; self.since=0
+        self.lkpts=None; self.lkgrey=None; self.lkage=0; self.lkused=0
+        if LK_ASSIST and LK_SEED0:
+            self._seed(np.clip(frame['y'],0,255).astype(np.uint8))
     def _build(self, crop):
         self.tmpl=[]; self.tn=[]
         for c in self.cues:
@@ -176,6 +332,207 @@ class Tracker:
         self.kf=[[] for _ in self.cues]; self.kfn=[[] for _ in self.cues]
         self.tl=norm_patch(crop['y'], CROP/2, CROP/2, TMPL); self.tln=nrm(self.tl)
         self.histfg, self.histbg = hist_counts_at(crop, CROP/2, CROP/2)   # STAPLE-style cue
+
+    # ---- LK coasting assist ------------------------------------------------
+    def _seed(self, grey):
+        (self._ssd_seed if LK_METHOD=='ssd' else self._lk_seed)(grey)
+
+    def _step(self, grey):
+        return (self._ssd_step if LK_METHOD=='ssd' else self._lk_step)(grey)
+
+    # Portable variant: no OpenCV, so LockTracker.kt / the onboard C++ can run
+    # the same thing. Corner selection becomes a patch-VARIANCE gate over a grid
+    # (flat patches are ambiguous to match, which is the same property Shi-Tomasi
+    # tests) and pyramidal LK becomes a brute-force SSD search over +-SSD_SEARCH.
+    def _ssd_seed(self, grey):
+        self.lkage=0
+        h=self.bsize*0.5*LK_INNER
+        H,W=grey.shape; m=SSD_PATCH+SSD_SEARCH
+        x0=int(np.clip(self.bcx-h,m,W-m-1)); x1=int(np.clip(self.bcx+h,m,W-m-1))
+        y0=int(np.clip(self.bcy-h,m,H-m-1)); y1=int(np.clip(self.bcy+h,m,H-m-1))
+        if x1-x0<4 or y1-y0<4: self.lkpts=None; return
+        g=max(2,int(np.sqrt(LK_MAX_PTS))+1)
+        xs=np.linspace(x0,x1,g).astype(np.int32); ys=np.linspace(y0,y1,g).astype(np.int32)
+        p=SSD_PATCH; cand=[]
+        for cy in ys:
+            for cx in xs:
+                w_=grey[cy-p:cy+p+1, cx-p:cx+p+1].astype(np.float32)
+                if SSD_GATE=='eig':
+                    gx=0.5*(w_[1:-1,2:]-w_[1:-1,:-2]); gy=0.5*(w_[2:,1:-1]-w_[:-2,1:-1])
+                    a=float((gx*gx).mean()); b=float((gy*gy).mean()); c=float((gx*gy).mean())
+                    tr=a+b; det=a*b-c*c
+                    v=0.5*(tr-np.sqrt(max(0.0,tr*tr-4*det)))   # min eigenvalue
+                    if v<SSD_MINEIG: continue
+                else:
+                    v=float(w_.var())
+                    if v<SSD_MINVAR: continue
+                cand.append((v,cx,cy))
+        if len(cand)<LK_MIN_PTS: self.lkpts=None; return
+        # Strongest-textured first, so a small point budget spends itself on the
+        # patches that can actually be matched unambiguously.
+        cand.sort(key=lambda t:-t[0])
+        pts=np.array([[[c[1],c[2]]] for c in cand[:LK_MAX_PTS]],np.float32)
+        self.lkpts=pts; self.lkgrey=grey
+
+    @staticmethod
+    def _pyr(g, n):
+        """2x2 box-average pyramid. Decimation and an add are all the onboard
+        side needs; no filter kernel, no interpolation."""
+        out=[g.astype(np.float32)]
+        for _ in range(n-1):
+            a=out[-1]; h=(a.shape[0]//2)*2; w=(a.shape[1]//2)*2
+            if h<16 or w<16: break
+            out.append(0.25*(a[0:h:2,0:w:2]+a[1:h:2,0:w:2]+a[0:h:2,1:w:2]+a[1:h:2,1:w:2]))
+        return out
+
+    def _ssd_match(self, pa, pb, cx, cy):
+        """Coarse-to-fine block match, returning level-0 displacement or None.
+
+        This is the ingredient a flat block search cannot substitute for. On a
+        target crossing ~18 px per frame with the motion blur that comes with it,
+        a single-scale match has to search +-20 px (1681 candidate positions) and
+        still fails, because at full resolution the blurred target no longer
+        matches its own sharp template. Halving twice turns 18 px of motion into
+        4.5 px and blur into structure. It is also CHEAPER: ~5 px of search at
+        the coarsest level plus two +-2 refinements is ~12k operations per point
+        against ~200k for the flat search it replaces.
+        """
+        p=SSD_PATCH; L=len(pa)-1; dx=dy=0
+        for lv in range(L,-1,-1):
+            sc=1<<lv; a=pa[lv]; b=pb[lv]
+            px=int(round(cx/sc)); py=int(round(cy/sc))
+            rad=max(1,int(np.ceil(SSD_SEARCH/float(sc)))) if lv==L else 2
+            if px-p<0 or py-p<0 or px+p>=a.shape[1] or py+p>=a.shape[0]: return None
+            t=a[py-p:py+p+1, px-p:px+p+1]
+            x0=px+dx-p-rad; y0=py+dy-p-rad
+            x1=px+dx+p+rad+1; y1=py+dy+p+rad+1
+            if x0<0 or y0<0 or x1>b.shape[1] or y1>b.shape[0]: return None
+            win=np.lib.stride_tricks.sliding_window_view(b[y0:y1, x0:x1],(2*p+1,2*p+1))
+            diff=win-t
+            ssd=np.einsum('ijkl,ijkl->ij',diff,diff)
+            iy,ix=np.unravel_index(np.argmin(ssd),ssd.shape)
+            dx+=ix-rad; dy+=iy-rad
+            if lv>0: dx*=2; dy*=2
+        return dx,dy
+
+    def _ssd_step(self, grey):
+        if self.lkpts is None or self.lkgrey is None or len(self.lkpts)<LK_MIN_PTS:
+            return None
+        pa=self._pyr(self.lkgrey,SSD_LEVELS); pb=self._pyr(grey,SSD_LEVELS)
+        d=[]; keep=[]
+        for q in self.lkpts:
+            cx,cy=int(round(float(q[0,0]))),int(round(float(q[0,1])))
+            r=self._ssd_match(pa,pb,cx,cy)
+            if r is None: continue
+            d.append(r); keep.append((cx+r[0],cy+r[1]))
+        if len(d)<LK_MIN_PTS: self.lkpts=None; return None
+        d=np.asarray(d,np.float32)
+        self.lkpts=np.asarray(keep,np.float32).reshape(-1,1,2); self.lkgrey=grey
+        self.lkused+=1
+        return float(np.median(d[:,0])), float(np.median(d[:,1]))
+
+    def _lk_seed(self, grey):
+        """Re-detect corners inside the current box, in frame coordinates.
+
+        goodFeaturesToTrack runs on the CROPPED sub-image, not on the full frame
+        with a mask. Masking still computes the eigenvalue map everywhere, which
+        is the entire cost -- on a 60 px box this is ~3600 px of corner response
+        instead of ~230000. It also changes WHICH corners come back, and that
+        turns out to matter more than the speed: see LK_FULLSEED.
+        """
+        import cv2
+        self.lkage=0; self.lkfail=0
+        if self.bsize < LK_MIN_BOX:
+            # Below this the box holds too few pixels for corner detection to
+            # find anything but noise; whatever it returns will be background.
+            self.lkpts=None; return
+        h=self.bsize*0.5*LK_INNER
+        H,W=grey.shape
+        x0=int(np.clip(self.bcx-h,0,W-1)); x1=int(np.clip(self.bcx+h,x0+8,W))
+        y0=int(np.clip(self.bcy-h,0,H-1)); y1=int(np.clip(self.bcy+h,y0+8,H))
+        if LK_FULLSEED:
+            m=np.zeros_like(grey); m[y0:y1, x0:x1]=255
+            p=cv2.goodFeaturesToTrack(grey, LK_MAX_PTS, LK_QUALITY, 3, mask=m)
+            x0=y0=0
+        else:
+            sub=grey[y0:y1, x0:x1]
+            if sub.shape[0]<12 or sub.shape[1]<12:
+                self.lkpts=None; return
+            p=cv2.goodFeaturesToTrack(sub, LK_MAX_PTS, LK_QUALITY, 3)
+        if p is None or len(p)<LK_MIN_PTS:
+            # Not enough structure to flow. Saying "no verdict" is the whole
+            # point: a weak-corner target is one where LK returns the motion of
+            # whatever texture happens to be nearby, and coasting on the
+            # constant-velocity prediction is strictly better than that.
+            self.lkpts=None; return
+        p[:,0,0]+=x0; p[:,0,1]+=y0
+        self.lkpts=p.astype(np.float32); self.lkgrey=grey; self.lkage=0
+
+    def _lk_step(self, grey):
+        """Median LK displacement of the seeded corners, or None.
+
+        The quality gates this was built around are all DISABLED by default,
+        because measuring them one at a time showed every one costs more than it
+        recovers (see the LK_INNER block above). They stay implemented and
+        switchable so that result stays reproducible, and because the reasoning
+        behind them is not wrong in general -- it was wrong here:
+
+          fwd-bwd  TLD's round-trip test, and the most respectable of the four.
+                   It rejects points that slid along an edge or latched onto an
+                   occluder. On this battery it also rejects the points that
+                   carry a fast target through a blur, and f_maneuver goes
+                   62% -> 19%. A coasting tracker has nothing else; a
+                   half-trustworthy displacement beats extrapolation.
+          spread   requires the survivors to agree, on the theory that a mix of
+                   target and background gives two clusters and the median lands
+                   between them. Worst of the four (63%): during exactly the
+                   partial occlusion this feature is for, the points SHOULD
+                   disagree, and refusing to answer then is refusing to help.
+          inner    seed from the middle of the box only, to avoid background.
+                   Made redundant by box-relative corner selection, and on a
+                   small target it starves the detector.
+          min box  never fired on any clip -- identical results with and without.
+
+        The median over all surviving points is doing the robustness work that
+        these gates were meant to add, and it does it without ever withholding an
+        answer.
+        """
+        import cv2
+        if self.lkpts is None or self.lkgrey is None or len(self.lkpts)<LK_MIN_PTS:
+            return None
+        lk=dict(winSize=(LK_WIN,LK_WIN), maxLevel=LK_LEVELS,
+                criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+        nxt,stf,_=cv2.calcOpticalFlowPyrLK(self.lkgrey, grey, self.lkpts, None, **lk)
+        if nxt is None or stf is None:
+            self.lkpts=None; return None
+        ok=stf.ravel()==1
+        if LK_FB_MAX<1e6:                       # >=1e6 disables the round trip entirely
+            back,stb,_=cv2.calcOpticalFlowPyrLK(grey, self.lkgrey, nxt, None, **lk)
+            if back is None or stb is None:
+                self.lkpts=None; return None
+            fb=np.hypot(*(back-self.lkpts).reshape(-1,2).T)
+            ok=ok&(stb.ravel()==1)&(fb<=LK_FB_MAX)
+        if ok.sum()<LK_MIN_PTS:
+            # Out of points. This is the only way the flow track dies, and it is
+            # a real death: there is nothing left to advance.
+            self.lkpts=None; return None
+        d=(nxt[ok]-self.lkpts[ok]).reshape(-1,2)
+        # ADVANCE THE POINTS FIRST, unconditionally, and only then decide whether
+        # to believe the displacement. Rejecting the verdict and the point set
+        # together was the first version's mistake and it was silently fatal:
+        # three rejected frames dropped the track, so on the clip this feature
+        # exists for -- a 100-frame coast through a manoeuvre -- LK ran on 2
+        # frames out of 101 and the whole gain vanished. A frame whose corners
+        # disagree is a frame with no ANSWER, not a dead track; the points are
+        # still on the image and still where the flow says they are.
+        self.lkpts=nxt[ok].reshape(-1,1,2).astype(np.float32); self.lkgrey=grey
+        mdx=float(np.median(d[:,0])); mdy=float(np.median(d[:,1]))
+        if float(np.median(np.hypot(d[:,0]-mdx, d[:,1]-mdy)))>LK_SPREAD:
+            if LK_DROP: self.lkpts=None
+            return None
+        self.lkused+=1
+        return mdx,mdy
+
     def update(self, frame):
         # P1-A ego-motion feed-forward: estimate the camera pan (prev->cur, median
         # grid flow — target rejected as outlier) and add it to the PREDICTION so a
@@ -207,8 +564,30 @@ class Tracker:
                     fx, fy = aff
             edx=float(np.clip(fx,-cap,cap)); edy=float(np.clip(fy,-cap,cap))
         self.prevY=frame['y']
-        # predict (alpha-beta + ego)
-        self.x+=self.vx+edx; self.y+=self.vy+edy; pcx,pcy=self.x,self.y
+        # LK coast assist. Only while the appearance match is already failing:
+        # when the template still matches, the NCC peak is a better position
+        # estimate than a median of corner displacements, and letting flow move
+        # the prediction under a good lock just injects its own drift.
+        lkd=None; grey=None
+        if LK_ASSIST and LK_MODE<2 and self.bad>0 and self.lkpts is not None:
+            grey=np.clip(frame['y'],0,255).astype(np.uint8)
+            lkd=self._step(grey)
+        if lkd is None:
+            self.x+=self.vx+edx; self.y+=self.vy+edy
+        elif LK_MODE==0:
+            # Measured displacement REPLACES the constant-velocity step and the
+            # ego feed-forward. Image motion IS target motion plus camera motion
+            # and LK measures the sum, so adding ego on top would count the pan
+            # twice.
+            self.x+=lkd[0]; self.y+=lkd[1]
+        else:
+            self.x+=self.vx+edx+lkd[0]; self.y+=self.vy+edy+lkd[1]
+        if lkd is not None and LK_VFB:
+            # Feed it back into the alpha-beta velocity so that when LK goes
+            # quiet, the coast that resumes runs at the speed last OBSERVED
+            # rather than the one from before the target started manoeuvring.
+            self.vx=0.5*self.vx+0.5*lkd[0]; self.vy=0.5*self.vy+0.5*lkd[1]
+        pcx,pcy=self.x,self.y
         # zoom the search out (see LockTracker.kt) — only AFTER normal coasting has
         # failed for FOV_DELAY frames (early coasting rides the const-vel prediction
         # onto the target; zooming out early hurts). Coarser stride holds cost flat.
@@ -232,6 +611,42 @@ class Tracker:
         regionw = self.bsize*MARGIN*fov
         crop = {k: resample(frame[k], pcx-regionw/2, pcy-regionw/2, regionw, regionw, croppix, croppix)
                 for k in ('y','u','v')}
+        # Temporal averaging, restricted to the tracking crop.
+        #
+        # Averaging ego-ALIGNED FULL FRAMES was measured and lost decisively
+        # (70% -> 65%, g_occlusion 79% -> 35%). The reason is structural: frame
+        # alignment cancels CAMERA motion only, so a moving target is smeared by
+        # exactly its own displacement -- the averaging destroys the one thing
+        # being matched, and the harder the target moves the more it destroys.
+        #
+        # The crop does not have that defect, and gets its alignment for free.
+        # It is resampled about the tracker's own predicted centre every frame,
+        # so a tracked target sits at the SAME crop coordinate in consecutive
+        # crops with no warping: residual misalignment is just the prediction
+        # error, a couple of pixels, not the target's full displacement. Noise is
+        # temporally uncorrelated and averages down by sqrt(N); what smears
+        # instead is the BACKGROUND, which for a template matcher trying to
+        # separate target from background is a second benefit rather than a cost.
+        #
+        # Invalidated whenever the crop geometry moves: crops taken at different
+        # region widths are the same scene at different scales, and averaging
+        # those is just blur.
+        #
+        # MEASURED: 70% -> 64/63/58% at N=2/3/4. The premise holds and is not
+        # enough. Crop alignment is only as good as the PREDICTION it is centred
+        # on, which is worst exactly when the target moves, and the crop then
+        # magnifies that error: a 36 px box sampled over 79 px into a 128 px crop
+        # turns 1 px of frame-space prediction error into ~1.6 px of misalignment
+        # against a 28 px template. f_maneuver falls 19% -> 3%.
+        if TAVG_PIP>1:
+            prev=getattr(self,'_tak',None)
+            if prev is None or prev[0]!=croppix or abs(regionw/prev[1]-1.0)>TAVG_TOL:
+                self._tak=(croppix,regionw); self._tab=[]
+            self._tab.append(crop)
+            if len(self._tab)>TAVG_PIP: self._tab.pop(0)
+            if len(self._tab)>1:
+                crop={k: np.mean([c[k] for c in self._tab],axis=0,dtype=np.float32)
+                      for k in ('y','u','v')}
         velcrop=speed*CROP/(self.bsize*MARGIN)
         maxhalf=croppix//2-TMPL//2
         # Search width must track PREDICTION UNCERTAINTY. It is highest right
@@ -397,11 +812,41 @@ class Tracker:
             if not occluded: self._scale(crop,cxc,cyc)                 # P2-B: hold scale under occlusion
             if self.conf>=psr2conf(PSR_LOCK) and not occluded: self._adapt(crop,cxc,cyc)
             self.state='LOCKED'; self.bad=0
+            # Re-seed the corner set on a good lock, periodically rather than
+            # every frame: goodFeaturesToTrack is the expensive half of this and
+            # the corners only need to be fresh enough that the box they came
+            # from is still the right box.
+            if LK_ASSIST and LK_MODE<2:
+                self.lkage=getattr(self,'lkage',0)+1
+                if self.lkpts is None or self.lkage>=LK_REFRESH:
+                    if grey is None: grey=np.clip(frame['y'],0,255).astype(np.uint8)
+                    self._seed(grey)
         else:
             self.vx*=0.6; self.vy*=0.6          # coast decelerates instead of flying off
             self.bcx,self.bcy=pcx,pcy; self.bad+=1
             self.state=('LOST' if self.bad>=LOSS_TIMEOUT else
                         'SEARCHING' if wide else 'COASTING')
+        # LK coast assist, mode 2: correct the OUTPUT of a frame that failed to
+        # lock, rather than the prediction that fed the search. The search has
+        # already had its say and come back empty; what is reported and carried
+        # forward is then pure extrapolation, and this replaces that with
+        # measured image displacement. Feeding the same number into the
+        # prediction instead (modes 0/1) is nearly a no-op, because any frame
+        # where the NCC does accept a peak discards it.
+        if LK_ASSIST and LK_MODE==2:
+            if self.state!='LOCKED' and self.lkpts is not None:
+                if grey is None: grey=np.clip(frame['y'],0,255).astype(np.uint8)
+                lkd=self._step(grey)
+                if lkd is not None:
+                    self.bcx+=lkd[0]; self.bcy+=lkd[1]
+                    self.x=self.bcx; self.y=self.bcy
+                    if LK_VFB:
+                        self.vx=0.5*self.vx+0.5*lkd[0]; self.vy=0.5*self.vy+0.5*lkd[1]
+            elif self.state=='LOCKED':
+                self.lkage=getattr(self,'lkage',0)+1
+                if self.lkpts is None or self.lkage>=LK_REFRESH:
+                    if grey is None: grey=np.clip(frame['y'],0,255).astype(np.uint8)
+                    self._seed(grey)
         ax=self.x+self.vx*int(self.latency+0.5); ay=self.y+self.vy*int(self.latency+0.5)
         return self.bcx,self.bcy,self.bsize,self.conf,self.state,ax,ay
     def _scale(self,crop,cx,cy):

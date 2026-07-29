@@ -81,9 +81,9 @@ class DCFTracker:
         self.score = 0.0
 
     # -- features ---------------------------------------------------------
-    def _sample(self, f, cx, cy, region):
-        """Bilinear resample of a square region to N x N, edge-clamped."""
-        N = self.N
+    def _sample(self, f, cx, cy, region, n=None):
+        """Bilinear resample of a square region to n x n, edge-clamped."""
+        N = self.N if n is None else n
         ax = np.linspace(cx - region / 2, cx + region / 2, N, dtype=np.float32)
         ay = np.linspace(cy - region / 2, cy + region / 2, N, dtype=np.float32)
         H, W = f.shape
@@ -95,9 +95,10 @@ class DCFTracker:
         bot = f[np.ix_(y1, x0)] * (1 - tx) + f[np.ix_(y1, x1)] * tx
         return (top * (1 - ty[:, None]) + bot * ty[:, None]).astype(np.float32)
 
-    def _feats(self, frame, cx, cy, region):
+    def _feats(self, frame, cx, cy, region, n=None):
+        n = self.N if n is None else n
         out = []
-        y = self._sample(frame['y'], cx, cy, region)
+        y = self._sample(frame['y'], cx, cy, region, n)
         for c in self.chan:
             if c == 'y':
                 # log compression: flattens the huge dynamic range an AGC'd
@@ -109,12 +110,13 @@ class DCFTracker:
                 gy[1:-1, :] = y[2:, :] - y[:-2, :]
                 a = np.sqrt(gx * gx + gy * gy)
             elif c in ('u', 'v'):
-                a = self._sample(frame[c], cx, cy, region)
+                a = self._sample(frame[c], cx, cy, region, n)
             else:
                 raise ValueError(c)
             a = a - a.mean()
-            n = np.sqrt((a * a).sum()) + 1e-5
-            out.append((a / n) * self.win)      # windowed to kill FFT wrap edges
+            nrm = np.sqrt((a * a).sum()) + 1e-5
+            w = self.win if a.shape == self.win.shape else _hann2(a.shape[0])
+            out.append((a / nrm) * w)      # windowed to kill FFT wrap edges
         return out
 
     # -- API --------------------------------------------------------------
@@ -170,3 +172,28 @@ class DCFTracker:
             self.A[i] = (1 - self.lr) * self.A[i] + self.lr * (self.G * np.conj(f))
         self.B = (1 - self.lr) * self.B + self.lr * sum(f * np.conj(f) for f in F).real
         return self.cx, self.cy, self.size
+
+    # -- wide re-detection ------------------------------------------------
+    #
+    # A SECOND filter trained at a larger padding, rather than zero-padding the
+    # narrow filter up to a bigger grid.
+    #
+    # The padding approach was tried first and abandoned: embedding an NxN
+    # filter into an nxn grid has to preserve the FFT origin through
+    # fftshift/pad/ifftshift, and three plausible conventions all failed a
+    # self-test on known displacements (170 px error, or a constant 55 px bias
+    # -- displacement tracked, origin wrong). Correct FFT bookkeeping was not
+    # worth more time when a second filter costs 1.8 ms and cannot be subtly
+    # wrong: it is the SAME code path as the narrow one, just with a wider
+    # region, so it is verified by everything that already verifies that path.
+    #
+    # Why a separate filter rather than reusing the narrow one over a bigger
+    # region: the filter learns the target at a fixed pixels-per-target ratio.
+    # Feed it a 3x wider region resampled to the same grid and the target
+    # appears 3x smaller than anything it was trained on, and it simply does
+    # not match -- a wide search that silently finds nothing.
+    def make_wide(self, frame, cx, cy, size, padding=6.0):
+        w = DCFTracker(channels=self.chan, size=self.N, padding=padding,
+                       lr=self.lr, lam=self.lam, scales=(1.0,))
+        w.init(frame, cx, cy, size)
+        return w

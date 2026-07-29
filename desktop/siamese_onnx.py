@@ -95,7 +95,8 @@ class SiameseOnnxTracker:
     STD = np.array([0.229, 0.224, 0.225], np.float32) * 255.0
 
     def __init__(self, model_path, score_threshold=0.20, search_factor=None, hann=True,
-                 size_lr=1.0, max_scale_step=1.05, scale_bounds=(0.25, 4.0)):
+                 size_lr=1.0, max_scale_step=1.05, scale_bounds=(0.25, 4.0),
+                 anchor='none'):
         # SIZE DAMPING. The box-regression head is unconstrained, and its output
         # feeds the next crop: a size over-estimate enlarges the crop, which
         # enlarges the next estimate. That is positive feedback with nothing
@@ -134,6 +135,32 @@ class SiameseOnnxTracker:
         # actually designated. Wide enough for real range change (0.25x-4x), and
         # it turns an unbounded divergence into a bounded error.
         self.scale_bounds = tuple(scale_bounds) if scale_bounds else None
+        # anchor: how the box size is derived. MEASURED, three-way:
+        #
+        #                        accumulate+fence   anchor area   anchor full
+        #     c_lowcontrast          100%  2.5x        83%  3.6x    83%  3.0x
+        #     i_worst                 87%  1.7x        87%  1.8x    85%  1.4x
+        #     MEAN / WORST            88%  2.5x        86%  3.6x    86%  3.0x
+        #
+        # CSRT's design -- size = designation x one clamped scalar, never
+        # accumulated -- is structurally the right answer and it LOSES here, 2
+        # points of accuracy and a worse worst-case box. Defaults to 'none'
+        # because that is what the only evidence available says.
+        #
+        # The honest caveat: this battery does not reproduce the failure
+        # anchoring exists to fix. Real analog footage reached 8x from a 48 px
+        # designation; the worst any synthetic clip produces is 2.5x, so the
+        # loop never gets far enough here to be worth breaking. Re-test on real
+        # footage before trusting the default -- 'full' may well win there.
+        #
+        #         'none'   carry the box forward and fence it (the old way)
+        #         'full'   size = designated size * one scalar (CSRT's way);
+        #                  aspect ratio frozen at the designation
+        #         'area'   scale anchored to the designation, but the head's
+        #                  ASPECT is still honoured -- the two changes bundled
+        #                  together in 'full' are separable and only one of them
+        #                  may be worth having
+        self.anchor = anchor
         self.init_size = 0.0
         # search_factor / hann are exposed because the INSTALLED OpenCV binary
         # does not match the published source: reverse-engineering it against
@@ -201,6 +228,10 @@ class SiameseOnnxTracker:
     def init(self, image, rect):
         self.rect = [int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])]
         self.init_size = math.sqrt(max(1.0, float(rect[2]) * float(rect[3])))
+        # ANCHOR the size to the designation. See update() for why.
+        self.init_w = float(max(2, rect[2]))
+        self.init_h = float(max(2, rect[3]))
+        self.scale = 1.0
         crop, _ = self._crop(image, self.rect, self.TEMPLATE_FACTOR)
         # The template is set ONCE and persists inside the graph for every
         # subsequent forward(). This is what makes it a fixed-template tracker
@@ -233,20 +264,56 @@ class SiameseOnnxTracker:
 
         x0 = self.rect[0] + _trunc_div2(self.rect[2] - crop_sz)
         y0 = self.rect[1] + _trunc_div2(self.rect[3] - crop_sz)
-        nw = w * crop_sz
-        nh = h * crop_sz
-        ow, oh = float(self.rect[2]), float(self.rect[3])
-        if self.max_scale_step > 1.0 and ow > 0 and oh > 0:
-            nw = min(max(nw, ow / self.max_scale_step), ow * self.max_scale_step)
-            nh = min(max(nh, oh / self.max_scale_step), oh * self.max_scale_step)
+        # SIZE IS NEVER ACCUMULATED. This is how CSRT does it:
+        #     bounding_box.width = current_scale_factor * original_target_size.width
+        # The box is always the DESIGNATED size times one scalar. Previously the
+        # size was carried forward frame to frame and merely fenced, which left
+        # the feedback loop intact -- the crop is 4*sqrt(w*h) and the head
+        # predicts w RELATIVE to that crop, so the fixed point sits at
+        # w_pred = 0.25 and any systematic bias above it compounds. Fencing
+        # bounds how far it runs; anchoring removes the run.
+        #
+        # It also collapses two degrees of freedom to one: the aspect ratio is
+        # fixed at the designation, so the box cannot distort, and there is a
+        # single scalar to bound.
+        if self.anchor == 'none':
+            # OLD behaviour, kept as the comparison baseline: carry the box
+            # forward and fence it. The feedback loop is intact here -- this is
+            # what reached 8x on real footage.
+            nw, nh = w * crop_sz, h * crop_sz
+            ow, oh = float(self.rect[2]), float(self.rect[3])
+            if self.max_scale_step > 1.0 and ow > 0 and oh > 0:
+                nw = min(max(nw, ow / self.max_scale_step), ow * self.max_scale_step)
+                nh = min(max(nh, oh / self.max_scale_step), oh * self.max_scale_step)
+            if self.scale_bounds and self.init_size > 0:
+                lo = self.scale_bounds[0] * self.init_size
+                hi = self.scale_bounds[1] * self.init_size
+                nw = min(max(nw, lo), hi); nh = min(max(nh, lo), hi)
+            ccx = cx * crop_sz + x0
+            ccy = cy * crop_sz + y0
+            self.rect = [int(math.floor(ccx - nw / 2)), int(math.floor(ccy - nh / 2)),
+                         max(2, int(round(nw))), max(2, int(round(nh)))]
+            return True, tuple(self.rect)
+
+        implied = math.sqrt(max(1e-6, (w * crop_sz) * (h * crop_sz)) /
+                            max(1e-6, self.init_w * self.init_h))
+        if self.max_scale_step > 1.0:
+            implied = min(max(implied, self.scale / self.max_scale_step),
+                          self.scale * self.max_scale_step)
         if self.size_lr < 1.0:
-            nw = (1.0 - self.size_lr) * ow + self.size_lr * nw
-            nh = (1.0 - self.size_lr) * oh + self.size_lr * nh
-        if self.scale_bounds and self.init_size > 0:
-            lo = self.scale_bounds[0] * self.init_size
-            hi = self.scale_bounds[1] * self.init_size
-            nw = min(max(nw, lo), hi)
-            nh = min(max(nh, lo), hi)
+            implied = (1.0 - self.size_lr) * self.scale + self.size_lr * implied
+        if self.scale_bounds:
+            implied = min(max(implied, self.scale_bounds[0]), self.scale_bounds[1])
+        self.scale = implied
+        if self.anchor == 'area':
+            # keep the head's aspect ratio, anchor only the overall size
+            pw, ph = max(1e-6, w * crop_sz), max(1e-6, h * crop_sz)
+            ar = math.sqrt(pw / ph)
+            side = math.sqrt(self.init_w * self.init_h) * self.scale
+            nw, nh = side * ar, side / ar
+        else:
+            nw = self.init_w * self.scale
+            nh = self.init_h * self.scale
         # Centre from the decoded position and the ACCEPTED size, so damping the
         # size cannot shift the box off the peak the network actually found.
         ccx = cx * crop_sz + x0

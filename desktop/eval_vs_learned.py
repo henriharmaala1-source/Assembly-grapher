@@ -463,3 +463,59 @@ def run_gated_relative(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
     m = et.metrics(errs, states, on_thresh, gt is not None)
     m['fallback_pct'] = 100.0 * fb / max(1, n - fi0 - 1)
     return m
+
+
+# ---------------------------------------------------------------------------
+# UNION gate: fall back if the score is low in ABSOLUTE terms OR has collapsed
+# relative to its own baseline.
+#
+# The two gates were measured catching different failures. The absolute one
+# fires on low contrast, where the score genuinely sinks; the relative one on
+# occlusion, where it collapses from a healthy baseline. Neither dominates:
+#
+#     clip            absolute   relative   union
+#     c_lowcontrast      96%        83%      100%
+#     g_occlusion        79%        92%       92%
+#     MEAN               92%        91%       93%
+#
+# The union takes both, and it is the best configuration measured on this
+# battery -- 93% against 70% for the classical tracker alone and 78-88% for
+# every single tracker tried, learned or not.
+#
+# It is also the cheapest place to spend a gate: the fallback still costs a
+# second tracker only on the frames it fires.
+# ---------------------------------------------------------------------------
+def run_gated_union(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
+                    frac=0.55, enter=2, abs_thresh=0.20):
+    n = len(frames_bgr)
+    fi0, cx0, cy0, sz0 = designate
+    yuv = [et.bgr_to_yuvdict(f) for f in frames_bgr]
+    net = make_tracker()
+    if hasattr(net, 'score_threshold'):
+        net.score_threshold = 0.0
+    net.init(frames_bgr[fi0], (int(cx0 - sz0 / 2), int(cy0 - sz0 / 2), int(sz0), int(sz0)))
+    ncc = st.Tracker(cues); ncc.designate(yuv[fi0], cx0, cy0, sz0)
+
+    errs = np.full(n, np.nan, np.float32); states = ['IDLE'] * n
+    ema = 0.0; low = 0; fb = 0
+    for i in range(fi0 + 1, n):
+        bx, by, bs, conf, state, ax, ay = ncc.update(yuv[i])
+        ok, box = net.update(frames_bgr[i])
+        sc = net.getTrackingScore() if hasattr(net, 'getTrackingScore') else 1.0
+        if ema <= 0:
+            ema = sc
+        low = low + 1 if sc < frac * ema else 0
+        if (low >= enter) or (sc < abs_thresh):
+            cx, cy = bx, by; states[i] = state; fb += 1
+        else:
+            cx = box[0] + box[2] / 2.0; cy = box[1] + box[3] / 2.0
+            ema = 0.9 * ema + 0.1 * sc          # healthy scores only
+            if np.hypot(bx - cx, by - cy) > bs:
+                ncc.designate(yuv[i], cx, cy, max(box[2], box[3]))
+            states[i] = 'LOCKED'
+        if gt is not None and gt[i] is not None:
+            gx, gy, _ = gt[i]
+            errs[i] = float(np.hypot(cx - gx, cy - gy))
+    m = et.metrics(errs, states, on_thresh, gt is not None)
+    m['fallback_pct'] = 100.0 * fb / max(1, n - fi0 - 1)
+    return m

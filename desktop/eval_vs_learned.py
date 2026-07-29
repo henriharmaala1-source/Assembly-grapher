@@ -399,3 +399,67 @@ def run_ncc_led(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
     m = et.metrics(errs, states, on_thresh, gt is not None)
     m['net_pct'] = 100.0 * net_frames / max(1, n - fi0 - 1)
     return m
+
+
+# ---------------------------------------------------------------------------
+# CSRT finding #3, applied where it is actually missing.
+#
+# CSRT declares loss on the RAW response peak:
+#     if (max_val < params.psr_threshold) return Point2f(-1,-1);
+# -- no position at all, rather than a guess. That is the honest-failure signal
+# a gate needs, and the ONNX tracker nominally has one (score < 0.20 -> declines).
+#
+# On real footage it does not work. Logged over 344 frames of analog video: the
+# network's score sat at median 0.47, dipped below 0.30 on 7 frames, and below
+# the 0.20 threshold on 3 -- so the classical fallback fired on 1% of frames and
+# the gate was effectively inert. It was not "the network leading with a
+# fallback"; it was the network alone.
+#
+# The fix is not a lower threshold, which would fire constantly on the synthetic
+# clips where the score genuinely does collapse. It is to gate on the score
+# falling relative to ITS OWN running average -- what matters is that the score
+# COLLAPSED, not where it sits. That is exactly the trick LockTracker already
+# uses for occlusion (OCC_FRAC * psrEma with OCC_ENTER hysteresis), reused here.
+# ---------------------------------------------------------------------------
+def run_gated_relative(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
+                       frac=0.55, enter=2):
+    n = len(frames_bgr)
+    fi0, cx0, cy0, sz0 = designate
+    yuv = [et.bgr_to_yuvdict(f) for f in frames_bgr]
+
+    net = make_tracker()
+    # threshold 0: the network answers every frame and WE judge it, so the
+    # absolute cut cannot silently suppress the signal being measured.
+    if hasattr(net, 'score_threshold'):
+        net.score_threshold = 0.0
+    net.init(frames_bgr[fi0], (int(cx0 - sz0 / 2), int(cy0 - sz0 / 2), int(sz0), int(sz0)))
+    ncc = st.Tracker(cues); ncc.designate(yuv[fi0], cx0, cy0, sz0)
+
+    errs = np.full(n, np.nan, np.float32); states = ['IDLE'] * n
+    ema = 0.0; low = 0; fb = 0
+    for i in range(fi0 + 1, n):
+        bx, by, bs, conf, state, ax, ay = ncc.update(yuv[i])
+        ok, box = net.update(frames_bgr[i])
+        sc = net.getTrackingScore() if hasattr(net, 'getTrackingScore') else 1.0
+        if ema <= 0:
+            ema = sc
+        low = low + 1 if sc < frac * ema else 0
+        if low < enter:
+            cx = box[0] + box[2] / 2.0; cy = box[1] + box[3] / 2.0
+            sz = max(box[2], box[3])
+            # Only a HEALTHY score updates the baseline. Letting a collapsing
+            # score drag the average down is how a relative gate talks itself
+            # out of firing -- the same one-way-ratchet trap LockTracker's
+            # occlusion baseline had to be fixed for.
+            ema = 0.9 * ema + 0.1 * sc
+            if np.hypot(bx - cx, by - cy) > bs:
+                ncc.designate(yuv[i], cx, cy, sz)
+            states[i] = 'LOCKED'
+        else:
+            cx, cy = bx, by; states[i] = state; fb += 1
+        if gt is not None and gt[i] is not None:
+            gx, gy, _ = gt[i]
+            errs[i] = float(np.hypot(cx - gx, cy - gy))
+    m = et.metrics(errs, states, on_thresh, gt is not None)
+    m['fallback_pct'] = 100.0 * fb / max(1, n - fi0 - 1)
+    return m

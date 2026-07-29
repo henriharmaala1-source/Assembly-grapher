@@ -74,6 +74,7 @@ COL_GATE = (90, 90, 255)       # red
 COL_CSRT = (60, 230, 240)      # yellow
 COL_GNCC = (200, 120, 255)     # violet
 COL_DCF = (120, 255, 200)      # mint
+COL_RD = (255, 200, 120)       # pale orange
 
 # DCF is the CSRT-class option that needs NO extra install: pure numpy over the
 # cv2/numpy already present. CSRT lives in opencv_contrib and is unavailable on
@@ -144,7 +145,7 @@ def list_dir(path, limit=400):
 class TriTracker:
     """The three tracked outputs, all seeded from one designation."""
 
-    ORDER = ('NCC', 'DCF', 'CSRT', 'LEARNED', 'GATE-NET', 'GATE-NCC')
+    ORDER = ('NCC', 'DCF', 'CSRT', 'LEARNED', 'GATE-NET', 'GATE-NCC', 'NCC+RD')
 
     def __init__(self, model_path):
         self.cues = st.CUESETS.get('FUSE3', ['edge', 'chroma', 'none'])
@@ -160,6 +161,9 @@ class TriTracker:
         # waiting for SEARCHING fires on ~0% of frames and collapses to plain
         # NCC. Swept 0/1/2/3/5 -> 80/76/79/72/71%.
         self.patience = 2
+        self.rd_psr = 6.0        # wide-DCF PSR needed to accept a re-detection
+        self.rd_rebuild = True   # handover: rebuild templates, or reposition only
+        self.frame_no = 0
         self.model = model_path
         self.have_model = os.path.exists(model_path)
         self.reset()
@@ -177,6 +181,9 @@ class TriTracker:
         self.n_ncc = None          # GATE-NCC's own pair
         self.n_learn = None
         self.n_bad = 0
+        self.r_ncc = None       # NCC+RD: classical tracker + wide DCF re-detector
+        self.r_wide = None
+        self.r_bad = 0
         self.out = {}
         self.ms = {}
         self.gate_fallback = False
@@ -188,6 +195,9 @@ class TriTracker:
         self.ncc = st.Tracker(self.cues); self.ncc.designate(yuv, cx, cy, size)
         self.g_ncc = st.Tracker(self.cues); self.g_ncc.designate(yuv, cx, cy, size)
         self.n_ncc = st.Tracker(self.cues); self.n_ncc.designate(yuv, cx, cy, size)
+        self.r_ncc = st.Tracker(self.cues); self.r_ncc.designate(yuv, cx, cy, size)
+        self.r_wide = DCFTracker(channels=('y',)).make_wide(yuv, cx, cy, size, padding=6.0)
+        self.r_bad = 0
         self.n_bad = 0
         # LUMA ONLY. Measured on the battery: y 78%, y+g 77%, y+uv 76%,
         # y+g+uv 77% -- adding channels costs accuracy AND time (1.8 ms -> 4.4).
@@ -213,6 +223,7 @@ class TriTracker:
     def update(self, bgr, yuv):
         if not self.armed:
             return
+        self.frame_no += 1
         # Drop the readings of anything switched off. Without this a disabled
         # tracker keeps its last box and timing on the HUD, so the total ms (and
         # therefore the fps figure) stays wrong in exactly the direction that
@@ -278,6 +289,42 @@ class TriTracker:
                 lbl = f"FALLBACK {gstate}"
             self.ms['GATE-NET'] = 1000 * (time.perf_counter() - t0)
             self.out['GATE-NET'] = (cx, cy, sz, lbl)
+
+        # NCC+RD: classical tracker with a WIDE DCF re-detector, no network.
+        # Net zero on the synthetic battery (70% -> 69/70% depending on the
+        # handover), but the balance there is set by which clips dominate, and
+        # this is here so it can be re-tested on real footage. `rd_rebuild`
+        # picks the handover: rebuilding the templates wins when the target's
+        # appearance has genuinely changed, relocating wins when something else
+        # is in the box.
+        if self.r_wide is not None and self.on['NCC+RD']:
+            t0 = time.perf_counter()
+            rbx, rby, rbs, rconf, rstate, _, _ = self.r_ncc.update(yuv)
+            self.r_bad = 0 if rstate == 'LOCKED' else self.r_bad + 1
+            lbl = f"{rstate} {rconf*100:.0f}%"
+            if self.r_bad <= self.patience:
+                cx, cy, sz = rbx, rby, rbs
+                if rstate == 'LOCKED' and (self.frame_no % 5) == 0:
+                    self.r_wide.init(yuv, rbx, rby, rbs)
+            else:
+                self.r_wide.cx, self.r_wide.cy = rbx, rby
+                self.r_wide.update(yuv)
+                if self.r_wide.score >= self.rd_psr:
+                    cx, cy, sz = self.r_wide.cx, self.r_wide.cy, rbs
+                    lbl = f"RE-DETECT {self.r_wide.score:.1f}"
+                    if self.rd_rebuild:
+                        self.r_ncc.designate(yuv, cx, cy, sz)
+                    else:
+                        self.r_ncc.bcx = cx; self.r_ncc.bcy = cy
+                        self.r_ncc.x = cx; self.r_ncc.y = cy
+                        self.r_ncc.vx = 0.0; self.r_ncc.vy = 0.0
+                        self.r_ncc.bad = 0; self.r_ncc.state = 'LOCKED'
+                    self.r_bad = 0
+                else:
+                    cx, cy, sz = rbx, rby, rbs
+                    lbl = f"{rstate} (rd {self.r_wide.score:.1f})"
+            self.ms['NCC+RD'] = 1000 * (time.perf_counter() - t0)
+            self.out['NCC+RD'] = (cx, cy, sz, lbl)
 
         # GATE-NCC: the classical tracker LEADS, the network rescues.
         #
@@ -444,7 +491,7 @@ class Viewer:
 
         for i, (name, col) in enumerate((('NCC', COL_NCC), ('DCF', COL_DCF), ('CSRT', COL_CSRT),
                                          ('LEARNED', COL_LEARN), ('GATE-NET', COL_GATE),
-                                         ('GATE-NCC', COL_GNCC))):
+                                         ('GATE-NCC', COL_GNCC), ('NCC+RD', COL_RD))):
             r = self.tri.out.get(name)
             if not r:
                 continue
@@ -486,7 +533,7 @@ class Viewer:
         self.hud_rows = []
         for name, col in (('NCC', COL_NCC), ('DCF', COL_DCF), ('CSRT', COL_CSRT),
                           ('LEARNED', COL_LEARN), ('GATE-NET', COL_GATE),
-                          ('GATE-NCC', COL_GNCC)):
+                          ('GATE-NCC', COL_GNCC), ('NCC+RD', COL_RD)):
             self.hud_rows.append(((16, y - 16, 620, 22), name))
             if not self.tri.on.get(name, True):
                 cv2.putText(c, f"{name:<8} off  (click to enable)", (20, y),

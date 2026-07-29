@@ -192,6 +192,36 @@ class DCFTracker:
     # Feed it a 3x wider region resampled to the same grid and the target
     # appears 3x smaller than anything it was trained on, and it simply does
     # not match -- a wide search that silently finds nothing.
+    # MEASURED OUTCOME of using this to rescue the classical tracker: net zero.
+    #
+    #     clip                   NCC   re-designate   relocate only
+    #     d_pan_shake             71%          95%            69%
+    #     g_occlusion             79%          76%            81%
+    #     h_clutter_distractor    99%          77%           100%
+    #     MEAN                    70%          69%            70%
+    #
+    # The re-detection itself works -- self-tested to +-80px against the narrow
+    # filter's +-40px, with PSR separating found (9-11) from lost (3.0-3.6). What
+    # fails is the HANDOVER, and not for the reason first assumed.
+    #
+    # First hypothesis: a wider search finds the wrong object. So the accepted
+    # peak was gated on proximity to the coasted motion prediction. That changed
+    # NOTHING -- identical results at 1.0/1.5/2.5 box radii, including settings
+    # tight enough to reject most of the search window. The re-detections were
+    # never far away and the diagnosis was wrong.
+    #
+    # Actual cause: handing over with designate() REBUILDS templates, anchors
+    # and keyframes from the current frame -- which is by definition the frame
+    # where tracking had just failed. With a distractor overlapping, the new
+    # appearance model is contaminated even though the position barely moved.
+    # Repositioning instead fixes exactly that (h_clutter 77% -> 100%,
+    # g_occlusion 76% -> 81%) and destroys the case that worked (d_pan_shake
+    # 95% -> 69%), because there the appearance HAS changed and rebuilding is
+    # what made the rescue succeed.
+    #
+    # Both handovers are right half the time. What decides it is whether the
+    # target still looks like its old template -- exactly what neither variant
+    # knows at the moment it must choose.
     def make_wide(self, frame, cx, cy, size, padding=6.0):
         w = DCFTracker(channels=self.chan, size=self.N, padding=padding,
                        lr=self.lr, lam=self.lam, scales=(1.0,))

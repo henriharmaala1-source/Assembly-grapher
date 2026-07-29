@@ -222,6 +222,31 @@ class DCFTracker:
     # Both handovers are right half the time. What decides it is whether the
     # target still looks like its old template -- exactly what neither variant
     # knows at the moment it must choose.
+    #
+    # THIRD ATTEMPT: supply that verdict. The frozen anchors are the one thing
+    # in the tracker that cannot have drifted, so NCC against them scores
+    # whether the target still LOOKS like the designation. Low similarity ->
+    # the target changed, rebuild; high -> the model is fine, relocate.
+    #
+    #     always rebuild  always relocate  verdict .30  .45  .60
+    #         69%              70%             67%      67%  67%
+    #
+    # Worse than either fixed mode, at every threshold. And the per-clip pattern
+    # shows it is not a tuning problem: d_pan_shake 69% (chose relocate, needed
+    # rebuild) and h_clutter 77% (chose rebuild, needed relocate) -- backwards on
+    # BOTH, and identical at all three thresholds, so the signal is not even
+    # varying within a clip.
+    #
+    # The reason is structural. LOW anchor similarity means either "the target
+    # changed appearance" or "this is not the target" -- and those two need
+    # OPPOSITE actions. One patch of evidence cannot separate them, so no
+    # threshold on it can work. Inverting the rule just reproduces one of the two
+    # fixed modes.
+    #
+    # Three attempts, three negatives: the wide re-detector is not the way in on
+    # this battery. What makes the network gate reach 93% is that the network is
+    # a better RE-FINDER, and re-finding well is what removes the need to decide
+    # about templates at all.
     def make_wide(self, frame, cx, cy, size, padding=6.0):
         w = DCFTracker(channels=self.chan, size=self.N, padding=padding,
                        lr=self.lr, lam=self.lam, scales=(1.0,))

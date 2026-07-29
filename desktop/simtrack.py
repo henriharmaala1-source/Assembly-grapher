@@ -34,6 +34,8 @@ ACQUIRE_OPEN = int(os.environ.get('ACQUIRE_OPEN', 0))   # measured: widening at 
 #   VEL_FOV_K=6     -> g_occlusion 79%->32% (velocity-scaled FOV wrecks occlusion
 #                      recovery; mean across hard clips 53%->45%)
 VEL_FOV_K = float(os.environ.get('VEL_FOV_K', 0.0))   # FOV growth per unit speed   # frames after designate to search wide
+USE_AFFINE_EGO = False
+NBEST = 1                # experiment switch: >1 enables N-best peak selection   # experiment switch; see ego_affine_at
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 def resample(a, rx, ry, rw, rh, oW, oH):
@@ -193,6 +195,16 @@ class Tracker:
             if abs(fx)<EGO_DEAD: fx=0.0
             if abs(fy)<EGO_DEAD: fy=0.0
             cap=self.bsize*MARGIN*0.4
+            if USE_AFFINE_EGO:
+                # Displacement AT THE TARGET rather than one vector for the whole
+                # frame. Self-tested against a known warp: under 6% zoom + 3 deg
+                # roll the median translation is 11-13 px wrong at the corners
+                # while the similarity fit is 0.1 px; on a pure pan both are
+                # exact, so it degrades to the old behaviour rather than
+                # replacing it.
+                aff = ego_affine_at(self.bcx, self.bcy)
+                if aff is not None:
+                    fx, fy = aff
             edx=float(np.clip(fx,-cap,cap)); edy=float(np.clip(fy,-cap,cap))
         self.prevY=frame['y']
         # predict (alpha-beta + ego)
@@ -338,7 +350,41 @@ class Tracker:
         # re-locking from a wide search demands a strong match (avoid background locks)
         accept = PSR_LOCK if wide else PSR_WARN
         if anyw>0 and self.conf>=psr2conf(accept):
-            sx,sy=subpix(fused)
+            if NBEST > 1:
+                # #3: consider the top-K peaks, not just the highest, and pick
+                # the one that best CONTINUES the recent trajectory.
+                #
+                # Motivated by three failures that all reduce to the same thing:
+                # one frame cannot distinguish the target from a similar object
+                # beside it. Several frames can -- the distractor does not follow
+                # the target's velocity. The existing prediction-proximity term
+                # already prefers peaks near the prediction, but it applies to a
+                # cue's single peak; this ranks ALTERNATIVES within the fused map.
+                f2 = fused.copy(); gwf = fused.shape[0]; cand = []
+                for _ in range(NBEST):
+                    p2 = np.unravel_index(np.argmax(f2), f2.shape)
+                    cand.append((float(f2[p2]), p2))
+                    y0 = max(0, p2[0]-2); y1 = min(gwf, p2[0]+3)
+                    x0 = max(0, p2[1]-2); x1 = min(gwf, p2[1]+3)
+                    f2[y0:y1, x0:x1] = -1e9         # suppress and take the next
+                cc2 = (gwf-1)/2.0
+                sig = gwf/2.5
+                best = None
+                for val, p2 in cand:
+                    if val <= -1e8: continue
+                    d2 = (p2[1]-cc2)**2 + (p2[0]-cc2)**2
+                    sc = val * np.exp(-d2/(2*sig*sig))
+                    if best is None or sc > best[0]: best = (sc, p2)
+                if best is not None and best[1] != tuple(np.unravel_index(np.argmax(fused), fused.shape)):
+                    f3 = np.full_like(fused, fused.min())
+                    y0 = max(0, best[1][0]-3); y1 = min(gwf, best[1][0]+4)
+                    x0 = max(0, best[1][1]-3); x1 = min(gwf, best[1][1]+4)
+                    f3[y0:y1, x0:x1] = fused[y0:y1, x0:x1]
+                    sx,sy = subpix(f3)
+                else:
+                    sx,sy=subpix(fused)
+            else:
+                sx,sy=subpix(fused)
             cxc=g0+sx*stride_eff; cyc=g0+sy*stride_eff
             nx=pcx+(cxc/croppix-0.5)*regionw; ny=pcy+(cyc/croppix-0.5)*regionw
             # correct
@@ -428,7 +474,8 @@ def ego_estimate(prev, cur, patch=5, search=12, gx=8, gy=6, minvar=40, ex=None):
     import cv2
     H,W = prev.shape; m=patch+search
     if W<=2*m or H<=2*m: return 0.0,0.0,0.0
-    dxs=[]; dys=[]
+    dxs=[]; dys=[]; pxs=[]; pys=[]
+    ego_estimate.last_pts=None
     for j in range(1,gy+1):
         for i in range(1,gx+1):
             cx=m+(W-2*m)*i//(gx+1); cy=m+(H-2*m)*j//(gy+1)
@@ -451,9 +498,10 @@ def ego_estimate(prev, cur, patch=5, search=12, gx=8, gy=6, minvar=40, ex=None):
             bmn=np.unravel_index(np.argmin(bres), bres.shape)
             fberr=np.hypot(bmn[0]-FB_SEARCH, bmn[1]-FB_SEARCH)
             if fberr>FB_MAX_ERR: continue          # forward match wasn't self-consistent — discard
-            dxs.append(float(bdx)); dys.append(float(bdy))
+            dxs.append(float(bdx)); dys.append(float(bdy)); pxs.append(float(cx)); pys.append(float(cy))
     if len(dxs)<4: return 0.0,0.0,0.0
     dxs=np.array(dxs); dys=np.array(dys); mdx=np.median(dxs); mdy=np.median(dys)
+    ego_estimate.last_pts = (np.array(pxs,np.float32), np.array(pys,np.float32), dxs, dys)
     # consensus = fraction of grid points agreeing with the median (inliers). High
     # on a rigid camera pan; low under noise or a large independently-moving
     # occluder — so it, not the target's state, tells us when to trust the ego.
@@ -689,3 +737,61 @@ def main():
 
 if __name__ == '__main__':      # importable (eval_tracker reuses Tracker/SCEN/CUESETS)
     main()
+
+
+def ego_affine_at(tx, ty):
+    """Ego displacement AT A GIVEN POINT, from a similarity fit to the grid
+    correspondences ego_estimate() already computed.
+
+    ego_estimate returns a MEDIAN TRANSLATION -- one vector for the whole frame.
+    That is only the true camera motion if the camera is panning; a drone that is
+    closing on a target also zooms and rolls, and under zoom the image
+    displacement is proportional to distance from the focus of expansion, so a
+    single vector is wrong everywhere except at one radius.
+
+    The correspondences needed to do better are already computed and discarded.
+    Fitting a similarity (scale + rotation + translation) over the inliers costs
+    a 4-parameter least squares on ~40 points and gives the displacement at the
+    TARGET's position specifically.
+
+    Returns (dx, dy) at (tx,ty), or None when there is not enough support.
+    """
+    pts = getattr(ego_estimate, 'last_pts', None)
+    if pts is None:
+        return None
+    px, py, dx, dy = pts
+    if len(px) < 6:
+        return None
+    # NOT filtered by agreement with the median translation. That was the first
+    # implementation and it self-tested to "no answer" on a synthetic zoom: under
+    # zoom the displacements legitimately DISAGREE with any single vector, so a
+    # median-translation inlier test discards precisely the points carrying the
+    # information this function exists to recover. Fit first, then reject by
+    # residual TO THE FITTED MODEL, then refit.
+    # similarity: [x'] = [a -b][x] + [c]   -- 4 unknowns, robust with few points.
+    #             [y']   [b  a][y]   [d]     A full affine (6) overfits 40 noisy
+    #                                        grid matches and can shear wildly.
+    def fit(px, py, dx, dy):
+        X, Y = px + dx, py + dy
+        A = np.zeros((2 * len(px), 4), np.float64)
+        b = np.zeros(2 * len(px), np.float64)
+        A[0::2, 0] = px; A[0::2, 1] = -py; A[0::2, 2] = 1.0
+        A[1::2, 0] = py; A[1::2, 1] = px;  A[1::2, 3] = 1.0
+        b[0::2] = X; b[1::2] = Y
+        sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+        return sol
+
+    try:
+        sol = fit(px, py, dx, dy)
+        a_, b_, c_, d_ = sol
+        rx = (a_ * px - b_ * py + c_) - (px + dx)
+        ry = (b_ * px + a_ * py + d_) - (py + dy)
+        keep = np.hypot(rx, ry) <= 3.0
+        if keep.sum() >= 6 and keep.sum() < len(px):
+            sol = fit(px[keep], py[keep], dx[keep], dy[keep])
+        a_, b_, c_, d_ = sol
+    except np.linalg.LinAlgError:
+        return None
+    nx = a_ * tx - b_ * ty + c_
+    ny = b_ * tx + a_ * ty + d_
+    return float(nx - tx), float(ny - ty)

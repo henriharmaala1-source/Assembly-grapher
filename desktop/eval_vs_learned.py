@@ -484,6 +484,26 @@ def run_gated_relative(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
 #
 # It is also the cheapest place to spend a gate: the fallback still costs a
 # second tracker only on the frames it fires.
+#
+# WHY THE FALLBACK IS NCC AND NOT DCF. The DCF is 8 points stronger than NCC as
+# a standalone matcher and ~30x cheaper, so it looks like the obvious leg to
+# use. Measured:
+#
+#     clip                  fb=NCC   fb=DCF   fb=both
+#     c_lowcontrast           100%      97%      97%
+#     g_occlusion              92%      83%      92%
+#     MEAN                     93%      92%      93%
+#
+# It does not help, and the whole difference is g_occlusion, 92% -> 83%. Same
+# coupling found when the DCF was put INSIDE LockTracker's machinery (78%, no
+# better than plain DCF): what a gate needs from its fallback is not matching
+# accuracy, it is GRACEFUL DEGRADATION during the failure -- something sane to
+# fall back to, and a stable baseline to measure the collapse against. NCC
+# degrades that way; the DCF, sharper-peaked and adapting its filter online,
+# does not.
+#
+# So the DCF is a better standalone tracker than NCC and a worse partner. Its
+# place is as an alternative, not a component.
 # ---------------------------------------------------------------------------
 def run_gated_union(frames_bgr, gt, designate, cues, on_thresh, make_tracker,
                     frac=0.55, enter=2, abs_thresh=0.20):

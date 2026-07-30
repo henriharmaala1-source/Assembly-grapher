@@ -36,6 +36,7 @@ ACQUIRE_OPEN = int(os.environ.get('ACQUIRE_OPEN', 0))   # measured: widening at 
 VEL_FOV_K = float(os.environ.get('VEL_FOV_K', 0.0))   # FOV growth per unit speed   # frames after designate to search wide
 USE_AFFINE_EGO = False
 NBEST = 1                # experiment switch: >1 enables N-best peak selection   # experiment switch; see ego_affine_at
+COAST_HALF = float(os.environ.get('COAST_HALF', 1.0))  # 1.0 = open the coasting search fully (current)
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 # ---------------------------------------------------------------- LK coasting
@@ -247,11 +248,17 @@ def ncc_map(chan, tmpl, tn, g0, g1, stride=STRIDE):
     numpy's PER-CALL overhead, not arithmetic. The tracker is not slow; calling
     numpy 300,000 times is.
 
-    Vectorised via a strided view, using the same identity as the Kotlin
-    nccAt: with a zero-mean template, sum((v-mean)*t) == sum(v*t), and
-    sum((v-mean)^2) == sum(v^2) - sum(v)^2/N. So no patch ever needs centring
-    and the whole grid is three tensor reductions. Bit-comparable to the loop,
-    verified against it.
+    Vectorised via a strided view over the whole grid at once.
+
+    DO NOT reinstate the identities this docstring used to advertise --
+    sum((v-mean)*t) == sum(v*t) and sum((v-mean)^2) == sum(v^2) - sum(v)^2/N.
+    They are exact in real arithmetic and catastrophic in float32 here; the body
+    below centres explicitly and explains why at length. The Kotlin nccAt does
+    the same, two-pass and centred, contrary to what this text used to claim.
+
+    Prefer ncc_maps() when more than one template is scored against the same
+    channel and grid: everything here except the numerator is template-
+    independent, and the appearance bank scores 2-4 templates per cue.
     """
     gs = np.arange(g0, g1+1, stride); gw = len(gs)
     h = TMPL // 2
@@ -281,6 +288,45 @@ def ncc_map(chan, tmpl, tn, g0, g1, stride=STRIDE):
     idx = np.nonzero(ok)[0]
     resp[np.ix_(idx, idx)] = r
     return resp, gs
+
+def ncc_maps(chan, tmpls, tns, g0, g1, stride=STRIDE):
+    """Response maps for SEVERAL templates against the SAME channel and grid.
+
+    The tracker keeps an appearance BANK per cue -- a frozen anchor, an EMA
+    adaptive slot, and up to K keyframes -- and takes the elementwise max over
+    their responses. Each was previously a separate ncc_map call, which recomputed
+    the patch extraction, the per-position mean and the per-position centred norm
+    every time. None of those three depend on the template: they are functions of
+    (channel, grid) alone. Only the numerator is per-template.
+
+    So the bank costs 6 passes per template where it should cost 4 shared plus 2
+    per template. Measured over 307 real frames the tracker evaluates ~3641
+    positions across ~16 response maps drawn from only ~5 distinct (channel,grid)
+    pairs, so roughly two thirds of the mean/centre/norm work is redundant.
+
+    This is BIT-IDENTICAL, not merely equivalent: same patches, same centring,
+    same denominator, same numerator accumulation order. Verified by comparing
+    against per-template ncc_map with np.array_equal, not with a tolerance.
+    """
+    gs = np.arange(g0, g1+1, stride); gw = len(gs)
+    h = TMPL // 2
+    H, W = chan.shape
+    ok = (gs - h >= 0) & (gs + TMPL - h <= W) & (gs + TMPL - h <= H)
+    if not ok.any():
+        return [np.full((gw, gw), -2.0, np.float32) for _ in tmpls], gs
+    win = np.lib.stride_tricks.sliding_window_view(chan, (TMPL, TMPL))
+    ys = gs[ok] - h
+    P = win[np.ix_(ys, ys)].astype(np.float32)
+    Pc = P - P.mean((2, 3), keepdims=True)          # shared: centring
+    den = np.sqrt(np.einsum('ijkl,ijkl->ij', Pc, Pc, dtype=np.float64))   # shared: norm
+    idx = np.nonzero(ok)[0]
+    out = []
+    for tmpl, tn in zip(tmpls, tns):
+        num = np.einsum('ijkl,kl->ij', Pc, tmpl.astype(np.float32), dtype=np.float64)
+        resp = np.full((gw, gw), -2.0, np.float32)
+        resp[np.ix_(idx, idx)] = (num / (tn * (den + 1e-6))).astype(np.float32)
+        out.append(resp)
+    return out, gs
 
 def psr_of(resp):
     pk = np.unravel_index(np.argmax(resp), resp.shape); peak = resp[pk]
@@ -657,7 +703,15 @@ class Tracker:
         # just-designated case like coasting and open up until velocity settles.
         self.since += 1
         wideOpen = self.bad>0 or self.since <= ACQUIRE_OPEN
-        half = maxhalf if wideOpen else int(np.clip(SEARCH+velcrop*2,SEARCH,maxhalf))
+        # COAST_HALF caps how far the coasting search opens, as a fraction of the
+        # crop. Opening it FULLY is what makes search cost spike exactly when the
+        # tracker is already struggling: measured over 307 real frames, the
+        # average is 3641 positions/frame against the ~225 the base config
+        # implies, and the difference is almost entirely coasting frames. Whether
+        # the full opening is EARNED is a measurement, not a matter of taste --
+        # see eval_searchcap.py.
+        half = (max(SEARCH,int(maxhalf*COAST_HALF)) if wideOpen
+                else int(np.clip(SEARCH+velcrop*2,SEARCH,maxhalf)))
         c0=croppix//2; g0=c0-half; g1=c0+half
         # FIX 2: ANCHOR-CONSENSUS fusion + conditional prior.
         #  (a) Each cue's response, peak, PSR. The most-confident cue is the
@@ -673,10 +727,13 @@ class Tracker:
             chan=apply_cue(crop,c)
             # anchor alone during a wide re-acquire; max over the appearance bank
             # {anchor, adaptive, keyframes} otherwise.
-            rb,_=ncc_map(chan,self.anchor[ci],self.an[ci],g0,g1,stride_eff)
-            if wide: r=rb
+            if wide:
+                (rb,),_=ncc_maps(chan,[self.anchor[ci]],[self.an[ci]],g0,g1,stride_eff)
+                r=rb
             else:
-                ra,_=ncc_map(chan,self.tmpl[ci],self.tn[ci],g0,g1,stride_eff)
+                # anchor + adaptive share the patch extraction, centring and norm
+                (rb,ra),_=ncc_maps(chan,[self.anchor[ci],self.tmpl[ci]],
+                                        [self.an[ci],self.tn[ci]],g0,g1,stride_eff)
                 r=np.maximum(ra,rb)
                 # Keyframes are a TARGETED fallback, not always-on: consult them only
                 # while locked (bad==0, target present — not during occlusion) AND the
@@ -684,8 +741,8 @@ class Tracker:
                 # of a pose shift the primary can't match). Always-on max just raises
                 # the response noise floor and hurt occlusion/noisy cases in sim.
                 if self.bad==0 and self.kf[ci] and psr_of(r)<PSR_LOCK:
-                    for kf,kfn in zip(self.kf[ci],self.kfn[ci]):
-                        rk,_=ncc_map(chan,kf,kfn,g0,g1,stride_eff); r=np.maximum(r,rk)
+                    rks,_=ncc_maps(chan,self.kf[ci],self.kfn[ci],g0,g1,stride_eff)
+                    for rk in rks: r=np.maximum(r,rk)
             gw=r.shape[0]; cc=(gw-1)/2
             if sig_p is None: sig_p = gw/1.4 if self.bad>0 else gw/2.5
             pk=np.unravel_index(np.argmax(r),r.shape)

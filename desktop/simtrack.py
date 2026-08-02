@@ -37,6 +37,65 @@ VEL_FOV_K = float(os.environ.get('VEL_FOV_K', 0.0))   # FOV growth per unit spee
 USE_AFFINE_EGO = False
 NBEST = 1                # experiment switch: >1 enables N-best peak selection   # experiment switch; see ego_affine_at
 COAST_HALF = float(os.environ.get('COAST_HALF', 1.0))  # 1.0 = open the coasting search fully (current)
+# --- three correctness fixes, switchable so the defects stay reproducible ---
+# LATTICE_FIX: templates were sampled on a HALF-PIXEL-OFFSET lattice from the
+#   candidate patches they are compared against. resample() samples pixel
+#   CENTRES (rx + i + 0.5) while ncc_map slices integer rows/cols, so every
+#   template was a half-pixel bilinear blur of the source, offset half a pixel
+#   from every candidate. On an identical noiseless crop the edge cue peaked at
+#   0.901 instead of 1.000 and lost 1.3 PSR before any real degradation -- and
+#   PSR drives the fusion weight, the accept gate, the adapt gate and psrema.
+# GRID_SYM: the search grid was asymmetric about the prediction whenever
+#   half % stride != 0, which is every default configuration. At half=22,
+#   stride=3 the grid spans [-22,+20]; while coasting [-50,+49]; in a 3x wide
+#   search [-178,+173]. So the search reached further in -x/-y than +x/+y, and
+#   cc=(gw-1)/2 mislocated the prediction centre by up to 2.5 crop px, biasing
+#   the proximity weight and the distractor prior directionally.
+# These two are biases of OPPOSITE SIGN that partly cancel, which is why neither
+# was caught: measured static-target bias is (+0.98,+0.44) px unfixed,
+# (+2.92,+3.30) with only the grid fixed, (-2.25,-3.25) with only the lattice
+# fixed, and (-0.22,+0.00) with both. Fix them together or not at all.
+# VERIFIED DIRECTLY (chaos-free, no battery involved). On an identical noiseless
+# crop with an aligned grid, a template's self-match should be exactly 1.000:
+#     cue       peak unfixed   peak fixed   PSR unfixed   PSR fixed
+#     none          0.4991       1.0000        14.41        28.57
+#     edge          0.5433       1.0000        12.42        27.39
+#     chroma        0.5017       1.0000        13.87        27.15
+# Every template in the tracker was matching itself at HALF strength, and PSR --
+# which drives the fusion weight, the accept gate, the adapt gate and the
+# occlusion baseline -- was halved with it. Grid centring error goes 2.5 crop px
+# to 0 in the wide search, 1.0 to 0 when locked.
+#
+# BATTERY EFFECT (eval_ab.py, 8 paired draws): +0.23 +/- 1.53, i.e. NET NEUTRAL.
+# The per-clip pattern is not noise, though -- it is consistent and split:
+#     c_lowcontrast 5W-0L (90->100)   d_pan_shake 6W-0L (64->76)
+#     i_worst       5W-2L (25->34)    h_clutter   5W-2L
+#     g_occlusion   0W-8L (65->54)    z_below_floor 0W-8L (15->1)
+#
+# The two 8-0 losses are UNEXPLAINED. Two hypotheses were tested and both are
+# refuted, so neither should be tried again:
+#   - "PSR doubled so EARLY_TERM_PSR=10 now fires and skips cues" -- disabling
+#     early termination entirely is BIT-IDENTICAL, so it never fires at all.
+#   - "PSR doubled so the absolute PSR_LOCK/PSR_WARN gates are now half as
+#     strict" -- scaling both by 2 is decisively WORSE, -10.77 +/- 1.48
+#     (t = -7.28).
+# Shipped on anyway: the defects are real, verified independently of the
+# battery, and a matcher that half-matches itself makes every PSR-derived
+# constant in this file a number fitted to a bug. But the regression is real and
+# unclosed, and the switches stay so it can be chased.
+LATTICE_FIX = int(os.environ.get('LATTICE_FIX', 1))
+GRID_SYM    = int(os.environ.get('GRID_SYM', 1))
+# KF_DEGEN_GUARD: a template patch that is locally FLAT in some cue (a uniform
+#   target in chroma, a texture-free one in edge) has norm 1e-6 from nrm()'s
+#   floor, so its similarity to every stored slot is 0/(1e-6*1e-6) = 0 -- which
+#   reads as MAXIMALLY NOVEL and always passes the banking gate. Worse, the
+#   eviction rule keeps it: a zero patch has the lowest similarity to everything,
+#   so it is never the most-redundant slot. Measured: an all-zero chroma keyframe
+#   is banked on update frame 1 and both slots fill with zeros. They are then
+#   np.maximum'd into the response exactly when the primary is weak -- the case
+#   the bank exists for -- rectifying every negative correlation to 0 and
+#   corrupting the sidelobe statistics psr_of measures.
+KF_DEGEN_GUARD = int(os.environ.get('KF_DEGEN_GUARD', 1))
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 # ---------------------------------------------------------------- LK coasting
@@ -250,7 +309,12 @@ def crop_raw(frame, cx, cy, size):
     return {k: resample(frame[k], cx-r/2, cy-r/2, r, r, CROP, CROP) for k in ('y','u','v')}
 
 def norm_patch(chan, cx, cy, sz):
-    p = resample(chan, cx-sz/2, cy-sz/2, sz, sz, sz, sz)
+    # -0.5 puts the samples on the INTEGER lattice ncc_map slices from, instead
+    # of on pixel centres half a pixel to the right of it. With an integer cx
+    # this makes the extraction exact (tx=0, no interpolation) rather than a
+    # half-pixel blur. See LATTICE_FIX.
+    o = 0.5 if LATTICE_FIX else 0.0
+    p = resample(chan, cx-sz/2-o, cy-sz/2-o, sz, sz, sz, sz)
     return ms(p)
 
 def ncc_map(chan, tmpl, tn, g0, g1, stride=STRIDE):
@@ -729,7 +793,13 @@ class Tracker:
         # see eval_searchcap.py.
         half = (max(SEARCH,int(maxhalf*COAST_HALF)) if wideOpen
                 else int(np.clip(SEARCH+velcrop*2,SEARCH,maxhalf)))
-        c0=croppix//2; g0=c0-half; g1=c0+half
+        c0=croppix//2
+        # Snap the half-width down to a whole number of strides so the grid is
+        # symmetric about the prediction AND contains it. Without this, arange
+        # from c0-half runs past c0+half-((2*half)%stride), so the window is
+        # lopsided and cc=(gw-1)/2 is not the prediction. See GRID_SYM.
+        if GRID_SYM: half = max(stride_eff, (half//stride_eff)*stride_eff)
+        g0=c0-half; g1=c0+half
         # FIX 2: ANCHOR-CONSENSUS fusion + conditional prior.
         #  (a) Each cue's response, peak, PSR. The most-confident cue is the
         #      ANCHOR (luma during scale, edge on a same-brightness target — it
@@ -957,7 +1027,9 @@ class Tracker:
             # ambiguous views that would poison the bank) AND (2) it's a genuinely
             # new appearance (below KF_THRESH similarity to every stored slot, so the
             # bank stays diverse, not full of near-duplicates). Evict oldest when full.
-            if self.conf>=KF_ADD_CONF and self.bad==0:
+            # A degenerate (flat) patch scores 0 similarity to everything, which
+            # the gate below reads as "maximally novel". Reject it outright.
+            if self.conf>=KF_ADD_CONF and self.bad==0 and not (KF_DEGEN_GUARD and fn<1e-3):
                 slots=[(self.anchor[ci],self.an[ci]),(self.tmpl[ci],self.tn[ci])]+list(zip(self.kf[ci],self.kfn[ci]))
                 maxsim=max((fr*t).sum()/(fn*tn) for t,tn in slots)
                 if maxsim < KF_THRESH:

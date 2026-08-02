@@ -89,7 +89,14 @@ class MainActivity : AppCompatActivity() {
     // gating stops a scale-drifted edge from dragging the lock. L+C keeps the
     // pure luma+chroma option (best on fast pure-zoom); single chips for A/B.
     private val cueModes = listOf(
-        CueMode("FUSE",      listOf(CropFilter.NONE, CropFilter.CHROMA, CropFilter.EDGE)),
+        // ORDER MATTERS, and must match simtrack.CUESETS['FUSE3'] = edge,
+        // chroma, none. Fusion is a weighted sum and would be order-independent
+        // except that EARLY_TERM_PSR breaks the loop once one cue is dominant,
+        // which lets the FIRST cue suppress the others. This list was reversed
+        // relative to the reference; isolated on the desktop battery, the
+        // reversal costs 25.8 points on the low-contrast clip and 2.6 on the
+        // mean, purely from list order.
+        CueMode("FUSE",      listOf(CropFilter.EDGE, CropFilter.CHROMA, CropFilter.NONE)),
         CueMode("L+C",       listOf(CropFilter.NONE, CropFilter.CHROMA)),
         CueMode("off",       listOf(CropFilter.NONE)),
         CueMode("edge",      listOf(CropFilter.EDGE)),

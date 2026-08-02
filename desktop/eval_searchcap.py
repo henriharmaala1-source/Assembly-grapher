@@ -2,7 +2,7 @@
 """
 Does the coasting search have to open to the WHOLE crop?
 
-Instrumenting the tracker over 307 real frames showed it evaluates 3641 NCC
+Instrumenting the tracker over 307 synthetic-battery frames showed it evaluates 3641 NCC
 search positions per frame -- against the ~225 the base configuration implies.
 The gap is almost entirely coasting frames: `wideOpen` sets the search half-width
 to `maxhalf`, so the searched AREA quadruples at exactly the moment the tracker
@@ -23,7 +23,19 @@ opening?
 Reports lock quality and search cost together, because either alone is
 meaningless: a cheaper search that drops the target is not an optimization.
 
-ANSWERED: it has to widen all the way. The full opening is earned.
+RETRACTED. The conclusion below ("it has to widen all the way") is NOT supported.
+It was a single draw, and eval_noisefloor.py subsequently showed this battery's
+single-draw spread is 18 points on the mean and up to 67 points on one clip under
+perturbations that cannot matter -- moving the designation box by one pixel.
+Re-run under a perturbation ensemble the two designs disagree: sub-quantisation
+luma noise makes the 0.85 cap BETTER by 1.5 +/- 2.4, designation jitter makes the
+full opening better by 3.9 +/- 2.5. The true effect is bounded to about +/-5
+points with the direction unresolved, and "f_maneuver 68% -> 8%" is an artefact:
+under perturbation that clip ranges 13-40% at cap 1.00 and 9-38% at 0.85.
+
+So a ~10% compute saving was rejected on evidence that does not exist. This needs
+re-running with --seeds before anything is concluded. Original single-draw table
+kept below only so the retraction is checkable.
 
     cap of maxhalf          1.00    0.85    0.70    0.55    0.40
     d_pan_shake              69%     71%     71%     74%    100%

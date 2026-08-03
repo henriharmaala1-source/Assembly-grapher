@@ -299,7 +299,14 @@ def apply_cue(crop, cue):
     # would be near-constant in one of the two channels above.
     if cue == 'co1': return ((crop['u'] + crop['v']) * 0.7071).astype(np.float32)
     if cue == 'co2': return ((crop['u'] - crop['v']) * 0.7071).astype(np.float32)
-    return crop['y']
+    # An unknown cue used to fall back to luma. Unreachable for every name in
+    # CUESETS, but a silent fallback is the wrong failure mode here: a typo in a
+    # cue name would quietly become a duplicate 'none' channel and the run would
+    # look like a legitimate result. This project has already been burned once by
+    # a config error that produced plausible numbers (a sweep whose per-config
+    # dicts did not override every knob returned the BASE scores on all ten
+    # clips, indistinguishable from a real measurement).
+    raise ValueError(f"unknown cue {cue!r}; known: none, edge, chroma, cu, cv, co1, co2")
 
 def ms(a): return a - a.mean()
 def nrm(a): return np.sqrt((a*a).sum())+1e-6

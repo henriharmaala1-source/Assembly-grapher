@@ -12,11 +12,31 @@
 #include <ompl/geometric/SimpleSetup.h>
 #include <ompl/geometric/planners/rrt/RRTConnect.h>
 #include <ompl/util/Console.h>
+#include <ompl/util/RandomNumbers.h>
 namespace ob = ompl::base;
 namespace og = ompl::geometric;
 #endif
 
 namespace sim {
+
+// RRTConnect is a RANDOMISED planner, and until this existed its RNG was seeded
+// from the clock. The consequence was worse than it sounds: two runs of the
+// same binary with the same --seed produced different trajectories, so the
+// harness could not answer "did my change alter behaviour?" at all, and every
+// multi-seed table in this tree silently mixed world variation with run-to-run
+// variation. Nothing was measurably wrong -- the effects that mattered were far
+// larger than the noise -- but the precision was overstated and a bit-identical
+// refactor was untestable.
+//
+// Must be called before any ompl::RNG is constructed, i.e. before the first
+// planForward. Seeding from the world seed keeps one knob rather than two.
+void setPlannerSeed(unsigned seed) {
+#ifdef NAVSIM_HAVE_OMPL
+    ompl::RNG::setSeed(seed ? seed : 1u);
+#else
+    (void)seed;
+#endif
+}
 
 const char* forwardPlannerName() {
 #ifdef NAVSIM_HAVE_OMPL

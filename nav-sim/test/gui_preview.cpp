@@ -52,6 +52,8 @@ int main(int argc, char** argv) {
     const int steps       = argc > 3 ? std::atoi(argv[3]) : 320;
     const float cell = 0.25f;
 
+    // Deterministic sampling planner: same seed -> same flight.
+    setPlannerSeed(unsigned(seed));
     VoxelWorld W;
     std::vector<Trail> trails;
     ForestParams fp; fp.cell = cell; fp.seed = seed;

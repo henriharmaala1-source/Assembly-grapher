@@ -70,6 +70,13 @@ struct ForwardPath {
 // planner backend, selected at build time
 const char* forwardPlannerName();
 
+// Seed the sampling planner's RNG. RRTConnect is randomised; without this two
+// runs of the same binary with the same world seed diverge, which makes any
+// before/after comparison unfalsifiable. Call once, before the first
+// planForward. No-op in the non-OMPL fallback build, which is deterministic
+// already.
+void setPlannerSeed(unsigned seed);
+
 // Plan a path from (sx,sy,sz) heading roughly along goalAzDeg / goalElDeg,
 // ending near the horizon. Returns found=false if no candidate was reachable.
 ForwardPath planForward(const VoxelMap& m,

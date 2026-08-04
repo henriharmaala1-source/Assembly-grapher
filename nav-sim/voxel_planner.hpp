@@ -203,6 +203,14 @@ public:
     int nEl() const { return p_.nEl; }
 
 private:
+    // One direction's reach (unknown-discounted) and confirmed-free run.
+    // Public-ish only in the sense that plan() calls it 864 times on a decision
+    // step and exactly ONCE on a held step -- which is where the onboard budget
+    // came from.
+    void probe(const VoxelMap& m, float px, float py, float pz,
+               float azDeg, float elDeg, float& reachOut, float& freeOut) const;
+    float elForIndex(int i) const;
+
     GeneralParams p_;
     std::vector<float> field_, free_;
     // Time-averaged copies, used ONLY for direction scoring. Kept separate from

@@ -134,6 +134,8 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Deterministic sampling planner: same seed -> same flight.
+    setPlannerSeed(unsigned(seed));
     VoxelWorld W;
     std::vector<Trail> trails;
     float px, py, pz;

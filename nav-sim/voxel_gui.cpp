@@ -172,6 +172,8 @@ static float trueClearance(const VoxelWorld& w, float x, float y, float z, float
 static int fly(const Cfg& cfg) {
     const WorldChoice& wc = WORLDS[cfg.world];
     const float cell = wc.cell;
+    // Deterministic sampling planner: same seed -> same flight.
+    setPlannerSeed(unsigned(cfg.seed));
     VoxelWorld W;
     float px, py, pz, goalE, goalN, goalU;
 

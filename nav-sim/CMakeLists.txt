@@ -59,3 +59,15 @@ add_executable(voxel_demo
   voxel_map.cpp)
 target_include_directories(voxel_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_demo PRIVATE ${OpenCV_LIBS})
+
+add_executable(voxel_sim
+  voxel_sim.cpp
+  voxel_world.cpp
+  depth_camera.cpp
+  voxel_map.cpp
+  voxel_planner.cpp)
+target_include_directories(voxel_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(voxel_sim PRIVATE ${OpenCV_LIBS})
+if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
+  target_compile_definitions(voxel_sim PRIVATE SIM_HAVE_HIGHGUI=1)
+endif()

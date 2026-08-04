@@ -28,11 +28,25 @@ static inline void dirFrom(float azDeg, float elDeg, float& dx, float& dy, float
 // Seven samples (centre + six axis offsets) rather than a full ball: 7x the
 // probe cost instead of 125x at 0.25 m cells, and for convex obstacles larger
 // than a voxel it finds the same things.
+// EXHAUSTIVE over the cells in the ball, not 7 sample points. The 7-point
+// version was the same sparse-sampling error that had already appeared twice in
+// this codebase: adjacent axis samples on a 0.6 m sphere are 0.85 m apart, so a
+// 0.10-0.35 m trunk at 45 deg sits between them and is invisible. That is why
+// the aircraft still hit trees with PERFECT depth, a map with 0.000% false-free
+// cells, and voxels finer than the trunks.
 static inline bool sphereClear(const VoxelMap& m, float x, float y, float z, float r) {
-    static const float O[7][3] = {{0,0,0},{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
-    for (const auto& o : O)
-        if (m.stateAt(x + o[0]*r, y + o[1]*r, z + o[2]*r) == VoxelMap::OCCUPIED)
-            return false;
+    int cx, cy, cz; m.worldToCell(x, y, z, cx, cy, cz);
+    const float cell = m.params().cell;
+    const int R = int(std::ceil(r / cell));
+    const float r2 = r * r;
+    for (int dz = -R; dz <= R; ++dz)
+        for (int dy = -R; dy <= R; ++dy)
+            for (int dx = -R; dx <= R; ++dx) {
+                float ox = dx * cell, oy = dy * cell, oz = dz * cell;
+                if (ox*ox + oy*oy + oz*oz > r2) continue;
+                if (!m.inBounds(cx+dx, cy+dy, cz+dz)) continue;
+                if (m.logAt(cx+dx, cy+dy, cz+dz) > m.params().occThresh) return false;
+            }
     return true;
 }
 

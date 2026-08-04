@@ -191,7 +191,7 @@ static int fly(const Cfg& cfg) {
         for (float rad = 1; rad <= 30 && !ok; rad += 1)
             for (int a = 0; a < 24 && !ok; ++a)
                 for (float dz = 0; dz <= 10 && !ok; dz += 1) {
-                    float th = a * float(M_PI) / 12.f;
+                    float th = a * sim::PI_F / 12.f;
                     float tx = px + rad*std::cos(th), ty = py + rad*std::sin(th), tz = pz + dz;
                     if (trueClearance(W, tx, ty, tz, 3.f) >= 1.5f) { px=tx; py=ty; pz=tz; ok=true; }
                 }
@@ -222,25 +222,25 @@ static int fly(const Cfg& cfg) {
         M.recentre(px, py, pz);
 
         if (s % 25 == 0) {
-            float mAz = std::atan2(goalE-px, goalN-py) * 180.f/float(M_PI);
-            float mEl = std::atan2(goalU-pz, std::hypot(goalE-px, goalN-py)) * 180.f/float(M_PI);
+            float mAz = std::atan2(goalE-px, goalN-py) * 180.f/sim::PI_F;
+            float mEl = std::atan2(goalU-pz, std::hypot(goalE-px, goalN-py)) * 180.f/sim::PI_F;
             path = planForward(M, px, py, pz, mAz, mEl, fwp);
         }
         float tE=goalE, tN=goalN, tU=goalU;
         if (path.found)
             for (const auto& w : path.pts)
                 if (std::hypot(w[0]-px, w[1]-py) > 3.f) { tE=w[0]; tN=w[1]; tU=w[2]; break; }
-        float gAz = std::atan2(tE-px, tN-py) * 180.f/float(M_PI);
-        float gEl = std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/float(M_PI);
+        float gAz = std::atan2(tE-px, tN-py) * 180.f/sim::PI_F;
+        float gEl = std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/sim::PI_F;
         GeneralResult gr = gen.plan(M, px, py, pz, gAz, gEl);
 
-        float a = gr.azDeg*float(M_PI)/180.f, e = gr.elDeg*float(M_PI)/180.f;
+        float a = gr.azDeg*sim::PI_F/180.f, e = gr.elDeg*sim::PI_F/180.f;
         float dx = std::cos(e)*std::sin(a), dy = std::cos(e)*std::cos(a), dz = std::sin(e);
         float k = std::min(1.f, dt/0.35f);
         vx += (dx*gr.speed - vx)*k; vy += (dy*gr.speed - vy)*k; vz += (dz*gr.speed - vz)*k;
         px += vx*dt; py += vy*dt; pz += vz*dt;
         travelled += std::sqrt(vx*vx+vy*vy+vz*vz)*dt;
-        if (std::hypot(vx,vy) > 0.2f) yaw = std::atan2(vx,vy)*180.f/float(M_PI);
+        if (std::hypot(vx,vy) > 0.2f) yaw = std::atan2(vx,vy)*180.f/sim::PI_F;
         trail.push_back({px, py});
         float clr = trueClearance(W, px, py, pz, 2.f);
         minClear = std::min(minClear, clr);

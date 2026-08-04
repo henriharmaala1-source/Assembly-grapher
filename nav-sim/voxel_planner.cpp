@@ -8,7 +8,7 @@
 
 namespace sim {
 
-static inline float deg2rad(float d) { return d * float(M_PI) / 180.f; }
+static inline float deg2rad(float d) { return d * sim::PI_F / 180.f; }
 
 // Direction from azimuth (clockwise from +North) and elevation.
 static inline void dirFrom(float azDeg, float elDeg, float& dx, float& dy, float& dz) {

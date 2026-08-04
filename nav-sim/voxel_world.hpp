@@ -42,6 +42,13 @@
 
 namespace sim {
 
+// M_PI IS NOT STANDARD C++. glibc and libc++ expose it as a POSIX extension, so
+// GCC and Clang compile happily; MSVC does not define it unless _USE_MATH_DEFINES
+// is set before <cmath>, which is fragile because it depends on include order.
+// This built clean on Linux and failed every Windows CI target with
+// "error C2065: 'M_PI': undeclared identifier". Use this instead.
+constexpr float PI_F = 3.14159265358979323846f;
+
 class VoxelWorld {
 public:
     // origin is the world coord of cell (0,0,0)'s min corner.

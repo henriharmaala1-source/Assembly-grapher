@@ -189,7 +189,7 @@ static void isoDraw(cv::Mat& img, int gx, int gy, int gz,
     // Rotate in the ground plane about the grid centre before projecting, so
     // the model can be spun without rebuilding anything.
     float cxg = nx * 0.5f, cyg = ny * 0.5f;
-    float a = yawDeg * float(M_PI) / 180.f, ca = std::cos(a), sa = std::sin(a);
+    float a = yawDeg * sim::PI_F / 180.f, ca = std::cos(a), sa = std::sin(a);
     float rx = (gx - cxg) * ca - (gy - cyg) * sa + cxg;
     float ry = (gx - cxg) * sa + (gy - cyg) * ca + cyg;
     int px = int((rx - ry) * sx * 0.5f + outPx * 0.5f);

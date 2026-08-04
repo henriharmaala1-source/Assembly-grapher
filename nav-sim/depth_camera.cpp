@@ -5,7 +5,7 @@
 namespace sim {
 
 DepthCamera::DepthCamera(const CamParams& p) : p_(p), rng_(p.seed ? p.seed : 1u) {
-    fpx_ = (p_.width * 0.5f) / std::tan(p_.hfovDeg * 0.5f * float(M_PI) / 180.f);
+    fpx_ = (p_.width * 0.5f) / std::tan(p_.hfovDeg * 0.5f * sim::PI_F / 180.f);
 }
 
 float DepthCamera::urand() const {
@@ -23,12 +23,12 @@ void DepthCamera::rayFor(const CamPose& pose, int u, int v,
 
     // Rotate into world. Yaw is measured from +North, clockwise (matching
     // sim_world's bearing convention), so forward at yaw=0 is +y.
-    const float cr = std::cos(pose.rollDeg  * float(M_PI) / 180.f);
-    const float sr = std::sin(pose.rollDeg  * float(M_PI) / 180.f);
-    const float cp = std::cos(pose.pitchDeg * float(M_PI) / 180.f);
-    const float sp = std::sin(pose.pitchDeg * float(M_PI) / 180.f);
-    const float cy_ = std::cos(pose.yawDeg  * float(M_PI) / 180.f);
-    const float sy_ = std::sin(pose.yawDeg  * float(M_PI) / 180.f);
+    const float cr = std::cos(pose.rollDeg  * sim::PI_F / 180.f);
+    const float sr = std::sin(pose.rollDeg  * sim::PI_F / 180.f);
+    const float cp = std::cos(pose.pitchDeg * sim::PI_F / 180.f);
+    const float sp = std::sin(pose.pitchDeg * sim::PI_F / 180.f);
+    const float cy_ = std::cos(pose.yawDeg  * sim::PI_F / 180.f);
+    const float sy_ = std::sin(pose.yawDeg  * sim::PI_F / 180.f);
 
     // roll about forward axis
     float x1 = rx * cr - ry * sr;

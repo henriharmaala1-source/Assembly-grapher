@@ -38,7 +38,7 @@ static bool stateOk(const VoxelMap& m, float x, float y, float z,
 }
 
 static inline void dirFrom(float azDeg, float elDeg, float& dx, float& dy, float& dz) {
-    float a = azDeg * float(M_PI) / 180.f, e = elDeg * float(M_PI) / 180.f;
+    float a = azDeg * sim::PI_F / 180.f, e = elDeg * sim::PI_F / 180.f;
     dx = std::cos(e) * std::sin(a);
     dy = std::cos(e) * std::cos(a);
     dz = std::sin(e);

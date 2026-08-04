@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
             for (float rad = 1.f; rad <= 25.f && !ok; rad += 1.f)
                 for (int a = 0; a < 24 && !ok; ++a)
                     for (float dzs = 0.f; dzs <= 8.f && !ok; dzs += 1.f) {
-                        float th = a * float(M_PI) / 12.f;
+                        float th = a * sim::PI_F / 12.f;
                         float tx = px + rad * std::cos(th), ty = py + rad * std::sin(th),
                               tz = pz + dzs;
                         if (trueClearance(W, tx, ty, tz, 3.0f) >= 1.5f) {
@@ -219,9 +219,9 @@ int main(int argc, char** argv) {
         int64 t1 = cv::getTickCount();
         if (!generalOnly && (s % replanEvery == 0)) {
             // Plan AHEAD along the mission bearing, not to the distant goal.
-            float mAz = std::atan2(goalE - px, goalN - py) * 180.f / float(M_PI);
+            float mAz = std::atan2(goalE - px, goalN - py) * 180.f / sim::PI_F;
             float mEl = std::atan2(goalU - pz,
-                                   std::hypot(goalE - px, goalN - py)) * 180.f / float(M_PI);
+                                   std::hypot(goalE - px, goalN - py)) * 180.f / sim::PI_F;
             int64 tp = cv::getTickCount();
             path = planForward(M, px + dE, py + dN, pz + dU, mAz, mEl, fwp);
             tPrec += double(cv::getTickCount() - tp) / cv::getTickFrequency(); ++nPrec;
@@ -239,8 +239,8 @@ int main(int argc, char** argv) {
                 if (dd > 3.0f) { tgtE = w[0]; tgtN = w[1]; tgtU = w[2]; break; }
             }
         }
-        float gAz = std::atan2(tgtE - px, tgtN - py) * 180.f / float(M_PI);
-        float gEl = std::atan2(tgtU - pz, std::hypot(tgtE - px, tgtN - py)) * 180.f / float(M_PI);
+        float gAz = std::atan2(tgtE - px, tgtN - py) * 180.f / sim::PI_F;
+        float gEl = std::atan2(tgtU - pz, std::hypot(tgtE - px, tgtN - py)) * 180.f / sim::PI_F;
 
         // --- general plan, every step ----------------------------------------
         int64 tg = cv::getTickCount();
@@ -252,7 +252,7 @@ int main(int argc, char** argv) {
         // --- move -------------------------------------------------------------
         float dx, dy, dz;
         {
-            float a = gr.azDeg * float(M_PI) / 180.f, e = gr.elDeg * float(M_PI) / 180.f;
+            float a = gr.azDeg * sim::PI_F / 180.f, e = gr.elDeg * sim::PI_F / 180.f;
             dx = std::cos(e) * std::sin(a); dy = std::cos(e) * std::cos(a); dz = std::sin(e);
         }
         // First-order lag toward the commanded velocity: an aircraft cannot
@@ -265,7 +265,7 @@ int main(int argc, char** argv) {
         vz += (dz * gr.speed - vz) * k;
         px += vx * dt; py += vy * dt; pz += vz * dt;
         travelled += std::sqrt(vx * vx + vy * vy + vz * vz) * dt;
-        if (std::hypot(vx, vy) > 0.2f) yaw = std::atan2(vx, vy) * 180.f / float(M_PI);
+        if (std::hypot(vx, vy) > 0.2f) yaw = std::atan2(vx, vy) * 180.f / sim::PI_F;
         trail.push_back({px, py});
 
         // --- score against TRUTH ---------------------------------------------

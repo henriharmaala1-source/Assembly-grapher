@@ -89,25 +89,49 @@ running, each of which would have been invisible without the control:
 
 ## Status — read this before trusting a number
 
-**The harness works. The planners do not yet fly reliably.** Current matrix,
-900 steps:
+**The harness works. The planners still collide.** Current matrix, 1200 steps:
 
 ```
-world/depth      outcome        travelled   min clearance   false-free
-forest/truth     COLLIDED          98.7 m          0.25 m       0.000%
-forest/stereo    COLLIDED           0.5 m          0.25 m       2.444%
-city/truth       deadlocked         0.0 m          2.00 m       0.000%
-city/stereo      timeout          311.0 m          0.80 m       0.018%
+world/depth      outcome        travelled   to-goal   min clearance
+forest/truth     COLLIDED         104.0 m   156.9 m          0.19 m
+forest/stereo    COLLIDED         358.0 m   138.1 m          0.29 m
+city/truth       deadlocked         0.0 m   240.1 m          2.00 m
+city/stereo      timeout          425.1 m   227.6 m          0.86 m
 ```
 
-Only `city/stereo` behaves — it flies 311 m without hitting anything but does not
-reach the goal. The forest runs still collide and the city truth run still
-deadlocks, so at least two more bugs are in there. The escape behaviour added for
-bug 3 is the prime suspect: it abandons the goal whenever free room is short,
-which in dense forest is most of the time, so the aircraft wanders instead of
-committing.
+Three causes were found, and **two of them were the harness lying, not the
+planner**:
 
-What *is* established: the map itself is sound (false-free is 0.000% with truth
-depth in every world), the collision scoring is honest (it is measured against
-`VoxelWorld`, never against the map the planner used), and the harness surfaces
-real bugs quickly.
+1. **The collision detector itself was broken.** It sampled 26 rays outward and
+   took the first hit. At r = 0.6 m those sample points are ~0.6 m apart on the
+   sphere, so a 0.2 m forest trunk sits between them and reads as clear. It
+   reported 3.00 m of clearance one step before a collision 0.36 m away, which
+   is geometrically impossible and is what gave it away. The aircraft was
+   *spawning inside trees* — the real clearance at the fixed start point was
+   0.50 m, not the 3.00 m reported. Replaced with an exhaustive voxel scan.
+2. **The planner probe had the identical bug.** 48 azimuth bins is 7.5°, i.e.
+   0.65 m between rays at 5 m, against trunks of 0.10–0.35 m. Trees were
+   literally invisible to it. Fixed with a swept-sphere test over the robot's
+   full width, plus 96 bins.
+3. **Genuine planner immaturity.** Even after both fixes it flies 104 m
+   (truth) / 358 m (stereo) and then hits something, and `city/truth`
+   deadlocks outright. Not solved.
+
+The general lesson, which cost real time twice in one session: *check the
+instrument before believing the experiment.* A detector that can miss obstacles
+makes every number the harness prints meaningless.
+
+## Ready-made planners worth benchmarking against
+
+This planner was written from scratch, which was reasonable for the reactive
+layer and questionable for the A*. Before investing more in it, compare against:
+
+* **OMPL** — the standard motion-planning library. BSD, plain C++, no ROS
+  dependency, installable via vcpkg on Windows. RRT\*, BIT\*, informed RRT\*, PRM.
+* **FCL** — collision checking, pairs with OMPL.
+* **EGO-Planner / Fast-Planner** (ZJU / HKUST) — purpose-built for quadrotor
+  flight in cluttered 3D from a local map. State of the art for this exact
+  problem, but ROS-coupled and would need lifting out.
+
+Benchmarking against OMPL would separate "this planner is buggy" from "this
+problem is hard", which the current numbers cannot do.

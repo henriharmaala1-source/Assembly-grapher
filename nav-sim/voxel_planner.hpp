@@ -39,11 +39,14 @@ namespace sim {
 // --- general (reactive direction) planner -----------------------------------
 
 struct GeneralParams {
-    int   nAz         = 48;      // azimuth bins over 360 deg
+    // 48 bins is 7.5 deg -> 0.65 m between rays at 5 m, wider than a forest
+    // trunk. Raised, and combined with the swept-sphere test in plan().
+    int   nAz         = 96;      // azimuth bins over 360 deg
     int   nEl         = 9;       // elevation bins
     float elMinDeg    = -35.f;
     float elMaxDeg    =  35.f;
     float horizonM    = 12.f;    // how far to probe
+    float sweepM      = 7.f;     // out to here, probe the robot's full width
     float robotR      = 0.6f;    // clearance the aircraft needs
     float unknownCost = 0.45f;   // an unknown cell counts as this fraction of a
                                  // real obstacle when scoring openness

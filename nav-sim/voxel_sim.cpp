@@ -33,21 +33,38 @@
 
 using namespace sim;
 
-// True clearance from the world, used ONLY for scoring — never fed to the
-// planner. Sampled on a small sphere; cheap and good enough to catch a strike.
+// True clearance from the world, used ONLY for scoring -- never fed to the
+// planner.
+//
+// EXACT, by scanning the actual voxels in a box around the point. The first
+// version sampled 26 rays outward and took the first hit, and it was wrong in
+// the same way the planner was: at r = 0.6 m the 26 sample points are ~0.6 m
+// apart on the sphere, so a 0.2 m tree trunk sits between them and reads as
+// clear. It reported 3.00 m of clearance one step before a collision 0.36 m
+// away -- geometrically impossible, and the tell that the DETECTOR was broken
+// rather than the planner.
+//
+// A collision detector that can miss obstacles makes every number the harness
+// prints meaningless, so this one is exhaustive: 125 cells at 0.25 m and a
+// 0.6 m radius, which costs nothing at sim rates.
 static float trueClearance(const VoxelWorld& w, float x, float y, float z, float maxR) {
-    const float step = w.cell() * 0.5f;
-    for (float r = step; r <= maxR; r += step) {
-        for (int i = 0; i < 26; ++i) {
-            int dx = (i % 3) - 1, dy = ((i / 3) % 3) - 1, dz = ((i / 9) % 3) - 1;
-            if (!dx && !dy && !dz) continue;
-            float n = std::sqrt(float(dx * dx + dy * dy + dz * dz));
-            int cx, cy, cz;
-            w.worldToCell(x + dx / n * r, y + dy / n * r, z + dz / n * r, cx, cy, cz);
-            if (w.solid(cx, cy, cz)) return r;
-        }
-    }
-    return maxR;
+    int cx, cy, cz;
+    w.worldToCell(x, y, z, cx, cy, cz);
+    const int R = int(std::ceil(maxR / w.cell()));
+    float best = maxR;
+    for (int dz = -R; dz <= R; ++dz)
+        for (int dy = -R; dy <= R; ++dy)
+            for (int dx = -R; dx <= R; ++dx) {
+                if (!w.solid(cx + dx, cy + dy, cz + dz)) continue;
+                float wx, wy, wz;
+                w.cellCentre(cx + dx, cy + dy, cz + dz, wx, wy, wz);
+                // distance to the cell's nearest face, not its centre
+                float ex = std::max(0.f, std::fabs(wx - x) - w.cell() * 0.5f);
+                float ey = std::max(0.f, std::fabs(wy - y) - w.cell() * 0.5f);
+                float ez = std::max(0.f, std::fabs(wz - z) - w.cell() * 0.5f);
+                best = std::min(best, std::sqrt(ex * ex + ey * ey + ez * ez));
+            }
+    return best;
 }
 
 int main(int argc, char** argv) {
@@ -83,12 +100,37 @@ int main(int argc, char** argv) {
         ForestParams p; p.cell = cell; genForest(W, p);
         px = 15.f; py = 10.f; pz = 6.f;
     }
-    printf("world '%s' %dx%dx%d @ %.2f m   start (%.0f,%.0f,%.0f) -> goal (%.0f,%.0f,%.0f)\n",
+    // VALIDATE THE SPAWN before blaming the planner for anything. A fixed start
+    // point in a procedurally generated forest lands inside a tree often enough
+    // that "collision at 0.4 m travelled" is far more likely to be a bad initial
+    // condition than a planning failure -- and a harness that cannot tell those
+    // apart is worse than no harness.
+    {
+        float c0 = trueClearance(W, px, py, pz, 3.0f);
+        if (c0 < 1.5f) {
+            printf("  spawn clearance only %.2f m -- searching for a clear start\n", c0);
+            bool ok = false;
+            for (float rad = 1.f; rad <= 25.f && !ok; rad += 1.f)
+                for (int a = 0; a < 24 && !ok; ++a)
+                    for (float dzs = 0.f; dzs <= 8.f && !ok; dzs += 1.f) {
+                        float th = a * float(M_PI) / 12.f;
+                        float tx = px + rad * std::cos(th), ty = py + rad * std::sin(th),
+                              tz = pz + dzs;
+                        if (trueClearance(W, tx, ty, tz, 3.0f) >= 1.5f) {
+                            px = tx; py = ty; pz = tz; ok = true;
+                        }
+                    }
+            if (!ok) { printf("  !! no clear spawn found within 25 m -- aborting\n"); return 3; }
+        }
+        printf("  spawn clearance %.2f m at (%.1f,%.1f,%.1f)\n",
+               trueClearance(W, px, py, pz, 3.0f), px, py, pz);
+    }
+    printf("world '%s' %dx%dx%d @ %.2f m   start (%.1f,%.1f,%.1f) -> goal (%.0f,%.0f,%.0f)\n",
            world.c_str(), W.nx(), W.ny(), W.nz(), W.cell(), px, py, pz, goalE, goalN, goalU);
 
     CamParams cp; DepthCamera cam(cp);
     VoxelMapParams mp; mp.cell = cell;
-    VoxelMap M; M.init(mp, px, py, pz);
+    VoxelMap M; M.init(mp, px, py, pz);   // after spawn validation, not before
 
     GeneralParams gp; gp.robotR = 0.6f;
     GeneralPlanner gen(gp);
@@ -172,7 +214,7 @@ int main(int argc, char** argv) {
         // --- score against TRUTH ---------------------------------------------
         float clr = trueClearance(W, px, py, pz, 2.0f);
         minClear = std::min(minClear, clr);
-        if (clr <= W.cell()) {
+        if (clr <= gp.robotR * 0.5f) {
             ++collisions;
             printf("  !! COLLISION at step %d, (%.1f, %.1f, %.1f), clearance %.2f m\n",
                    s, px, py, pz, clr);

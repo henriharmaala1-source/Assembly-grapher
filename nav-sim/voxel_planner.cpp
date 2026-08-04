@@ -19,6 +19,23 @@ static inline void dirFrom(float azDeg, float elDeg, float& dx, float& dy, float
     dz = std::sin(e);        // Up
 }
 
+// Is a SPHERE of radius r around this point clear? A single-ray probe is what
+// let the aircraft fly into trees: 48 azimuth bins is 7.5 deg, so adjacent rays
+// are 0.65 m apart at 5 m, and a 0.10-0.35 m forest trunk fits between them
+// completely unseen. Subtracting robotR from the ray length afterwards does not
+// help -- the obstacle was never detected at all.
+//
+// Seven samples (centre + six axis offsets) rather than a full ball: 7x the
+// probe cost instead of 125x at 0.25 m cells, and for convex obstacles larger
+// than a voxel it finds the same things.
+static inline bool sphereClear(const VoxelMap& m, float x, float y, float z, float r) {
+    static const float O[7][3] = {{0,0,0},{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    for (const auto& o : O)
+        if (m.stateAt(x + o[0]*r, y + o[1]*r, z + o[2]*r) == VoxelMap::OCCUPIED)
+            return false;
+    return true;
+}
+
 // Smallest signed angular difference, degrees.
 static inline float angDiff(float a, float b) {
     float d = std::fmod(a - b + 540.f, 360.f) - 180.f;
@@ -47,12 +64,15 @@ GeneralResult GeneralPlanner::plan(const VoxelMap& m, float px, float py, float 
             bool stillFree = true;
             while (t < p_.horizonM) {
                 t += step;
-                VoxelMap::State s = m.stateAt(px + dx * t, py + dy * t, pz + dz * t);
+                float qx = px + dx * t, qy = py + dy * t, qz = pz + dz * t;
+                VoxelMap::State s = m.stateAt(qx, qy, qz);
                 if (s == VoxelMap::OCCUPIED) { stillFree = false; break; }
-                // freeRun stops growing at the FIRST non-free cell. It is the
-                // distance the aircraft can commit to.
+                // freeRun gates SPEED, so it gets the expensive correct test:
+                // the whole robot-sized volume must be clear, not a centre line.
+                // Only out to sweepM -- past that it cannot affect the command.
                 if (stillFree) {
-                    if (s == VoxelMap::FREE) freeRun = t;
+                    if (t <= p_.sweepM && !sphereClear(m, qx, qy, qz, p_.robotR)) stillFree = false;
+                    else if (s == VoxelMap::FREE) freeRun = t;
                     else stillFree = false;
                 }
                 reach = (s == VoxelMap::FREE) ? t

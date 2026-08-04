@@ -50,3 +50,12 @@ if(BUILD_TESTS)
   target_link_libraries(test_nav PRIVATE ${OpenCV_LIBS})
   add_test(NAME test_nav COMMAND test_nav)
 endif()
+
+# --- 3D voxel world / stereo depth / voxel map -------------------------------
+add_executable(voxel_demo
+  voxel_demo.cpp
+  voxel_world.cpp
+  depth_camera.cpp
+  voxel_map.cpp)
+target_include_directories(voxel_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(voxel_demo PRIVATE ${OpenCV_LIBS})

@@ -142,7 +142,8 @@ int main(int argc, char** argv) {
     int collisions = 0, stopped = 0, noPath = 0, replans = 0;
     bool reached = false;
     std::vector<cv::Point2f> trail;
-    double tPlan = 0, tSense = 0;
+    double tPlan = 0, tSense = 0, tGen = 0, tPrec = 0, tInteg = 0;
+    int nPrec = 0;
 
     const float startDist = std::hypot(goalE - px, goalN - py);
 
@@ -162,14 +163,18 @@ int main(int argc, char** argv) {
         pose.yawDeg = yaw; pose.pitchDeg = -5.f; pose.rollDeg = 0.f;
         int64 t0 = cv::getTickCount();
         cv::Mat d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
+        int64 tm = cv::getTickCount();
         M.integrate(d, cam, pose);
+        tInteg += double(cv::getTickCount() - tm) / cv::getTickFrequency();
         tSense += double(cv::getTickCount() - t0) / cv::getTickFrequency();
         M.recentre(px, py, pz);
 
         // --- precise plan, occasionally ---------------------------------------
         int64 t1 = cv::getTickCount();
         if (!generalOnly && (s % replanEvery == 0)) {
+            int64 tp = cv::getTickCount();
             path = prec.plan(M, px, py, pz, goalE, goalN, goalU);
+            tPrec += double(cv::getTickCount() - tp) / cv::getTickFrequency(); ++nPrec;
             ++replans;
             if (!path.found) ++noPath;
         }
@@ -188,7 +193,9 @@ int main(int argc, char** argv) {
         float gEl = std::atan2(tgtU - pz, std::hypot(tgtE - px, tgtN - py)) * 180.f / float(M_PI);
 
         // --- general plan, every step ----------------------------------------
+        int64 tg = cv::getTickCount();
         GeneralResult gr = gen.plan(M, px, py, pz, gAz, gEl);
+        tGen += double(cv::getTickCount() - tg) / cv::getTickFrequency();
         tPlan += double(cv::getTickCount() - t1) / cv::getTickFrequency();
         if (gr.speed <= 0.01f) ++stopped;
 
@@ -299,8 +306,19 @@ int main(int argc, char** argv) {
     printf("  min true clearance %.2f m   <- scored against the WORLD, not the map\n", minClear);
     printf("  stopped on         %d of %d steps\n", stopped, steps);
     printf("  A* replans         %d, of which no path %d\n", replans, noPath);
-    printf("  sense %.1f ms/step   plan %.1f ms/step\n",
-           1000 * tSense / std::max(1, steps), 1000 * tPlan / std::max(1, steps));
+    // Split out what would actually run ON THE AIRCRAFT. The depth RENDER is
+    // sim-only -- on the Pi that is the stereo matcher, benchmarked separately.
+    // Map integration and both planners are real onboard cost.
+    int nsteps = std::max(1, (int)trail.size());
+    printf("  --- onboard cost (per step unless noted) ---\n");
+    printf("  map integrate      %6.2f ms\n", 1000 * tInteg / nsteps);
+    printf("  general planner    %6.2f ms\n", 1000 * tGen / nsteps);
+    printf("  precise planner    %6.2f ms per replan (%d replans, every %d steps)\n",
+           nPrec ? 1000 * tPrec / nPrec : 0.0, nPrec, replanEvery);
+    printf("  ONBOARD TOTAL      %6.2f ms/step amortised\n",
+           1000 * (tInteg + tGen + tPrec) / nsteps);
+    printf("  [sim-only] depth render %.1f ms/step\n",
+           1000 * (tSense - tInteg) / nsteps);
 
     VoxelMap::Score sc = M.score(W, px, py, pz, 25.f, 30.f);
     printf("  map false-free     %.3f%%\n", 100.0 * sc.falseFreeRate());

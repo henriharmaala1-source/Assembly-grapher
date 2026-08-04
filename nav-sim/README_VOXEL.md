@@ -89,37 +89,54 @@ running, each of which would have been invisible without the control:
 
 ## Status — read this before trusting a number
 
-**The harness works. The planners still collide.** Current matrix, 1200 steps:
+The precise planner is now **OMPL RRTConnect**, and the question it answers
+changed with it. It no longer plans to a distant mission goal; it plans a short
+path AHEAD along a requested bearing, ending on a horizon sphere ~25 m out. That
+is what "keep going that way, safely" actually needs, and the local map is only
+60 m across so the old formulation was projecting onto the boundary anyway.
+
+**Cost, measured on a desktop x86 core:**
+
+```
+                    hand-rolled A*      OMPL RRTConnect
+forward planner       236 ms/replan        1.10 ms/replan     214x
+onboard total        20.2 ms/step         11.7 ms/step
+```
+
+The 236 ms figure was a 0.35-0.7 s stall once scaled to a Pi 5 — 3 to 7 lost
+control cycles. At 1.1 ms it is irrelevant, and `planTimeS` is a **hard cap**,
+which the A* had no equivalent of. Onboard total is now ~12 ms/step here, so
+roughly 18-29 ms on a Pi 5, alongside the tracker (~16 ms) and StereoBM
+(~22-36 ms).
+
+**Flight quality, 1200 steps:**
 
 ```
 world/depth      outcome        travelled   to-goal   min clearance
-forest/truth     COLLIDED         104.0 m   156.9 m          0.19 m
-forest/stereo    COLLIDED         358.0 m   138.1 m          0.29 m
+forest/truth     COLLIDED         298.8 m   156.6 m          0.22 m
+forest/stereo    timeout          411.9 m   169.0 m          0.53 m
 city/truth       deadlocked         0.0 m   240.1 m          2.00 m
-city/stereo      timeout          425.1 m   227.6 m          0.86 m
+city/stereo      timeout          405.0 m   233.6 m          0.99 m
 ```
 
-Three causes were found, and **two of them were the harness lying, not the
-planner**:
+Better, not fixed. `forest/truth` went 104 m -> 299 m before colliding;
+`forest/stereo` no longer collides at all in 1200 steps. But nothing reaches a
+goal, and `city/truth` still deadlocks at zero — that one is a reactive-layer
+bug, since the same world flies 405 m on stereo depth.
 
-1. **The collision detector itself was broken.** It sampled 26 rays outward and
-   took the first hit. At r = 0.6 m those sample points are ~0.6 m apart on the
-   sphere, so a 0.2 m forest trunk sits between them and reads as clear. It
-   reported 3.00 m of clearance one step before a collision 0.36 m away, which
-   is geometrically impossible and is what gave it away. The aircraft was
-   *spawning inside trees* — the real clearance at the fixed start point was
-   0.50 m, not the 3.00 m reported. Replaced with an exhaustive voxel scan.
-2. **The planner probe had the identical bug.** 48 azimuth bins is 7.5°, i.e.
-   0.65 m between rays at 5 m, against trunks of 0.10–0.35 m. Trees were
-   literally invisible to it. Fixed with a swept-sphere test over the robot's
-   full width, plus 96 bins.
-3. **Genuine planner immaturity.** Even after both fixes it flies 104 m
-   (truth) / 358 m (stereo) and then hits something, and `city/truth`
-   deadlocks outright. Not solved.
+Progression of the run that keeps failing (`forest/truth`), for honesty about
+what each fix bought:
 
-The general lesson, which cost real time twice in one session: *check the
-instrument before believing the experiment.* A detector that can miss obstacles
-makes every number the harness prints meaningless.
+```
+0.4 m   -> spawning inside a tree (broken collision detector)
+104 m   -> exact detector + swept-sphere probe
+299 m   -> OMPL forward planner
+```
+
+Note also `map false-free` reaching ~9% on moving forest runs, against 2.95% in
+the static sweep at the same 8 m integration range. Motion makes the map worse
+than the stationary measurement suggested, which is worth chasing before
+trusting any planner result on stereo depth.
 
 ## Ready-made planners worth benchmarking against
 

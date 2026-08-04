@@ -60,8 +60,16 @@ add_executable(voxel_demo
 target_include_directories(voxel_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_demo PRIVATE ${OpenCV_LIBS})
 
+find_package(ompl QUIET)
+if(ompl_FOUND)
+  message(STATUS "nav_sim: OMPL found - forward planner uses RRTConnect")
+else()
+  message(STATUS "nav_sim: no OMPL - forward planner falls back to a straight-line probe")
+endif()
+
 add_executable(voxel_sim
   voxel_sim.cpp
+  ompl_planner.cpp
   voxel_world.cpp
   depth_camera.cpp
   voxel_map.cpp
@@ -70,4 +78,9 @@ target_include_directories(voxel_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenC
 target_link_libraries(voxel_sim PRIVATE ${OpenCV_LIBS})
 if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
   target_compile_definitions(voxel_sim PRIVATE SIM_HAVE_HIGHGUI=1)
+endif()
+if(ompl_FOUND)
+  target_compile_definitions(voxel_sim PRIVATE NAVSIM_HAVE_OMPL=1)
+  target_include_directories(voxel_sim PRIVATE ${OMPL_INCLUDE_DIRS})
+  target_link_libraries(voxel_sim PRIVATE ${OMPL_LIBRARIES})
 endif()

@@ -28,6 +28,7 @@
 
 #include "depth_camera.hpp"
 #include "voxel_map.hpp"
+#include "ompl_planner.hpp"
 #include "voxel_planner.hpp"
 #include "voxel_world.hpp"
 
@@ -134,8 +135,9 @@ int main(int argc, char** argv) {
 
     GeneralParams gp; gp.robotR = 0.6f;
     GeneralPlanner gen(gp);
-    PrecisePlanner prec{PreciseParams()};
-    PrecisePath path;
+    ForwardParams fwp; fwp.robotR = gp.robotR;
+    ForwardPath path;
+    printf("  forward planner: %s\n", forwardPlannerName());
 
     float vx = 0, vy = 0, vz = 0, yaw = 0;
     float travelled = 0, minClear = 1e9f;
@@ -172,8 +174,12 @@ int main(int argc, char** argv) {
         // --- precise plan, occasionally ---------------------------------------
         int64 t1 = cv::getTickCount();
         if (!generalOnly && (s % replanEvery == 0)) {
+            // Plan AHEAD along the mission bearing, not to the distant goal.
+            float mAz = std::atan2(goalE - px, goalN - py) * 180.f / float(M_PI);
+            float mEl = std::atan2(goalU - pz,
+                                   std::hypot(goalE - px, goalN - py)) * 180.f / float(M_PI);
             int64 tp = cv::getTickCount();
-            path = prec.plan(M, px, py, pz, goalE, goalN, goalU);
+            path = planForward(M, px, py, pz, mAz, mEl, fwp);
             tPrec += double(cv::getTickCount() - tp) / cv::getTickFrequency(); ++nPrec;
             ++replans;
             if (!path.found) ++noPath;
@@ -313,7 +319,7 @@ int main(int argc, char** argv) {
     printf("  --- onboard cost (per step unless noted) ---\n");
     printf("  map integrate      %6.2f ms\n", 1000 * tInteg / nsteps);
     printf("  general planner    %6.2f ms\n", 1000 * tGen / nsteps);
-    printf("  precise planner    %6.2f ms per replan (%d replans, every %d steps)\n",
+    printf("  forward planner    %6.2f ms per replan (%d replans, every %d steps)\n",
            nPrec ? 1000 * tPrec / nPrec : 0.0, nPrec, replanEvery);
     printf("  ONBOARD TOTAL      %6.2f ms/step amortised\n",
            1000 * (tInteg + tGen + tPrec) / nsteps);

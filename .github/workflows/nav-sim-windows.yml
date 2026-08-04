@@ -67,45 +67,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/worlds | Out-Null
           Copy-Item worlds/*.txt dist/worlds/ -ErrorAction SilentlyContinue
           Copy-Item sweep.sh dist/ -ErrorAction SilentlyContinue
-          @"
-KESTREL VOXEL NAVIGATION SIM - Windows build
-
-Double-click  voxel_gui.exe
-
-A menu opens. Click a world, choose Simulated stereo or Perfect (control),
-then FLY. Keep this whole folder together - the exe needs the DLLs beside it
-and reads worlds\ for the Hervanta / Tampere / Helsinki maps.
-
-  IN FLIGHT
-    space   pause
-    r       restart the same run
-    m       back to the menu
-    q       quit
-    s       toggle voxel-model spin
-    <- ->   rotate the voxel model
-
-  WHAT YOU ARE LOOKING AT
-    TRUTH + path        the real world, flown trail red, planned path green
-    VOXEL MODEL         the 3D map the aircraft actually built, rotating
-    VOXEL MAP           a horizontal slice - grey means UNKNOWN, not empty
-    DEPTH               what the camera returned; grey = no stereo match
-
-  WORTH KNOWING
-    Fly every world TWICE, once on stereo and once on Perfect. If it fails on
-    Perfect depth the planner is at fault; if only on stereo, the sensor is the
-    limit. That comparison found three real bugs in an afternoon.
-
-    It wanders safely rather than arriving - no configuration reaches its goal
-    yet. That is a known open problem, not a broken install.
-
-    This build has no OMPL (no clean Windows port), so the forward planner uses
-    a straight-line probe. The reactive layer does the obstacle avoidance and is
-    unaffected.
-
-  BATCH RUNS
-    voxel_sim.exe is the scriptable version - see --help flags in the README.
-    One run you watched is an anecdote; sweep.sh runs every world x seed.
-"@ | Out-File -FilePath dist/RUN_ME.txt -Encoding utf8
+          Copy-Item RUN_ME_windows.txt dist/RUN_ME.txt
           Get-ChildItem dist -Recurse | Select-Object FullName
 
       - uses: actions/upload-artifact@v4

@@ -93,6 +93,17 @@ int main(int argc, char** argv) {
     // planner. Exposing it is the precondition for any honest number here.
     unsigned seed = 1;
     std::string csvPath;       // per-step log, for offline analysis
+    // Start on a forest trail and aim along it, rather than at a fixed corner.
+    // Crossing a trail by accident tells you nothing; being placed on one and
+    // asked to follow it is a different and much sharper question, because the
+    // planner must reject wider openings off to the side in favour of the
+    // corridor that actually leads somewhere.
+    int trailRun = -1;         // -1 off, otherwise the trail index
+    // Steering-behaviour knobs, exposed because they must be ABLATED rather
+    // than reasoned about. Three plausible anti-churn mechanisms went in
+    // together and the pair made progress worse (advance ratio 0.60 -> 0.47);
+    // with no way to vary them one at a time that is an unusable measurement.
+    float emaA = -1, dwellM = -1, revP = -1; int commitN = -1;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -111,6 +122,11 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--drift")) driftMps = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--driftyaw")) driftDps = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--replan")) replanEvery = std::atoi(next("25"));
+        else if (!std::strcmp(argv[i], "--trail")) trailRun = std::atoi(next("0"));
+        else if (!std::strcmp(argv[i], "--ema")) emaA = float(std::atof(next("0.3")));
+        else if (!std::strcmp(argv[i], "--dwell")) dwellM = float(std::atof(next("0.12")));
+        else if (!std::strcmp(argv[i], "--revpen")) revP = float(std::atof(next("1.2")));
+        else if (!std::strcmp(argv[i], "--commit")) commitN = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--goal")) {
             goalE = float(std::atof(next("150")));
             goalN = float(std::atof(next("170")));
@@ -119,13 +135,66 @@ int main(int argc, char** argv) {
     }
 
     VoxelWorld W;
+    std::vector<Trail> trails;
     float px, py, pz;
     if (world == "city") {
         CityParams p; p.cell = cell; p.seed = seed; genCity(W, p);
         px = p.streetM * 0.5f; py = 5.f; pz = 6.f;
     } else {
-        ForestParams p; p.cell = cell; p.seed = seed; genForest(W, p);
+        ForestParams p; p.cell = cell; p.seed = seed; genForest(W, p, &trails);
         px = 15.f; py = 10.f; pz = 6.f;
+    }
+    if (trailRun >= 0 && !trails.empty()) {
+        const Trail& t = trails[size_t(trailRun) % trails.size()];
+        px = t.front()[0]; py = t.front()[1];
+        goalE = t.back()[0]; goalN = t.back()[1];
+        printf("  trail %d: (%.0f,%.0f) -> (%.0f,%.0f), %zu vertices\n",
+               trailRun, px, py, goalE, goalN, t.size());
+
+        // CHECK THE INSTRUMENT BEFORE BELIEVING THE EXPERIMENT. A "trail
+        // following" score is meaningless if the trail is not actually clear
+        // end to end -- one stem left standing in it would make a perfect
+        // follower look like a failure, and this project has already shipped
+        // two conclusions that were really instrument faults. So walk the
+        // centreline and report the worst clearance on it before flying.
+        //
+        // And pick the altitude by measurement rather than by assumption. The
+        // first version fixed it at 4.5 m and the check immediately reported
+        // 1.00 m of corridor clearance -- which was not a tree in the trail at
+        // all but the GROUND, since the terrain undulates by +-1.7 m and the
+        // floor sits 2 m above that. The trail was exactly as clear as designed;
+        // the aircraft was simply being flown too low over a hill.
+        auto corridor = [&](float z, float& worst, float& mean) {
+            worst = 1e9f; float sum = 0; int nS = 0;
+            for (size_t i = 0; i + 1 < t.size(); ++i) {
+                float ax=t[i][0], ay=t[i][1], bx=t[i+1][0], by=t[i+1][1];
+                int nSeg = std::max(1, int(std::hypot(bx-ax, by-ay) / 0.5f));
+                for (int k = 0; k <= nSeg; ++k) {
+                    float u = float(k)/nSeg;
+                    float c = trueClearance(W, ax+(bx-ax)*u, ay+(by-ay)*u, z, 3.0f);
+                    worst = std::min(worst, c); sum += c; ++nS;
+                }
+            }
+            mean = sum / std::max(1, nS);
+        };
+        // Print the whole profile, not just the winner. "It chose 4.5 m" tells
+        // you nothing about why; "clearance falls off above 6 m" tells you the
+        // canopy is the limit and the corridor is a tunnel, not a slot.
+        float bestZ = 4.5f, bestW = -1, bestM = 0;
+        printf("  corridor clearance by altitude:");
+        for (float z = 3.5f; z <= 10.5f; z += 1.0f) {
+            float w, m; corridor(z, w, m);
+            printf("  %.1f m:%.2f", z, w);
+            if (w > bestW) { bestW = w; bestM = m; bestZ = z; }
+        }
+        printf("\n");
+        pz = bestZ;
+        goalU = pz;
+        printf("  trail corridor at %.1f m altitude: min clearance %.2f m, mean %.2f m\n",
+               pz, bestW, bestM);
+        if (bestW < 1.4f)
+            printf("  !! corridor is narrower than designed -- the trail-following "
+                   "score below is not trustworthy\n");
     }
     // VALIDATE THE SPAWN before blaming the planner for anything. A fixed start
     // point in a procedurally generated forest lands inside a tree often enough
@@ -166,6 +235,10 @@ int main(int argc, char** argv) {
     VoxelMap M; M.init(mp, px, py, pz);   // after spawn validation, not before
 
     GeneralParams gp; gp.robotR = 0.6f;
+    if (emaA    >= 0) gp.fieldEma     = emaA;
+    if (dwellM  >= 0) gp.switchMargin = dwellM;
+    if (revP    >= 0) gp.revPenalty   = revP;
+    if (commitN >= 0) gp.commitSteps  = commitN;
     GeneralPlanner gen(gp);
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
@@ -173,6 +246,10 @@ int main(int argc, char** argv) {
 
     float vx = 0, vy = 0, vz = 0, yaw = 0;
     float travelled = 0, minClear = 1e9f;
+    // Trail-following score. Distance from the corridor centreline, not distance
+    // to the goal: a run can end near the goal having ignored the trail
+    // completely, and that is a different (easier) achievement.
+    float trailDev = 0; long trailN = 0, trailIn = 0;
     int collisions = 0, stopped = 0, noPath = 0, replans = 0;
     bool reached = false;
     std::vector<cv::Point2f> trail;
@@ -182,7 +259,8 @@ int main(int argc, char** argv) {
     const float startDist = std::hypot(goalE - px, goalN - py);
     FILE* csv = csvPath.empty() ? nullptr : std::fopen(csvPath.c_str(), "w");
     if (csv) std::fprintf(csv, "step,e,n,u,yaw,speed,freeM,openM,blocked,"
-                               "pathFound,pathWp,trueClear,distToGoal\n");
+                               "pathFound,pathWp,trueClear,distToGoal,"
+                               "cmdAz,goalAz,src\n");
 
 #if SIM_HAVE_HIGHGUI
     // Static truth backdrop for the live top-down view, rendered once.
@@ -271,6 +349,19 @@ int main(int argc, char** argv) {
         travelled += std::sqrt(vx * vx + vy * vy + vz * vz) * dt;
         if (std::hypot(vx, vy) > 0.2f) yaw = std::atan2(vx, vy) * 180.f / sim::PI_F;
         trail.push_back({px, py});
+        if (trailRun >= 0 && !trails.empty()) {
+            const Trail& t = trails[size_t(trailRun) % trails.size()];
+            float best = 1e9f;
+            for (size_t i = 0; i + 1 < t.size(); ++i) {
+                float ax=t[i][0], ay=t[i][1], vxs=t[i+1][0]-ax, vys=t[i+1][1]-ay;
+                float l2 = vxs*vxs + vys*vys;
+                float u = l2 > 1e-9f ? ((px-ax)*vxs + (py-ay)*vys)/l2 : 0.f;
+                u = std::max(0.f, std::min(1.f, u));
+                best = std::min(best, std::hypot(px-(ax+u*vxs), py-(ay+u*vys)));
+            }
+            trailDev += best; ++trailN;
+            if (best <= 2.5f) ++trailIn;    // within the corridor plus a margin
+        }
 
         // --- score against TRUTH ---------------------------------------------
         float clr = trueClearance(W, px, py, pz, 2.0f);
@@ -339,11 +430,13 @@ int main(int argc, char** argv) {
             if (key == ' ') paused = !paused;
         }
 #endif
-        if (csv) std::fprintf(csv, "%d,%.3f,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%d,%d,%zu,%.3f,%.2f\n",
+        if (csv) std::fprintf(csv, "%d,%.3f,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%d,%d,%zu,%.3f,%.2f,"
+                                   "%.2f,%.2f,%d\n",
                               s, px, py, pz, yaw, std::hypot(vx, vy), gr.freeM, gr.openM,
                               gr.blocked ? 1 : 0, path.found ? 1 : 0, path.pts.size(),
                               trueClearance(W, px, py, pz, 3.0f),
-                              std::hypot(goalE - px, goalN - py));
+                              std::hypot(goalE - px, goalN - py),
+                              gr.azDeg, gAz, int(gr.src));
         if (s % 40 == 0)
             printf("  step %4d  pos (%6.1f,%6.1f,%5.1f)  v %.2f  cmd %.2f  free %.2f  "
                    "open %.2f  %s  path %s(%zu wp)\n", s, px, py, pz,
@@ -363,6 +456,10 @@ int main(int argc, char** argv) {
     printf("  path travelled     %.1f m   (straight line %.1f m, ratio %.2f)\n",
            travelled, startDist, travelled / std::max(1.f, startDist));
     printf("  min true clearance %.2f m   <- scored against the WORLD, not the map\n", minClear);
+    if (trailN > 0)
+        printf("  trail following    %.0f%% of steps within 2.5 m of the corridor, "
+               "mean deviation %.1f m\n",
+               100.0 * double(trailIn) / double(trailN), trailDev / float(trailN));
     printf("  stopped on         %d of %d steps\n", stopped, steps);
     printf("  A* replans         %d, of which no path %d\n", replans, noPath);
     // Split out what would actually run ON THE AIRCRAFT. The depth RENDER is

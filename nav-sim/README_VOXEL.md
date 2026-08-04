@@ -45,18 +45,29 @@ cd nav-sim && cmake -B build && cmake --build build -j
 ```
 
 A menu appears. Click a world (Forest, City, Hervanta, Tampere centre, Helsinki
-centre), pick **Simulated stereo** or **Perfect (control)**, step the seed and
-step count with +/-, then **FLY**. During flight: `space` pause, `r` restart the
-same run, `m` back to the menu, `q` quit, `s` toggle voxel spin, `<-`/`->`
-rotate the voxel model. On a collision it holds the frame so
-you can see where it happened rather than the window vanishing.
+centre), pick **Simulated stereo** or **Perfect (control)**, choose **Follow a
+trail** or **Open stand** for the forest, step the seed and step count with +/-,
+then **FLY**.
+
+During flight:
+
+| key | does |
+|---|---|
+| `space` | pause |
+| `r` / `m` / `q` | restart the same run / back to the menu / quit |
+| `-` `+` | **playback speed** — 0.25x, 0.5x, 1x, 2x, 4x, max |
+| `[` `]` | **view distance** of the voxel pane — 20 m / 32 m / 44 m / 60 m |
+| `<-` `->` | rotate the voxel model (`s` toggles auto-spin) |
+
+On a collision it holds the frame so you can see where it happened rather than
+the window vanishing.
 
 Four live panes in a 2x2 grid:
 
 | pane | shows |
 |---|---|
-| **TRUTH + path** | the real world at flight height, flown trail in red, current OMPL path in green, goal circle |
-| **VOXEL MODEL (built)** | the 3D voxel structure the aircraft has actually built, height-coloured, **rotatable** |
+| **TRUTH + path** | the real world at flight height, flown trail in red, current path in green, forest trails in pale blue, goal circle |
+| **VOXEL MODEL (built)** | the 3D voxel structure the aircraft has actually built, as solid blocks, **rotatable**, with the flown path, the planned path and the commanded heading drawn into it |
 | **VOXEL MAP** | a horizontal slice — white free, black occupied, **grey unknown** |
 | **DEPTH** | the depth image going in; grey pixels are where stereo found no match |
 
@@ -64,8 +75,23 @@ The voxel-model pane is the one worth watching. A 2D slice shows a single
 height and hides everything above and below it, so "the map looks nothing like
 the world" is invisible in it. The 3D view makes that obvious at a glance — and
 comparing it against the truth pane beside it is the fastest way to see whether
-a failure is the sensor or the planner. It auto-spins; `<-`/`->` (or `a`/`d`)
-rotate manually, `s` toggles the spin.
+a failure is the sensor or the planner.
+
+Blocks are coloured by height **relative to the aircraft**: red is at your
+altitude and is what you are about to hit, green is below, blue is above.
+Absolute height was tried first and coloured the entire model one shade of blue,
+because a forest occupies 8 m of a 24 m map — it answered a question nobody was
+asking.
+
+The blocks are drawn at a chosen **display pitch** (1.5 m by default), which is
+not the map's resolution (0.25 m). This matters: the first version drew one cube
+per map cell, which is 240 cubes across a 440-pixel pane — 1.05 px each. The
+cube renderer with its three shaded faces was working perfectly and was
+completely invisible. Downsampling for display is an OR, never an average, so a
+block is drawn if anything solid is inside it and no obstacle is ever lost to
+the display. `build/iso_render_check` dumps the pane at every pitch headlessly
+and prints the pixels-per-cube, which is the number that decides whether you can
+see anything at all.
 
 `voxel_gui` is for looking at one run with your eyes. **`voxel_sim` stays the
 scriptable entry point** and `sweep.sh` drives it for multi-seed batches, which
@@ -77,6 +103,49 @@ The OSM worlds need their footprint files first:
 ```bash
 python3 worlds/make_fi_cities.py
 ```
+
+### Forest trails
+
+`genForest` threads three winding cleared corridors, 3.5 m wide, through the
+plot. They are a rejection rule rather than a post-hoc clearing: stems and scrub
+are never placed within half the corridor width plus their own trunk radius, so
+the clear width is 3.5 m whatever thickness the nearest tree happens to be. The
+trail floor is retextured to packed earth (0.5 against the forest floor's 0.7),
+which makes it very slightly *harder* for stereo than the ground beside it — a
+planner that hugs a trail is not being handed easier perception as a reward.
+
+```bash
+./build/voxel_sim --world forest --trail 0 --seed 3
+```
+
+starts at one end of trail 0 and puts the goal at the other, then reports what
+fraction of the flight stayed within 2.5 m of the centreline. Before flying it
+walks the centreline and prints the worst true clearance on it — check the
+instrument before believing the experiment, because one stem left standing in
+the corridor would make a perfect follower look like a failure.
+
+A managed boreal forest genuinely is threaded with skid roads and ditch lines,
+so this is not a synthetic convenience. It is also a sharper test than open
+stand: crossing a trail tells you nothing, while following one asks whether the
+planner will turn *down* a lane that is narrower than the gaps either side of
+it.
+
+**The planner currently fails that test**, and the trail exists so that the
+failure is visible rather than assumed away. Stereo depth, 900 steps:
+
+```
+seed  corridor min clr   on-trail   mean deviation   end distance
+ 1        1.67 m           22%           4.6 m       102 of 213 m
+ 2        1.67 m           61%           3.3 m        75 of 190 m
+ 3        1.63 m           37%           6.6 m        99 of 204 m
+```
+
+The corridor check passes in all three (1.63-1.67 m against a designed 1.75 m
+half-width), so the low following scores are the planner's, not the world's.
+Nothing in the reactive layer biases it toward a corridor: the goal direction
+pulls it at the far end of the trail and it cuts across the stand, arriving in
+roughly the right place having ignored the lane entirely. Trail-aware steering
+is not implemented, and this is the measurement that says how much it is worth.
 
 ## Multiple maps, batch runs, and data
 
@@ -91,7 +160,13 @@ the planner. Use `sweep.sh` rather than single runs:
 ./sweep.sh "" 5 forest        # one world
 ```
 
-Measured, truth depth, 5 seeds per world:
+> **The tables below predate the trail change and are not comparable to a run
+> today.** Trail generation draws from the same RNG before the stem loop, so
+> `--seed 1` now builds a different forest — every tree moved. Re-run rather
+> than reading old and new numbers side by side. This is exactly the trap
+> `ablate.sh` warns about in its header.
+
+Measured on the *pre-trail* worlds, truth depth, 5 seeds per world:
 
 ```
 world    seed  outcome           travel  end-dist   minClr  falseFree
@@ -108,9 +183,9 @@ city     5     no collision       234.4     130.4     0.66     0.385%
 ---  10 runs, 2 collisions (20%), 0 goals reached
 ```
 
-The forest numbers are genuinely tight across seeds (225-237 m travelled,
-70-78 m end distance) -- that is a reproducible property. The city is not:
-2 of 5 collide even with perfect depth. And **no seed in any world reaches its
+The forest numbers were genuinely tight across seeds (225-237 m travelled,
+70-78 m end distance) -- that is a reproducible property. The city was not:
+2 of 5 collided even with perfect depth. And **no seed in any world reached its
 goal**, which remains the open problem.
 
 `--csv path` writes a per-step log (position, yaw, speed, freeM, openM, blocked,
@@ -165,6 +240,60 @@ running, each of which would have been invisible without the control:
 3. Direction was scored on openness while speed was gated on free range, so the
    planner chose whichever direction held the most *unseen* space — precisely
    the direction with the least room to move into — and then refused to move.
+
+## Heading churn — what fixed it and what did not
+
+The aircraft used to spend most of its motion turning. Measured on the forest,
+mean absolute yaw change per step, and *advance* = net displacement ÷ distance
+travelled (1.0 is a straight line, 0.0 is a closed loop):
+
+```
+                                churn    reversals   advance
+6 m/s, no commitment            42.6       13.3%       0.42
+3 m/s, no commitment            26.9        5.9%       0.53
+3 m/s, commit 5 steps           11.4        0.5%       0.53   <- shipped
+```
+
+Two separate causes. `vMax` was 6 m/s in a stand whose typical trunk gap is
+2.67 m — the aircraft crossed a gap in under half a second while the map updated
+at 10 Hz. And the planner re-ran its 864-bin argmax **every step**, 10 Hz, while
+moving 0.3 m per step, so it re-decided about ten times per meaningful change in
+the scene and the winning bin flipped between equally-open gaps. Holding the
+chosen heading for 0.5 s unless it actually becomes blocked removes 58% of the
+remaining churn and 92% of the reversals.
+
+**Commitment is not free**, and on the trail-bearing forests the cost is
+visible. Four seeds, same worlds:
+
+```
+                churn   reversals   advance          
+commit 0        28.4       5.1%      0.616  [0.591,0.630]
+commit 5        11.3       0.5%      0.450  [0.410,0.534]
+```
+
+The ranges do not overlap, so unlike the three mechanisms below this is a real
+effect rather than seed noise. The mechanism is not mysterious: a corridor with
+bends needs steering, and a held heading overshoots them. Optimising either
+metric alone gives a useless aircraft — hold forever and it flies beautifully
+straight into a tree, re-decide every frame and it spins in place — so
+`commit_sweep.sh` sweeps the hold length and reports both.
+
+Three further mechanisms were tried and **are off by default because they did
+not work**: smoothing the direction field over time, requiring a challenger to
+beat the incumbent by a margin, and charging extra for deviations beyond 90°.
+None reduced churn further; all three cost advance (0.452–0.492 against 0.531).
+`ablate.sh` reproduces the table, and the parameters are still there behind
+`--ema`, `--dwell` and `--revpen`.
+
+Read the spread before the means, though. Across three baseline seeds advance
+ranged 0.460–0.642 — a spread of 0.182 — while the largest gap between arm means
+is 0.080. **Three seeds cannot resolve a 0.08 effect.** The honest conclusion is
+"no measurable benefit, possible harm", not "these are 8% worse".
+
+One hypothesis died on the way: the field variance looked like stereo speckle
+collapsing a direction's free run for one frame. The perfect-depth control
+refuted it — 34% large swings on truth depth against 39% on stereo. The variance
+is geometry sampled from a moving origin, not sensor noise.
 
 ## Status — read this before trusting a number
 

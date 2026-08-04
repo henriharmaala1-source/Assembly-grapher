@@ -3,20 +3,29 @@ KESTREL VOXEL NAVIGATION SIM - Windows build
 Double-click  voxel_gui.exe
 
 A menu opens. Click a world, choose Simulated stereo or Perfect (control),
-then FLY. Keep this whole folder together - the exe needs the DLLs beside it
-and reads worlds\ for the Hervanta / Tampere / Helsinki maps.
+and for the forest choose Open stand or Follow a trail. Then FLY. Keep this
+whole folder together - the exe needs the DLLs beside it and reads worlds\
+for the Hervanta / Tampere / Helsinki maps.
 
   IN FLIGHT
     space   pause
     r       restart the same run
     m       back to the menu
     q       quit
+    - +     playback speed: 0.25x 0.5x 1x 2x 4x max
+    [ ]     view distance of the voxel model: 20 / 32 / 44 / 60 m
     s       toggle voxel-model spin
     <- ->   rotate the voxel model
 
   WHAT YOU ARE LOOKING AT
-    TRUTH + path        the real world, flown trail red, planned path green
-    VOXEL MODEL         the 3D map the aircraft actually built, rotating
+    TRUTH + path        the real world, flown trail red, planned path green,
+                        forest trails pale blue
+    VOXEL MODEL         the 3D map the aircraft actually built, as solid
+                        blocks, with its flown path, its plan and the
+                        heading it is currently commanding drawn into it.
+                        Block colour is height RELATIVE TO YOU: red is at
+                        your altitude and is what you would hit, green is
+                        below, blue above.
     VOXEL MAP           a horizontal slice - grey means UNKNOWN, not empty
     DEPTH               what the camera returned; grey = no stereo match
 

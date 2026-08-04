@@ -99,9 +99,52 @@ GeneralResult GeneralPlanner::plan(const VoxelMap& m, float px, float py, float 
         }
     }
 
+    // Blend into the steering field. First call seeds it, so the aircraft is
+    // not steered by a half-formed average on step 0.
+    const size_t NB = field_.size();
+    if (fieldS_.size() != NB || p_.fieldEma >= 1.f) { fieldS_ = field_; freeS_ = free_; }
+    else {
+        const float a = p_.fieldEma;
+        for (size_t i = 0; i < NB; ++i) {
+            fieldS_[i] += (field_[i] - fieldS_[i]) * a;
+            freeS_[i]  += (free_[i]  - freeS_[i])  * a;
+        }
+    }
+
+    // COMMITMENT CHECK. If a heading was chosen recently and the volume along it
+    // is still clear, keep flying it rather than re-deciding. Re-deciding at the
+    // sensor rate is what made the aircraft oscillate between equally-good gaps
+    // instead of committing to one.
+    if (haveLast_ && held_ < p_.commitSteps) {
+        int ia = int(std::lround(lastAz_ / 360.f * p_.nAz)) % p_.nAz;
+        if (ia < 0) ia += p_.nAz;
+        int ie = 0; float bd = 1e9f;
+        for (int i = 0; i < p_.nEl; ++i) {
+            float el = p_.elMinDeg + (p_.elMaxDeg - p_.elMinDeg) *
+                       (p_.nEl > 1 ? float(i) / (p_.nEl - 1) : 0.5f);
+            float d = std::fabs(el - lastEl_);
+            if (d < bd) { bd = d; ie = i; }
+        }
+        float fr = free_[size_t(ie) * p_.nAz + ia];
+        if (fr - p_.robotR >= p_.breakFreeM) {
+            ++held_;
+            GeneralResult rc;
+            rc.src = GeneralResult::HELD;
+            rc.azDeg = lastAz_; rc.elDeg = lastEl_;
+            rc.freeM = fr; rc.openM = field_[size_t(ie) * p_.nAz + ia];
+            float usable = std::max(0.f, rc.freeM - p_.robotR);
+            const float a2 = p_.decelMs2, t2 = p_.reactS;
+            float v2 = -a2 * t2 + std::sqrt(a2 * t2 * a2 * t2 + 2.f * a2 * usable);
+            rc.speed = std::min(p_.vMax, std::max(0.f, v2));
+            return rc;
+        }
+    }
+    held_ = 0;
+
     // Score. Openness dominates; goal alignment and hysteresis break ties.
     GeneralResult r;
     float best = -1e30f;
+    float incumbent = -1e30f;    // score of the heading we are already flying
     for (int ie = 0; ie < p_.nEl; ++ie) {
         float el = p_.elMinDeg + (p_.elMaxDeg - p_.elMinDeg) *
                    (p_.nEl > 1 ? float(ie) / (p_.nEl - 1) : 0.5f);
@@ -113,26 +156,63 @@ GeneralResult GeneralPlanner::plan(const VoxelMap& m, float px, float py, float 
             // least confirmed-free room -- and then the stopping-distance gate
             // refused to move. Measured: wedged at 0.38 m of free run with 8.71 m
             // of openness, stationary for the remaining 780 steps.
-            float open = field_[size_t(ie) * p_.nAz + ia] / p_.horizonM;
-            float fr   = free_[size_t(ie) * p_.nAz + ia] / p_.horizonM;
-            if (field_[size_t(ie) * p_.nAz + ia] < p_.robotR * 2.f) continue;
-            float gd = std::fabs(angDiff(az, goalAzDeg)) / 180.f
-                     + std::fabs(el - goalElDeg) / 90.f * 0.5f;
+            // Steer by the smoothed field; the raw one is reserved for speed.
+            const size_t k = size_t(ie) * p_.nAz + ia;
+            float open = fieldS_[k] / p_.horizonM;
+            float fr   = freeS_[k]  / p_.horizonM;
+            // Admissibility, though, is a safety test, so it reads the CURRENT
+            // measurement: a direction that has just become blocked must be
+            // rejected this frame even if its average still looks generous.
+            if (field_[k] < p_.robotR * 2.f) continue;
+            float dAz = std::fabs(angDiff(az, goalAzDeg));
+            float gd = dAz / 180.f + std::fabs(el - goalElDeg) / 90.f * 0.5f;
+            float rev = std::max(0.f, dAz - 90.f) / 90.f;   // 0 ahead, 1 behind
             float hd = 0.f;
             if (haveLast_)
                 hd = std::fabs(angDiff(az, lastAz_)) / 180.f
                    + std::fabs(el - lastEl_) / 90.f * 0.5f;
             float score = open + p_.freeWeight * fr
-                        - p_.goalWeight * gd - p_.hystWeight * hd;
+                        - p_.goalWeight * gd - p_.hystWeight * hd
+                        - p_.revPenalty * rev;
             if (score > best) {
                 best = score; r.azDeg = az; r.elDeg = el;
-                r.openM = field_[size_t(ie) * p_.nAz + ia];
-                r.freeM = free_[size_t(ie) * p_.nAz + ia];
+                r.openM = field_[k];
+                r.freeM = free_[k];
             }
+            // Is this the heading we are already flying? Scored identically, so
+            // the margin below compares like with like.
+            if (haveLast_ && std::fabs(angDiff(az, lastAz_)) < 180.f / p_.nAz
+                          && std::fabs(el - lastEl_) < 1e-3f)
+                incumbent = score;
+        }
+    }
+
+    // DWELL. A challenger must beat the incumbent by switchMargin, not merely
+    // tie with it. Without this the argmax flips on differences far smaller
+    // than the map's own accuracy, which is how a planner ends up "spinning
+    // between gaps" while every individual decision looks defensible.
+    if (haveLast_ && incumbent > -1e29f && best - incumbent < p_.switchMargin) {
+        int ia = int(std::lround(lastAz_ / 360.f * p_.nAz)) % p_.nAz;
+        if (ia < 0) ia += p_.nAz;
+        int ie = 0; float bd = 1e9f;
+        for (int i = 0; i < p_.nEl; ++i) {
+            float el = p_.elMinDeg + (p_.elMaxDeg - p_.elMinDeg) *
+                       (p_.nEl > 1 ? float(i) / (p_.nEl - 1) : 0.5f);
+            float d = std::fabs(el - lastEl_);
+            if (d < bd) { bd = d; ie = i; }
+        }
+        const size_t k = size_t(ie) * p_.nAz + ia;
+        if (field_[k] >= p_.robotR * 2.f) {
+            best = incumbent;
+            r.azDeg = 360.f * float(ia) / p_.nAz;
+            r.elDeg = p_.elMinDeg + (p_.elMaxDeg - p_.elMinDeg) *
+                      (p_.nEl > 1 ? float(ie) / (p_.nEl - 1) : 0.5f);
+            r.openM = field_[k];
+            r.freeM = free_[k];
         }
     }
     if (best <= -1e29f) {
-        r.blocked = true; r.speed = 0.f;
+        r.blocked = true; r.speed = 0.f; r.src = GeneralResult::BLOCKED;
         r.azDeg = haveLast_ ? lastAz_ : goalAzDeg;
         r.elDeg = haveLast_ ? lastEl_ : goalElDeg;
         return r;
@@ -154,6 +234,7 @@ GeneralResult GeneralPlanner::plan(const VoxelMap& m, float px, float py, float 
                       (p_.nEl > 1 ? float(be) / (p_.nEl - 1) : 0.5f);
             r.freeM = bf;
             r.openM = field_[size_t(be) * p_.nAz + bi];
+            r.src = GeneralResult::ESCAPE;
         }
     }
     lastAz_ = r.azDeg; lastEl_ = r.elDeg; haveLast_ = true;

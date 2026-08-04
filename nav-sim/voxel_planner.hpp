@@ -56,11 +56,87 @@ struct GeneralParams {
     // direction and then discovers it has nowhere to move into.
     float freeWeight  = 1.4f;
     float goalWeight  = 1.0f;    // pull toward the requested direction
+    // COMMITMENT. The planner used to re-run its 864-bin argmax every step --
+    // 10 Hz, while moving 0.3 m per step. The scene only changes meaningfully
+    // every ~1 s of travel, so it was re-deciding roughly ten times per real
+    // change, and the winning bin flipped between gaps as each depth frame
+    // landed. That is the "spinning between gaps" behaviour, and it is a
+    // decision-RATE problem rather than a weight-tuning one.
+    //
+    // Hold the chosen heading for commitSteps unless it actually becomes
+    // blocked, then re-decide.
+    int   commitSteps = 5;       // 0.5 s at dt = 0.1
+    float breakFreeM  = 1.2f;    // re-decide early if committed free run drops below this
+    // ------------------------------------------------------------------
+    // THE THREE MECHANISMS BELOW ARE OFF BY DEFAULT BECAUSE THEY WERE
+    // MEASURED AND DID NOT WORK. They are kept, and kept switchable
+    // (--ema / --dwell / --revpen on voxel_sim), because the measurement is
+    // worth more than the code and the next person will otherwise think of
+    // all three again. `ablate.sh` reproduces it.
+    //
+    // Forest, 600 steps, seeds 1-3, one factor at a time. "churn" is mean
+    // |dyaw| per step; "advance" is net displacement / distance travelled:
+    //
+    //     arm                 churn   reversals   advance
+    //     commit 0 (off)      26.92       5.9%      0.530
+    //     commit 5            11.39       0.5%      0.531   <- shipped
+    //     commit 5 + ema      10.94       0.4%      0.452
+    //     commit 5 + dwell    10.93       0.5%      0.492
+    //     commit 5 + revpen   11.20       0.4%      0.479
+    //     all three           ~11         ~0.5%     0.507
+    //
+    // No collisions in any arm, 3/3 seeds.
+    //
+    // Commitment alone accounts for the entire churn improvement -- 58% less
+    // yaw churn and 92% fewer reversals, at no cost to progress. None of the
+    // other three removes any further churn, and all three cost advance.
+    //
+    // Read the spread before reading the means, though: across the three
+    // baseline seeds advance ranged 0.460-0.642, a spread of 0.182, while the
+    // largest gap between arm MEANS is 0.080. Three seeds cannot resolve a
+    // 0.08 effect. So the honest statement is "no measurable benefit, possible
+    // harm", not "these are 8% worse" -- and a bigger sweep is what would be
+    // needed to say anything stronger.
+    // ------------------------------------------------------------------
+
+    // FIELD SMOOTHING. The reasoning was: with commitment alone the planner
+    // still re-decided every 6th step and 39% of those re-decisions swung the
+    // command more than 90 deg, so score on a time-averaged field instead of
+    // the instantaneous one. The first guess at the cause -- stereo speckle
+    // collapsing a direction's free run for one frame -- was refuted by the
+    // perfect-depth control (34% on truth depth against 39% on stereo). The
+    // variance is geometry sampled from a moving origin: translate 0.3 m
+    // sideways in a stand with a 2.67 m mean gap and the azimuth of every clear
+    // lane shifts. Real, but averaging it did not help.
+    //
+    // If it is ever switched back on, the safety argument holds and is worth
+    // stating: the smoothed field only ever chooses a HEADING. Commanded SPEED
+    // is computed from the raw, current, unsmoothed free run, so a genuinely
+    // new obstacle cuts the speed on the frame it appears. Smooth what you
+    // steer by, never what you brake by.
+    float fieldEma    = 1.00f;   // 1 = no smoothing (the default); 0.3 was tried
+    // A near-tie must not be able to flip the command -- the standard dwell
+    // rule. Made no difference to churn on top of commitment, which in
+    // hindsight is unsurprising: commitment already caps the decision rate, and
+    // a dwell margin is a weaker version of the same idea.
+    float switchMargin= 0.00f;   // 0 = off; 0.12 was tried
+    // REVERSING AS A LAST RESORT. A linear angular cost does not say that: at
+    // goalWeight 1.0 a 180 deg reversal costs 1.0 while the openness terms are
+    // worth up to 2.4, so the widest lane in the plot can win even when it
+    // points backwards. This charges extra on the deviation beyond 90 deg, to
+    // take the NEAREST acceptable lane rather than the globally most open one
+    // -- VFH+'s nearest-valley rule. Sound in principle; not measurable here,
+    // because with commitment on, the aircraft rarely reverses anyway.
+    float revPenalty  = 0.00f;   // 0 = off; 1.2 was tried
     float hystWeight  = 0.55f;   // stickiness toward last frame's choice; this
                                  // is what stops oscillation between two
                                  // equally-open gaps, and it matters more than
                                  // it looks like it should
-    float vMax        = 6.0f;    // m/s
+    // 6 m/s was reckless for this environment. At 1200 stems/ha the typical gap
+    // between trunks is 2.67 m, so 6 m/s crosses a gap in under half a second
+    // while the map updates at 10 Hz. Skydio manages ~5 m/s in forest with SIX
+    // cameras and far better perception; 3 m/s is the honest ceiling here.
+    float vMax        = 3.0f;    // m/s
     float decelMs2    = 3.0f;    // usable deceleration
     float reactS      = 0.25f;   // sense+plan+actuate latency before decel starts
     float minFreeM    = 0.4f;    // below this confirmed-free range, hold
@@ -78,6 +154,12 @@ struct GeneralResult {
     float openM = 0;
     float freeM = 0;
     bool  blocked = false;       // nothing acceptable anywhere -> hold
+    // Which branch produced this heading. Logged, because "the aircraft is
+    // spinning" is a symptom with at least three possible causes -- argmax
+    // churn, the escape branch firing, and velocity-lag overshoot -- and they
+    // need completely different fixes. Guessing which one it is has already
+    // cost this project a day.
+    enum Source { SCORED, HELD, ESCAPE, BLOCKED } src = SCORED;
 };
 
 class GeneralPlanner {
@@ -98,8 +180,14 @@ public:
 private:
     GeneralParams p_;
     std::vector<float> field_, free_;
+    // Time-averaged copies, used ONLY for direction scoring. Kept separate from
+    // field_/free_ so that nothing which gates speed can accidentally read a
+    // smoothed value -- the separation is the safety property, so it is a
+    // separate buffer rather than a flag.
+    std::vector<float> fieldS_, freeS_;
     float lastAz_ = 0, lastEl_ = 0;
     bool  haveLast_ = false;
+    int   held_ = 0;             // steps the current heading has been held
 };
 
 // --- precise (A* to a point) planner ----------------------------------------

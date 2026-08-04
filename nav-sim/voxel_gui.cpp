@@ -43,6 +43,7 @@ struct Cfg {
     int   seed = 1;
     bool  truth = false;      // perfect depth control
     int   steps = 900;
+    bool  trail = false;      // forest only: start on a trail, fly its length
 };
 
 struct Btn { cv::Rect r; std::string label; int id; bool on = false; };
@@ -101,6 +102,18 @@ static bool menu(Cfg& cfg) {
         cv::putText(img, "changes the generated world", {560, 198},
                     cv::FONT_HERSHEY_SIMPLEX, 0.42, {150, 150, 160}, 1, cv::LINE_AA);
 
+        // Trail mode. Only meaningful in the forest, so say so rather than
+        // silently doing nothing when a city is selected.
+        bool isForest = !std::strcmp(WORLDS[cfg.world].kind, "forest");
+        cv::putText(img, "forest trail", {760, 122}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                    {150, 150, 160}, 1, cv::LINE_AA);
+        btns.push_back({cv::Rect(760, 134, 200, 40),
+                        cfg.trail ? "Follow a trail" : "Open stand", 500,
+                        cfg.trail && isForest});
+        cv::putText(img, isForest ? "start on a cleared corridor"
+                                  : "(forest only)", {760, 198},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.42, {150, 150, 160}, 1, cv::LINE_AA);
+
         // steps
         cv::putText(img, "steps", {560, 246}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
                     {150, 150, 160}, 1, cv::LINE_AA);
@@ -110,7 +123,7 @@ static bool menu(Cfg& cfg) {
                     cv::FONT_HERSHEY_SIMPLEX, 0.65, {240, 240, 245}, 2, cv::LINE_AA);
 
         btns.push_back({cv::Rect(30, y + 24, 260, 52), "FLY", 400, true});
-        cv::putText(img, "space pause   r restart   m menu   q quit",
+        cv::putText(img, "space pause   r restart   m menu   q quit   -/+ playback speed",
                     {30, H - 26}, cv::FONT_HERSHEY_SIMPLEX, 0.46,
                     {150, 150, 160}, 1, cv::LINE_AA);
 
@@ -130,6 +143,7 @@ static bool menu(Cfg& cfg) {
                 else if (b.id == 201) cfg.seed = std::min(99, cfg.seed + 1);
                 else if (b.id == 300) cfg.steps = std::max(200, cfg.steps - 200);
                 else if (b.id == 301) cfg.steps = std::min(4000, cfg.steps + 200);
+                else if (b.id == 500) cfg.trail = !cfg.trail;
                 else if (b.id == 400) return true;
             }
         }
@@ -166,9 +180,20 @@ static int fly(const Cfg& cfg) {
                 cv::FONT_HERSHEY_SIMPLEX, 0.8, {240, 240, 245}, 2);
     cv::imshow(WIN, splash); cv::waitKey(1);
 
+    std::vector<Trail> trails;
     if (!std::strcmp(wc.kind, "forest")) {
-        ForestParams p; p.cell = cell; p.seed = unsigned(cfg.seed); genForest(W, p);
+        ForestParams p; p.cell = cell; p.seed = unsigned(cfg.seed);
+        genForest(W, p, &trails);
         px = 15; py = 10; pz = 6; goalE = 120; goalN = 150; goalU = 8;
+        // Trail mode places the aircraft at one end of a cleared corridor and
+        // puts the goal at the other. Following a corridor is a different test
+        // from crossing open stand: the planner has to turn DOWN a lane that is
+        // narrower than the gaps either side of it.
+        if (cfg.trail && !trails.empty()) {
+            const Trail& t = trails[0];
+            px = t.front()[0]; py = t.front()[1]; pz = 4.5f;
+            goalE = t.back()[0]; goalN = t.back()[1]; goalU = 4.5f;
+        }
     } else if (!std::strcmp(wc.kind, "city")) {
         CityParams p; p.cell = cell; p.seed = unsigned(cfg.seed); genCity(W, p);
         px = p.streetM * 0.5f; py = 5; pz = 6; goalE = 160; goalN = 190; goalU = 8;
@@ -212,11 +237,37 @@ static int fly(const Cfg& cfg) {
     bool paused = false, collided = false;
     float isoYaw = 0.f; bool spin = true;   // voxel-model view angle
     std::vector<cv::Point2f> trail;
+    std::vector<cv::Point3f> trail3;        // same path, with height, for the 3D view
     const float dt = 0.1f;
+    // PLAYBACK RATE, separate from the aircraft's speed, and the two were being
+    // confused. One sim step is dt = 0.1 s of flight, and a step costs roughly
+    // 80 ms to compute, so the window has been running at very nearly 1x real
+    // time all along -- what looked "very high" was the commanded 6 m/s, now
+    // 3 m/s. Rate is here so you can slow the world down to watch a decision,
+    // which is a different need from making the aircraft fly slower.
+    //   rate < 0  -> as fast as the machine will go (batch-like)
+    static const float RATES[] = {0.25f, 0.5f, 1.f, 2.f, 4.f, -1.f};
+    int rateIdx = 2;
+    // Display pitch of the voxel-model pane, metres per drawn block. Not the
+    // map resolution -- see VoxelMap::isoImage. Coarser means bigger, clearer
+    // blocks and more of the map on screen; finer means the real detail the
+    // map holds, at the cost of legibility.
+    // Block pitch and render distance are stepped TOGETHER: a 20 m view wants
+    // small blocks and a 60 m view wants big ones, and letting them drift apart
+    // just gives you the two bad combinations as well as the two good ones.
+    struct View { float blockM, spanM; const char* name; };
+    static const View VIEWS[] = {
+        {0.5f, 20.f, "20 m / 0.5 m"},
+        {1.0f, 32.f, "32 m / 1.0 m"},
+        {1.5f, 44.f, "44 m / 1.5 m"},
+        {2.0f, 60.f, "60 m / 2.0 m"},
+    };
+    int blockIdx = 2;
     cv::Mat top(W.ny(), W.nx(), CV_8UC3);
     (void)0;
 
     for (int s = 0; s < cfg.steps; ++s) {
+        const int64 tStep = cv::getTickCount();
         CamPose pose; pose.e=px; pose.n=py; pose.u=pz;
         pose.yawDeg=yaw; pose.pitchDeg=-5; pose.rollDeg=0;
         cv::Mat d = cfg.truth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
@@ -244,6 +295,7 @@ static int fly(const Cfg& cfg) {
         travelled += std::sqrt(vx*vx+vy*vy+vz*vz)*dt;
         if (std::hypot(vx,vy) > 0.2f) yaw = std::atan2(vx,vy)*180.f/sim::PI_F;
         trail.push_back({px, py});
+        trail3.push_back({px, py, pz});
         float clr = trueClearance(W, px, py, pz, 2.f);
         minClear = std::min(minClear, clr);
         if (clr <= gp.robotR*0.5f) collided = true;
@@ -254,6 +306,13 @@ static int fly(const Cfg& cfg) {
         for (int yy=0; yy<W.ny(); ++yy)
             for (int xx=0; xx<W.nx(); ++xx)
                 if (W.solid(xx,yy,zc)) top.at<cv::Vec3b>(W.ny()-1-yy,xx) = cv::Vec3b(70,70,70);
+        // Trails first, under everything else -- they are terrain, not a result.
+        for (const auto& tr : trails)
+            for (size_t i=1;i<tr.size();++i){int x0,y0,z0,x1,y1,z1;
+                W.worldToCell(tr[i-1][0],tr[i-1][1],pz,x0,y0,z0);
+                W.worldToCell(tr[i][0],tr[i][1],pz,x1,y1,z1);
+                cv::line(top,{x0,W.ny()-1-y0},{x1,W.ny()-1-y1},{150,205,225},
+                         std::max(2,int(3.5f/cell)));}
         if (path.found)
             for (size_t i=1;i<path.pts.size();++i){int x0,y0,z0,x1,y1,z1;
                 W.worldToCell(path.pts[i-1][0],path.pts[i-1][1],pz,x0,y0,z0);
@@ -281,9 +340,66 @@ static int fly(const Cfg& cfg) {
         // the only view where "the map looks nothing like the world" is obvious
         // at a glance.
         if (spin) isoYaw += 0.4f;
-        cv::Mat isoV = M.isoImage(440, 40.f, isoYaw);
-        cv::putText(isoV,"VOXEL MODEL (built)",{10,22},cv::FONT_HERSHEY_SIMPLEX,0.55,{30,30,30},2);
-        cv::putText(isoV,"[<-/->] rotate  [s] spin",{10,432},
+        VoxelMap::IsoView iv;
+        cv::Mat isoV = M.isoImage(440, 40.f, isoYaw, &iv,
+                                  VIEWS[blockIdx].blockM, VIEWS[blockIdx].spanM);
+        // The plan, drawn in the same 3D space as the blocks. Without this the
+        // voxel pane shows WHAT the aircraft believes but not what it intends,
+        // and the two together are the only way to see a bad decision being
+        // made against a correct map -- which is the failure that matters.
+        {
+            // Only draw what is inside the MAP, not merely inside the image.
+            // The map is a window that scrolls with the aircraft, so a point
+            // the aircraft passed a minute ago still projects to a perfectly
+            // reasonable pixel -- over empty background, implying the map holds
+            // structure there when it has long since been scrolled away.
+            auto onScreen = [&](const cv::Point2f& q) {
+                return q.x > 0 && q.y > 0 && q.x < isoV.cols && q.y < isoV.rows;
+            };
+            auto inMap = [&](float wx, float wy, float wz) {
+                int cx, cy, cz; M.worldToCell(wx, wy, wz, cx, cy, cz);
+                return M.inBounds(cx, cy, cz);
+            };
+            size_t from = trail3.size() > 600 ? trail3.size() - 600 : 0;
+            for (size_t i = from + 1; i < trail3.size(); ++i) {
+                if (!inMap(trail3[i].x, trail3[i].y, trail3[i].z)) continue;
+                cv::Point2f a0 = iv.project(trail3[i-1].x, trail3[i-1].y, trail3[i-1].z);
+                cv::Point2f a1 = iv.project(trail3[i].x,   trail3[i].y,   trail3[i].z);
+                if (!onScreen(a0) || !onScreen(a1)) continue;
+                cv::line(isoV, a0, a1, {60, 60, 225}, 2, cv::LINE_AA);
+            }
+            if (path.found)
+                for (size_t i = 1; i < path.pts.size(); ++i) {
+                    cv::Point2f a0 = iv.project(path.pts[i-1][0], path.pts[i-1][1], path.pts[i-1][2]);
+                    cv::Point2f a1 = iv.project(path.pts[i][0],   path.pts[i][1],   path.pts[i][2]);
+                    if (!onScreen(a0) || !onScreen(a1)) continue;
+                    cv::line(isoV, a0, a1, {40, 190, 40}, 2, cv::LINE_AA);
+                }
+            // Commanded heading: a stub from the aircraft along the direction
+            // the reactive layer actually chose, length = the confirmed-free
+            // run. This is the single most diagnostic thing in the window --
+            // when it swings wildly you are watching the churn directly.
+            {
+                float ca = gr.azDeg*sim::PI_F/180.f, ce = gr.elDeg*sim::PI_F/180.f;
+                float L = std::max(1.f, gr.freeM);
+                cv::Point2f a0 = iv.project(px, py, pz);
+                cv::Point2f a1 = iv.project(px + std::cos(ce)*std::sin(ca)*L,
+                                            py + std::cos(ce)*std::cos(ca)*L,
+                                            pz + std::sin(ce)*L);
+                if (onScreen(a0) && onScreen(a1))
+                    cv::arrowedLine(isoV, a0, a1, {20, 140, 245}, 2, cv::LINE_AA, 0, 0.25);
+                if (onScreen(a0)) cv::circle(isoV, a0, 5, {20, 20, 30}, cv::FILLED, cv::LINE_AA);
+            }
+        }
+        char isoLbl[96];
+        std::snprintf(isoLbl,sizeof isoLbl,"VOXEL MODEL (built)   %s",
+                      VIEWS[blockIdx].name);
+        cv::putText(isoV,isoLbl,{10,22},cv::FONT_HERSHEY_SIMPLEX,0.5,{30,30,30},2);
+        cv::putText(isoV,"red = at your altitude   green below   blue above",{10,400},
+                    cv::FONT_HERSHEY_SIMPLEX,0.40,{110,110,120},1);
+        cv::putText(isoV,"blue line flown   green plan   orange commanded",{10,416},
+                    cv::FONT_HERSHEY_SIMPLEX,0.40,{110,110,120},1);
+        cv::putText(isoV,"[<-/->] rotate  [s] spin  [ / ] view distance",{10,432},
                     cv::FONT_HERSHEY_SIMPLEX,0.42,{110,110,120},1);
         cv::Mat rowA, rowB, row;
         cv::hconcat(std::vector<cv::Mat>{topV,isoV}, rowA);
@@ -291,9 +407,13 @@ static int fly(const Cfg& cfg) {
         cv::vconcat(rowA, rowB, row);
         cv::Mat bar(64, row.cols, CV_8UC3, cv::Scalar(25,25,30));
         char l1[260], l2[260];
-        std::snprintf(l1,sizeof l1,"%s  seed %d  %s   step %d/%d   %.1f m/s   flown %.0f m",
+        char rl[24];
+        if (RATES[rateIdx] < 0) std::snprintf(rl,sizeof rl,"max");
+        else std::snprintf(rl,sizeof rl,"%gx", RATES[rateIdx]);
+        std::snprintf(l1,sizeof l1,"%s  seed %d  %s%s   step %d/%d   %.1f m/s   flown %.0f m   [-/+] %s",
                       wc.label, cfg.seed, cfg.truth?"perfect depth":"stereo",
-                      s, cfg.steps, std::hypot(vx,vy), travelled);
+                      (cfg.trail && !trails.empty())?"  trail":"",
+                      s, cfg.steps, std::hypot(vx,vy), travelled, rl);
         std::snprintf(l2,sizeof l2,"free %.1f m   open %.1f m   %s   path %s   min clearance %.2f m%s",
                       gr.freeM, gr.openM, gr.blocked?"BLOCKED":"ok",
                       path.found?"yes":"none", minClear, collided?"   *** COLLIDED ***":"");
@@ -303,12 +423,27 @@ static int fly(const Cfg& cfg) {
         cv::Mat full; cv::vconcat(row, bar, full);
         cv::imshow(WIN, full);
 
-        int key = cv::waitKey(paused ? 0 : 1);
+        // Spend whatever is left of this step's wall-clock budget inside
+        // waitKey, so the window stays responsive while it waits. A step costs
+        // ~80 ms of real compute against a 100 ms budget at 1x, so at 2x and
+        // above this is a no-op and the sim simply runs flat out.
+        int wait = 1;
+        if (RATES[rateIdx] > 0) {
+            double spentMs = double(cv::getTickCount() - tStep)
+                           / cv::getTickFrequency() * 1000.0;
+            double budgetMs = double(dt) * 1000.0 / RATES[rateIdx];
+            wait = std::max(1, int(budgetMs - spentMs));
+        }
+        int key = cv::waitKey(paused ? 0 : wait);
         if (key=='q'||key==27) return 0;
         if (key=='m') return 1;
         if (key=='r') return 2;
         if (key==' ') paused = !paused;
         if (key=='s') spin = !spin;
+        if (key=='-'||key=='_') rateIdx = std::max(0, rateIdx-1);
+        if (key=='+'||key=='=') rateIdx = std::min(int(sizeof(RATES)/sizeof(*RATES))-1, rateIdx+1);
+        if (key=='[') blockIdx = std::max(0, blockIdx-1);
+        if (key==']') blockIdx = std::min(int(sizeof(VIEWS)/sizeof(*VIEWS))-1, blockIdx+1);
         if (key==81 || key=='a') { isoYaw -= 6.f; spin = false; }   // left arrow
         if (key==83 || key=='d') { isoYaw += 6.f; spin = false; }   // right arrow
         if (collided) {                       // hold on the crash so it can be seen

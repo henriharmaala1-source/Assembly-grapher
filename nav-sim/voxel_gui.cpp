@@ -208,9 +208,11 @@ static int fly(const Cfg& cfg) {
 
     float vx=0, vy=0, vz=0, yaw=0, travelled=0, minClear=1e9f;
     bool paused = false, collided = false;
+    float isoYaw = 0.f; bool spin = true;   // voxel-model view angle
     std::vector<cv::Point2f> trail;
     const float dt = 0.1f;
     cv::Mat top(W.ny(), W.nx(), CV_8UC3);
+    (void)0;
 
     for (int s = 0; s < cfg.steps; ++s) {
         CamPose pose; pose.e=px; pose.n=py; pose.u=pz;
@@ -272,7 +274,19 @@ static int fly(const Cfg& cfg) {
         cv::putText(sliceV,"VOXEL MAP  (grey=unknown)",{10,22},cv::FONT_HERSHEY_SIMPLEX,0.5,{30,30,30},2);
         cv::putText(depthV,cfg.truth?"DEPTH (perfect)":"DEPTH (stereo)",{10,22},
                     cv::FONT_HERSHEY_SIMPLEX,0.55,{240,240,240},2);
-        cv::Mat row; cv::hconcat(std::vector<cv::Mat>{topV,sliceV,depthV}, row);
+        // THE VOXEL MODEL ITSELF, in 3D. The slice above shows one height; this
+        // shows the whole structure the aircraft has actually built, which is
+        // the only view where "the map looks nothing like the world" is obvious
+        // at a glance.
+        if (spin) isoYaw += 0.4f;
+        cv::Mat isoV = M.isoImage(440, 40.f, isoYaw);
+        cv::putText(isoV,"VOXEL MODEL (built)",{10,22},cv::FONT_HERSHEY_SIMPLEX,0.55,{30,30,30},2);
+        cv::putText(isoV,"[<-/->] rotate  [s] spin",{10,432},
+                    cv::FONT_HERSHEY_SIMPLEX,0.42,{110,110,120},1);
+        cv::Mat rowA, rowB, row;
+        cv::hconcat(std::vector<cv::Mat>{topV,isoV}, rowA);
+        cv::hconcat(std::vector<cv::Mat>{sliceV,depthV}, rowB);
+        cv::vconcat(rowA, rowB, row);
         cv::Mat bar(64, row.cols, CV_8UC3, cv::Scalar(25,25,30));
         char l1[260], l2[260];
         std::snprintf(l1,sizeof l1,"%s  seed %d  %s   step %d/%d   %.1f m/s   flown %.0f m",
@@ -292,6 +306,9 @@ static int fly(const Cfg& cfg) {
         if (key=='m') return 1;
         if (key=='r') return 2;
         if (key==' ') paused = !paused;
+        if (key=='s') spin = !spin;
+        if (key==81 || key=='a') { isoYaw -= 6.f; spin = false; }   // left arrow
+        if (key==83 || key=='d') { isoYaw += 6.f; spin = false; }   // right arrow
         if (collided) {                       // hold on the crash so it can be seen
             for (;;) { int kk = cv::waitKey(0);
                 if (kk=='q'||kk==27) return 0; if (kk=='m') return 1; if (kk=='r') return 2; }

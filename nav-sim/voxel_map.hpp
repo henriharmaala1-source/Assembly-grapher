@@ -164,9 +164,12 @@ public:
     // --- visualisation ------------------------------------------------------
     // Horizontal slice at height wz: grey = unknown, white = free, black = occ.
     cv::Mat sliceImage(float wz, int outPx = 480) const;
-    // Isometric projection of occupied cells, height-coloured. Cheap, no GPU,
-    // and enough to see whether the map looks like the world.
-    cv::Mat isoImage(int outPx = 640, float maxZ = 30.f) const;
+    // Isometric projection of OCCUPIED cells, height-coloured, rotatable about
+    // the vertical axis by yawDeg. Cheap, no GPU, no scene graph -- painter's
+    // algorithm back-to-front. Enough to see whether the map the aircraft built
+    // actually resembles the world it flew through, which a 2D slice cannot
+    // show: a slice at one height hides everything above and below it.
+    cv::Mat isoImage(int outPx = 640, float maxZ = 30.f, float yawDeg = 0.f) const;
 
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }

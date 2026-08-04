@@ -47,12 +47,25 @@ cd nav-sim && cmake -B build && cmake --build build -j
 A menu appears. Click a world (Forest, City, Hervanta, Tampere centre, Helsinki
 centre), pick **Simulated stereo** or **Perfect (control)**, step the seed and
 step count with +/-, then **FLY**. During flight: `space` pause, `r` restart the
-same run, `m` back to the menu, `q` quit. On a collision it holds the frame so
+same run, `m` back to the menu, `q` quit, `s` toggle voxel spin, `<-`/`->`
+rotate the voxel model. On a collision it holds the frame so
 you can see where it happened rather than the window vanishing.
 
-Same three live panes as before — truth world with the flown path and the
-current OMPL path, the voxel map slice with unknown space in grey, and the depth
-image with unmatched pixels grey — plus a two-line status bar.
+Four live panes in a 2x2 grid:
+
+| pane | shows |
+|---|---|
+| **TRUTH + path** | the real world at flight height, flown trail in red, current OMPL path in green, goal circle |
+| **VOXEL MODEL (built)** | the 3D voxel structure the aircraft has actually built, height-coloured, **rotatable** |
+| **VOXEL MAP** | a horizontal slice — white free, black occupied, **grey unknown** |
+| **DEPTH** | the depth image going in; grey pixels are where stereo found no match |
+
+The voxel-model pane is the one worth watching. A 2D slice shows a single
+height and hides everything above and below it, so "the map looks nothing like
+the world" is invisible in it. The 3D view makes that obvious at a glance — and
+comparing it against the truth pane beside it is the fastest way to see whether
+a failure is the sensor or the planner. It auto-spins; `<-`/`->` (or `a`/`d`)
+rotate manually, `s` toggles the spin.
 
 `voxel_gui` is for looking at one run with your eyes. **`voxel_sim` stays the
 scriptable entry point** and `sweep.sh` drives it for multi-seed batches, which

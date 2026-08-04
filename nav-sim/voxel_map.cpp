@@ -184,16 +184,22 @@ cv::Mat VoxelMap::sliceImage(float wz, int outPx) const {
 // map contains and needs no GPU or extra dependency.
 static void isoDraw(cv::Mat& img, int gx, int gy, int gz,
                     int nx, int ny, int nz, float cell, int outPx,
-                    const cv::Vec3b& col) {
+                    const cv::Vec3b& col, float yawDeg = 0.f, int rad = 1) {
     float sx = float(outPx) / float(nx + ny);
-    int px = int((gx - gy) * sx * 0.5f + outPx * 0.5f);
-    int py = int((gx + gy) * sx * 0.25f - gz * sx * 0.5f + outPx * 0.25f);
-    if (px < 1 || py < 1 || px >= img.cols - 1 || py >= img.rows - 1) return;
-    cv::rectangle(img, cv::Point(px - 1, py - 1), cv::Point(px + 1, py + 1),
+    // Rotate in the ground plane about the grid centre before projecting, so
+    // the model can be spun without rebuilding anything.
+    float cxg = nx * 0.5f, cyg = ny * 0.5f;
+    float a = yawDeg * float(M_PI) / 180.f, ca = std::cos(a), sa = std::sin(a);
+    float rx = (gx - cxg) * ca - (gy - cyg) * sa + cxg;
+    float ry = (gx - cxg) * sa + (gy - cyg) * ca + cyg;
+    int px = int((rx - ry) * sx * 0.5f + outPx * 0.5f);
+    int py = int((rx + ry) * sx * 0.25f - gz * sx * 0.5f + outPx * 0.30f);
+    if (px < rad || py < rad || px >= img.cols - rad || py >= img.rows - rad) return;
+    cv::rectangle(img, cv::Point(px - rad, py - rad), cv::Point(px + rad, py + rad),
                   cv::Scalar(col[0], col[1], col[2]), cv::FILLED);
 }
 
-cv::Mat VoxelMap::isoImage(int outPx, float maxZ) const {
+cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg) const {
     cv::Mat img(outPx, outPx, CV_8UC3, cv::Scalar(250, 248, 245));
     int step = std::max(1, p_.nx / 200);
     for (int z = 0; z < p_.nz; z += step)
@@ -204,7 +210,7 @@ cv::Mat VoxelMap::isoImage(int outPx, float maxZ) const {
                 if (wz > maxZ) continue;
                 float f = std::min(1.f, std::max(0.f, (wz - oz_) / std::max(1.f, maxZ - oz_)));
                 cv::Vec3b col(uchar(220 - 150 * f), uchar(90 + 60 * f), uchar(40 + 180 * f));
-                isoDraw(img, x, y, z, p_.nx, p_.ny, p_.nz, p_.cell, outPx, col);
+                isoDraw(img, x, y, z, p_.nx, p_.ny, p_.nz, p_.cell, outPx, col, yawDeg);
             }
     return img;
 }

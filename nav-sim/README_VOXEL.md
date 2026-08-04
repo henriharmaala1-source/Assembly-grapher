@@ -38,6 +38,45 @@ cd nav-sim && cmake -B build && cmake --build build -j
 ./build/voxel_sim --world forest --display
 ```
 
+## Multiple maps, batch runs, and data
+
+Worlds are **procedurally seeded**, so `--seed N` gives a different forest or
+city each time. This was hard-coded to 1 until recently, which meant every result
+quoted from this harness was one sample of one world presented as a property of
+the planner. Use `sweep.sh` rather than single runs:
+
+```bash
+./sweep.sh --truth 5          # 2 worlds x 5 seeds, perfect-depth control
+./sweep.sh "" 8               # stereo, 8 seeds
+./sweep.sh "" 5 forest        # one world
+```
+
+Measured, truth depth, 5 seeds per world:
+
+```
+world    seed  outcome           travel  end-dist   minClr  falseFree
+forest   1     no collision       225.2      75.6     0.39     0.000%
+forest   2     no collision       225.1      70.7     0.44     0.575%
+forest   3     no collision       237.3      72.9     0.49     0.000%
+forest   4     no collision       232.8      75.8     0.38     0.000%
+forest   5     no collision       230.6      78.0     0.35     0.405%
+city     1     no collision       297.3     188.5     0.78     1.838%
+city     2     no collision       334.4     198.8     0.42     6.434%
+city     3     COLLIDED           191.6     160.8     0.16     0.642%
+city     4     COLLIDED           110.6     215.7     0.18     1.795%
+city     5     no collision       234.4     130.4     0.66     0.385%
+---  10 runs, 2 collisions (20%), 0 goals reached
+```
+
+The forest numbers are genuinely tight across seeds (225-237 m travelled,
+70-78 m end distance) -- that is a reproducible property. The city is not:
+2 of 5 collide even with perfect depth. And **no seed in any world reaches its
+goal**, which remains the open problem.
+
+`--csv path` writes a per-step log (position, yaw, speed, freeM, openM, blocked,
+path found, waypoint count, true clearance, distance to goal) for offline
+analysis.
+
 ## Running
 
 `--display` opens a live window with three panes and a status bar:

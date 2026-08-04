@@ -83,6 +83,12 @@ int main(int argc, char** argv) {
     // is how you size a SLAM requirement instead of guessing at one.
     float driftMps = 0.f;      // metres of position error accumulated per second
     float driftDps = 0.f;      // degrees of yaw error accumulated per second
+    // World seed. This was previously hard-coded to 1, which meant every run
+    // ever shown was the SAME forest and the SAME city -- and every "it flew
+    // 233 m" was one sample of one world dressed up as a property of the
+    // planner. Exposing it is the precondition for any honest number here.
+    unsigned seed = 1;
+    std::string csvPath;       // per-step log, for offline analysis
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -96,6 +102,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--lmiss")) lMiss = float(std::atof(next("0.4")));
         else if (!std::strcmp(argv[i], "--occt")) occT = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--freet")) freeT = float(std::atof(next("-0.4")));
+        else if (!std::strcmp(argv[i], "--seed")) seed = unsigned(std::atoi(next("1")));
+        else if (!std::strcmp(argv[i], "--csv")) csvPath = next("");
         else if (!std::strcmp(argv[i], "--drift")) driftMps = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--driftyaw")) driftDps = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--replan")) replanEvery = std::atoi(next("25"));
@@ -109,10 +117,10 @@ int main(int argc, char** argv) {
     VoxelWorld W;
     float px, py, pz;
     if (world == "city") {
-        CityParams p; p.cell = cell; genCity(W, p);
+        CityParams p; p.cell = cell; p.seed = seed; genCity(W, p);
         px = p.streetM * 0.5f; py = 5.f; pz = 6.f;
     } else {
-        ForestParams p; p.cell = cell; genForest(W, p);
+        ForestParams p; p.cell = cell; p.seed = seed; genForest(W, p);
         px = 15.f; py = 10.f; pz = 6.f;
     }
     // VALIDATE THE SPAWN before blaming the planner for anything. A fixed start
@@ -140,6 +148,7 @@ int main(int argc, char** argv) {
         printf("  spawn clearance %.2f m at (%.1f,%.1f,%.1f)\n",
                trueClearance(W, px, py, pz, 3.0f), px, py, pz);
     }
+    printf("  seed %u\n", seed);
     printf("world '%s' %dx%dx%d @ %.2f m   start (%.1f,%.1f,%.1f) -> goal (%.0f,%.0f,%.0f)\n",
            world.c_str(), W.nx(), W.ny(), W.nz(), W.cell(), px, py, pz, goalE, goalN, goalU);
 
@@ -167,6 +176,9 @@ int main(int argc, char** argv) {
     int nPrec = 0;
 
     const float startDist = std::hypot(goalE - px, goalN - py);
+    FILE* csv = csvPath.empty() ? nullptr : std::fopen(csvPath.c_str(), "w");
+    if (csv) std::fprintf(csv, "step,e,n,u,yaw,speed,freeM,openM,blocked,"
+                               "pathFound,pathWp,trueClear,distToGoal\n");
 
 #if SIM_HAVE_HIGHGUI
     // Static truth backdrop for the live top-down view, rendered once.
@@ -311,8 +323,8 @@ int main(int argc, char** argv) {
             cv::Mat row; cv::hconcat(std::vector<cv::Mat>{topV, sliceV, depthV}, row);
             char hud[240];
             std::snprintf(hud, sizeof hud,
-                "step %d  pos %.0f,%.0f,%.1f  v %.2f m/s  free %.2f m  open %.2f m  %s  path %s  [space]=pause [q]=quit",
-                s, px, py, pz, std::hypot(vx,vy), gr.freeM, gr.openM,
+                "[%s seed %u] step %d  pos %.0f,%.0f,%.1f  v %.2f m/s  free %.2f m  open %.2f m  %s  path %s  [space]=pause [q]=quit",
+                world.c_str(), seed, s, px, py, pz, std::hypot(vx,vy), gr.freeM, gr.openM,
                 gr.blocked?"BLOCKED":"ok", path.found?"yes":"NONE");
             cv::Mat bar(34, row.cols, CV_8UC3, cv::Scalar(25,25,30));
             cv::putText(bar, hud, {10,23}, cv::FONT_HERSHEY_SIMPLEX, 0.45, {235,235,235}, 1);
@@ -323,6 +335,11 @@ int main(int argc, char** argv) {
             if (key == ' ') paused = !paused;
         }
 #endif
+        if (csv) std::fprintf(csv, "%d,%.3f,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%d,%d,%zu,%.3f,%.2f\n",
+                              s, px, py, pz, yaw, std::hypot(vx, vy), gr.freeM, gr.openM,
+                              gr.blocked ? 1 : 0, path.found ? 1 : 0, path.pts.size(),
+                              trueClearance(W, px, py, pz, 3.0f),
+                              std::hypot(goalE - px, goalN - py));
         if (s % 40 == 0)
             printf("  step %4d  pos (%6.1f,%6.1f,%5.1f)  v %.2f  cmd %.2f  free %.2f  "
                    "open %.2f  %s  path %s(%zu wp)\n", s, px, py, pz,
@@ -382,6 +399,7 @@ int main(int argc, char** argv) {
                 collisions ? cv::Scalar(30, 30, 220) : cv::Scalar(30, 140, 30), 2);
     cv::imwrite(out + "_top.png", topOut);
     cv::imwrite(out + "_slice.png", M.sliceImage(pz));
+    if (csv) { std::fclose(csv); printf("  wrote %s\n", csvPath.c_str()); }
     printf("  wrote %s_top.png (flown path over truth) and %s_slice.png\n",
            out.c_str(), out.c_str());
     return collisions ? 2 : (reached ? 0 : 1);

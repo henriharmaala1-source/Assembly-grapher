@@ -76,6 +76,13 @@ int main(int argc, char** argv) {
     bool useTruth = false, generalOnly = false, display = false;
     int replanEvery = 25;
     float lHit=-1, lMiss=-1, occT=-99, freeT=-99;
+    // Pose drift injected into the pose the MAPPER believes, while the true
+    // pose stays exact. This is what dead reckoning without SLAM looks like:
+    // the aircraft flies correctly but writes its observations into the map at
+    // slightly wrong places, smearing it. Measuring where that starts to hurt
+    // is how you size a SLAM requirement instead of guessing at one.
+    float driftMps = 0.f;      // metres of position error accumulated per second
+    float driftDps = 0.f;      // degrees of yaw error accumulated per second
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -89,6 +96,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--lmiss")) lMiss = float(std::atof(next("0.4")));
         else if (!std::strcmp(argv[i], "--occt")) occT = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--freet")) freeT = float(std::atof(next("-0.4")));
+        else if (!std::strcmp(argv[i], "--drift")) driftMps = float(std::atof(next("0")));
+        else if (!std::strcmp(argv[i], "--driftyaw")) driftDps = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--replan")) replanEvery = std::atoi(next("25"));
         else if (!std::strcmp(argv[i], "--goal")) {
             goalE = float(std::atof(next("150")));
@@ -171,15 +180,28 @@ int main(int argc, char** argv) {
 
     for (int s = 0; s < steps; ++s) {
         // --- sense -----------------------------------------------------------
+        // TRUE pose -- what the camera actually observes from.
         CamPose pose; pose.e = px; pose.n = py; pose.u = pz;
         pose.yawDeg = yaw; pose.pitchDeg = -5.f; pose.rollDeg = 0.f;
+        // BELIEVED pose -- what the mapper thinks it observed from. Identical
+        // unless drift is injected. A random walk, not a constant bias, because
+        // dead-reckoning error is integrated noise.
+        static float dE = 0, dN = 0, dU = 0, dY = 0;
+        if (driftMps > 0.f || driftDps > 0.f) {
+            auto rnd = []() { return (float(rand()) / RAND_MAX) * 2.f - 1.f; };
+            float sd = driftMps * std::sqrt(dt);
+            dE += rnd() * sd; dN += rnd() * sd; dU += rnd() * sd * 0.5f;
+            dY += rnd() * driftDps * std::sqrt(dt);
+        }
+        CamPose mpose = pose;
+        mpose.e += dE; mpose.n += dN; mpose.u += dU; mpose.yawDeg += dY;
         int64 t0 = cv::getTickCount();
         cv::Mat d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
         int64 tm = cv::getTickCount();
-        M.integrate(d, cam, pose);
+        M.integrate(d, cam, mpose);   // believed pose, not true pose
         tInteg += double(cv::getTickCount() - tm) / cv::getTickFrequency();
         tSense += double(cv::getTickCount() - t0) / cv::getTickFrequency();
-        M.recentre(px, py, pz);
+        M.recentre(px + dE, py + dN, pz + dU);
 
         // --- precise plan, occasionally ---------------------------------------
         int64 t1 = cv::getTickCount();
@@ -189,7 +211,7 @@ int main(int argc, char** argv) {
             float mEl = std::atan2(goalU - pz,
                                    std::hypot(goalE - px, goalN - py)) * 180.f / float(M_PI);
             int64 tp = cv::getTickCount();
-            path = planForward(M, px, py, pz, mAz, mEl, fwp);
+            path = planForward(M, px + dE, py + dN, pz + dU, mAz, mEl, fwp);
             tPrec += double(cv::getTickCount() - tp) / cv::getTickFrequency(); ++nPrec;
             ++replans;
             if (!path.found) ++noPath;
@@ -210,7 +232,7 @@ int main(int argc, char** argv) {
 
         // --- general plan, every step ----------------------------------------
         int64 tg = cv::getTickCount();
-        GeneralResult gr = gen.plan(M, px, py, pz, gAz, gEl);
+        GeneralResult gr = gen.plan(M, px + dE, py + dN, pz + dU, gAz, gEl);
         tGen += double(cv::getTickCount() - tg) / cv::getTickFrequency();
         tPlan += double(cv::getTickCount() - t1) / cv::getTickFrequency();
         if (gr.speed <= 0.01f) ++stopped;

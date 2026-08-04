@@ -1,5 +1,6 @@
 #include "depth_camera.hpp"
 
+#include <cstdlib>
 #include <cmath>
 
 namespace sim {

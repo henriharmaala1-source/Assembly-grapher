@@ -1,5 +1,8 @@
 #include "ompl_planner.hpp"
 
+#include <chrono>
+#include <memory>
+#include <vector>
 #include <algorithm>
 #include <cmath>
 

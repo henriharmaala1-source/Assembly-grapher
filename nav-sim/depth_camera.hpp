@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <cstdlib>
+
 #include <opencv2/core.hpp>
 
 #include "voxel_world.hpp"

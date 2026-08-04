@@ -10,6 +10,8 @@
 // the map resembles the world; false-free says whether it will fly you into
 // something. They are not the same question and the second one is the one that
 // matters.
+#include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>

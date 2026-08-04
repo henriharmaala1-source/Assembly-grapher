@@ -1,5 +1,8 @@
 #include "voxel_world.hpp"
 
+#include <cstdint>
+#include <string>
+#include <vector>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -8,6 +11,15 @@
 #include <sstream>
 
 namespace sim {
+
+// std::popcount is C++20 and __builtin_popcount is a GCC/Clang extension that
+// MSVC does not have ("error C3861: identifier not found"). A nibble table is
+// portable, exact, and this runs once per solidCount() call rather than per
+// frame, so the lookup costs nothing that matters.
+static inline int popcount8(uint8_t b) {
+    static const uint8_t T[16] = {0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
+    return T[b & 0x0F] + T[b >> 4];
+}
 
 void VoxelWorld::init(float cell, float ox, float oy, float oz,
                       int nx, int ny, int nz) {
@@ -20,7 +32,7 @@ void VoxelWorld::init(float cell, float ox, float oy, float oz,
 
 size_t VoxelWorld::solidCount() const {
     size_t c = 0;
-    for (uint8_t b : bits_) c += size_t(__builtin_popcount(b));
+    for (uint8_t b : bits_) c += size_t(popcount8(b));
     return c;
 }
 

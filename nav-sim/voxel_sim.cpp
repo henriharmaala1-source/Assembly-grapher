@@ -16,6 +16,10 @@
 // Always run --truth as a control. If the run fails with perfect depth, the
 // planner is broken. If it succeeds with perfect depth and fails with stereo,
 // the map is the limit and the number is a sensor result.
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <vector>
 #include <cstdio>
 #include <cstring>
 #include <string>

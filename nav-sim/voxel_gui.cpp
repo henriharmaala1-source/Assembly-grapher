@@ -8,6 +8,8 @@
 // voxel_sim remains the scriptable entry point -- sweep.sh drives it for
 // multi-seed batches, which is where the numbers that matter come from. This
 // file is for looking at one run with your eyes.
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>

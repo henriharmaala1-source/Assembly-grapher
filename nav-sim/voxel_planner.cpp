@@ -1,5 +1,7 @@
 #include "voxel_planner.hpp"
 
+#include <cstdint>
+#include <vector>
 #include <algorithm>
 #include <array>
 #include <cmath>

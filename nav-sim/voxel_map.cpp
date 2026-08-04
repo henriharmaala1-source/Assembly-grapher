@@ -1,5 +1,6 @@
 #include "voxel_map.hpp"
 
+#include <vector>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

@@ -84,3 +84,22 @@ if(ompl_FOUND)
   target_include_directories(voxel_sim PRIVATE ${OMPL_INCLUDE_DIRS})
   target_link_libraries(voxel_sim PRIVATE ${OMPL_LIBRARIES})
 endif()
+
+# --- point-and-click front end (needs highgui) --------------------------------
+if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
+  add_executable(voxel_gui
+    voxel_gui.cpp
+    voxel_world.cpp
+    depth_camera.cpp
+    voxel_map.cpp
+    voxel_planner.cpp
+    ompl_planner.cpp)
+  target_include_directories(voxel_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(voxel_gui PRIVATE ${OpenCV_LIBS})
+  if(ompl_FOUND)
+    target_compile_definitions(voxel_gui PRIVATE NAVSIM_HAVE_OMPL=1)
+    target_include_directories(voxel_gui PRIVATE ${OMPL_INCLUDE_DIRS})
+    target_link_libraries(voxel_gui PRIVATE ${OMPL_LIBRARIES})
+  endif()
+  message(STATUS "nav_sim: voxel_gui enabled")
+endif()

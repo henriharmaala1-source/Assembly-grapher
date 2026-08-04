@@ -38,6 +38,33 @@ cd nav-sim && cmake -B build && cmake --build build -j
 ./build/voxel_sim --world forest --display
 ```
 
+## voxel_gui — point and click, no flags
+
+```
+./build/voxel_gui          # Windows: build\Release\voxel_gui.exe
+```
+
+A menu appears. Click a world (Forest, City, Hervanta, Tampere centre, Helsinki
+centre), pick **Simulated stereo** or **Perfect (control)**, step the seed and
+step count with +/-, then **FLY**. During flight: `space` pause, `r` restart the
+same run, `m` back to the menu, `q` quit. On a collision it holds the frame so
+you can see where it happened rather than the window vanishing.
+
+Same three live panes as before — truth world with the flown path and the
+current OMPL path, the voxel map slice with unknown space in grey, and the depth
+image with unmatched pixels grey — plus a two-line status bar.
+
+`voxel_gui` is for looking at one run with your eyes. **`voxel_sim` stays the
+scriptable entry point** and `sweep.sh` drives it for multi-seed batches, which
+is where any number worth quoting comes from — a single run you watched is an
+anecdote, however convincing it looked.
+
+The OSM worlds need their footprint files first:
+
+```bash
+python3 worlds/make_fi_cities.py
+```
+
 ## Multiple maps, batch runs, and data
 
 Worlds are **procedurally seeded**, so `--seed N` gives a different forest or

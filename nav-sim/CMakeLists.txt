@@ -60,6 +60,17 @@ add_executable(voxel_demo
 target_include_directories(voxel_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_demo PRIVATE ${OpenCV_LIBS})
 
+# Headless renderer check. No window needed, so it runs in CI and over ssh --
+# which matters, because the defect it exists to catch (one-pixel cubes) is
+# invisible in every other test and obvious in its output.
+add_executable(iso_render_check
+  test/iso_render_check.cpp
+  voxel_world.cpp
+  depth_camera.cpp
+  voxel_map.cpp)
+target_include_directories(iso_render_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(iso_render_check PRIVATE ${OpenCV_LIBS})
+
 find_package(ompl QUIET)
 if(ompl_FOUND)
   message(STATUS "nav_sim: OMPL found - forward planner uses RRTConnect")

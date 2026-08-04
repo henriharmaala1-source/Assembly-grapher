@@ -200,19 +200,122 @@ static void isoDraw(cv::Mat& img, int gx, int gy, int gz,
                   cv::Scalar(col[0], col[1], col[2]), cv::FILLED);
 }
 
-cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg) const {
-    cv::Mat img(outPx, outPx, CV_8UC3, cv::Scalar(250, 248, 245));
-    int step = std::max(1, p_.nx / 200);
-    for (int z = 0; z < p_.nz; z += step)
-        for (int y = p_.ny - 1; y >= 0; y -= step)
-            for (int x = 0; x < p_.nx; x += step) {
-                if (log_[idx(x, y, z)] <= p_.occThresh) continue;
-                float wx, wy, wz; cellCentre(x, y, z, wx, wy, wz);
+// Isometric CUBE, three visible faces. Top is brightest, then left, then right,
+// which is what makes a grid of them read as solid blocks rather than as dots.
+static void isoCube(cv::Mat& img, float rx, float ry, float gz, float s,
+                    int outPx, const cv::Vec3b& base) {
+    const float hw = s * 0.5f, hh = s * 0.25f, vh = s * 0.5f;
+    float px = (rx - ry) * hw + outPx * 0.5f;
+    float py = (rx + ry) * hh - gz * vh + outPx * 0.58f;
+    if (px < -s || py < -s || px > img.cols + s || py > img.rows + s) return;
+    auto P = [&](float dx, float dy) { return cv::Point(int(px + dx), int(py + dy)); };
+    auto shade = [&](float k) {
+        return cv::Scalar(std::min(255.f, base[0]*k), std::min(255.f, base[1]*k),
+                          std::min(255.f, base[2]*k));
+    };
+    cv::Point top[4]  = {P(0,-hh), P(hw,0),  P(0,hh),      P(-hw,0)};
+    cv::Point left[4] = {P(-hw,0), P(0,hh),  P(0,hh+vh),   P(-hw,vh)};
+    cv::Point rght[4] = {P(hw,0),  P(0,hh),  P(0,hh+vh),   P(hw,vh)};
+    cv::fillConvexPoly(img, left, 4, shade(0.62f));
+    cv::fillConvexPoly(img, rght, 4, shade(0.42f));
+    cv::fillConvexPoly(img, top,  4, shade(1.00f));
+}
+
+cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg, IsoView* view,
+                           float blockM, float spanM) const {
+    cv::Mat img(outPx, outPx, CV_8UC3, cv::Scalar(238, 240, 244));
+    // RENDER PITCH, and this is why the pane looked like static rather than like
+    // blocks. The old code drew one cube per map cell: 240 x 240 cells across a
+    // 440 px pane is 1.05 px per cube, so every "cube" was a single pixel and
+    // the three shaded faces were invisible. Cube rendering was there; you just
+    // could not see it.
+    //
+    // So draw at a chosen pitch in METRES instead, independent of the map's
+    // resolution. 1.5 m blocks over a 60 m map is 40 across, ~6 px each -- big
+    // enough to read as geometry. The map itself is unchanged; this is purely
+    // how it is displayed, and the pane is labelled with the pitch so nobody
+    // mistakes the display resolution for the map's.
+    //
+    // Downsampling is an OR, never an average: a block is drawn if ANY cell in
+    // it is occupied. On a map whose whole purpose is not to lose obstacles,
+    // the only acceptable rounding is the one that keeps them.
+    const int step = std::max(1, int(std::lround(blockM / p_.cell)));
+    const int nbx = (p_.nx + step - 1) / step, nby = (p_.ny + step - 1) / step;
+    const int nbz = (p_.nz + step - 1) / step;
+    const float a = yawDeg * PI_F / 180.f, ca = std::cos(a), sa = std::sin(a);
+    const float cxg = float(nbx) * 0.5f, cyg = float(nby) * 0.5f;
+    // Span in blocks, half-width. The rotation means a square crop can present
+    // its diagonal to the viewer, so scale on the diagonal to guarantee the
+    // requested span is visible at every yaw rather than clipping at 45 deg.
+    const int spanB = (spanM > 0.f)
+        ? std::max(4, std::min(std::min(nbx, nby) / 2,
+                               int(std::lround(spanM * 0.5f / (step * p_.cell)))))
+        : std::min(nbx, nby) / 2;
+    const float s = float(outPx) / (2.f * float(spanB) * 1.42f) * 1.15f;
+    // Vertical datum: the vehicle's own height, which is the map's z centre.
+    // Anchoring on the map floor instead pushes tall city blocks off the top of
+    // the pane and leaves the aircraft's own altitude band unreadable.
+    const float czg = float(nbz) * 0.5f;
+    if (view) *view = IsoView{outPx, step, s, ca, sa, cxg, cyg, czg,
+                              ox_, oy_, oz_, p_.cell, true};
+
+    // Block occupancy: OR over the cells inside it.
+    std::vector<uint8_t> occ(size_t(nbx) * nby * nbz, 0);
+    auto bidx = [&](int bx, int by, int bz) {
+        return (size_t(bz) * nby + by) * nbx + bx;
+    };
+    for (int z = 0; z < p_.nz; ++z)
+        for (int y = 0; y < p_.ny; ++y) {
+            const float* row = &log_[idx(0, y, z)];
+            for (int x = 0; x < p_.nx; ++x)
+                if (row[x] > p_.occThresh) occ[bidx(x/step, y/step, z/step)] = 1;
+        }
+
+    // Painter's algorithm: far blocks first. After rotation the depth key is
+    // (rx + ry), so sort on it and draw ascending.
+    struct Cell { float rx, ry, z; float f; };
+    std::vector<Cell> cells;
+    cells.reserve(8000);
+    const int bx0 = std::max(0, int(cxg) - spanB), bx1 = std::min(nbx, int(cxg) + spanB);
+    const int by0 = std::max(0, int(cyg) - spanB), by1 = std::min(nby, int(cyg) + spanB);
+    for (int bz = 0; bz < nbz; ++bz)
+        for (int by = by0; by < by1; ++by)
+            for (int bx = bx0; bx < bx1; ++bx) {
+                if (!occ[bidx(bx, by, bz)]) continue;
+                float wz = oz_ + (bz + 0.5f) * step * p_.cell;
                 if (wz > maxZ) continue;
-                float f = std::min(1.f, std::max(0.f, (wz - oz_) / std::max(1.f, maxZ - oz_)));
-                cv::Vec3b col(uchar(220 - 150 * f), uchar(90 + 60 * f), uchar(40 + 180 * f));
-                isoDraw(img, x, y, z, p_.nx, p_.ny, p_.nz, p_.cell, outPx, col, yawDeg);
+                // EXPOSED-FACE CULLING. A block with occupied neighbours on all
+                // six sides is invisible, and in a solid map that is most of
+                // them. Same trick Minecraft uses, and it is what makes filled
+                // cubes affordable: typically 90%+ never reach the rasteriser.
+                auto solidB = [&](int x, int y, int z) {
+                    return x >= 0 && y >= 0 && z >= 0 && x < nbx && y < nby && z < nbz
+                           && occ[bidx(x, y, z)];
+                };
+                if (solidB(bx+1,by,bz) && solidB(bx-1,by,bz) &&
+                    solidB(bx,by+1,bz) && solidB(bx,by-1,bz) &&
+                    solidB(bx,by,bz+1) && solidB(bx,by,bz-1)) continue;
+                float dx = bx - cxg, dy = by - cyg;
+                // Colour key is height RELATIVE TO THE VEHICLE, not absolute
+                // height. Absolute height coloured the whole model one shade of
+                // blue -- the map spans 24 m and a forest occupies 8 of them --
+                // and it answered a question nobody asked. Relative height
+                // answers "what is at my altitude", i.e. what I am going to
+                // hit, which is the reason to look at this pane at all.
+                cells.push_back({dx*ca - dy*sa, dx*sa + dy*ca, bz - czg,
+                                 (wz - (oz_ + p_.nz * p_.cell * 0.5f)) / 8.f});
             }
+    std::sort(cells.begin(), cells.end(),
+              [](const Cell& a, const Cell& b) { return (a.rx + a.ry) < (b.rx + b.ry); });
+    // BGR anchors: below the aircraft, at its altitude, above it.
+    const cv::Vec3f LOW(90, 150, 80), AT(55, 60, 235), HIGH(210, 160, 90);
+    for (const Cell& c : cells) {
+        float t = std::max(-1.f, std::min(1.f, c.f));
+        cv::Vec3f m = (t < 0.f) ? LOW  + (AT - LOW ) * (1.f + t)
+                                : AT   + (HIGH - AT) * t;
+        isoCube(img, c.rx, c.ry, c.z, s, outPx,
+                cv::Vec3b(uchar(m[0]), uchar(m[1]), uchar(m[2])));
+    }
     return img;
 }
 

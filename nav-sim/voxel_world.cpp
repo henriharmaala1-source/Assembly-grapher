@@ -173,7 +173,25 @@ void genCity(VoxelWorld& w, const CityParams& p) {
 
 // --- forest ----------------------------------------------------------------
 
-void genForest(VoxelWorld& w, const ForestParams& p) {
+// Distance from a point to a polyline, in the horizontal plane. Used to keep
+// stems off a trail; a per-segment test rather than a per-vertex one, because
+// with 24 vertices over 200 m the vertices are 8 m apart and a vertex-only test
+// would leave trees standing in the middle of every straight section.
+static float distToPolyline(const Trail& t, float x, float y) {
+    float best = 1e30f;
+    for (size_t i = 0; i + 1 < t.size(); ++i) {
+        float ax = t[i][0], ay = t[i][1], bx = t[i + 1][0], by = t[i + 1][1];
+        float vx = bx - ax, vy = by - ay;
+        float len2 = vx * vx + vy * vy;
+        float s = len2 > 1e-9f ? ((x - ax) * vx + (y - ay) * vy) / len2 : 0.f;
+        s = std::max(0.f, std::min(1.f, s));
+        float dx = x - (ax + s * vx), dy = y - (ay + s * vy);
+        best = std::min(best, std::sqrt(dx * dx + dy * dy));
+    }
+    return best;
+}
+
+void genForest(VoxelWorld& w, const ForestParams& p, std::vector<Trail>* trailsOut) {
     const int n = int(p.sizeM / p.cell);
     const int nz = int((p.topM + 4.f) / p.cell);
     w.init(p.cell, 0, 0, 0, n, n, nz);
@@ -204,6 +222,50 @@ void genForest(VoxelWorld& w, const ForestParams& p) {
             for (int z = 0; z <= zt; ++z) { w.set(x, y, z, true); w.setTex(x, y, z, 0.7f); }
         }
 
+    // --- trails -------------------------------------------------------------
+    // Generated BEFORE the stems, because a trail is a place where trees were
+    // never allowed to grow, not a place where they were cut down afterwards --
+    // and doing it by rejection keeps the stem count honest per hectare in the
+    // parts of the plot that actually have stems.
+    //
+    // Each trail runs corner-ish to corner-ish with a two-harmonic lateral
+    // meander. Two harmonics rather than one because a single sine is a shape
+    // no planner has to think about: it is locally straight everywhere. The
+    // second harmonic puts in the short-radius bends where a committed heading
+    // genuinely has to be abandoned, which is the case worth testing.
+    std::vector<Trail> trails;
+    for (int k = 0; k < p.trails && p.trailWidthM > 0.f; ++k) {
+        const float m = 8.f;                       // keep ends inside the plot
+        bool ns = (k % 2) == 0;                    // alternate the through-axis
+        float a0 = m + u01(rng) * (p.sizeM - 2 * m);
+        float a1 = m + u01(rng) * (p.sizeM - 2 * m);
+        float amp1 = (6.f + u01(rng) * 14.f), ph1 = u01(rng) * 6.28f;
+        float amp2 = (2.f + u01(rng) *  6.f), ph2 = u01(rng) * 6.28f;
+        float k1 = 1.f + u01(rng) * 1.5f, k2 = 3.f + u01(rng) * 2.5f;
+        Trail tr;
+        const int NV = 33;
+        for (int i = 0; i < NV; ++i) {
+            float s = float(i) / (NV - 1);
+            float along = m + s * (p.sizeM - 2 * m);
+            float across = a0 + s * (a1 - a0)
+                         + amp1 * std::sin(s * 6.28f * k1 + ph1)
+                         + amp2 * std::sin(s * 6.28f * k2 + ph2);
+            // Taper the meander to zero at the ends so the trail actually meets
+            // the plot edge instead of curling back inside it.
+            float taper = std::sin(s * 3.14159f);
+            across = a0 + s * (a1 - a0) + (across - (a0 + s * (a1 - a0))) * taper;
+            across = std::max(m, std::min(p.sizeM - m, across));
+            if (ns) tr.push_back({across, along});
+            else    tr.push_back({along, across});
+        }
+        trails.push_back(std::move(tr));
+    }
+    if (trailsOut) *trailsOut = trails;
+
+    // Half-width a stem centre must clear. The trunk radius is added per-tree
+    // below; this is the clear channel the aircraft flies down.
+    const float trailHalf = p.trailWidthM * 0.5f;
+
     const float areaHa = (p.sizeM * p.sizeM) / 10000.f;
     const int nTrees = int(areaHa * p.stemsPerHa);
     for (int i = 0; i < nTrees; ++i) {
@@ -214,6 +276,15 @@ void genForest(VoxelWorld& w, const ForestParams& p) {
         if (cx >= 0 && cy >= 0 && cx < gn && cy < gn) base = gz[size_t(cy) * gn + cx] + 2.0f;
 
         float dbh = p.dbhMinM + u01(rng) * (p.dbhMaxM - p.dbhMinM);
+
+        // Off the trail, or there is no trail. Rejecting on trunk radius as
+        // well as the channel half-width means the CLEAR width is trailWidthM
+        // regardless of how thick the nearest stem happens to be.
+        bool onTrail = false;
+        for (const auto& tr : trails)
+            if (distToPolyline(tr, x, y) < trailHalf + dbh * 0.5f) { onTrail = true; break; }
+        if (onTrail) continue;
+
         // Height-diameter allometry: taller trees are thicker. Roughly h ~ dbh^0.6
         // scaled into the plot's height range, plus scatter.
         float hf = std::pow((dbh - p.dbhMinM) / (p.dbhMaxM - p.dbhMinM + 1e-6f), 0.6f);
@@ -235,6 +306,18 @@ void genForest(VoxelWorld& w, const ForestParams& p) {
             float bx = x + gauss(rng) * spread * 0.5f;
             float by = y + gauss(rng) * spread * 0.5f;
             float r = 0.5f + u01(rng) * 1.1f;
+            // Keep the canopy off the trail as well as the stems. Rejecting
+            // trunks alone leaves a tunnel, not a corridor: measured on seed 3,
+            // clearance over the centreline was 1.00 m at 4.5 m, 0.19 m at
+            // 6.5 m and ZERO from 7.5 m up -- the crowns of the trees flanking
+            // the trail simply closed over it. A skid road or forest track has
+            // a canopy gap; that gap is why they are visible from the air at
+            // all, and it is what makes the corridor a three-dimensional lane
+            // instead of a slot you cannot climb out of.
+            bool overTrail = false;
+            for (const auto& tr : trails)
+                if (distToPolyline(tr, bx, by) < trailHalf + r) { overTrail = true; break; }
+            if (overTrail) continue;
             int a0, b0, c0, a1, b1, c1;
             w.worldToCell(bx - r, by - r, bz - r, a0, b0, c0);
             w.worldToCell(bx + r, by + r, bz + r, a1, b1, c1);
@@ -256,11 +339,46 @@ void genForest(VoxelWorld& w, const ForestParams& p) {
     int scrub = int(p.sizeM * p.sizeM * p.undergrowth / 4.f);
     for (int i = 0; i < scrub; ++i) {
         float x = u01(rng) * p.sizeM, y = u01(rng) * p.sizeM;
+        bool onTrail = false;
+        for (const auto& tr : trails)
+            if (distToPolyline(tr, x, y) < trailHalf + 0.8f) { onTrail = true; break; }
+        if (onTrail) continue;      // a trail with scrub on it is not a trail
         int cx, cy, cz; w.worldToCell(x, y, 0, cx, cy, cz);
         float base = 0.f;
         if (cx >= 0 && cy >= 0 && cx < gn && cy < gn) base = gz[size_t(cy) * gn + cx] + 2.0f;
         fillCylinder(w, x, y, base, base + 0.4f + u01(rng) * 1.2f,
                      0.3f + u01(rng) * 0.5f, 0.75f);
+    }
+
+    // Retexture the trail surface. Packed earth and gravel are less textured
+    // than litter and moss, so this is not decoration: it makes the trail floor
+    // marginally harder for stereo than the forest around it, and a planner
+    // that hugs the trail is therefore not being handed easier perception.
+    for (const auto& tr : trails) {
+        for (size_t i = 0; i + 1 < tr.size(); ++i) {
+            float ax = tr[i][0], ay = tr[i][1];
+            float bx = tr[i + 1][0], by = tr[i + 1][1];
+            float seg = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+            int steps = std::max(1, int(seg / (p.cell * 0.5f)));
+            for (int s = 0; s <= steps; ++s) {
+                float t = float(s) / steps;
+                float cxw = ax + (bx - ax) * t, cyw = ay + (by - ay) * t;
+                int a0, b0, c0, a1, b1, c1;
+                w.worldToCell(cxw - trailHalf, cyw - trailHalf, 0, a0, b0, c0);
+                w.worldToCell(cxw + trailHalf, cyw + trailHalf, 0, a1, b1, c1);
+                for (int yy = b0; yy <= b1; ++yy)
+                    for (int xx = a0; xx <= a1; ++xx) {
+                        float wx, wy, wz; w.cellCentre(xx, yy, 0, wx, wy, wz);
+                        float dx = wx - cxw, dy = wy - cyw;
+                        if (dx * dx + dy * dy > trailHalf * trailHalf) continue;
+                        if (xx < 0 || yy < 0 || xx >= gn || yy >= gn) continue;
+                        int zt, ddx, ddy;
+                        w.worldToCell(wx, wy, gz[size_t(yy) * gn + xx] + 2.0f, ddx, ddy, zt);
+                        if (w.solid(xx, yy, zt))
+                            w.setTex(xx, yy, zt, 0.5f);
+                    }
+            }
+        }
     }
 }
 

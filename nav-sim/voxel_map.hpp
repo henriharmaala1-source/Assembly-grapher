@@ -169,7 +169,45 @@ public:
     // algorithm back-to-front. Enough to see whether the map the aircraft built
     // actually resembles the world it flew through, which a 2D slice cannot
     // show: a slice at one height hides everything above and below it.
-    cv::Mat isoImage(int outPx = 640, float maxZ = 30.f, float yawDeg = 0.f) const;
+    // The projection isoImage used, so a caller can draw INTO that image in
+    // world coordinates. Handing back the parameters rather than exposing a
+    // draw-a-line-for-me method keeps the renderer ignorant of paths, trails
+    // and goals -- and it guarantees the overlay cannot drift out of register
+    // with the cubes, because there is only one projection to get wrong.
+    struct IsoView {
+        int   outPx = 0;
+        int   step  = 1;
+        float s = 0;                 // cube edge, pixels
+        float ca = 1, sa = 0;        // yaw rotation
+        float cxg = 0, cyg = 0, czg = 0;   // view centre, in block units
+        float ox = 0, oy = 0, oz = 0, cell = 1;
+        bool  valid = false;
+        // Everything is expressed RELATIVE to the view centre. Adding the
+        // centre back after rotating (which an earlier version did) makes the
+        // vertical placement depend on the block pitch, so changing the pitch
+        // slid the model up and down the pane for no reason a viewer could see.
+        cv::Point2f project(float wx, float wy, float wz) const {
+            const float b = cell * step;
+            float dx = (wx - ox) / b - cxg, dy = (wy - oy) / b - cyg;
+            float dz = (wz - oz) / b - czg;
+            float rx = dx * ca - dy * sa, ry = dx * sa + dy * ca;
+            return {(rx - ry) * s * 0.5f + outPx * 0.5f,
+                    (rx + ry) * s * 0.25f - dz * s * 0.5f + outPx * 0.58f};
+        }
+    };
+    // blockM is the DISPLAY pitch in metres, not the map resolution. At the
+    // map's own 0.25 m a 60 m map is 240 blocks across a 440 px pane -- one
+    // pixel each, which is why this pane read as noise. Blocks are OR-reduced
+    // from the cells inside them, so nothing solid is ever lost to the display.
+    // spanM is how many metres across to show, centred on the vehicle -- the
+    // render distance. <=0 means the whole map. It matters because the map is
+    // 60 m wide while the mapped part is often 10-15 m across, so scaling to
+    // the map extent draws the model as a thumbnail in the middle of an empty
+    // pane. Cropping to a span makes the blocks big enough to read AND is the
+    // honest framing: it says "this is what the aircraft knows within N metres".
+    cv::Mat isoImage(int outPx = 640, float maxZ = 30.f, float yawDeg = 0.f,
+                     IsoView* view = nullptr, float blockM = 1.5f,
+                     float spanM = 0.f) const;
 
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }

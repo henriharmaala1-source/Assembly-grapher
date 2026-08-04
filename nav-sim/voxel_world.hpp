@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -150,9 +151,23 @@ struct ForestParams {
     float dbhMaxM    = 0.35f;
     float canopyBase = 0.45f;   // crown starts at this fraction of tree height
     float undergrowth= 0.15f;   // fraction of ground cells with low scrub
+    // TRAILS. A managed boreal forest is not a uniform Poisson field of stems;
+    // it is threaded with skid roads, ditch lines and footpaths, and those are
+    // precisely the structures a low-flying aircraft should use. They also make
+    // the harness discriminating: uniform forest rewards any planner that
+    // wanders competently, whereas a trail asks whether the planner can FIND
+    // and HOLD a corridor, which is a strictly harder and more useful question.
+    int   trails     = 3;
+    float trailWidthM= 3.5f;    // cleared width; 0 disables trails entirely
     unsigned seed    = 1;
 };
-void genForest(VoxelWorld& w, const ForestParams& p);
+
+// Trail centrelines, in the same ENU metres as the world. Optional output --
+// the sim uses them to start on a trail and aim along it, which is the only way
+// to test trail-following rather than trail-crossing.
+using Trail = std::vector<std::array<float, 2>>;
+void genForest(VoxelWorld& w, const ForestParams& p,
+               std::vector<Trail>* trailsOut = nullptr);
 
 // --- real-data importers ---------------------------------------------------
 //

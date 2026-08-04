@@ -8,8 +8,14 @@
 // number that decides whether cubes are visible at all.
 //
 //   ./iso_render_check /tmp/iso        writes /tmp/iso_0.5m.png ... etc
+// Includes are explicit rather than transitive on purpose: MSVC does not ship
+// <cmath>, <vector> or <algorithm> inside <string> the way libstdc++ happens
+// to, and that difference alone cost this repository three Windows CI rounds.
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>

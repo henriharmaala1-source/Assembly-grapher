@@ -301,11 +301,34 @@ static int fly(const Cfg& cfg) {
         if (clr <= gp.robotR*0.5f) collided = true;
 
         // ---- draw ----
+        // Truth top-down. Two things that a naive single-slice render gets
+        // wrong badly enough to make the pane useless:
+        //
+        //   BAND, not slice. A 0.10-0.35 m trunk on a 0.25 m grid is one or two
+        //   cells, and one slice at exactly flight height misses any stem whose
+        //   voxel column happens not to be marked there. Taking the max over
+        //   +-1.5 m shows what is in the flight corridor, which is the question.
+        //
+        //   DILATE. An 800-cell map resized into a 440 px pane is a 1.8x
+        //   reduction, and INTER_AREA averages a one-pixel trunk into the
+        //   background. The forest rendered as an empty field with a few specks
+        //   in it. Growing the obstacle mask by one cell first costs nothing and
+        //   keeps every stem visible -- and erring toward showing obstacles is
+        //   the right direction for this pane to err in.
         int zc; { int aa,bb; W.worldToCell(0,0,pz,aa,bb,zc); }
-        top.setTo(cv::Scalar(250,248,245));
-        for (int yy=0; yy<W.ny(); ++yy)
-            for (int xx=0; xx<W.nx(); ++xx)
-                if (W.solid(xx,yy,zc)) top.at<cv::Vec3b>(W.ny()-1-yy,xx) = cv::Vec3b(70,70,70);
+        {
+            const int band = std::max(1, int(1.5f / cell));
+            cv::Mat occ(W.ny(), W.nx(), CV_8U, cv::Scalar(0));
+            for (int yy=0; yy<W.ny(); ++yy) {
+                uchar* orow = occ.ptr<uchar>(W.ny()-1-yy);
+                for (int xx=0; xx<W.nx(); ++xx)
+                    for (int dz=-band; dz<=band; ++dz)
+                        if (W.solid(xx,yy,zc+dz)) { orow[xx] = 255; break; }
+            }
+            cv::dilate(occ, occ, cv::Mat());
+            top.setTo(cv::Scalar(250,248,245));
+            top.setTo(cv::Scalar(70,70,70), occ);
+        }
         // Trails first, under everything else -- they are terrain, not a result.
         for (const auto& tr : trails)
             for (size_t i=1;i<tr.size();++i){int x0,y0,z0,x1,y1,z1;

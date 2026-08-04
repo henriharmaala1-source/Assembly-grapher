@@ -71,6 +71,8 @@ add_executable(iso_render_check
 target_include_directories(iso_render_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(iso_render_check PRIVATE ${OpenCV_LIBS})
 
+# Defined after the OMPL probe below, since it flies a real planned run.
+
 find_package(ompl QUIET)
 if(ompl_FOUND)
   message(STATUS "nav_sim: OMPL found - forward planner uses RRTConnect")
@@ -94,6 +96,24 @@ if(ompl_FOUND)
   target_compile_definitions(voxel_sim PRIVATE NAVSIM_HAVE_OMPL=1)
   target_include_directories(voxel_sim PRIVATE ${OMPL_INCLUDE_DIRS})
   target_link_libraries(voxel_sim PRIVATE ${OMPL_LIBRARIES})
+endif()
+
+# Headless render of the GUI's flight layout. The window is the one artefact in
+# this tree that cannot be checked over ssh or in CI, so this writes the same
+# 2x2 composite to a PNG that anyone can look at without building the GUI.
+add_executable(gui_preview
+  test/gui_preview.cpp
+  ompl_planner.cpp
+  voxel_world.cpp
+  depth_camera.cpp
+  voxel_map.cpp
+  voxel_planner.cpp)
+target_include_directories(gui_preview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(gui_preview PRIVATE ${OpenCV_LIBS})
+if(ompl_FOUND)
+  target_compile_definitions(gui_preview PRIVATE NAVSIM_HAVE_OMPL=1)
+  target_include_directories(gui_preview PRIVATE ${OMPL_INCLUDE_DIRS})
+  target_link_libraries(gui_preview PRIVATE ${OMPL_LIBRARIES})
 endif()
 
 # --- point-and-click front end (needs highgui) --------------------------------

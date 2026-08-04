@@ -93,10 +93,20 @@ the display. `build/iso_render_check` dumps the pane at every pitch headlessly
 and prints the pixels-per-cube, which is the number that decides whether you can
 see anything at all.
 
+The truth pane takes the **max over ±1.5 m** of flight height and dilates the
+obstacle mask by one cell before downscaling. Neither is cosmetic: a 0.10–0.35 m
+trunk on a 0.25 m grid is one or two cells, and an 800-cell map resized into a
+440-pixel pane averages that straight into the background. A 1200 stems/ha
+forest rendered as an empty field with a few specks in it.
+
 `voxel_gui` is for looking at one run with your eyes. **`voxel_sim` stays the
 scriptable entry point** and `sweep.sh` drives it for multi-seed batches, which
 is where any number worth quoting comes from — a single run you watched is an
 anecdote, however convincing it looked.
+
+If you want to see the layout without building the GUI — over ssh, in CI, or
+before deciding whether it is worth compiling — `build/gui_preview out.png`
+flies a real planned run and writes the same 2×2 composite to a file.
 
 The OSM worlds need their footprint files first:
 

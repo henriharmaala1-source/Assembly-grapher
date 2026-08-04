@@ -9,6 +9,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <utility>   // std::move -- transitive on libstdc++, not guaranteed
 
 namespace sim {
 

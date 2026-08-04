@@ -1,9 +1,13 @@
 name: build nav-sim (Windows exe)
 
-# Builds nav_sim.exe on a Windows runner and uploads it as a downloadable
-# artifact — a prebuilt .exe with no local toolchain needed.
-# After a run: repo -> Actions tab -> this workflow -> latest run ->
-# Artifacts -> download "nav_sim-windows-x64" (exe + the OpenCV DLL it needs).
+# Builds every nav-sim .exe on a Windows runner and uploads a ready-to-run zip
+# — no local toolchain, no vcpkg, no compiler, nothing to install.
+# Repo -> Actions tab -> this workflow -> latest run -> Artifacts ->
+# "kestrel-voxel-sim-windows-x64". Unzip, double-click voxel_gui.exe.
+#
+# The zip carries: voxel_gui.exe (the GUI), voxel_sim.exe and voxel_demo.exe
+# (scriptable), nav_sim.exe (the 2D tool), the OpenCV DLLs, worlds/*.txt for the
+# Finnish city maps, and RUN_ME.txt.
 #
 # Uses the official PREBUILT OpenCV release (a ~2-3 min download+extract) rather
 # than compiling OpenCV from source (which took ~40 min via vcpkg). The prebuilt
@@ -48,16 +52,64 @@ jobs:
       - name: Build
         run: cmake --build build --config Release -j 4
 
+      - name: Generate the Finnish city worlds
+        # voxel_gui's Hervanta / Tampere / Helsinki buttons read these footprint
+        # files at runtime. Without them those three menu entries show an error
+        # screen, so they have to travel in the zip.
+        run: python worlds/make_fi_cities.py
+
       - name: Package (exe + DLLs)
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build/Release/*.exe dist/ -ErrorAction SilentlyContinue
           Copy-Item build/*.exe dist/ -ErrorAction SilentlyContinue
           Copy-Item "C:/ocv/opencv/build/x64/vc16/bin/opencv_*.dll" dist/ -ErrorAction SilentlyContinue
-          Get-ChildItem dist
+          New-Item -ItemType Directory -Force dist/worlds | Out-Null
+          Copy-Item worlds/*.txt dist/worlds/ -ErrorAction SilentlyContinue
+          Copy-Item sweep.sh dist/ -ErrorAction SilentlyContinue
+          @"
+KESTREL VOXEL NAVIGATION SIM - Windows build
+
+Double-click  voxel_gui.exe
+
+A menu opens. Click a world, choose Simulated stereo or Perfect (control),
+then FLY. Keep this whole folder together - the exe needs the DLLs beside it
+and reads worlds\ for the Hervanta / Tampere / Helsinki maps.
+
+  IN FLIGHT
+    space   pause
+    r       restart the same run
+    m       back to the menu
+    q       quit
+    s       toggle voxel-model spin
+    <- ->   rotate the voxel model
+
+  WHAT YOU ARE LOOKING AT
+    TRUTH + path        the real world, flown trail red, planned path green
+    VOXEL MODEL         the 3D map the aircraft actually built, rotating
+    VOXEL MAP           a horizontal slice - grey means UNKNOWN, not empty
+    DEPTH               what the camera returned; grey = no stereo match
+
+  WORTH KNOWING
+    Fly every world TWICE, once on stereo and once on Perfect. If it fails on
+    Perfect depth the planner is at fault; if only on stereo, the sensor is the
+    limit. That comparison found three real bugs in an afternoon.
+
+    It wanders safely rather than arriving - no configuration reaches its goal
+    yet. That is a known open problem, not a broken install.
+
+    This build has no OMPL (no clean Windows port), so the forward planner uses
+    a straight-line probe. The reactive layer does the obstacle avoidance and is
+    unaffected.
+
+  BATCH RUNS
+    voxel_sim.exe is the scriptable version - see --help flags in the README.
+    One run you watched is an anecdote; sweep.sh runs every world x seed.
+"@ | Out-File -FilePath dist/RUN_ME.txt -Encoding utf8
+          Get-ChildItem dist -Recurse | Select-Object FullName
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nav_sim-windows-x64
+          name: kestrel-voxel-sim-windows-x64
           path: nav-sim/dist
           if-no-files-found: error

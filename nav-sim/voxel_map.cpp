@@ -9,6 +9,17 @@
 
 namespace sim {
 
+// Half-width of the height colour key, metres: red at your altitude, green at
+// HEIGHT_KEY_M below, blue at HEIGHT_KEY_M above. Shared by the isometric and
+// first-person renderers so the two panes cannot disagree about what a colour
+// means -- that is the whole value of having a key.
+//
+// It was 8 m, which was wrong in both views for the same reason: the terrain
+// sits ~2 m under the aircraft, and at 8 m that is still three quarters of the
+// way to "at your altitude". The ground rendered red. Red has to mean "this
+// will hit you", so the band has to be about the size of the thing that would.
+static const float HEIGHT_KEY_M = 3.5f;
+
 void VoxelMap::init(const VoxelMapParams& p, float cx, float cy, float cz) {
     p_ = p;
     log_.assign(size_t(p_.nx) * p_.ny * p_.nz, 0.f);
@@ -35,6 +46,129 @@ VoxelMap::State VoxelMap::stateAt(float wx, float wy, float wz) const {
     if (l > p_.occThresh) return OCCUPIED;
     if (l < p_.freeThresh) return FREE;
     return UNKNOWN;
+}
+
+VoxelMap::Hit VoxelMap::raycast(float px, float py, float pz,
+                                float dx, float dy, float dz,
+                                float maxRange) const {
+    Hit h;
+    float len = std::sqrt(dx*dx + dy*dy + dz*dz);
+    if (len < 1e-9f) return h;
+    dx /= len; dy /= len; dz /= len;
+
+    int x, y, z; worldToCell(px, py, pz, x, y, z);
+    const int sx = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+    const int sy = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+    const int sz = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
+
+    const float INF = 1e30f;
+    auto firstT = [&](float p, float o, int c, int s, float d) -> float {
+        if (s == 0) return INF;
+        float bound = o + (c + (s > 0 ? 1 : 0)) * p_.cell;
+        return (bound - p) / d;
+    };
+    float tMaxX = firstT(px, ox_, x, sx, dx);
+    float tMaxY = firstT(py, oy_, y, sy, dy);
+    float tMaxZ = firstT(pz, oz_, z, sz, dz);
+    const float tDX = sx ? p_.cell / std::fabs(dx) : INF;
+    const float tDY = sy ? p_.cell / std::fabs(dy) : INF;
+    const float tDZ = sz ? p_.cell / std::fabs(dz) : INF;
+
+    float t = 0.f;
+    int face = 5;
+    for (int guard = 0; guard < 100000; ++guard) {
+        if (inBounds(x, y, z)) {
+            float l = log_[idx(x, y, z)];
+            if (l > p_.occThresh) {
+                h.hit = true; h.t = t; h.face = face;
+                h.x = x; h.y = y; h.z = z;
+                return h;
+            }
+        }
+        if (t > maxRange) break;
+        if ((x < 0 && sx <= 0) || (x >= p_.nx && sx >= 0) ||
+            (y < 0 && sy <= 0) || (y >= p_.ny && sy >= 0) ||
+            (z < 0 && sz <= 0) || (z >= p_.nz && sz >= 0)) break;
+
+        float tPrev = t;
+        if (tMaxX < tMaxY && tMaxX < tMaxZ) { t = tMaxX; x += sx; tMaxX += tDX; face = sx > 0 ? 0 : 1; }
+        else if (tMaxY < tMaxZ)             { t = tMaxY; y += sy; tMaxY += tDY; face = sy > 0 ? 2 : 3; }
+        else                                { t = tMaxZ; z += sz; tMaxZ += tDZ; face = sz > 0 ? 4 : 5; }
+        // Segment length just travelled, attributed to the cell we were in.
+        if (inBounds(x, y, z)) {
+            float l = logAt(x, y, z);
+            if (!(l < p_.freeThresh) && !(l > p_.occThresh)) h.unknownM += t - tPrev;
+        } else {
+            h.unknownM += t - tPrev;      // outside the map is unknown too
+        }
+    }
+    h.t = std::min(t, maxRange);
+    return h;
+}
+
+cv::Mat VoxelMap::fpvImage(float px, float py, float pz,
+                           float yawDeg, float pitchDeg,
+                           int outPx, float hfovDeg, float maxRange) const {
+    cv::Mat img(outPx, outPx, CV_8UC3);
+    const float f = (outPx * 0.5f) / std::tan(hfovDeg * 0.5f * PI_F / 180.f);
+    const float c = (outPx - 1) * 0.5f;
+    const float cy_ = std::cos(yawDeg * PI_F / 180.f), sy_ = std::sin(yawDeg * PI_F / 180.f);
+    const float cp = std::cos(pitchDeg * PI_F / 180.f), sp = std::sin(pitchDeg * PI_F / 180.f);
+    // Same colour key as the isometric pane so the two views agree: red is at
+    // your altitude and is what you would hit, green below, blue above.
+    const cv::Vec3f LOW(90, 150, 80), AT(55, 60, 235), HIGH(210, 160, 90);
+    // Face shading, and the ordering matters more than the values: a cube grid
+    // with one brightness per cube reads as noise, and with one per FACE reads
+    // as geometry. 0/1 = -x/+x, 2/3 = -y/+y, 4/5 = -z/+z (5 is a top face).
+    static const float FACE[6] = {0.62f, 0.62f, 0.45f, 0.45f, 0.30f, 1.00f};
+    const cv::Vec3f FOG(238, 240, 244);      // matches the iso pane background
+
+    for (int v = 0; v < outPx; ++v) {
+        cv::Vec3b* row = img.ptr<cv::Vec3b>(v);
+        for (int u = 0; u < outPx; ++u) {
+            // Camera frame: +X right, +Y down, +Z forward, then pitch, then yaw
+            // clockwise from North -- identical to DepthCamera::rayFor, because
+            // two conventions for the same thing is a bug waiting to happen.
+            float rx = (u - c) / f, ry = (v - c) / f;
+            float y2 = ry * cp - sp, z2 = ry * sp + cp;
+            float fE = rx, fN = z2, fU = -y2;
+            float dx = fE * cy_ + fN * sy_;
+            float dy = -fE * sy_ + fN * cy_;
+            float dz = fU;
+
+            Hit h = raycast(px, py, pz, dx, dy, dz, maxRange);
+            cv::Vec3f col;
+            if (h.hit) {
+                float wx, wy, wz; cellCentre(h.x, h.y, h.z, wx, wy, wz);
+                float k = (wz - pz) / HEIGHT_KEY_M;
+                k = std::max(-1.f, std::min(1.f, k));
+                col = (k < 0.f) ? LOW + (AT - LOW) * (1.f + k) : AT + (HIGH - AT) * k;
+                col *= FACE[h.face];
+                // Distance haze, so depth is readable without a depth number.
+                float d = std::min(1.f, h.t / maxRange);
+                col = col * (1.f - 0.55f * d) + FOG * (0.55f * d);
+                // Uncertainty fog: how much UNKNOWN we looked through to see
+                // this. A surface behind 4 m of unknown is a guess, and it
+                // should look like one.
+                float ufog = std::min(0.85f, h.unknownM / 6.f);
+                col = col * (1.f - ufog) + FOG * ufog;
+            } else {
+                col = FOG;
+            }
+            row[u] = cv::Vec3b(uchar(col[0]), uchar(col[1]), uchar(col[2]));
+        }
+    }
+    // Caption strips, top and bottom. Unlike every other pane here the content
+    // of this one is arbitrary -- a trunk can be anywhere -- so labels drawn
+    // straight onto it become unreadable exactly when the view is interesting.
+    // A translucent band costs two rectangles and makes them always legible.
+    for (const cv::Rect& r : {cv::Rect(0, 0, outPx, 50),
+                              cv::Rect(0, outPx - 44, outPx, 44)}) {
+        cv::Mat band = img(r);
+        cv::Mat wash(band.size(), band.type(), cv::Scalar(238, 240, 244));
+        cv::addWeighted(band, 0.55, wash, 0.45, 0.0, band);
+    }
+    return img;
 }
 
 // Carve free space along the ray, mark the endpoint occupied. Same DDA as the
@@ -303,7 +437,7 @@ cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg, IsoView* view,
                 // answers "what is at my altitude", i.e. what I am going to
                 // hit, which is the reason to look at this pane at all.
                 cells.push_back({dx*ca - dy*sa, dx*sa + dy*ca, bz - czg,
-                                 (wz - (oz_ + p_.nz * p_.cell * 0.5f)) / 8.f});
+                                 (wz - (oz_ + p_.nz * p_.cell * 0.5f)) / HEIGHT_KEY_M});
             }
     std::sort(cells.begin(), cells.end(),
               [](const Cell& a, const Cell& b) { return (a.rx + a.ry) < (b.rx + b.ry); });

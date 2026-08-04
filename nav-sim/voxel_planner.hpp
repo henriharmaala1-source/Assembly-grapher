@@ -65,7 +65,32 @@ struct GeneralParams {
     //
     // Hold the chosen heading for commitSteps unless it actually becomes
     // blocked, then re-decide.
-    int   commitSteps = 5;       // 0.5 s at dt = 0.1
+    //
+    // The length was swept rather than picked (commit_sweep.sh; forest, 600
+    // steps, 4 seeds). Commitment is NOT free -- it buys smoothness with
+    // progress -- so the frontier matters more than any single number:
+    //
+    //     hold   churn   reversals   advance            collisions
+    //      0     30.01      7.6%     0.579 [0.49,0.68]      1/4
+    //      1     18.89      2.2%     0.592 [0.57,0.61]      1/4   <- shipped
+    //      2     17.09      1.3%     0.534 [0.52,0.56]      0/4
+    //      3     13.65      1.3%     0.524 [0.48,0.61]      1/4
+    //      5     11.78      0.5%     0.510 [0.47,0.54]      0/4
+    //      8     10.18      0.2%     0.482 [0.44,0.50]      1/4
+    //
+    // One step is the only arm that DOMINATES no-commitment: less churn, fewer
+    // reversals, more progress, and a much tighter spread across seeds. Every
+    // longer hold from 2 upward is a trade, buying churn with advance at a
+    // steadily worse rate -- going 1 -> 8 halves the churn and costs a fifth of
+    // the progress.
+    //
+    // Halving the decision rate does most of the work, which is the useful
+    // lesson: the problem was never that the planner decided badly, it was that
+    // it decided again before its last decision had produced any motion.
+    //
+    // Collisions do not separate the arms at four seeds -- 1,1,0,1,0,1 is noise
+    // at that count, and should not be read as a safety ordering.
+    int   commitSteps = 1;       // 0.1 s at dt = 0.1
     float breakFreeM  = 1.2f;    // re-decide early if committed free run drops below this
     // ------------------------------------------------------------------
     // THE THREE MECHANISMS BELOW ARE OFF BY DEFAULT BECAUSE THEY WERE

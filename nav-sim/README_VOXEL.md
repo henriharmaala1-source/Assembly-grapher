@@ -56,6 +56,7 @@ During flight:
 | `space` | pause |
 | `r` / `m` / `q` | restart the same run / back to the menu / quit |
 | `-` `+` | **playback speed** — 0.25x, 0.5x, 1x, 2x, 4x, max |
+| `v` | **first person** ⟷ outside view in the top-right pane |
 | `[` `]` | **view distance** of the voxel pane — 20 m / 32 m / 44 m / 60 m |
 | `<-` `->` | rotate the voxel model (`s` toggles auto-spin) |
 
@@ -67,7 +68,8 @@ Four live panes in a 2x2 grid:
 | pane | shows |
 |---|---|
 | **TRUTH + path** | the real world at flight height, flown trail in red, current path in green, forest trails in pale blue, goal circle |
-| **VOXEL MODEL (built)** | the 3D voxel structure the aircraft has actually built, as solid blocks, **rotatable**, with the flown path, the planned path and the commanded heading drawn into it |
+| **FIRST PERSON** *(default)* | the map from inside, out of the aircraft's own eyes — one raycast per pixel, shaded by cube face. `v` swaps this pane for the outside view |
+| **VOXEL MODEL (built)** | the same map from outside, as solid blocks, **rotatable**, with the flown path, the planned path and the commanded heading drawn into it |
 | **VOXEL MAP** | a horizontal slice — white free, black occupied, **grey unknown** |
 | **DEPTH** | the depth image going in; grey pixels are where stereo found no match |
 
@@ -92,6 +94,32 @@ block is drawn if anything solid is inside it and no obstacle is ever lost to
 the display. `build/iso_render_check` dumps the pane at every pitch headlessly
 and prints the pixels-per-cube, which is the number that decides whether you can
 see anything at all.
+
+### First person
+
+`v` puts you inside the map the aircraft built. One raycast per pixel through
+the same Amanatides & Woo traversal the depth camera uses, shaded by *which cube
+face* was hit — a grid of cubes with one brightness per cube reads as noise, and
+with one per face reads as geometry. About 0.5 µs per ray, so a 440 px pane is
+~50 ms. That is fine for a desktop window and would never run onboard; it is a
+visualisation, not part of the flight loop.
+
+It renders the **map, never the world**, and that distinction is the entire
+point. The outside view shows you the model; this shows you what flying inside
+that model would be like. Where the model is wrong, you fly into fog.
+
+Two things it deliberately does not flatter:
+
+* **UNKNOWN is drawn as fog, not as air.** A first-person view that showed
+  unmapped space as clear would be the most convincing possible way to tell the
+  one lie this whole pipeline exists to prevent. Surfaces seen *through* unknown
+  space are faded in proportion, so a wall behind 4 m of nothing looks like the
+  guess it is.
+* **The horizon is short, and it should be.** At 0.25 m cells on a 12 cm
+  baseline the map can only honestly mark obstacles to
+  `Z_max = √(cell·f·B/σ_d)` ≈ **5.2 m**. That is a sensor property, not a
+  rendering limit — a 25 cm baseline would give 7.6 m, and 2 m cells would give
+  14.8 m. Seeing where the world stops is the useful part.
 
 The truth pane takes the **max over ±1.5 m** of flight height and dilates the
 obstacle mask by one cell before downscaling. Neither is cosmetic: a 0.10–0.35 m
@@ -254,39 +282,40 @@ running, each of which would have been invisible without the control:
 ## Heading churn — what fixed it and what did not
 
 The aircraft used to spend most of its motion turning. Measured on the forest,
-mean absolute yaw change per step, and *advance* = net displacement ÷ distance
-travelled (1.0 is a straight line, 0.0 is a closed loop):
-
-```
-                                churn    reversals   advance
-6 m/s, no commitment            42.6       13.3%       0.42
-3 m/s, no commitment            26.9        5.9%       0.53
-3 m/s, commit 5 steps           11.4        0.5%       0.53   <- shipped
-```
+*churn* is mean absolute yaw change per step and *advance* is net displacement ÷
+distance travelled (1.0 is a straight line, 0.0 is a closed loop).
 
 Two separate causes. `vMax` was 6 m/s in a stand whose typical trunk gap is
 2.67 m — the aircraft crossed a gap in under half a second while the map updated
 at 10 Hz. And the planner re-ran its 864-bin argmax **every step**, 10 Hz, while
 moving 0.3 m per step, so it re-decided about ten times per meaningful change in
-the scene and the winning bin flipped between equally-open gaps. Holding the
-chosen heading for 0.5 s unless it actually becomes blocked removes 58% of the
-remaining churn and 92% of the reversals.
+the scene and the winning bin flipped between equally-open gaps.
 
-**Commitment is not free**, and on the trail-bearing forests the cost is
-visible. Four seeds, same worlds:
+Dropping to 3 m/s took churn from 42.6 to 30.0 on its own. The hold length was
+then **swept rather than picked** — `commit_sweep.sh`, forest, 600 steps, 4 seeds:
 
 ```
-                churn   reversals   advance          
-commit 0        28.4       5.1%      0.616  [0.591,0.630]
-commit 5        11.3       0.5%      0.450  [0.410,0.534]
+hold   churn   reversals   advance             collisions
+ 0     30.01      7.6%     0.579 [0.49,0.68]      1/4
+ 1     18.89      2.2%     0.592 [0.57,0.61]      1/4   <- shipped
+ 2     17.09      1.3%     0.534 [0.52,0.56]      0/4
+ 3     13.65      1.3%     0.524 [0.48,0.61]      1/4
+ 5     11.78      0.5%     0.510 [0.47,0.54]      0/4
+ 8     10.18      0.2%     0.482 [0.44,0.50]      1/4
 ```
 
-The ranges do not overlap, so unlike the three mechanisms below this is a real
-effect rather than seed noise. The mechanism is not mysterious: a corridor with
-bends needs steering, and a held heading overshoots them. Optimising either
-metric alone gives a useless aircraft — hold forever and it flies beautifully
-straight into a tree, re-decide every frame and it spins in place — so
-`commit_sweep.sh` sweeps the hold length and reports both.
+**One step is the only arm that dominates no-commitment** — less churn, fewer
+reversals, *more* progress, and a much tighter spread across seeds. Everything
+from 2 upward is a trade, buying smoothness with progress at a steadily worse
+rate: 1 → 8 halves the churn and costs a fifth of the distance made good.
+
+Halving the decision rate does most of the work, which is the useful lesson.
+The problem was never that the planner decided badly. It was that it decided
+again before its previous decision had produced any motion — the vehicle needs
+~0.35 s just to turn, and it was being re-aimed every 0.1 s.
+
+Collisions do not separate the arms at four seeds (1,1,0,1,0,1); that column is
+noise at this count and is not a safety ordering.
 
 Three further mechanisms were tried and **are off by default because they did
 not work**: smoothing the direction field over time, requiring a challenger to

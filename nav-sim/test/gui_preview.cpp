@@ -170,6 +170,10 @@ int main(int argc, char** argv) {
         if (on(a0)) cv::circle(isoV,a0,5,{20,20,30},cv::FILLED,cv::LINE_AA);
     }
 
+    // First person, through the map. maxRange is set from what the map can
+    // honestly know rather than from what looks good -- see fpvImage.
+    cv::Mat fpv = M.fpvImage(px, py, pz, yaw, -5.f, 440, 90.f, 25.f);
+
     cv::Mat sliceV = M.sliceImage(pz, 440);
     cv::Mat dv(d.rows,d.cols,CV_8UC3,cv::Scalar(60,60,60));
     for (int yy=0;yy<d.rows;++yy) for (int xx=0;xx<d.cols;++xx){
@@ -189,10 +193,55 @@ int main(int argc, char** argv) {
                 cv::FONT_HERSHEY_SIMPLEX,0.5,{30,30,30},2);
     cv::putText(depthV,"DEPTH (stereo)",{10,22},cv::FONT_HERSHEY_SIMPLEX,0.55,{240,240,240},2);
 
-    cv::Mat rowA, rowB, row;
+    cv::putText(fpv,"FIRST PERSON (the map, from the aircraft)",{10,22},
+                cv::FONT_HERSHEY_SIMPLEX,0.45,{30,30,30},2);
+    cv::putText(fpv,"pale = unknown, not empty",{10,42},
+                cv::FONT_HERSHEY_SIMPLEX,0.42,{60,60,70},1);
+
+    // Legend rather than a dead pane. The colour keys are the part of these
+    // views a newcomer gets wrong, and a legend beside them costs nothing.
+    cv::Mat key(440,440,CV_8UC3,cv::Scalar(30,30,36));
+    {
+        const char* lines[] = {
+            "WHAT YOU ARE LOOKING AT",
+            "",
+            "TRUTH        the real world at flight height.",
+            "             pale corridors are forest trails.",
+            "             red flown, green planned, circle goal.",
+            "",
+            "VOXEL MODEL  the map the aircraft built, from",
+            "             outside. blocks are a display pitch,",
+            "             not the map resolution.",
+            "",
+            "FIRST PERSON the same map, from inside it.",
+            "             this is what the aircraft 'sees'.",
+            "             pale is UNKNOWN, never empty --",
+            "             fog you can see beats a false-free",
+            "             percentage you have to interpret.",
+            "",
+            "DEPTH        what stereo returned. grey = no match.",
+            "",
+            "VOXEL MAP    horizontal slice. white free,",
+            "             black occupied, GREY UNKNOWN.",
+            "",
+            "COLOUR KEY   red is at your altitude and is what",
+            "             you would hit. green below, blue above.",
+        };
+        int y = 40;
+        for (const char* s : lines) {
+            cv::putText(key, s, {16, y}, cv::FONT_HERSHEY_SIMPLEX, 0.38,
+                        s[0] && s[1] && s[0] >= 'A' && s[0] <= 'Z' && s[1] >= 'A' && s[1] <= 'Z'
+                            ? cv::Scalar(235,235,240) : cv::Scalar(165,165,180),
+                        1, cv::LINE_AA);
+            y += 18;
+        }
+    }
+
+    cv::Mat rowA, rowB, rowC, row;
     cv::hconcat(std::vector<cv::Mat>{topV,isoV}, rowA);
-    cv::hconcat(std::vector<cv::Mat>{sliceV,depthV}, rowB);
-    cv::vconcat(rowA, rowB, row);
+    cv::hconcat(std::vector<cv::Mat>{fpv,depthV}, rowB);
+    cv::hconcat(std::vector<cv::Mat>{sliceV,key}, rowC);
+    cv::vconcat(std::vector<cv::Mat>{rowA, rowB, rowC}, row);
     cv::Mat bar(64, row.cols, CV_8UC3, cv::Scalar(25,25,30));
     char l1[260], l2[260];
     std::snprintf(l1,sizeof l1,"Forest  seed %u  stereo  trail   step %d/%d   %.1f m/s   flown %.0f m   [-/+] 1x",
@@ -206,5 +255,23 @@ int main(int argc, char** argv) {
     cv::imwrite(out, full);
     std::printf("wrote %s  (%dx%d)  flown %.0f m, min clearance %.2f m\n",
                 out.c_str(), full.cols, full.rows, travelled, minClear);
+
+    // Score the map against truth, and count what is actually MARKED. The
+    // first-person view showed fog where the depth image plainly had trunks,
+    // and "that is the honest sensor horizon" is a comfortable explanation that
+    // has to be checked rather than assumed -- an under-marking map would look
+    // exactly the same and would be a real bug.
+    VoxelMap::Score sc = M.score(W, px, py, pz, 12.f, pz + 10.f);
+    long occCells = 0;
+    for (int z = 0; z < mp.nz; ++z)
+        for (int y = 0; y < mp.ny; ++y)
+            for (int x = 0; x < mp.nx; ++x)
+                if (M.logAt(x,y,z) > mp.occThresh) ++occCells;
+    std::printf("  map: %ld cells marked OCCUPIED of %d\n",
+                occCells, mp.nx*mp.ny*mp.nz);
+    std::printf("  within 12 m: observed %ld of %ld (%.0f%% coverage), "
+                "occupied TP %ld FP %ld FN %ld, IoU %.2f, false-free %.2f%%\n",
+                sc.observed, sc.total, 100.0*sc.coverage(),
+                sc.occTP, sc.occFP, sc.occFN, sc.iou(), 100.0*sc.falseFreeRate());
     return 0;
 }

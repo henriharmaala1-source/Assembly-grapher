@@ -120,6 +120,26 @@ public:
     void worldToCell(float wx, float wy, float wz, int& x, int& y, int& z) const;
     void cellCentre(int x, int y, int z, float& wx, float& wy, float& wz) const;
 
+    // Result of marching a ray through the map. `face` is which side of the
+    // cell the ray entered through (0/1 = -x/+x, 2/3 = -y/+y, 4/5 = -z/+z),
+    // which is what makes a first-person render read as cubes rather than as a
+    // depth field: shading by face is the whole trick.
+    struct Hit {
+        float t = 0;                 // distance along the ray, metres
+        int   face = 5;
+        int   x = 0, y = 0, z = 0;   // cell hit
+        // How much UNKNOWN the ray crossed before it hit anything. Rendered as
+        // fog. The map's central claim is that unknown is NOT free, and a
+        // first-person view that draws unknown as clear air would be the most
+        // convincing possible way to tell that lie.
+        float unknownM = 0;
+        bool  hit = false;
+    };
+    // Amanatides & Woo, same traversal as VoxelWorld::raycast. Stops on the
+    // first OCCUPIED cell; UNKNOWN does not stop the ray, it accumulates.
+    Hit raycast(float px, float py, float pz,
+                float dx, float dy, float dz, float maxRange) const;
+
     // --- scoring against truth ---------------------------------------------
     //
     // The numbers that actually answer "does the voxel model work".
@@ -208,6 +228,29 @@ public:
     cv::Mat isoImage(int outPx = 640, float maxZ = 30.f, float yawDeg = 0.f,
                      IsoView* view = nullptr, float blockM = 1.5f,
                      float spanM = 0.f) const;
+
+    // FIRST PERSON, out of the aircraft's own eyes, through the map it built.
+    // One raycast per pixel, shaded by which cube face was hit -- the same
+    // three brightnesses the isometric cubes use, for the same reason.
+    //
+    // This renders the MAP, never the world, and the distinction is the entire
+    // point: the isometric pane shows you the model from outside, and this
+    // shows you what flying inside that model would look like. Where the model
+    // is wrong you fly into fog, and fog you can see is worth more than a
+    // false-free percentage you have to interpret.
+    //
+    // Cost is ~0.5 us/ray, so a 320 px square pane is roughly 50 ms. That is
+    // fine for a desktop window and would never run onboard; it is a
+    // visualisation, not part of the flight loop.
+    //
+    // `maxRange` should be set from what the map can honestly know rather than
+    // from what looks good: at 0.25 m cells on a 12 cm baseline that is about
+    // 5 m, and the view SHOULD look short. The horizon here is a sensor
+    // property, and seeing it is the useful part.
+    cv::Mat fpvImage(float px, float py, float pz,
+                     float yawDeg, float pitchDeg,
+                     int outPx = 320, float hfovDeg = 90.f,
+                     float maxRange = 25.f) const;
 
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }

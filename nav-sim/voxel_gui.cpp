@@ -256,6 +256,11 @@ static int fly(const Cfg& cfg) {
     // small blocks and a 60 m view wants big ones, and letting them drift apart
     // just gives you the two bad combinations as well as the two good ones.
     struct View { float blockM, spanM; const char* name; };
+    // Which 3D view occupies the top-right pane. Both are worth having and the
+    // window cannot grow a row without falling off most screens, so they share
+    // a slot on `v`. First person is the default because it is the one that
+    // shows what the aircraft is flying through rather than what it has built.
+    bool fpvMode = true;
     static const View VIEWS[] = {
         {0.5f, 20.f, "20 m / 0.5 m"},
         {1.0f, 32.f, "32 m / 1.0 m"},
@@ -364,8 +369,25 @@ static int fly(const Cfg& cfg) {
         // at a glance.
         if (spin) isoYaw += 0.4f;
         VoxelMap::IsoView iv;
-        cv::Mat isoV = M.isoImage(440, 40.f, isoYaw, &iv,
-                                  VIEWS[blockIdx].blockM, VIEWS[blockIdx].spanM);
+        cv::Mat isoV;
+        if (fpvMode) {
+            // Out of the aircraft's own eyes, through the map it built. The
+            // range is deliberately not generous: at 0.25 m cells on a 12 cm
+            // baseline the map can only honestly mark obstacles to about 5 m,
+            // so this view SHOULD look short. The horizon is a sensor property
+            // and seeing it is the useful part.
+            isoV = M.fpvImage(px, py, pz, yaw, -5.f, 440, 90.f, 25.f);
+            cv::putText(isoV,"FIRST PERSON (the map, from the aircraft)",{10,22},
+                        cv::FONT_HERSHEY_SIMPLEX,0.45,{30,30,30},2);
+            cv::putText(isoV,"pale = UNKNOWN, not empty",{10,42},
+                        cv::FONT_HERSHEY_SIMPLEX,0.42,{60,60,70},1);
+            cv::putText(isoV,"red = at your altitude   green below   blue above",{10,414},
+                        cv::FONT_HERSHEY_SIMPLEX,0.40,{90,90,100},1);
+            cv::putText(isoV,"[v] outside view",{10,432},
+                        cv::FONT_HERSHEY_SIMPLEX,0.42,{90,90,100},1);
+        } else {
+        isoV = M.isoImage(440, 40.f, isoYaw, &iv,
+                          VIEWS[blockIdx].blockM, VIEWS[blockIdx].spanM);
         // The plan, drawn in the same 3D space as the blocks. Without this the
         // voxel pane shows WHAT the aircraft believes but not what it intends,
         // and the two together are the only way to see a bad decision being
@@ -422,8 +444,9 @@ static int fly(const Cfg& cfg) {
                     cv::FONT_HERSHEY_SIMPLEX,0.40,{110,110,120},1);
         cv::putText(isoV,"blue line flown   green plan   orange commanded",{10,416},
                     cv::FONT_HERSHEY_SIMPLEX,0.40,{110,110,120},1);
-        cv::putText(isoV,"[<-/->] rotate  [s] spin  [ / ] view distance",{10,432},
-                    cv::FONT_HERSHEY_SIMPLEX,0.42,{110,110,120},1);
+        cv::putText(isoV,"[<-/->] rotate  [s] spin  [ / ] view distance  [v] first person",
+                    {10,432},cv::FONT_HERSHEY_SIMPLEX,0.42,{110,110,120},1);
+        }
         cv::Mat rowA, rowB, row;
         cv::hconcat(std::vector<cv::Mat>{topV,isoV}, rowA);
         cv::hconcat(std::vector<cv::Mat>{sliceV,depthV}, rowB);
@@ -463,6 +486,7 @@ static int fly(const Cfg& cfg) {
         if (key=='r') return 2;
         if (key==' ') paused = !paused;
         if (key=='s') spin = !spin;
+        if (key=='v') fpvMode = !fpvMode;
         if (key=='-'||key=='_') rateIdx = std::max(0, rateIdx-1);
         if (key=='+'||key=='=') rateIdx = std::min(int(sizeof(RATES)/sizeof(*RATES))-1, rateIdx+1);
         if (key=='[') blockIdx = std::max(0, blockIdx-1);

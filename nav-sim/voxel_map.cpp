@@ -39,8 +39,12 @@ VoxelMap::State VoxelMap::stateAt(float wx, float wy, float wz) const {
 // Carve free space along the ray, mark the endpoint occupied. Same DDA as the
 // world raycaster; kept separate because this one writes rather than reads and
 // must stop exactly at `range`.
+// carveTo: how far to mark FREE. hitAt: where to mark OCCUPIED, or < 0 for
+// "this return is too far to trust as an obstacle -- carve only".
 void VoxelMap::rayInsert(float px, float py, float pz,
-                         float dx, float dy, float dz, float range) {
+                         float dx, float dy, float dz,
+                         float carveTo, float hitAt) {
+    const float range = carveTo;
     float len = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (len < 1e-9f) return;
     dx /= len; dy /= len; dz /= len;
@@ -75,8 +79,9 @@ void VoxelMap::rayInsert(float px, float py, float pz,
     // Endpoint: occupied. Note this happens AFTER the free carve so a cell that
     // is both traversed and terminated-in ends up occupied, which is correct --
     // the return is the stronger evidence.
+    if (hitAt < 0.f) return;         // far return: free space only, no obstacle
     int ex, ey, ez;
-    worldToCell(px + dx * range, py + dy * range, pz + dz * range, ex, ey, ez);
+    worldToCell(px + dx * hitAt, py + dy * hitAt, pz + dz * hitAt, ex, ey, ez);
     if (inBounds(ex, ey, ez)) {
         float& l = log_[idx(ex, ey, ez)];
         l = std::min(l + p_.lHit, p_.lClamp);
@@ -94,9 +99,15 @@ void VoxelMap::integrate(const cv::Mat& depth, const DepthCamera& cam,
             // maxRange on a miss "because there was clearly nothing there" --
             // on an untextured wall there very clearly was.
             if (!(r > 0.f)) continue;
-            if (r > p_.maxIntegM) continue;
             float dx, dy, dz; cam.rayFor(pose, u, v, dx, dy, dz);
-            rayInsert(pose.e, pose.n, pose.u, dx, dy, dz, r);
+            // How far can this ray's free space be trusted? Up to the hit minus
+            // a few sigma of its own depth uncertainty, capped at maxCarveM.
+            float sig = p_.depthSigCoef > 0.f ? p_.depthSigCoef * r * r : 0.f;
+            float carve = std::min(p_.maxCarveM, r - p_.carveSigK * sig);
+            bool markHit = (r <= p_.maxIntegM);
+            if (carve <= 0.f && !markHit) continue;
+            rayInsert(pose.e, pose.n, pose.u, dx, dy, dz,
+                      std::max(0.f, carve), markHit ? r : -1.f);
         }
     }
 }

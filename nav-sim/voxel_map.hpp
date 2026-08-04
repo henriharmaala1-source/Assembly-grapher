@@ -73,6 +73,28 @@ struct VoxelMapParams {
     // error is what carves the hole. If you need map out to 20 m, either take
     // coarser voxels at range or stop carving and only mark occupancy.
     float maxIntegM= 8.f;
+    // FREE-SPACE CARVING IS A SEPARATE DECISION FROM MARKING AN OBSTACLE, and
+    // conflating them was a paralysing bug.
+    //
+    // maxIntegM exists because a far return's POSITION is untrustworthy -- the
+    // error grows as Z^2 and past Z_max it carves through the very obstacle it
+    // found. But the original code discarded the ENTIRE RAY when the endpoint
+    // was too far, throwing away the free space along it as well. Measured at
+    // the city spawn: the nearest truth return is 10.39 m and ZERO pixels are
+    // under 8 m, so with maxIntegM = 8 not one ray was integrated, the map
+    // stayed completely empty, nothing was ever FREE, and the aircraft sat
+    // still for 1200 steps. The stereo runs only moved because 0.4% speckle
+    // outliers landed inside 8 m -- they were flying on sensor noise.
+    //
+    // A ray that returns 30 m still proves the first several metres are empty.
+    // So carve free space out to (r - k*sigma(r)), the point beyond which the
+    // endpoint's own uncertainty makes the claim unsafe, capped at maxCarveM;
+    // and mark OCCUPIED only when r <= maxIntegM.
+    float maxCarveM = 25.f;   // free space may be claimed this far out
+    float carveSigK = 2.0f;   // stop carving this many depth-sigmas short of the hit
+    // sigma(Z) = Z^2 * subpixel / (f*B); supplied by the camera so the map does
+    // not have to know the optics. 0 disables the shortening.
+    float depthSigCoef = 0.f;  // = subpixelPx / (f_px * baseline_m)
 };
 
 class VoxelMap {
@@ -148,7 +170,8 @@ public:
 
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }
-    void rayInsert(float px, float py, float pz, float dx, float dy, float dz, float range);
+    void rayInsert(float px, float py, float pz, float dx, float dy, float dz,
+                   float carveTo, float hitAt);
 
     VoxelMapParams p_;
     std::vector<float> log_;

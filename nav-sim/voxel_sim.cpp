@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
     float goalE = 150, goalN = 170, goalU = 8;
     bool useTruth = false, generalOnly = false, display = false;
     int replanEvery = 25;
+    float lHit=-1, lMiss=-1, occT=-99, freeT=-99;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -84,6 +85,10 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--truth")) useTruth = true;
         else if (!std::strcmp(argv[i], "--general-only")) generalOnly = true;
         else if (!std::strcmp(argv[i], "--display")) display = true;
+        else if (!std::strcmp(argv[i], "--lhit")) lHit = float(std::atof(next("0.85")));
+        else if (!std::strcmp(argv[i], "--lmiss")) lMiss = float(std::atof(next("0.4")));
+        else if (!std::strcmp(argv[i], "--occt")) occT = float(std::atof(next("0")));
+        else if (!std::strcmp(argv[i], "--freet")) freeT = float(std::atof(next("-0.4")));
         else if (!std::strcmp(argv[i], "--replan")) replanEvery = std::atoi(next("25"));
         else if (!std::strcmp(argv[i], "--goal")) {
             goalE = float(std::atof(next("150")));
@@ -131,6 +136,11 @@ int main(int argc, char** argv) {
 
     CamParams cp; DepthCamera cam(cp);
     VoxelMapParams mp; mp.cell = cell;
+    if (lHit  > 0)   mp.lHit = lHit;
+    if (lMiss > 0)   mp.lMiss = lMiss;
+    if (occT  > -90) mp.occThresh = occT;
+    if (freeT > -90) mp.freeThresh = freeT;
+    mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
     VoxelMap M; M.init(mp, px, py, pz);   // after spawn validation, not before
 
     GeneralParams gp; gp.robotR = 0.6f;

@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
                 100.f * 20.f * cp.subpixelPx / (cam.fpx() * cp.baselineM));
 
     VoxelMapParams mp; mp.cell = cell;
+    mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
     if (integM > 0) mp.maxIntegM = integM;
     VoxelMap M; M.init(mp, startE, startN, startU);
 

@@ -112,31 +112,56 @@ roughly 18-29 ms on a Pi 5, alongside the tracker (~16 ms) and StereoBM
 **Flight quality, 1200 steps:**
 
 ```
-world/depth      outcome        travelled   to-goal   min clearance
-forest/truth     COLLIDED         298.8 m   156.6 m          0.22 m
-forest/stereo    timeout          411.9 m   169.0 m          0.53 m
-city/truth       deadlocked         0.0 m   240.1 m          2.00 m
-city/stereo      timeout          405.0 m   233.6 m          0.99 m
+world/depth      outcome     travelled   min clearance   false-free
+forest/truth     COLLIDED       76.7 m          0.09 m       0.000%
+forest/stereo    COLLIDED      111.2 m          0.27 m       7.360%
+city/truth       COLLIDED      152.4 m          0.04 m       3.286%
+city/stereo      COLLIDED       45.6 m          0.18 m       4.880%
 ```
 
-Better, not fixed. `forest/truth` went 104 m -> 299 m before colliding;
-`forest/stereo` no longer collides at all in 1200 steps. But nothing reaches a
-goal, and `city/truth` still deadlocks at zero — that one is a reactive-layer
-bug, since the same world flies 405 m on stereo depth.
+### The deadlock is fixed, and it was not the log-odds
 
-Progression of the run that keeps failing (`forest/truth`), for honesty about
-what each fix bought:
+The hypothesis was that `lHit` (0.85) outweighing `lMiss` (0.40) made FREE
+unreachable. **That was wrong** — a sweep of five (lHit, lMiss, occThresh,
+freeThresh) combinations gave 0.0 m travelled in every one.
+
+The real cause, found by histogramming what the camera actually returns at the
+city spawn:
 
 ```
-0.4 m   -> spawning inside a tree (broken collision detector)
-104 m   -> exact detector + swept-sphere probe
-299 m   -> OMPL forward planner
+truth    invalid 35259   <8m     0   8-25m 33330   >25m 8211   nearest 10.39 m
+stereo   invalid 56975   <8m    16   8-25m 19131   >25m  678   nearest  0.64 m
 ```
 
-Note also `map false-free` reaching ~9% on moving forest runs, against 2.95% in
-the static sweep at the same 8 m integration range. Motion makes the map worse
-than the stationary measurement suggested, which is worth chasing before
-trusting any planner result on stereo depth.
+**Zero truth pixels under 8 m.** With `maxIntegM = 8`, not a single ray was
+integrated, the map stayed completely empty, nothing was ever FREE, and the
+aircraft sat still for 1200 steps. And the only reason the *stereo* runs moved
+was those 16 sub-8 m pixels — 0.4% **speckle outliers**. They were flying on
+sensor noise.
+
+The bug was conflating two separate decisions. `maxIntegM` exists because a far
+return's POSITION is untrustworthy (error grows as Z²), but the code discarded
+the ENTIRE RAY when the endpoint was too far, throwing away the free space along
+it too. A ray returning 30 m still proves the first several metres are empty.
+Now free space is carved out to `r − 2σ(r)` (capped at `maxCarveM`), while
+OCCUPIED is marked only when `r ≤ maxIntegM`.
+
+`city/truth` went 0.0 m → 152.4 m. Forest regressed (299 m → 77 m), so this
+traded one failure for another rather than fixing everything.
+
+### The new problem: false-free under motion
+
+`city/truth` now reports **3.286% false-free where it previously reported
+0.000%** — but the old figure was an artifact of never moving. The same pattern
+holds in the forest: ~7% on moving runs against 2.95% in the static sweep at the
+same integration range.
+
+**Motion is corrupting the map.** That is now the top suspect for all four
+collisions, and it is upstream of anything in the planner. The prime candidate is
+`VoxelMap::recentre()`, which shifts the whole grid by whole cells every step
+and was effectively never exercised before, since the runs that scored 0.000%
+were the runs that never moved. Next step is to test with recentring disabled and
+a map large enough not to need it.
 
 ## Ready-made planners worth benchmarking against
 

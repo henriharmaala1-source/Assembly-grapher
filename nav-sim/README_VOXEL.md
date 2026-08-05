@@ -357,7 +357,73 @@ precisely so they can be calibrated against a real camera rather than against
 my reading of somebody's screenshot — see the ten-minute backlit-bark contrast
 experiment described above.
 
+### Trunks have visible EDGES
+
+A second batch of real depth imagery settled the question the first one raised.
+Trunks appear as black columns **with vivid coloured stripes down one edge** —
+a block matcher succeeding on the silhouette and failing on the interior. A
+trunk against bright sky is a strong horizontal gradient; the inside of a smooth
+shadowed cylinder is not.
+
+**So a trunk is never invisible — only its middle is.** The outline comes back,
+and an outline is enough to know something is there.
+
+`renderStereo` is now three passes: raycast geometry, detect depth
+discontinuities, then match. A pixel whose neighbourhood spans a large depth
+step — or borders a no-return, which is the trunk-against-sky case and the
+strongest cue of all — has its effective texture raised to `edgeBoost`, because
+the discontinuity *is* the feature being correlated.
+
+Trunk texture also moved 0.15–0.55 → **0.30–0.75**. The old range was an
+over-correction from a single screenshot: it put the median at 0.35, below the
+cliff, with a quarter of trunks wholly invisible. Bark in reasonable light
+genuinely is textured — the original 0.85 was wrong about backlighting, not
+about bark.
+
+Forest, 400 steps, 4 seeds:
+
+```
+arm                   coll/4   travel   endDist   minClr
+silhouette + far        0/4     69.3     108.6     0.31
+silhouette, no far      0/4     68.2     108.1     0.31
+```
+
+**No collisions**, where the pre-silhouette model was flying into trees. Note
+`minClr` 0.31 against a 0.30 collision threshold — it survives, but not with
+much to spare.
+
+### Coarse far-field map
+
+2 m cells alongside the 0.25 m map. Not a compromise: depth error grows as Z²,
+so at 12 m a return genuinely has metres of uncertainty along the ray and a
+0.25 m voxel claims precision the measurement does not contain. Sizing the cell
+to the uncertainty is the honest thing, and it triples the range —
+**Z_max 5.2 m → 14.8 m**.
+
+Affordable because it takes every 4th pixel (`integrateStride`): a 2 m cell does
+not need 76,800 rays when hundreds land inside it. Cost is inside the noise
+(14.05 → 14.67 ms). It carries **877 occupied cells, 814 beyond the fine map's
+8 m marking limit**.
+
+The router consults it wherever the fine map has no opinion; the fine map always
+wins where it *has* one, so the coarse layer can add an obstacle but never erase
+one. It is wired to the router rather than the reactive layer because the
+trajectory rollout is only ~6 m and never leaves the fine map.
+
+**It has not yet earned its keep**, and the table above says so: 69.3 m against
+68.2 m travelled, 0/4 collisions either way. Like the stall-triggered router, it
+costs nothing and has not yet been the difference between success and failure —
+because no world here has geometry that would reward it. And a coarser voxel
+does not make an unmatched obstacle visible; it extends the horizon you can
+steer by, nothing more.
+
 ### How visible must a trunk be? — the tolerance curve
+
+> **This curve predates the silhouette model.** It was measured when a trunk
+> resolved whole or vanished whole, which the real imagery says never happens.
+> The shape of the argument stands — sweep the parameter rather than guess it —
+> but the numbers need re-running before they mean anything about the current
+> stack.
 
 The trunk-visibility number came from **one screenshot** of somebody else's
 depth output: unknown vintage, unknown pipeline, possibly a filter bug. A point

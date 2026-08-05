@@ -392,6 +392,56 @@ silhouette, no far      0/4     68.2     108.1     0.31
 `minClr` 0.31 against a 0.30 collision threshold — it survives, but not with
 much to spare.
 
+### How good must the pose estimate be?
+
+The map is only ever as good as the pose it is written with, and "do we need
+VIO?" is not answerable by argument. `--drift` injects a random walk into the
+pose the **mapper** believes while the true pose stays exact — which is
+precisely what dead reckoning does — so the requirement can be measured.
+
+Forest, 400 steps, 3 seeds. `--drift D` gives a position error std of `D·√T`;
+for white velocity error `σ_v`, `D = σ_v·√dt`, so the second column is the spec
+you would actually shop for or measure on a bench:
+
+```
+--drift  ~sigma_v     coll/3   travel   endDist  falseFree
+0.00     perfect         0/3     91.1      87.1     0.002%
+0.01     0.03 m/s        0/3    103.5      89.4     0.048%
+0.03     0.09 m/s        0/3    106.3      69.6     0.149%
+0.10     0.32 m/s        3/3     75.9      99.7     0.439%
+0.30     0.95 m/s        1/3     94.9      80.8     1.095%
+1.00     3.16 m/s        2/3     73.0     102.8     3.662%
+```
+
+**The requirement is roughly 0.1 m/s of velocity accuracy.** Clean at 0.09,
+every seed collides at 0.32.
+
+Read the **false-free** column rather than the collision count — it is
+monotonic where the collisions are noisy at n=3. It also shows the mechanism:
+pose error scatters observations of the same trunk across different cells, the
+obstacle dissolves, and the map begins claiming free space where wood is.
+
+Two things worth more than the headline:
+
+* **Below ~0.1 m/s the odometry is not the bottleneck.** Drift contributes
+  0.149% false-free there, against the 7.8% the *stereo sensor* contributed
+  before the carve guard. Two orders of magnitude apart — there is no point
+  buying better pose until the perception improves.
+* **This is the friendly case.** A random walk models white velocity noise.
+  Real optical-flow error carries bias and scale-factor terms that drift
+  *systematically*, which is far more damaging at the same RMS. Treat 0.1 m/s
+  as an optimistic bar.
+
+So VIO is probably not a prerequisite: a PMW3901-class flow sensor over moss
+and litter — the one surface every real depth image here resolves perfectly —
+plausibly clears it. "Plausibly" is doing work in that sentence, and it is
+directly testable: hover with GPS lock, log flow-derived velocity against GPS
+velocity, take the RMS.
+
+**Heading drift is deliberately not swept.** At 2 °/min it is 0.17° over a 5 s
+fusion window — about 3 cm at 10 m. The local map does not care; yaw only costs
+you when flying a bearing for minutes.
+
 ### Coarse far-field map
 
 2 m cells alongside the 0.25 m map. Not a compromise: depth error grows as Z²,

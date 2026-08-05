@@ -71,6 +71,17 @@ add_executable(iso_render_check
 target_include_directories(iso_render_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(iso_render_check PRIVATE ${OpenCV_LIBS})
 
+# Side-by-side of what the fine and coarse maps know, with range rings. The
+# claim the coarse map makes is about RANGE, and a first-person view cannot
+# show range -- it shows what is close, which is the part both maps agree on.
+add_executable(far_map_demo
+  test/far_map_demo.cpp
+  voxel_world.cpp
+  depth_camera.cpp
+  voxel_map.cpp)
+target_include_directories(far_map_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(far_map_demo PRIVATE ${OpenCV_LIBS})
+
 # Calibrates the forest world's trunk-visibility parameter against a REAL
 # photograph, so that number stops being a guess read off someone's screenshot.
 add_executable(bark_contrast test/bark_contrast.cpp)

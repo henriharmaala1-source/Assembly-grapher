@@ -512,10 +512,20 @@ int main(int argc, char** argv) {
                100.0 * double(trailIn) / double(trailN), trailDev / float(trailN));
     printf("  stopped on         %d of %d steps\n", stopped, steps);
     printf("  A* replans         %d, of which no path %d\n", replans, noPath);
-    printf("  router             %s, engaged %d time(s) for %ld of %d steps (%.0f%%)\n",
-           routerMode == 0 ? "never" : routerMode == 2 ? "always" : "on stall",
-           stall.engagements, stall.engagedSteps, stepsRun,
-           stepsRun ? 100.0 * double(stall.engagedSteps) / stepsRun : 0.0);
+    // The stall monitor runs in every mode, so under --router never this
+    // reports when the router WOULD have been called, not when it was. Saying
+    // "engaged 12%" for a run that never engaged it would be a lie of exactly
+    // the kind this harness exists to avoid.
+    {
+        double pct = stepsRun ? 100.0 * double(stall.engagedSteps) / stepsRun : 0.0;
+        if (routerMode == 0)
+            printf("  router             never used; stall condition met on %.0f%% of steps\n", pct);
+        else if (routerMode == 2)
+            printf("  router             always on\n");
+        else
+            printf("  router             on stall, engaged %d time(s) for %ld of %d steps (%.0f%%)\n",
+                   stall.engagements, stall.engagedSteps, stepsRun, pct);
+    }
     // Split out what would actually run ON THE AIRCRAFT. The depth RENDER is
     // sim-only -- on the Pi that is the stereo matcher, benchmarked separately.
     // Map integration and both planners are real onboard cost.

@@ -404,8 +404,43 @@ Stall means **no new closest approach to the goal for 4 s**. Closest approach
 rather than current distance, because a vehicle circling a building has a
 distance that oscillates without ever improving — precisely the case this must
 catch. The router hands back only after buying 5 m of real progress, so the two
-layers cannot flap. `voxel_sim` reports how often it engaged; in open forest
-that is 0% of steps, and the run costs nothing for having the option.
+layers cannot flap.
+
+Measured across both worlds, 400 steps, 3 seeds:
+
+```
+forest    cmdChurn  advance  endDist  steps  router  coll
+never         0.57    0.988     57.3    400      0%     0
+stall         0.57    0.988     57.3    400      0%     0
+always        2.47    0.848     77.2    400      5%     0
+
+city      cmdChurn  advance  endDist  steps  router  coll
+never         4.85    0.812    172.5    338     12%*    1
+stall         5.00    0.817    172.3    338     12%     1
+always        3.91    0.750    181.2    279     10%     2
+```
+<sub>*under `never` the stall monitor still runs, so that column is when the
+router *would* have been called, not when it was.</sub>
+
+Three things, in order of confidence:
+
+1. **`always` is worse everywhere.** Forest advance 0.848 against 0.988; city
+   advance 0.750, twice the collisions, and it dies 59 steps sooner. Routing
+   every step is a net negative in both worlds.
+2. **`stall` is free.** In the forest it is bit-identical to `never`. In the
+   city it engages 12% of the time and changes essentially nothing —
+   advance 0.817 against 0.812, same collisions, same steps survived.
+3. **The router has not yet earned its place anywhere in this harness.** Not
+   harmful on stall, but not helpful either.
+
+Point 3 is a statement about **these worlds, not about global planners**. The
+city test compares two failures — both arms crash and neither gets close — and
+neither world contains a genuine dead end. A fair test needs geometry where a
+12 m reactive horizon provably traps the aircraft and a router provably frees
+it: a U-shaped courtyard, a walled cul-de-sac. Until this harness has one, "the
+router is useless" is not a claim the data supports; "nothing here rewards it"
+is. The default stays `stall` because it costs nothing and is the only thing
+that could handle that geometry when it exists.
 
 Three further mechanisms were tried and **are off by default because they did
 not work**: smoothing the direction field over time, requiring a challenger to

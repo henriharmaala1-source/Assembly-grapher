@@ -395,12 +395,51 @@ against real depth output before trusting the physical figures. And four seeds
 cannot distinguish 1/4 from 0/4: read 0.40 and 0.25 as "degraded", not as a
 rate.
 
-**The curve also exposes the cost of the safety fix.** Travel is ~54 m
-regardless of trunk visibility, where before the core-free requirement the
-aircraft covered 118 m at advance 0.988. Roughly half the progress bought the
-collision immunity, and that comes from `coreFrac = 0.65` — a number picked, not
-swept. Unlike trunk visibility it is entirely ours to choose, so it is the
-obvious next experiment.
+**The curve also exposed the cost of the safety fix — and the fix lost.**
+Travel sat at ~54 m regardless of trunk visibility, where before the core-free
+requirement the aircraft covered 118 m. So `coreFrac` was swept against the
+thing it was supposed to buy:
+
+```
+trunkTex  coreFrac   coll/4   travel  endDist  stopped
+0.70      0.00         0/4     68.3    107.9      169
+0.70      0.65         0/4     53.9    122.4      217
+0.25      0.00         0/4     56.1    120.6      210
+0.25      0.65         1/4     36.9    139.5      180
+0.15      0.00         4/4      6.9    169.1        0
+0.15      0.65         4/4     57.9    118.9        1
+```
+
+**Never safer, usually slower.** At 0.25 it is the arm *with* the requirement
+that collides — one run of four, so not significant, but certainly no evidence
+for it. At 0.15 both fail completely and `coreFrac` only delays the crash,
+which is cosmetic. It is now **off by default**, kept behind `--corefrac` with
+the numbers attached.
+
+The reasoning behind it still looks right: unknown space inside your own body's
+volume is exactly where an unmatched obstacle hides. The measurement disagrees,
+and the measurement wins. Note only 0 and 0.65 were tested — nothing in between.
+
+What actually freezes the aircraft is worth recording, because "it only flew
+54 m" sounds like a dead end and is not one. The stall is perfectly bimodal: on
+every stopped step the confirmed-free run ahead is **exactly 0.15 m**, on every
+moving step about 5 m, and only 2 of 173 stops report "blocked". It is a
+sense-move-sense stutter — creep forward, outrun the confirmed-free frontier in
+two steps, freeze until the map catches up. Distance to goal falls monotonically
+throughout and advance is 0.97 while moving.
+
+And one assumption that turned out backwards: **the carve guard improves
+progress.** Without it a cell is marked occupied by one ray and carved free by
+another, log-odds settles near zero, the cell reads UNKNOWN, and the planner
+refuses to enter it. The guard removes that contradiction. Better on safety and
+on speed:
+
+```
+corefrac 0.65 + carve guard    travel 59.6   stopped 197
+corefrac 0.65, no guard        travel 50.6   stopped 229
+corefrac 0    + carve guard    travel 91.7   stopped  92
+corefrac 0,    no guard        travel 51.1   stopped 228
+```
 
 ### Trajectory library instead of heading commands
 

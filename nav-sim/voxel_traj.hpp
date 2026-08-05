@@ -72,10 +72,32 @@ struct TrajParams {
     //
     // Requiring the WHOLE swept ball to be FREE deadlocks: with a forward
     // camera the sides and rear are permanently unknown, and this project has
-    // already spent 638 of 700 steps stationary learning that. So split it:
-    // the CORE must be confirmed free, the outer margin need only be
-    // unoccupied. The core is the part you cannot survive being wrong about.
-    float coreFrac   = 0.65f;   // 1.0 = whole ball must be FREE, 0 = old behaviour
+    // already spent 638 of 700 steps stationary learning that. So the idea was
+    // to split it -- CORE confirmed free, outer margin merely unoccupied.
+    //
+    // IT DOES NOT WORK, AND IS OFF BY DEFAULT. Swept against trunk visibility,
+    // 400 steps, 4 seeds:
+    //
+    //     trunkTex  coreFrac   coll/4  travel  endDist  stopped
+    //     0.70      0.00         0/4     68.3    107.9      169
+    //     0.70      0.65         0/4     53.9    122.4      217
+    //     0.25      0.00         0/4     56.1    120.6      210
+    //     0.25      0.65         1/4     36.9    139.5      180
+    //     0.15      0.00         4/4      6.9    169.1        0
+    //     0.15      0.65         4/4     57.9    118.9        1
+    //
+    // Never safer, usually slower. At 0.25 it is the arm that collides while
+    // the arm without it does not -- one run of four, so not significant, but
+    // certainly no evidence for it. At 0.15 both fail totally; coreFrac only
+    // delays the crash, which is cosmetic.
+    //
+    // The reasoning behind it still looks right: unknown space inside your own
+    // body's volume is exactly where an unmatched obstacle hides. The
+    // measurement disagrees, and the measurement wins. Kept behind --corefrac
+    // with the numbers attached, because the next person will think of it too.
+    //
+    // Intermediate values were NOT tested; only 0 and 0.65.
+    float coreFrac   = 0.0f;    // 1.0 = whole ball must be FREE, 0 = off
     // How far along the winning rollout to aim. This is NOT a free parameter:
     // commanding a straight bearing to a point on a curved path flies a CHORD,
     // and the chord bows inside the tube that was collision-checked by

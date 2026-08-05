@@ -357,6 +357,51 @@ precisely so they can be calibrated against a real camera rather than against
 my reading of somebody's screenshot — see the ten-minute backlit-bark contrast
 experiment described above.
 
+### How visible must a trunk be? — the tolerance curve
+
+The trunk-visibility number came from **one screenshot** of somebody else's
+depth output: unknown vintage, unknown pipeline, possibly a filter bug. A point
+estimate from that is not evidence. So sweep it, and report the range over which
+the stack survives — that turns the question into a spec you can go and measure.
+
+Forest, 400 steps, 4 seeds, `--trunktex`:
+
+```
+trunkTex   coll/4   travel   endDist   minClr  falseFree
+0.85         0/4     53.9     122.4     0.31    0.012%
+0.70         0/4     53.9     122.4     0.31    0.012%
+0.55         0/4     53.9     122.4     0.31    0.012%
+0.40         1/4     69.2     107.3     0.30    0.001%
+0.25         1/4     36.9     139.5     0.30    0.018%
+0.15         4/4     57.9     118.9     0.26    0.001%
+```
+
+The identical top three rows are a **consistency check passing**, not a bug:
+above `texThresh × 2 = 0.50` the dropout probability is exactly zero, so those
+three worlds really are the same world. The meaningful range is 0.25–0.50 and
+**the cliff is at 0.40**.
+
+Run `build/bark_contrast` on a photograph of a backlit trunk to place a real
+forest on that scale. Through its calibration that works out as roughly:
+
+* **≥ 10 grey levels** of 10th-percentile per-window σ → safe
+* **~6.5** → one run in four hits a tree
+* **below the matcher's threshold** → every run hits a tree
+
+Two caveats, because they matter more than the numbers. The *sim-texture*
+thresholds are measured; the *grey-level* conversion is a calibration constant
+invented in `bark_contrast.cpp` and flagged as such in its source — check it
+against real depth output before trusting the physical figures. And four seeds
+cannot distinguish 1/4 from 0/4: read 0.40 and 0.25 as "degraded", not as a
+rate.
+
+**The curve also exposes the cost of the safety fix.** Travel is ~54 m
+regardless of trunk visibility, where before the core-free requirement the
+aircraft covered 118 m at advance 0.988. Roughly half the progress bought the
+collision immunity, and that comes from `coreFrac = 0.65` — a number picked, not
+swept. Unlike trunk visibility it is entirely ours to choose, so it is the
+obvious next experiment.
+
 ### Trajectory library instead of heading commands
 
 The reactive layer used to answer "which bearing looks most open" and hand that

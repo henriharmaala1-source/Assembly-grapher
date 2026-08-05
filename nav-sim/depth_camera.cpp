@@ -85,9 +85,26 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
             // and the map must treat that as UNKNOWN, never as free.
             if (tex < p_.texThresh) continue;
             // Near the threshold matching is unreliable rather than impossible.
+            // The draw is per BLOCK, not per pixel -- see blockPx. A matcher
+            // correlates a window, so a marginal surface fails in window-sized
+            // patches. Deriving the draw from the block index rather than a
+            // running RNG also makes it stable frame to frame for a stationary
+            // camera, which is what a real matcher does and what a per-pixel
+            // coin flip conspicuously does not.
             float pFail = (tex < p_.texThresh * 2.f)
                         ? 1.f - (tex - p_.texThresh) / p_.texThresh : 0.f;
-            if (pFail > 0.f && urand() < pFail * 0.8f) continue;
+            if (pFail > 0.f) {
+                float draw;
+                if (p_.blockPx > 0) {
+                    uint32_t bx = uint32_t(u / p_.blockPx), by = uint32_t(v / p_.blockPx);
+                    uint32_t h = bx * 73856093u ^ by * 19349663u ^ p_.seed * 83492791u;
+                    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+                    draw = float(h & 0xFFFFFF) / float(0x1000000);
+                } else {
+                    draw = urand();
+                }
+                if (draw < pFail * 0.8f) continue;
+            }
 
             // Speckle: a confidently WRONG match. Worse than a hole.
             if (urand() < p_.speckleFrac) {
@@ -107,6 +124,37 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
             if (disp < 1.f) continue;                 // beyond usable range
             row[u] = fB / disp;
             ++valid;
+        }
+    }
+    // SPECKLE / CONSISTENCY REJECTION, modelling what every real pipeline runs
+    // after matching: left-right consistency plus filterSpeckles. A valid pixel
+    // in a neighbourhood that is mostly invalid was almost certainly a bad
+    // match, and throwing it away is what gives real depth images clean hole
+    // edges instead of a fringe of survivors.
+    //
+    // It also removes most of the isolated wrong-depth speckle this model
+    // injects above -- which is correct, and worth stating: the dangerous
+    // artefact in practice is not the lone bad pixel that a filter catches, it
+    // is the coherent hole that no filter can fill.
+    if (p_.filterSpeckle && p_.speckleWin > 0) {
+        cv::Mat src = d.clone();
+        const int W = p_.speckleWin;
+        const int need = int(p_.speckleKeep * float((2*W+1) * (2*W+1)) + 0.5f);
+        for (int v = 0; v < p_.height; ++v) {
+            float* row = d.ptr<float>(v);
+            for (int u = 0; u < p_.width; ++u) {
+                if (!(src.at<float>(v, u) > 0)) continue;
+                int ok = 0;
+                for (int dv = -W; dv <= W; ++dv) {
+                    int yy = v + dv; if (yy < 0 || yy >= p_.height) continue;
+                    const float* s = src.ptr<float>(yy);
+                    for (int du = -W; du <= W; ++du) {
+                        int xx = u + du; if (xx < 0 || xx >= p_.width) continue;
+                        if (s[xx] > 0) ++ok;
+                    }
+                }
+                if (ok < need) { row[u] = -1.f; --valid; }
+            }
         }
     }
     if (validFrac) *validFrac = float(valid) / float(p_.width * p_.height);

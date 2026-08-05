@@ -23,6 +23,7 @@
 #include "ompl_planner.hpp"
 #include "voxel_map.hpp"
 #include "voxel_planner.hpp"
+#include "voxel_traj.hpp"
 #include "voxel_world.hpp"
 
 using namespace sim;
@@ -232,6 +233,14 @@ static int fly(const Cfg& cfg) {
     VoxelMap M; M.init(mp, px, py, pz);
     GeneralParams gp; gp.robotR = 0.6f;
     GeneralPlanner gen(gp);
+    // Same reactive layer the harness measures. A window that flies differently
+    // from the thing being measured is worse than no window -- it looks like
+    // evidence.
+    TrajParams tp;
+    tp.robotR = gp.robotR; tp.vMax = gp.vMax;
+    tp.decelMs2 = gp.decelMs2; tp.reactS = gp.reactS; tp.minFreeM = gp.minFreeM;
+    tp.dt = 0.1f;
+    TrajectoryPlanner traj(tp);
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
     BearingFilter gfilt;
@@ -302,7 +311,8 @@ static int fly(const Cfg& cfg) {
         if (path.found) pursuitPoint(path, px, py, pz, 6.f, tE, tN, tU);
         gfilt.update(std::atan2(tE-px, tN-py) * 180.f/sim::PI_F,
                      std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/sim::PI_F, 0.25f);
-        GeneralResult gr = gen.plan(M, px, py, pz, gfilt.azDeg, gfilt.elDeg);
+        GeneralResult gr = traj.plan(M, px, py, pz, yaw, gfilt.azDeg, gfilt.elDeg);
+        (void)gen;
 
         float a = gr.azDeg*sim::PI_F/180.f, e = gr.elDeg*sim::PI_F/180.f;
         float dx = std::cos(e)*std::sin(a), dy = std::cos(e)*std::cos(a), dz = std::sin(e);

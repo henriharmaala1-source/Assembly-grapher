@@ -34,6 +34,7 @@
 #include "voxel_map.hpp"
 #include "ompl_planner.hpp"
 #include "voxel_planner.hpp"
+#include "voxel_traj.hpp"
 #include "voxel_world.hpp"
 
 using namespace sim;
@@ -117,6 +118,11 @@ int main(int argc, char** argv) {
     // dead end, so the honest answer is "when needed" rather than either
     // extreme.
     int   routerMode = 1;
+    // Which reactive layer. The histogram answers "which bearing looks open"
+    // and hands it to a vehicle that needs 0.35 s to turn; the library answers
+    // "which path can I actually fly". Both, so they can be compared on
+    // identical worlds rather than argued about.
+    bool  useTraj = true;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -143,6 +149,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--lookahead")) lookaheadM = float(std::atof(next("6")));
         else if (!std::strcmp(argv[i], "--goalema")) goalEma = float(std::atof(next("0.25")));
         else if (!std::strcmp(argv[i], "--noreuse")) reuse = false;
+        else if (!std::strcmp(argv[i], "--histogram")) useTraj = false;
+        else if (!std::strcmp(argv[i], "--traj")) useTraj = true;
         else if (!std::strcmp(argv[i], "--router")) {
             const char* m = next("stall");
             routerMode = !std::strcmp(m, "never") ? 0
@@ -263,6 +271,15 @@ int main(int argc, char** argv) {
     if (revP    >= 0) gp.revPenalty   = revP;
     if (commitN >= 0) gp.commitSteps  = commitN;
     GeneralPlanner gen(gp);
+    TrajParams tp;
+    tp.robotR = gp.robotR; tp.vMax = gp.vMax;
+    tp.decelMs2 = gp.decelMs2; tp.reactS = gp.reactS; tp.minFreeM = gp.minFreeM;
+    tp.dt = dt;              // the rollout must use the control period
+    TrajectoryPlanner traj(tp);
+    if (useTraj)
+        printf("  reactive layer: trajectory library, %zu primitives\n", traj.librarySize());
+    else
+        printf("  reactive layer: openness histogram, %d x %d bins\n", gp.nAz, gp.nEl);
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
     BearingFilter gfilt;
@@ -376,7 +393,9 @@ int main(int argc, char** argv) {
 
         // --- general plan, every step ----------------------------------------
         int64 tg = cv::getTickCount();
-        GeneralResult gr = gen.plan(M, px + dE, py + dN, pz + dU, gAz, gEl);
+        GeneralResult gr = useTraj
+            ? traj.plan(M, px + dE, py + dN, pz + dU, yaw, gAz, gEl)
+            : gen.plan(M, px + dE, py + dN, pz + dU, gAz, gEl);
         tGen += double(cv::getTickCount() - tg) / cv::getTickFrequency();
         tPlan += double(cv::getTickCount() - t1) / cv::getTickFrequency();
         if (gr.speed <= 0.01f) ++stopped;

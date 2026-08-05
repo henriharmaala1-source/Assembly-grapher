@@ -291,9 +291,12 @@ void genForest(VoxelWorld& w, const ForestParams& p, std::vector<Trail>* trailsO
         float hf = std::pow((dbh - p.dbhMinM) / (p.dbhMaxM - p.dbhMinM + 1e-6f), 0.6f);
         float h = (0.45f + 0.55f * hf) * p.topM * (0.85f + 0.3f * u01(rng));
 
-        // Trunk. Bark is strongly textured -- trunks are the one thing stereo
-        // reliably sees in a forest, which is why forests are navigable at all.
-        fillCylinder(w, x, y, base, base + h, dbh * 0.5f, 0.85f);
+        // Trunk. NOT reliably textured -- see trunkTexMin/Max. Each trunk draws
+        // its own value, so the plot contains a mix of trunks that resolve,
+        // trunks that resolve in patches, and trunks that are simply invisible
+        // to stereo. Which is what the real depth images show.
+        fillCylinder(w, x, y, base, base + h, dbh * 0.5f,
+                     p.trunkTexMin + u01(rng) * (p.trunkTexMax - p.trunkTexMin));
 
         // Crown: a cluster of foliage blobs from canopyBase upward. Foliage is
         // texture-rich but geometrically thin and porous, which is exactly the

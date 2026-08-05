@@ -317,6 +317,85 @@ again before its previous decision had produced any motion — the vehicle needs
 Collisions do not separate the arms at four seeds (1,1,0,1,0,1); that column is
 noise at this count and is not a safety ordering.
 
+### Realistic trunks break the stack
+
+Real depth images from a boreal stand show the ground resolved beautifully and
+the **trunks as solid holes** — bark in shadow against bright sky is a
+low-contrast surface, and a matcher cannot correlate what it cannot see. Our
+world model had the opposite: trunks carried `tex = 0.85`, the *highest* texture
+in the world, on the stated reasoning that "bark is strongly textured, which is
+why forests are navigable at all." That reasoning never accounted for
+backlighting, and it made every safety number here optimistic about the one
+obstacle that kills you.
+
+Three corrections, all in the direction of *harder*:
+
+* `trunkTexMin/Max` = 0.15–0.55, straddling `texThresh`. Some trunks vanish
+  entirely, most drop out in patches, a few in good side light resolve fine.
+* **Dropout is per-BLOCK, not per-pixel** (`blockPx = 8`). A matcher correlates
+  a window, so a marginal surface fails in window-sized patches. The old
+  per-pixel coin flip produced salt-and-pepper — a lace curtain instead of a
+  hole — and a mapper that never sees a coherent hole is never tested against
+  the failure that actually occurs.
+* **Speckle/consistency rejection** after matching, modelling left-right checks
+  and `filterSpeckles`. This is what gives real depth images clean hole *edges*.
+
+The result, forest, 400 steps, 3 seeds:
+
+```
+arm          cmdChurn  advance  endDist  steps  meanMinClr  worstClr
+histogram        1.20    0.995    131.7    148        0.38      0.32
+trajlib          0.50    0.989    125.3    234        0.43      0.36
+```
+
+**Both arms now collide** — 148 and 234 steps of a requested 400. On seed 1 the
+histogram hits a tree at step 17. That is the honest state: everything measured
+before this section assumed trunks were visible to stereo, and they are not.
+
+This is unwelcome and correct. The parameters are explicit and tunable
+precisely so they can be calibrated against a real camera rather than against
+my reading of somebody's screenshot — see the ten-minute backlit-bark contrast
+experiment described above.
+
+### Trajectory library instead of heading commands
+
+The reactive layer used to answer "which bearing looks most open" and hand that
+to a vehicle needing 0.35 s to turn. A bearing is not a thing the aircraft can
+do; it is a wish. Every steering fix in this project — commitment, hysteresis,
+the dwell margin, the reference low-pass — existed to paper over that mismatch.
+
+`voxel_traj.*` replaces it with a library of motion primitives, precomputed in
+the body frame by integrating **the vehicle's own first-order lag**, so every
+candidate is a path the airframe can actually fly. Collision checking and the
+stopping-distance speed budget are unchanged in kind.
+
+It is also cheaper, which stops being surprising once stated — the histogram
+ray-marches 864 directions and throws away 863:
+
+```
+openness field   96 x 9 bins, 1.88 M cell lookups     4.52 ms
+trajectory lib   195 primitives, 0.23 M lookups       1.51 ms
+onboard total                          20.7 ms  ->   18.3 ms
+```
+
+On the harsh world it also **halves command churn and survives 58% longer**
+before hitting something. One subtlety was worth measuring: commanding a
+straight bearing to a point on a *curved* rollout flies a chord, which bows
+inside the tube that was collision-checked by `R(1-cos(θ/2))` — 0.10 m at
+100 °/s and 0.4 s of lookahead. Aiming at 0.4 s cost 0.17 m of minimum
+clearance; `aimS = 0.2` brings the deviation to 0.026 m and the planner then
+*beats* the histogram on clearance instead of losing to it.
+
+### Textured reconstruction
+
+`integrate()` optionally takes an intensity image aligned to the depth and
+stores one byte per cell — 5.5 MB at 240×240×96. `isoImage(..., colourByTexture)`
+then draws the map with the world's own appearance instead of the height ramp.
+
+Be clear what this buys: **nothing for the avionics.** It exists so a human can
+tell at a glance whether the reconstruction resembles the place, which a
+height-coloured blob cannot show. Debug instrumentation, not perception.
+
 ### It was never the reactive planner
 
 After all of the above the aircraft still turned aggressively, and the obvious

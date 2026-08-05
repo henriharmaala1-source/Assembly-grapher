@@ -86,7 +86,8 @@ add_executable(voxel_sim
   voxel_world.cpp
   depth_camera.cpp
   voxel_map.cpp
-  voxel_planner.cpp)
+  voxel_planner.cpp
+  voxel_traj.cpp)
 target_include_directories(voxel_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_sim PRIVATE ${OpenCV_LIBS})
 if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
@@ -107,7 +108,8 @@ add_executable(gui_preview
   voxel_world.cpp
   depth_camera.cpp
   voxel_map.cpp
-  voxel_planner.cpp)
+  voxel_planner.cpp
+  voxel_traj.cpp)
 target_include_directories(gui_preview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(gui_preview PRIVATE ${OpenCV_LIBS})
 if(ompl_FOUND)
@@ -124,6 +126,7 @@ if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
     depth_camera.cpp
     voxel_map.cpp
     voxel_planner.cpp
+    voxel_traj.cpp
     ompl_planner.cpp)
   target_include_directories(voxel_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(voxel_gui PRIVATE ${OpenCV_LIBS})

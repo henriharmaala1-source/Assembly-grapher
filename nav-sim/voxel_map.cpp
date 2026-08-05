@@ -225,8 +225,17 @@ void VoxelMap::rayInsert(float px, float py, float pz,
 
 void VoxelMap::integrate(const cv::Mat& depth, const DepthCamera& cam,
                          const CamPose& pose) {
+    integrate(depth, cv::Mat(), cam, pose);
+}
+
+void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
+                         const DepthCamera& cam, const CamPose& pose) {
+    const bool wantTex = !intensity.empty()
+                      && intensity.rows == depth.rows && intensity.cols == depth.cols;
+    if (wantTex && tex_.empty()) tex_.assign(log_.size(), 0);
     for (int v = 0; v < depth.rows; ++v) {
         const float* row = depth.ptr<float>(v);
+        const uchar* irow = wantTex ? intensity.ptr<uchar>(v) : nullptr;
         for (int u = 0; u < depth.cols; ++u) {
             float r = row[u];
             // THE RULE. No measurement -> no information. Not free, not
@@ -243,6 +252,13 @@ void VoxelMap::integrate(const cv::Mat& depth, const DepthCamera& cam,
             if (carve <= 0.f && !markHit) continue;
             rayInsert(pose.e, pose.n, pose.u, dx, dy, dz,
                       std::max(0.f, carve), markHit ? r : -1.f);
+            // Paint the hit cell with what the camera saw there. Only on a
+            // marked hit -- painting a carved cell would colour thin air.
+            if (wantTex && markHit) {
+                int hx, hy, hz;
+                worldToCell(pose.e + dx * r, pose.n + dy * r, pose.u + dz * r, hx, hy, hz);
+                if (inBounds(hx, hy, hz)) tex_[idx(hx, hy, hz)] = irow[u];
+            }
         }
     }
 }
@@ -356,7 +372,8 @@ static void isoCube(cv::Mat& img, float rx, float ry, float gz, float s,
 }
 
 cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg, IsoView* view,
-                           float blockM, float spanM) const {
+                           float blockM, float spanM, bool colourByTexture) const {
+    const bool useTex = colourByTexture && !tex_.empty();
     cv::Mat img(outPx, outPx, CV_8UC3, cv::Scalar(238, 240, 244));
     // RENDER PITCH, and this is why the pane looked like static rather than like
     // blocks. The old code drew one cube per map cell: 240 x 240 cells across a
@@ -393,8 +410,13 @@ cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg, IsoView* view,
     if (view) *view = IsoView{outPx, step, s, ca, sa, cxg, cyg, czg,
                               ox_, oy_, oz_, p_.cell, true};
 
-    // Block occupancy: OR over the cells inside it.
+    // Block occupancy: OR over the cells inside it. Intensity, when wanted, is
+    // a MEAN over the occupied cells -- the OR is right for occupancy because
+    // losing an obstacle to display rounding is unacceptable, but a max would
+    // make every block the brightest speck it contains.
     std::vector<uint8_t> occ(size_t(nbx) * nby * nbz, 0);
+    std::vector<uint32_t> texSum, texCnt;
+    if (useTex) { texSum.assign(size_t(nbx)*nby*nbz, 0); texCnt.assign(texSum.size(), 0); }
     auto bidx = [&](int bx, int by, int bz) {
         return (size_t(bz) * nby + by) * nbx + bx;
     };
@@ -402,12 +424,19 @@ cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg, IsoView* view,
         for (int y = 0; y < p_.ny; ++y) {
             const float* row = &log_[idx(0, y, z)];
             for (int x = 0; x < p_.nx; ++x)
-                if (row[x] > p_.occThresh) occ[bidx(x/step, y/step, z/step)] = 1;
+                if (row[x] > p_.occThresh) {
+                    size_t b = bidx(x/step, y/step, z/step);
+                    occ[b] = 1;
+                    if (useTex) {
+                        uint8_t t = tex_[idx(x, y, z)];
+                        if (t) { texSum[b] += t; ++texCnt[b]; }
+                    }
+                }
         }
 
     // Painter's algorithm: far blocks first. After rotation the depth key is
     // (rx + ry), so sort on it and draw ascending.
-    struct Cell { float rx, ry, z; float f; };
+    struct Cell { float rx, ry, z; float f; size_t b; };
     std::vector<Cell> cells;
     cells.reserve(8000);
     const int bx0 = std::max(0, int(cxg) - spanB), bx1 = std::min(nbx, int(cxg) + spanB);
@@ -437,16 +466,26 @@ cv::Mat VoxelMap::isoImage(int outPx, float maxZ, float yawDeg, IsoView* view,
                 // answers "what is at my altitude", i.e. what I am going to
                 // hit, which is the reason to look at this pane at all.
                 cells.push_back({dx*ca - dy*sa, dx*sa + dy*ca, bz - czg,
-                                 (wz - (oz_ + p_.nz * p_.cell * 0.5f)) / HEIGHT_KEY_M});
+                                 (wz - (oz_ + p_.nz * p_.cell * 0.5f)) / HEIGHT_KEY_M,
+                                 bidx(bx, by, bz)});
             }
     std::sort(cells.begin(), cells.end(),
               [](const Cell& a, const Cell& b) { return (a.rx + a.ry) < (b.rx + b.ry); });
     // BGR anchors: below the aircraft, at its altitude, above it.
     const cv::Vec3f LOW(90, 150, 80), AT(55, 60, 235), HIGH(210, 160, 90);
     for (const Cell& c : cells) {
-        float t = std::max(-1.f, std::min(1.f, c.f));
-        cv::Vec3f m = (t < 0.f) ? LOW  + (AT - LOW ) * (1.f + t)
-                                : AT   + (HIGH - AT) * t;
+        cv::Vec3f m;
+        if (useTex && texCnt[c.b]) {
+            // The world's own appearance. Slightly warmed rather than pure
+            // grey, because a monochrome model against a grey background is
+            // harder to read than it sounds.
+            float g = float(texSum[c.b]) / float(texCnt[c.b]);
+            m = cv::Vec3f(g * 0.88f, g * 0.94f, g);
+        } else {
+            float t = std::max(-1.f, std::min(1.f, c.f));
+            m = (t < 0.f) ? LOW  + (AT - LOW ) * (1.f + t)
+                          : AT   + (HIGH - AT) * t;
+        }
         isoCube(img, c.rx, c.ry, c.z, s, outPx,
                 cv::Vec3b(uchar(m[0]), uchar(m[1]), uchar(m[2])));
     }

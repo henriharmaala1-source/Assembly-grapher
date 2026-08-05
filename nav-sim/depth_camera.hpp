@@ -59,6 +59,22 @@ struct CamParams {
     float texThresh  = 0.25f;    // below this texture richness -> no match
     float speckleFrac= 0.004f;   // fraction of pixels given a wrong-but-confident depth
     float maxRangeM  = 40.f;
+    // BLOCK GRANULARITY, and this was a real modelling error. A stereo matcher
+    // correlates a WINDOW, so when a surface has too little texture the whole
+    // window fails together -- you get coherent holes the size of the obstacle.
+    // The first version made the texture decision per PIXEL, which produces
+    // salt-and-pepper: a lace curtain instead of a hole. Real depth images from
+    // a forest show large solid regions of nothing, exactly where the trunks
+    // are, and a mapper that never sees a coherent hole is never tested against
+    // the failure that actually occurs.
+    int   blockPx    = 8;        // matcher window; 0 reverts to per-pixel
+    // Post-match rejection, modelling what every real pipeline does: left-right
+    // consistency plus a speckle filter. A valid pixel surrounded mostly by
+    // invalid ones is thrown away. This is why real output has clean hole
+    // EDGES rather than a fringe of surviving pixels.
+    bool  filterSpeckle = true;
+    int   speckleWin = 2;        // half-window for the validity majority test
+    float speckleKeep= 0.45f;    // keep only if this fraction of neighbours valid
     unsigned seed    = 7;
 };
 

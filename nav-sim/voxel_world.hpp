@@ -159,6 +159,22 @@ struct ForestParams {
     // and HOLD a corridor, which is a strictly harder and more useful question.
     int   trails     = 3;
     float trailWidthM= 3.5f;    // cleared width; 0 disables trails entirely
+    // TRUNK TEXTURE, and getting this wrong made every safety number in this
+    // project optimistic about the one obstacle that kills you.
+    //
+    // The original value was 0.85 -- the highest texture in the world -- on the
+    // reasoning that "bark is strongly textured, which is why forests are
+    // navigable at all". That reasoning never accounted for BACKLIGHTING. Real
+    // depth images from a boreal stand show the ground resolved beautifully and
+    // the trunks as solid holes: bark in shadow against bright sky is a
+    // low-contrast surface, and a matcher cannot correlate what it cannot see.
+    //
+    // The range straddles texThresh (0.25) deliberately. Some trunks vanish
+    // entirely, most are marginal and drop out in patches, a few in good side
+    // light resolve fine. That is the distribution the real images show, and it
+    // is far harsher than what we had.
+    float trunkTexMin = 0.15f;
+    float trunkTexMax = 0.55f;
     unsigned seed    = 1;
 };
 

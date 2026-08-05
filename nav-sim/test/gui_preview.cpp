@@ -87,7 +87,19 @@ int main(int argc, char** argv) {
         CamPose pose; pose.e=px; pose.n=py; pose.u=pz;
         pose.yawDeg=yaw; pose.pitchDeg=-5;
         d = cam.renderStereo(W, pose, nullptr);
-        M.integrate(d, cam, pose);
+        // Intensity aligned to the depth image. In the sim this comes from the
+        // world's own texture value; on the aircraft it would be the left
+        // camera's rectified grey image, which is the same thing.
+        cv::Mat inten(d.rows, d.cols, CV_8U, cv::Scalar(0));
+        for (int yy = 0; yy < d.rows; ++yy)
+            for (int xx = 0; xx < d.cols; ++xx) {
+                if (!(d.at<float>(yy,xx) > 0)) continue;
+                float dx2,dy2,dz2; cam.rayFor(pose, xx, yy, dx2, dy2, dz2);
+                float tex = 0.f;
+                W.raycast(pose.e, pose.n, pose.u, dx2, dy2, dz2, cp.maxRangeM, &tex);
+                inten.at<uchar>(yy,xx) = uchar(std::min(255.f, 40.f + tex * 215.f));
+            }
+        M.integrate(d, inten, cam, pose);
         M.recentre(px, py, pz);
         // Same steering as voxel_sim and voxel_gui: replan on demand, aim by
         // pure pursuit, low-pass the reference bearing.
@@ -154,7 +166,7 @@ int main(int argc, char** argv) {
     cv::Mat topV; cv::resize(top, topV, {440,440}, 0,0, cv::INTER_AREA);
 
     VoxelMap::IsoView iv;
-    cv::Mat isoV = M.isoImage(440, 40.f, 30.f, &iv, 1.5f, 44.f);
+    cv::Mat isoV = M.isoImage(440, 40.f, 30.f, &iv, 1.5f, 44.f, true);
     auto on = [&](const cv::Point2f& q){ return q.x>0 && q.y>0 && q.x<440 && q.y<440; };
     auto inMap = [&](const cv::Point3f& p){
         int a,b,c; M.worldToCell(p.x,p.y,p.z,a,b,c); return M.inBounds(a,b,c); };
@@ -192,7 +204,7 @@ int main(int argc, char** argv) {
     cv::Mat depthV; cv::resize(dv, depthV, {440,440}, 0,0, cv::INTER_NEAREST);
 
     cv::putText(topV,"TRUTH + path",{10,22},cv::FONT_HERSHEY_SIMPLEX,0.55,{30,30,30},2);
-    cv::putText(isoV,"VOXEL MODEL (built)   44 m / 1.5 m",{10,22},
+    cv::putText(isoV,"VOXEL MODEL (built)  44 m / 1.5 m  textured",{10,22},
                 cv::FONT_HERSHEY_SIMPLEX,0.5,{30,30,30},2);
     cv::putText(isoV,"red = at your altitude   green below   blue above",{10,400},
                 cv::FONT_HERSHEY_SIMPLEX,0.40,{110,110,120},1);

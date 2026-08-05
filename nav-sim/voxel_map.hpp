@@ -105,6 +105,21 @@ public:
     // Fold one depth image in. `cam` supplies the ray directions so the mapper
     // and the renderer cannot disagree about geometry.
     void integrate(const cv::Mat& depth, const DepthCamera& cam, const CamPose& pose);
+    // Same, but also records a per-cell INTENSITY from an aligned image, so the
+    // map can be drawn with the world's own appearance instead of a synthetic
+    // height ramp. One byte per cell -- 5.5 MB at 240x240x96, nothing on a Pi.
+    //
+    // Be clear what this is for: it buys the AVIONICS nothing. It exists so a
+    // human can look at the reconstruction and tell at a glance whether the map
+    // resembles the place, which a height-coloured blob cannot show. Treat it
+    // as debug instrumentation, not perception.
+    void integrate(const cv::Mat& depth, const cv::Mat& intensity,
+                   const DepthCamera& cam, const CamPose& pose);
+    // 0 if never observed.
+    uint8_t texAt(int x, int y, int z) const {
+        return (!tex_.empty() && inBounds(x, y, z)) ? tex_[idx(x, y, z)] : 0;
+    }
+    bool hasTexture() const { return !tex_.empty(); }
 
     // Recentre on the vehicle, decaying anything that scrolls in from outside.
     void recentre(float cx, float cy, float cz);
@@ -225,9 +240,11 @@ public:
     // the map extent draws the model as a thumbnail in the middle of an empty
     // pane. Cropping to a span makes the blocks big enough to read AND is the
     // honest framing: it says "this is what the aircraft knows within N metres".
+    // colourByTexture: draw cells with their recorded intensity instead of the
+    // height ramp. Falls back to height if no intensity was ever integrated.
     cv::Mat isoImage(int outPx = 640, float maxZ = 30.f, float yawDeg = 0.f,
                      IsoView* view = nullptr, float blockM = 1.5f,
-                     float spanM = 0.f) const;
+                     float spanM = 0.f, bool colourByTexture = false) const;
 
     // FIRST PERSON, out of the aircraft's own eyes, through the map it built.
     // One raycast per pixel, shaded by which cube face was hit -- the same
@@ -259,6 +276,7 @@ private:
 
     VoxelMapParams p_;
     std::vector<float> log_;
+    std::vector<uint8_t> tex_;         // per-cell intensity; empty until used
     float ox_ = 0, oy_ = 0, oz_ = 0;   // world coord of cell (0,0,0) min corner
 };
 

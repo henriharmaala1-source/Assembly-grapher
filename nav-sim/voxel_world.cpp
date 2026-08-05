@@ -386,6 +386,42 @@ void genForest(VoxelWorld& w, const ForestParams& p, std::vector<Trail>* trailsO
     }
 }
 
+// --- cul-de-sac ------------------------------------------------------------
+
+void genCulDeSac(VoxelWorld& w, const CulDeSacParams& p) {
+    const int n  = int(p.sizeM / p.cell);
+    const int nz = int((p.wallH + 6.f) / p.cell);
+    w.init(p.cell, 0, 0, 0, n, n, nz);
+    std::mt19937 rng(p.seed);
+    std::uniform_real_distribution<float> u01(0.f, 1.f);
+
+    fillBox(w, 0, 0, 0, p.sizeM, p.sizeM, p.cell * 0.99f, 0.55f);   // ground
+
+    const float cx = p.sizeM * 0.5f;
+    const float x0 = cx - p.widthM * 0.5f, x1 = cx + p.widthM * 0.5f;
+    const float y0 = p.mouthY,             y1 = p.mouthY + p.depthM;
+
+    // Three walls: two sides and a closed end. The fourth side is the mouth,
+    // and it faces the spawn -- so the straight line to the goal leads in.
+    fillBox(w, x0 - p.wallT, y0, 0, x0, y1, p.wallH, p.tex);            // left
+    fillBox(w, x1, y0, 0, x1 + p.wallT, y1, p.wallH, p.tex);            // right
+    fillBox(w, x0 - p.wallT, y1, 0, x1 + p.wallT, y1 + p.wallT, p.wallH, p.tex);  // closed end
+
+    // Clutter outside the pocket. Without it the surround is a bare plane and
+    // the reactive layer would sail around trivially for reasons that have
+    // nothing to do with routing.
+    int posts = int(p.sizeM * p.sizeM * p.clutter / 900.f);
+    for (int i = 0; i < posts; ++i) {
+        float x = u01(rng) * p.sizeM, y = u01(rng) * p.sizeM;
+        // Keep the pocket interior and its mouth clear, so the trap is the
+        // geometry under test rather than an obstacle course.
+        if (x > x0 - p.wallT - 3.f && x < x1 + p.wallT + 3.f &&
+            y > y0 - 12.f && y < y1 + p.wallT + 3.f) continue;
+        fillCylinder(w, x, y, 0, 3.f + u01(rng) * 9.f, 0.5f + u01(rng) * 0.8f,
+                     0.55f + u01(rng) * 0.3f);
+    }
+}
+
 // --- importers -------------------------------------------------------------
 
 bool loadOsmBuildings(VoxelWorld& w, const std::string& path,

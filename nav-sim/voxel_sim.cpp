@@ -137,6 +137,10 @@ int main(int argc, char** argv) {
     bool  useTraj = true;
     // Coarse far-field companion map -- see where it is constructed.
     bool  useFar = true;
+    // The router's search cone about the goal bearing. 75 deg means it can
+    // never plan a path that goes BACKWARDS -- which is exactly the manoeuvre
+    // escaping a dead end requires. Exposed to test that.
+    float coneDeg = -1.f;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -165,6 +169,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--noreuse")) reuse = false;
         else if (!std::strcmp(argv[i], "--histogram")) useTraj = false;
         else if (!std::strcmp(argv[i], "--nofar")) useFar = false;
+        else if (!std::strcmp(argv[i], "--cone")) coneDeg = float(std::atof(next("75")));
         else if (!std::strcmp(argv[i], "--traj")) useTraj = true;
         else if (!std::strcmp(argv[i], "--trunktex")) trunkTex = float(std::atof(next("0.5")));
         else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
@@ -186,7 +191,14 @@ int main(int argc, char** argv) {
     VoxelWorld W;
     std::vector<Trail> trails;
     float px, py, pz;
-    if (world == "city") {
+    if (world == "culdesac") {
+        // Spawn SOUTH of the pocket, goal NORTH beyond it, so the straight
+        // line to the goal runs in through the mouth and into the closed end.
+        // Escaping means abandoning the goal bearing and going around.
+        CulDeSacParams p; p.cell = cell; p.seed = seed; genCulDeSac(W, p);
+        px = p.sizeM * 0.5f; py = 30.f; pz = 8.f;
+        goalE = p.sizeM * 0.5f; goalN = p.sizeM - 20.f; goalU = 8.f;
+    } else if (world == "city") {
         CityParams p; p.cell = cell; p.seed = seed; genCity(W, p);
         px = p.streetM * 0.5f; py = 5.f; pz = 6.f;
     } else {
@@ -332,6 +344,7 @@ int main(int argc, char** argv) {
     else
         printf("  reactive layer: openness histogram, %d x %d bins\n", gp.nAz, gp.nEl);
     ForwardParams fwp; fwp.robotR = gp.robotR;
+    if (coneDeg > 0.f) fwp.coneDeg = coneDeg;
     ForwardPath path;
     BearingFilter gfilt;
     StallMonitor stall;
@@ -414,8 +427,23 @@ int main(int argc, char** argv) {
         // randomised planner threw away a perfectly good path and got back an
         // arbitrarily different one, which is most of why the reference bearing
         // churned. `--replan N` is now the FALLBACK period, not the period.
+        // A VALID PATH IS NOT A PATH THAT IS WORKING. pathStillGood tests
+        // validity -- states safe, enough length ahead, bearing still sensible
+        // -- and a STUCK aircraft satisfies every one of those. Measured in the
+        // cul-de-sac: the router ran twice in 900 steps, found a path both
+        // times, and the aircraft then sat stalled for 520 steps because its
+        // one path never became invalid. It was simply a path the reactive
+        // layer would not fly.
+        //
+        // So while the stall monitor says we are not making progress, keep
+        // re-rolling the plan on the fallback period. RRTConnect is randomised,
+        // so each attempt is a genuinely different route -- which is a liability
+        // when things are going well and precisely what is wanted when they are
+        // not.
+        bool stuckReplan = stall.engaged && (s % replanEvery == 0);
         bool needReplan = wantRouter &&
-            (reuse ? !pathStillGood(M, path, px + dE, py + dN, pz + dU, mAz, fwp, useFar ? &Mfar : nullptr)
+            (reuse ? (!pathStillGood(M, path, px + dE, py + dN, pz + dU, mAz, fwp,
+                                     useFar ? &Mfar : nullptr) || stuckReplan)
                    : (s % replanEvery == 0));
         if (needReplan) {
             int64 tp = cv::getTickCount();

@@ -106,6 +106,23 @@ struct TrajParams {
     // against the histogram planner. Short is safe; too short and the command
     // is dominated by the first-order lag rather than the plan.
     float aimS       = 0.2f;
+    // ESCAPE PRIMITIVES -- lateral and rearward translation at the current
+    // heading. A multirotor is holonomic; the arc primitives above are a CAR
+    // model, and every one of them begins by moving forward.
+    //
+    // Measured in the cul-de-sac: pressed 0.31 m from the closed wall, the
+    // aircraft sat at 0.00 m/s for 200 steps. Not because it chose to -- because
+    // no primitive in the library retreated, so the best available free run was
+    // under a metre and the speed budget correctly commanded zero. It had no
+    // way out to choose.
+    //
+    // These keep the camera pointing where it was, which is the safe direction
+    // to retreat in: the space behind the aircraft is the space it just flew
+    // through, so it is mapped. Speed is reduced because flying somewhere the
+    // camera is not looking should be deliberate and slow.
+    int   nEscape    = 8;        // rearward/lateral directions; 0 disables
+    float escapeSpeed= 1.0f;     // m/s
+    float escapeMinDeg = 60.f;   // only directions at least this far off nose
 
     // Scoring. Deliberately few terms: this project has already measured that
     // adding weights to a badly-posed problem does not fix it.

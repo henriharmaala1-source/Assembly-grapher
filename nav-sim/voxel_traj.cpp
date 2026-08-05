@@ -76,6 +76,29 @@ TrajectoryPlanner::TrajectoryPlanner(const TrajParams& p) : p_(p) {
             }
         }
     }
+
+    // Escape set: pure translation in the body frame, heading unchanged, only
+    // directions well off the nose (the forward arcs already cover the front).
+    for (int i = 0; i < p_.nEscape; ++i) {
+        float ang = 360.f * float(i) / float(std::max(1, p_.nEscape));
+        float off = std::fabs(wrapDeg(ang));
+        if (off < p_.escapeMinDeg) continue;      // forward arcs own that sector
+        for (int ic = 0; ic < 3; ++ic) {
+            float climb = p_.maxClimb * (ic - 1) * 0.5f;
+            Prim pr; pr.speed = p_.escapeSpeed; pr.yawRate = 0; pr.climb = climb;
+            pr.pts.reserve(steps);
+            float x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0;
+            const float cxd = std::sin(deg2rad(ang)), cyd = std::cos(deg2rad(ang));
+            for (int s = 0; s < steps; ++s) {
+                vx += (cxd * p_.escapeSpeed - vx) * k;
+                vy += (cyd * p_.escapeSpeed - vy) * k;
+                vz += (climb - vz) * k;
+                x += vx * p_.dt; y += vy * p_.dt; z += vz * p_.dt;
+                pr.pts.push_back({x, y, z});
+            }
+            prims_.push_back(std::move(pr));
+        }
+    }
 }
 
 GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, float pz,

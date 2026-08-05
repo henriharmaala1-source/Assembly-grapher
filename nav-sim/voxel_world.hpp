@@ -196,6 +196,40 @@ using Trail = std::vector<std::array<float, 2>>;
 void genForest(VoxelWorld& w, const ForestParams& p,
                std::vector<Trail>* trailsOut = nullptr);
 
+// --- cul-de-sac: the world that tests whether a ROUTER is needed ------------
+//
+// Every world in this harness so far rewards a purely reactive planner, and
+// the measurements say so: routing was never safer and usually slower, in
+// forest and city alike. But that is an argument about THESE worlds, not about
+// routers. A reactive planner with a 12 m horizon cannot see out of a dead
+// end, and until the harness contains one, "the router does not earn its keep"
+// is a statement about a gap in the test set.
+//
+// So: a three-sided pocket straddling the straight line from spawn to goal.
+// The aircraft is lured in -- the goal bearing points directly through it --
+// and to escape it must abandon that bearing entirely, fly back out of the
+// mouth, and go around the outside. That is precisely the manoeuvre a horizon
+// of 12 m cannot plan and a horizon of 25 m can.
+//
+// The walls are WELL TEXTURED on purpose. This is a planning test, and if the
+// walls were hard to see it would silently become a perception test instead --
+// the aircraft would fly into one rather than being trapped by it, and the
+// result would answer a different question than the one asked.
+struct CulDeSacParams {
+    float sizeM   = 200.f;
+    float cell    = 0.5f;
+    float wallH   = 25.f;   // taller than the map is deep, so climbing out is
+                            // not a loophole the test accidentally allows
+    float wallT   = 4.f;
+    float mouthY  = 70.f;   // pocket opens toward -y, closed end at mouthY+depth
+    float depthM  = 60.f;
+    float widthM  = 56.f;   // internal clear width
+    float tex     = 0.65f;  // easy to see: this tests planning, not perception
+    float clutter = 0.4f;   // scattered pillars outside, so it is not a bare plane
+    unsigned seed = 1;
+};
+void genCulDeSac(VoxelWorld& w, const CulDeSacParams& p);
+
 // --- real-data importers ---------------------------------------------------
 //
 // Both are deliberately dumb text formats so you can produce them with a few

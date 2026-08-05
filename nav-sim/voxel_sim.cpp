@@ -118,6 +118,13 @@ int main(int argc, char** argv) {
     // dead end, so the honest answer is "when needed" rather than either
     // extreme.
     int   routerMode = 1;
+    // Trunk visibility to stereo, swept rather than guessed. We set this from
+    // ONE screenshot of somebody else's depth output, of unknown vintage and
+    // unknown pipeline. A point estimate from that is not evidence; a
+    // TOLERANCE CURVE across the plausible range is, because it answers "how
+    // visible do trunks have to be for this to work" -- which is a spec that
+    // can be checked with a real camera.
+    float trunkTex = -1.f;    // <0 = use the world default range
     // Which reactive layer. The histogram answers "which bearing looks open"
     // and hands it to a vehicle that needs 0.35 s to turn; the library answers
     // "which path can I actually fly". Both, so they can be compared on
@@ -151,6 +158,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--noreuse")) reuse = false;
         else if (!std::strcmp(argv[i], "--histogram")) useTraj = false;
         else if (!std::strcmp(argv[i], "--traj")) useTraj = true;
+        else if (!std::strcmp(argv[i], "--trunktex")) trunkTex = float(std::atof(next("0.5")));
         else if (!std::strcmp(argv[i], "--router")) {
             const char* m = next("stall");
             routerMode = !std::strcmp(m, "never") ? 0
@@ -172,7 +180,9 @@ int main(int argc, char** argv) {
         CityParams p; p.cell = cell; p.seed = seed; genCity(W, p);
         px = p.streetM * 0.5f; py = 5.f; pz = 6.f;
     } else {
-        ForestParams p; p.cell = cell; p.seed = seed; genForest(W, p, &trails);
+        ForestParams p; p.cell = cell; p.seed = seed;
+        if (trunkTex >= 0.f) { p.trunkTexMin = trunkTex; p.trunkTexMax = trunkTex; }
+        genForest(W, p, &trails);
         px = 15.f; py = 10.f; pz = 6.f;
     }
     if (trailRun >= 0 && !trails.empty()) {
@@ -264,6 +274,9 @@ int main(int argc, char** argv) {
     if (freeT > -90) mp.freeThresh = freeT;
     mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
     VoxelMap M; M.init(mp, px, py, pz);   // after spawn validation, not before
+    // Takeoff bootstrap -- see VoxelMap::seedFree. The spawn was validated
+    // against truth above, so this asserts something already checked.
+    M.seedFree(px, py, pz, 1.5f);
 
     GeneralParams gp; gp.robotR = 0.6f;
     if (emaA    >= 0) gp.fieldEma     = emaA;
@@ -294,6 +307,7 @@ int main(int argc, char** argv) {
     float trailDev = 0; long trailN = 0, trailIn = 0;
     int collisions = 0, stopped = 0, noPath = 0, replans = 0;
     int stepsRun = 0;
+    long corridorLies = 0;
     bool reached = false;
     std::vector<cv::Point2f> trail;
     double tPlan = 0, tSense = 0, tGen = 0, tPrec = 0, tInteg = 0;
@@ -433,12 +447,58 @@ int main(int argc, char** argv) {
         }
 
         // --- score against TRUTH ---------------------------------------------
+        // CORRIDOR LIE DETECTOR. A false-free RATE cannot see a tree: a 0.2 m
+        // trunk crossing the flight path is ~30 cells of 5.5 M, which is
+        // 0.0005% -- indistinguishable from zero in a percentage, and a
+        // collision in reality. Measured: the carve guard took whole-map
+        // false-free from 7.814% to 0.003% and the aircraft hit the SAME tree
+        // at the SAME step, because the residual cells were exactly the ones
+        // that mattered.
+        //
+        // So count what actually matters: cells just ahead of the aircraft,
+        // inside the volume it is about to occupy, that the map calls FREE and
+        // truth calls SOLID. Each one is a lie the planner is about to act on.
+        {
+            float sp = std::hypot(vx, vy);
+            float ahead = std::max(1.0f, sp * 1.0f);      // one second of travel
+            float ux = sp > 0.1f ? vx / sp : 0.f, uy = sp > 0.1f ? vy / sp : 0.f;
+            for (float t = 0.f; t <= ahead; t += cell) {
+                float qx = px + ux * t, qy = py + uy * t, qz = pz;
+                int mx, my, mz; M.worldToCell(qx, qy, qz, mx, my, mz);
+                if (!M.inBounds(mx, my, mz)) continue;
+                int wx2, wy2, wz2; W.worldToCell(qx, qy, qz, wx2, wy2, wz2);
+                bool mapFree = M.stateAt(qx, qy, qz) == VoxelMap::FREE;
+                if (mapFree && W.solid(wx2, wy2, wz2)) { ++corridorLies; break; }
+            }
+        }
         float clr = trueClearance(W, px, py, pz, 2.0f);
         minClear = std::min(minClear, clr);
         if (clr <= gp.robotR * 0.5f) {
             ++collisions;
             printf("  !! COLLISION at step %d, (%.1f, %.1f, %.1f), clearance %.2f m\n",
                    s, px, py, pz, clr);
+            // What did the MAP believe about the thing we just hit? Three
+            // possibilities with three different fixes: FREE means the map
+            // lied, UNKNOWN means the planner flew into space it had no
+            // opinion about, OCCUPIED means the planner ignored its own map.
+            {
+                int nf=0, nu=0, no=0, solid=0;
+                for (float dz2=-0.6f; dz2<=0.6f; dz2+=cell)
+                for (float dy2=-0.6f; dy2<=0.6f; dy2+=cell)
+                for (float dx2=-0.6f; dx2<=0.6f; dx2+=cell) {
+                    float qx=px+dx2, qy=py+dy2, qz=pz+dz2;
+                    int a,b,c2; W.worldToCell(qx,qy,qz,a,b,c2);
+                    if (!W.solid(a,b,c2)) continue;
+                    ++solid;
+                    switch (M.stateAt(qx,qy,qz)) {
+                        case VoxelMap::FREE: ++nf; break;
+                        case VoxelMap::OCCUPIED: ++no; break;
+                        default: ++nu; break;
+                    }
+                }
+                printf("     of %d truth-SOLID cells in the robot volume, the map called "
+                       "%d FREE, %d UNKNOWN, %d OCCUPIED\n", solid, nf, nu, no);
+            }
             break;
         }
         if (std::hypot(goalE - px, goalN - py) < 4.f && std::fabs(goalU - pz) < 4.f) {
@@ -525,6 +585,10 @@ int main(int argc, char** argv) {
     printf("  path travelled     %.1f m   (straight line %.1f m, ratio %.2f)\n",
            travelled, startDist, travelled / std::max(1.f, startDist));
     printf("  min true clearance %.2f m   <- scored against the WORLD, not the map\n", minClear);
+    printf("  corridor lies      %ld of %d steps (%.1f%%)  <- map said FREE, truth said SOLID,\n"
+           "                     within one second of travel ahead. A false-free RATE cannot\n"
+           "                     see a tree; this can.\n",
+           corridorLies, stepsRun, stepsRun ? 100.0*double(corridorLies)/stepsRun : 0.0);
     if (trailN > 0)
         printf("  trail following    %.0f%% of steps within 2.5 m of the corridor, "
                "mean deviation %.1f m\n",

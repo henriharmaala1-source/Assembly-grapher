@@ -64,6 +64,18 @@ struct TrajParams {
     float decelMs2   = 3.0f;
     float reactS     = 0.25f;
     float minFreeM   = 0.4f;
+    // THE VOLUME YOU ARE ABOUT TO OCCUPY MUST BE POSITIVELY KNOWN CLEAR, not
+    // merely "not known to be blocked". This is the fix for the failure that
+    // an invisible trunk is UNKNOWN rather than OCCUPIED: measured at the
+    // collision, all 5 truth-solid cells inside the robot volume were UNKNOWN,
+    // and the old test -- which rejected only OCCUPIED -- waved them through.
+    //
+    // Requiring the WHOLE swept ball to be FREE deadlocks: with a forward
+    // camera the sides and rear are permanently unknown, and this project has
+    // already spent 638 of 700 steps stationary learning that. So split it:
+    // the CORE must be confirmed free, the outer margin need only be
+    // unoccupied. The core is the part you cannot survive being wrong about.
+    float coreFrac   = 0.65f;   // 1.0 = whole ball must be FREE, 0 = old behaviour
     // How far along the winning rollout to aim. This is NOT a free parameter:
     // commanding a straight bearing to a point on a curved path flies a CHORD,
     // and the chord bows inside the tube that was collision-checked by

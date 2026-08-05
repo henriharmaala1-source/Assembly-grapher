@@ -39,6 +39,22 @@ void VoxelMap::cellCentre(int x, int y, int z, float& wx, float& wy, float& wz) 
     wz = oz_ + (z + 0.5f) * p_.cell;
 }
 
+void VoxelMap::seedFree(float cx, float cy, float cz, float radiusM) {
+    int x0, y0, z0, x1, y1, z1;
+    worldToCell(cx - radiusM, cy - radiusM, cz - radiusM, x0, y0, z0);
+    worldToCell(cx + radiusM, cy + radiusM, cz + radiusM, x1, y1, z1);
+    const float r2 = radiusM * radiusM;
+    for (int z = z0; z <= z1; ++z)
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) {
+                if (!inBounds(x, y, z)) continue;
+                float wx, wy, wz; cellCentre(x, y, z, wx, wy, wz);
+                float dx = wx-cx, dy = wy-cy, dz = wz-cz;
+                if (dx*dx + dy*dy + dz*dz > r2) continue;
+                log_[idx(x, y, z)] = -p_.lClamp;
+            }
+}
+
 VoxelMap::State VoxelMap::stateAt(float wx, float wy, float wz) const {
     int x, y, z; worldToCell(wx, wy, wz, x, y, z);
     if (!inBounds(x, y, z)) return UNKNOWN;
@@ -233,6 +249,20 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
     const bool wantTex = !intensity.empty()
                       && intensity.rows == depth.rows && intensity.cols == depth.cols;
     if (wantTex && tex_.empty()) tex_.assign(log_.size(), 0);
+
+    // Nearest valid return in each pixel's neighbourhood -- see carveWinPx.
+    // Invalid pixels are set to +inf so they never win the minimum; what
+    // constrains carving is a nearer SURFACE, not the absence of one. A min
+    // filter is exactly cv::erode, so this costs one optimised pass rather
+    // than a hand-rolled window scan.
+    cv::Mat localMin;
+    if (p_.carveWinPx > 1) {
+        cv::Mat dv = depth.clone();
+        dv.setTo(1e9f, depth <= 0.f);
+        cv::erode(dv, localMin, cv::getStructuringElement(
+                      cv::MORPH_RECT, cv::Size(p_.carveWinPx, p_.carveWinPx)));
+    }
+
     for (int v = 0; v < depth.rows; ++v) {
         const float* row = depth.ptr<float>(v);
         const uchar* irow = wantTex ? intensity.ptr<uchar>(v) : nullptr;
@@ -248,6 +278,11 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
             // a few sigma of its own depth uncertainty, capped at maxCarveM.
             float sig = p_.depthSigCoef > 0.f ? p_.depthSigCoef * r * r : 0.f;
             float carve = std::min(p_.maxCarveM, r - p_.carveSigK * sig);
+            // Never claim free space beyond the nearest thing seen nearby.
+            if (!localMin.empty()) {
+                float lm = localMin.at<float>(v, u);
+                if (lm < 1e8f) carve = std::min(carve, lm + p_.carveSlackM);
+            }
             bool markHit = (r <= p_.maxIntegM);
             if (carve <= 0.f && !markHit) continue;
             rayInsert(pose.e, pose.n, pose.u, dx, dy, dz,

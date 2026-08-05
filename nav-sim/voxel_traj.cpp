@@ -13,18 +13,27 @@ static inline float wrapDeg(float d) { return std::fmod(d + 540.f, 360.f) - 180.
 // version was the same mistake this codebase made three times -- adjacent axis
 // samples on a 0.6 m sphere are 0.85 m apart, and a 0.2 m trunk sits between
 // them unseen.
-static inline bool sphereClear(const VoxelMap& m, float x, float y, float z, float r) {
+static inline bool sphereClear(const VoxelMap& m, float x, float y, float z,
+                               float r, float coreFrac) {
     int cx, cy, cz; m.worldToCell(x, y, z, cx, cy, cz);
     const float cell = m.params().cell;
     const int R = int(std::ceil(r / cell));
     const float r2 = r * r;
+    const float core2 = (r * coreFrac) * (r * coreFrac);
     for (int dz = -R; dz <= R; ++dz)
         for (int dy = -R; dy <= R; ++dy)
             for (int dx = -R; dx <= R; ++dx) {
                 float ox = dx * cell, oy = dy * cell, oz = dz * cell;
-                if (ox*ox + oy*oy + oz*oz > r2) continue;
-                if (!m.inBounds(cx+dx, cy+dy, cz+dz)) continue;
-                if (m.logAt(cx+dx, cy+dy, cz+dz) > m.params().occThresh) return false;
+                float d2 = ox*ox + oy*oy + oz*oz;
+                if (d2 > r2) continue;
+                if (!m.inBounds(cx+dx, cy+dy, cz+dz)) {
+                    // Outside the map is unknown. Treat it like any unknown.
+                    if (d2 <= core2 && coreFrac > 0.f) return false;
+                    continue;
+                }
+                float l = m.logAt(cx+dx, cy+dy, cz+dz);
+                if (l > m.params().occThresh) return false;              // blocked
+                if (d2 <= core2 && !(l < m.params().freeThresh)) return false;  // not confirmed
             }
     return true;
 }
@@ -96,7 +105,7 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         float freeLen = 0, prevX = px, prevY = py, prevZ = pz;
         for (size_t i = 0; i < pr.pts.size(); ++i) {
             float wx, wy, wz; toWorld(pr.pts[i], wx, wy, wz);
-            if (!sphereClear(m, wx, wy, wz, p_.robotR)) break;
+            if (!sphereClear(m, wx, wy, wz, p_.robotR, p_.coreFrac)) break;
             // Only CONFIRMED-FREE length earns speed. Unknown space is
             // traversable but pays nothing, which is the rule that stopped this
             // aircraft flying into a tree at 1.5 m/s on perfect depth.

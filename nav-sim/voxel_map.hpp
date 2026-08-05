@@ -95,6 +95,29 @@ struct VoxelMapParams {
     // sigma(Z) = Z^2 * subpixel / (f*B); supplied by the camera so the map does
     // not have to know the optics. 0 disables the shortening.
     float depthSigCoef = 0.f;  // = subpixelPx / (f_px * baseline_m)
+
+    // CARVE ONLY TO THE LOCAL NEAREST RETURN. This is the guard against the
+    // failure that an unmatched obstacle is not merely unknown -- it is carved
+    // FREE by the rays that see past it.
+    //
+    // Measured: with trunks made hard for stereo, perfect depth gives 0.000%
+    // false-free and no collision, while stereo gives 7.8% and flies into a
+    // tree. The map is not failing to see the trunk; it is actively claiming
+    // the trunk's cells are empty, because the pixels either side of it
+    // returned the background and the DDA carved right through.
+    //
+    // The rule: a ray may claim free space only as far as the NEAREST valid
+    // return in its pixel neighbourhood, plus a little slack. On smooth open
+    // ground the neighbourhood minimum is within centimetres of the centre
+    // pixel and nothing changes. At a depth discontinuity -- which is exactly
+    // what the silhouette of an unmatched object looks like -- it clamps hard,
+    // and the cells behind stay UNKNOWN instead of becoming a lie.
+    //
+    // This is deliberately independent of any belief about how visible bark
+    // is. It says "do not claim free space across a depth edge", which is true
+    // whatever the sensor turns out to do.
+    int   carveWinPx  = 5;     // neighbourhood width in pixels; 0 disables
+    float carveSlackM = 0.5f;  // tolerance so smooth surfaces are unaffected
 };
 
 class VoxelMap {
@@ -123,6 +146,16 @@ public:
 
     // Recentre on the vehicle, decaying anything that scrolls in from outside.
     void recentre(float cx, float cy, float cz);
+
+    // Mark a ball as FREE. Exactly one legitimate use: the aircraft knows it is
+    // not inside an obstacle at the moment it takes off, and without that one
+    // fact a planner that requires positively-confirmed free space can never
+    // start -- it cannot confirm without moving and cannot move without
+    // confirming. Measured: 0.0 m travelled, stopped on 400 of 400 steps.
+    //
+    // Do not reach for this anywhere else. Asserting free space you have not
+    // observed is the exact failure this whole map exists to prevent.
+    void seedFree(float cx, float cy, float cz, float radiusM);
 
     enum State : uint8_t { UNKNOWN = 0, FREE = 1, OCCUPIED = 2 };
     State stateAt(float wx, float wy, float wz) const;

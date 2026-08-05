@@ -104,6 +104,14 @@ int main(int argc, char** argv) {
     // together and the pair made progress worse (advance ratio 0.60 -> 0.47);
     // with no way to vary them one at a time that is an unusable measurement.
     float emaA = -1, dwellM = -1, revP = -1; int commitN = -1;
+    // Reference-side steering. The reactive planner's commanded bearing churns
+    // 20.9 deg/step; the GOAL bearing handed to it churns 21.5. It is tracking
+    // a wobbling reference, not wobbling on its own, so these three act
+    // upstream. All ablatable, because the last three ideas that sounded this
+    // obvious were measured and turned off.
+    float lookaheadM = 6.f;    // 0 = old "first waypoint past 3 m" carrot rule
+    float goalEma    = 0.25f;  // 1 = no filtering of the reference bearing
+    bool  reuse      = true;   // replan on demand instead of every --replan steps
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -127,6 +135,9 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--dwell")) dwellM = float(std::atof(next("0.12")));
         else if (!std::strcmp(argv[i], "--revpen")) revP = float(std::atof(next("1.2")));
         else if (!std::strcmp(argv[i], "--commit")) commitN = std::atoi(next("5"));
+        else if (!std::strcmp(argv[i], "--lookahead")) lookaheadM = float(std::atof(next("6")));
+        else if (!std::strcmp(argv[i], "--goalema")) goalEma = float(std::atof(next("0.25")));
+        else if (!std::strcmp(argv[i], "--noreuse")) reuse = false;
         else if (!std::strcmp(argv[i], "--goal")) {
             goalE = float(std::atof(next("150")));
             goalN = float(std::atof(next("170")));
@@ -244,6 +255,7 @@ int main(int argc, char** argv) {
     GeneralPlanner gen(gp);
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
+    BearingFilter gfilt;
     printf("  forward planner: %s\n", forwardPlannerName());
 
     float vx = 0, vy = 0, vz = 0, yaw = 0;
@@ -301,30 +313,43 @@ int main(int argc, char** argv) {
 
         // --- precise plan, occasionally ---------------------------------------
         int64 t1 = cv::getTickCount();
-        if (!generalOnly && (s % replanEvery == 0)) {
-            // Plan AHEAD along the mission bearing, not to the distant goal.
-            float mAz = std::atan2(goalE - px, goalN - py) * 180.f / sim::PI_F;
-            float mEl = std::atan2(goalU - pz,
-                                   std::hypot(goalE - px, goalN - py)) * 180.f / sim::PI_F;
+        // Plan AHEAD along the mission bearing, not to the distant goal.
+        float mAz = std::atan2(goalE - px, goalN - py) * 180.f / sim::PI_F;
+        float mEl = std::atan2(goalU - pz,
+                               std::hypot(goalE - px, goalN - py)) * 180.f / sim::PI_F;
+        // REPLAN ON DEMAND, not on a timer. Replanning every N steps with a
+        // randomised planner threw away a perfectly good path and got back an
+        // arbitrarily different one, which is most of why the reference bearing
+        // churned. `--replan N` is now the FALLBACK period, not the period.
+        bool needReplan = !generalOnly &&
+            (reuse ? !pathStillGood(M, path, px + dE, py + dN, pz + dU, mAz, fwp)
+                   : (s % replanEvery == 0));
+        if (needReplan) {
             int64 tp = cv::getTickCount();
             path = planForward(M, px + dE, py + dN, pz + dU, mAz, mEl, fwp);
             tPrec += double(cv::getTickCount() - tp) / cv::getTickFrequency(); ++nPrec;
             ++replans;
             if (!path.found) ++noPath;
         }
-        // Direction the precise planner would like: the first waypoint far
-        // enough ahead to be meaningful. If there is no path, fall back to the
+        // Where on the path to aim. If there is no path, fall back to the
         // straight-line goal bearing -- the reactive layer still keeps us safe,
         // we just explore rather than follow a route.
         float tgtE = goalE, tgtN = goalN, tgtU = goalU;
         if (path.found) {
-            for (const auto& w : path.pts) {
-                float dd = std::hypot(w[0] - px, w[1] - py);
-                if (dd > 3.0f) { tgtE = w[0]; tgtN = w[1]; tgtU = w[2]; break; }
+            if (lookaheadM > 0) {
+                pursuitPoint(path, px, py, pz, lookaheadM, tgtE, tgtN, tgtU);
+            } else {
+                // Original carrot rule, kept only so it can be ablated.
+                for (const auto& w : path.pts) {
+                    float dd = std::hypot(w[0] - px, w[1] - py);
+                    if (dd > 3.0f) { tgtE = w[0]; tgtN = w[1]; tgtU = w[2]; break; }
+                }
             }
         }
-        float gAz = std::atan2(tgtE - px, tgtN - py) * 180.f / sim::PI_F;
-        float gEl = std::atan2(tgtU - pz, std::hypot(tgtE - px, tgtN - py)) * 180.f / sim::PI_F;
+        float rawAz = std::atan2(tgtE - px, tgtN - py) * 180.f / sim::PI_F;
+        float rawEl = std::atan2(tgtU - pz, std::hypot(tgtE - px, tgtN - py)) * 180.f / sim::PI_F;
+        gfilt.update(rawAz, rawEl, goalEma);
+        float gAz = gfilt.azDeg, gEl = gfilt.elDeg;
 
         // --- general plan, every step ----------------------------------------
         int64 tg = cv::getTickCount();

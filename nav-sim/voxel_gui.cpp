@@ -234,6 +234,7 @@ static int fly(const Cfg& cfg) {
     GeneralPlanner gen(gp);
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
+    BearingFilter gfilt;
 
     float vx=0, vy=0, vz=0, yaw=0, travelled=0, minClear=1e9f;
     bool paused = false, collided = false;
@@ -281,18 +282,20 @@ static int fly(const Cfg& cfg) {
         M.integrate(d, cam, pose);
         M.recentre(px, py, pz);
 
-        if (s % 25 == 0) {
-            float mAz = std::atan2(goalE-px, goalN-py) * 180.f/sim::PI_F;
-            float mEl = std::atan2(goalU-pz, std::hypot(goalE-px, goalN-py)) * 180.f/sim::PI_F;
+        // Replan on demand, aim by pure pursuit, low-pass the reference. Same
+        // three as voxel_sim -- see ompl_planner.hpp. Keeping the GUI's
+        // steering identical to the scriptable harness matters: a window that
+        // flies differently from the thing being measured is worse than no
+        // window, because it looks like evidence.
+        float mAz = std::atan2(goalE-px, goalN-py) * 180.f/sim::PI_F;
+        float mEl = std::atan2(goalU-pz, std::hypot(goalE-px, goalN-py)) * 180.f/sim::PI_F;
+        if (!pathStillGood(M, path, px, py, pz, mAz, fwp))
             path = planForward(M, px, py, pz, mAz, mEl, fwp);
-        }
         float tE=goalE, tN=goalN, tU=goalU;
-        if (path.found)
-            for (const auto& w : path.pts)
-                if (std::hypot(w[0]-px, w[1]-py) > 3.f) { tE=w[0]; tN=w[1]; tU=w[2]; break; }
-        float gAz = std::atan2(tE-px, tN-py) * 180.f/sim::PI_F;
-        float gEl = std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/sim::PI_F;
-        GeneralResult gr = gen.plan(M, px, py, pz, gAz, gEl);
+        if (path.found) pursuitPoint(path, px, py, pz, 6.f, tE, tN, tU);
+        gfilt.update(std::atan2(tE-px, tN-py) * 180.f/sim::PI_F,
+                     std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/sim::PI_F, 0.25f);
+        GeneralResult gr = gen.plan(M, px, py, pz, gfilt.azDeg, gfilt.elDeg);
 
         float a = gr.azDeg*sim::PI_F/180.f, e = gr.elDeg*sim::PI_F/180.f;
         float dx = std::cos(e)*std::sin(a), dy = std::cos(e)*std::cos(a), dz = std::sin(e);

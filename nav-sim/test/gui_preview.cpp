@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     GeneralPlanner gen(gp);
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
+    BearingFilter gfilt;
 
     float vx=0, vy=0, vz=0, yaw=0, travelled=0, minClear=1e9f;
     const float dt = 0.1f;
@@ -87,18 +88,17 @@ int main(int argc, char** argv) {
         d = cam.renderStereo(W, pose, nullptr);
         M.integrate(d, cam, pose);
         M.recentre(px, py, pz);
-        if (s % 25 == 0) {
-            float mAz = std::atan2(goalE-px, goalN-py) * 180.f/sim::PI_F;
-            float mEl = std::atan2(goalU-pz, std::hypot(goalE-px, goalN-py)) * 180.f/sim::PI_F;
+        // Same steering as voxel_sim and voxel_gui: replan on demand, aim by
+        // pure pursuit, low-pass the reference bearing.
+        float mAz = std::atan2(goalE-px, goalN-py) * 180.f/sim::PI_F;
+        float mEl = std::atan2(goalU-pz, std::hypot(goalE-px, goalN-py)) * 180.f/sim::PI_F;
+        if (!pathStillGood(M, path, px, py, pz, mAz, fwp))
             path = planForward(M, px, py, pz, mAz, mEl, fwp);
-        }
         float tE=goalE, tN=goalN, tU=goalU;
-        if (path.found)
-            for (const auto& w : path.pts)
-                if (std::hypot(w[0]-px, w[1]-py) > 3.f) { tE=w[0]; tN=w[1]; tU=w[2]; break; }
-        gr = gen.plan(M, px, py, pz,
-                      std::atan2(tE-px, tN-py) * 180.f/sim::PI_F,
-                      std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/sim::PI_F);
+        if (path.found) pursuitPoint(path, px, py, pz, 6.f, tE, tN, tU);
+        gfilt.update(std::atan2(tE-px, tN-py) * 180.f/sim::PI_F,
+                     std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/sim::PI_F, 0.25f);
+        gr = gen.plan(M, px, py, pz, gfilt.azDeg, gfilt.elDeg);
         float a = gr.azDeg*sim::PI_F/180.f, e = gr.elDeg*sim::PI_F/180.f;
         float dx = std::cos(e)*std::sin(a), dy = std::cos(e)*std::cos(a), dz = std::sin(e);
         float k = std::min(1.f, dt/0.35f);

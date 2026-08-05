@@ -60,11 +60,102 @@ static bool stateOk(const VoxelMap& m, float x, float y, float z,
     return true;
 }
 
+static inline float wrapDeg(float d) {
+    return std::fmod(d + 540.f, 360.f) - 180.f;
+}
+
+bool pursuitPoint(const ForwardPath& p, float px, float py, float pz,
+                  float lookaheadM, float& tx, float& ty, float& tz) {
+    if (!p.found || p.pts.size() < 2) return false;
+
+    // Nearest point on the polyline, as a (segment, fraction) pair. Projecting
+    // onto segments rather than snapping to the nearest VERTEX matters: with
+    // 2 m spacing, vertex snapping quantises the lookahead origin and puts back
+    // most of the jumping this function exists to remove.
+    size_t bestSeg = 0; float bestU = 0, bestD2 = 1e30f;
+    for (size_t i = 0; i + 1 < p.pts.size(); ++i) {
+        float ax=p.pts[i][0], ay=p.pts[i][1], az_=p.pts[i][2];
+        float vx=p.pts[i+1][0]-ax, vy=p.pts[i+1][1]-ay, vz=p.pts[i+1][2]-az_;
+        float l2 = vx*vx + vy*vy + vz*vz;
+        float u = l2 > 1e-9f ? ((px-ax)*vx + (py-ay)*vy + (pz-az_)*vz) / l2 : 0.f;
+        u = std::max(0.f, std::min(1.f, u));
+        float dx=px-(ax+u*vx), dy=py-(ay+u*vy), dz=pz-(az_+u*vz);
+        float d2 = dx*dx + dy*dy + dz*dz;
+        if (d2 < bestD2) { bestD2 = d2; bestSeg = i; bestU = u; }
+    }
+
+    // Walk forward that much arclength from there.
+    float remain = lookaheadM;
+    for (size_t i = bestSeg; i + 1 < p.pts.size(); ++i) {
+        float ax=p.pts[i][0], ay=p.pts[i][1], az_=p.pts[i][2];
+        float vx=p.pts[i+1][0]-ax, vy=p.pts[i+1][1]-ay, vz=p.pts[i+1][2]-az_;
+        float segLen = std::sqrt(vx*vx + vy*vy + vz*vz);
+        float u0 = (i == bestSeg) ? bestU : 0.f;
+        float avail = segLen * (1.f - u0);
+        if (remain <= avail || i + 2 == p.pts.size()) {
+            float u = u0 + (segLen > 1e-9f ? std::min(remain, avail) / segLen : 0.f);
+            u = std::min(1.f, u);
+            tx = ax + vx*u; ty = ay + vy*u; tz = az_ + vz*u;
+            return true;
+        }
+        remain -= avail;
+    }
+    // Path shorter than the lookahead: aim at its end. Correct rather than a
+    // fallback -- there is nothing further along to aim at.
+    tx = p.pts.back()[0]; ty = p.pts.back()[1]; tz = p.pts.back()[2];
+    return true;
+}
+
+void BearingFilter::update(float az, float el, float alpha) {
+    if (!have || alpha >= 1.f) { azDeg = az; elDeg = el; have = true; return; }
+    // Angular EMA, which must go the short way round: filtering 359 -> 1
+    // linearly sweeps the aircraft through 180 degrees to travel 2.
+    azDeg = wrapDeg(azDeg + alpha * wrapDeg(az - azDeg) + 360.f);
+    elDeg += alpha * (el - elDeg);
+}
+
 static inline void dirFrom(float azDeg, float elDeg, float& dx, float& dy, float& dz) {
     float a = azDeg * sim::PI_F / 180.f, e = elDeg * sim::PI_F / 180.f;
     dx = std::cos(e) * std::sin(a);
     dy = std::cos(e) * std::cos(a);
     dz = std::sin(e);
+}
+
+bool pathStillGood(const VoxelMap& m, const ForwardPath& p,
+                   float px, float py, float pz,
+                   float wantAzDeg, const ForwardParams& fp) {
+    if (!p.found || p.pts.size() < 2) return false;
+    const bool uok = fp.unknownOk != 0;
+
+    // Where are we on it, and how much is left ahead?
+    size_t bestSeg = 0; float bestD2 = 1e30f;
+    for (size_t i = 0; i < p.pts.size(); ++i) {
+        float dx=px-p.pts[i][0], dy=py-p.pts[i][1], dz=pz-p.pts[i][2];
+        float d2 = dx*dx + dy*dy + dz*dz;
+        if (d2 < bestD2) { bestD2 = d2; bestSeg = i; }
+    }
+    // Drifted off it. The reactive layer is allowed to deviate -- that is its
+    // job -- but past a few metres the path is describing a route we are no
+    // longer on, and following it is worse than admitting that.
+    if (std::sqrt(bestD2) > 4.f) return false;
+
+    float ahead = 0;
+    for (size_t i = bestSeg; i + 1 < p.pts.size(); ++i)
+        ahead += std::sqrt(
+            (p.pts[i+1][0]-p.pts[i][0])*(p.pts[i+1][0]-p.pts[i][0]) +
+            (p.pts[i+1][1]-p.pts[i][1])*(p.pts[i+1][1]-p.pts[i][1]) +
+            (p.pts[i+1][2]-p.pts[i][2])*(p.pts[i+1][2]-p.pts[i][2]));
+    if (ahead < fp.horizonM * 0.4f) return false;      // nearly consumed
+
+    // Still pointing somewhere useful?
+    if (std::fabs(wrapDeg(p.bearingDeg - wantAzDeg)) > fp.coneDeg) return false;
+
+    // Still safe? Only the part AHEAD -- whether the bit we already flew is
+    // still clear is not a question that can affect anything.
+    for (size_t i = bestSeg; i < p.pts.size(); ++i)
+        if (!stateOk(m, p.pts[i][0], p.pts[i][1], p.pts[i][2], fp.robotR, uok))
+            return false;
+    return true;
 }
 
 ForwardPath planForward(const VoxelMap& m, float sx, float sy, float sz,

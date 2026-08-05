@@ -67,6 +67,60 @@ struct ForwardPath {
     float bearingDeg = 0;      // bearing of the accepted horizon target
 };
 
+// --- steering the reactive layer at this path -------------------------------
+//
+// These three exist because of one measurement. The reactive planner was
+// accused of "spinning aggressively"; its commanded bearing churns 20.9 deg per
+// step. But the GOAL bearing handed to it churns 21.5 deg per step. The
+// reactive layer is not spinning -- it is faithfully tracking a reference that
+// is, and no amount of bias, hysteresis or commitment applied downstream can
+// fix a wobbling target. All three fixes below are therefore upstream.
+
+// PURE PURSUIT. The old rule was "aim at the first path waypoint more than 3 m
+// away", which is the classic carrot-chasing artefact: the path is interpolated
+// to roughly every 2 m, so the chosen waypoint switches every few steps and each
+// switch is a discrete bearing jump. At 3 m lookahead, 1 m of lateral offset
+// between consecutive waypoints is an 18 degree step -- for nothing.
+//
+// Instead take the point at a fixed ARCLENGTH along the path, measured from the
+// point nearest the vehicle, interpolating between waypoints. The target then
+// slides continuously as the vehicle moves instead of hopping.
+bool pursuitPoint(const ForwardPath& p, float px, float py, float pz,
+                  float lookaheadM, float& tx, float& ty, float& tz);
+
+// PATH REUSE. RRTConnect is randomised: replanning from scratch every 25 steps
+// produced an arbitrarily different path each time even when nothing about the
+// world had changed -- two runs of an identical situation gave goal bearings
+// 23 degrees apart. So do not replan on a timer. Replan when the path you have
+// has actually stopped being usable: some state on it is no longer safe, the
+// vehicle has drifted off it, too little of it remains ahead, or it no longer
+// points near where you want to go.
+//
+// This is plan reuse rather than warm-starting RRTConnect's internals, and it
+// is both simpler and stronger: a path that is still good produces EXACTLY the
+// same reference as last step, not merely a similar one.
+bool pathStillGood(const VoxelMap& m, const ForwardPath& p,
+                   float px, float py, float pz,
+                   float wantAzDeg, const ForwardParams& fp);
+
+// BEARING FILTER. Even with pure pursuit and path reuse a replan is a step
+// change in the reference. Low-passing it costs a little responsiveness and no
+// safety: this smooths a REFERENCE, not a measurement. The reactive layer still
+// gates speed on the live map, so a lagging reference can send the aircraft the
+// long way round but cannot fly it into anything.
+//
+// Worth being precise about, because the same idea was tried on the direction
+// FIELD earlier and rightly abandoned: smoothing what you brake on is
+// dangerous, smoothing what you aim at is not.
+struct BearingFilter {
+    float azDeg = 0, elDeg = 0;
+    bool  have = false;
+    // alpha 1.0 = no filtering. 0.25 is about a 0.35 s time constant at 10 Hz,
+    // which is the same order as the vehicle's own turn lag -- filtering much
+    // harder than the airframe responds buys nothing.
+    void update(float az, float el, float alpha);
+};
+
 // planner backend, selected at build time
 const char* forwardPlannerName();
 

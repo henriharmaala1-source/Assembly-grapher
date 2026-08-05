@@ -317,6 +317,64 @@ again before its previous decision had produced any motion — the vehicle needs
 Collisions do not separate the arms at four seeds (1,1,0,1,0,1); that column is
 noise at this count and is not a safety ordering.
 
+### It was never the reactive planner
+
+After all of the above the aircraft still turned aggressively, and the obvious
+next move was a stronger direction bias. One measurement killed that idea:
+
+```
+GOAL bearing churn   21.5 deg/step     the reference handed to the planner
+CMD  bearing churn   20.9 deg/step     what the planner does with it
+```
+
+The reactive layer's output churned *as much as its input*. It was not
+spinning — it was faithfully tracking a reference that was, and no bias,
+hysteresis or commitment applied downstream can fix a wobbling target. That is
+also why `revPenalty` did nothing and why commitment plateaued: both act on the
+wrong stage.
+
+Three fixes, all **upstream** of the reactive layer, ablated one at a time
+(`ref_sweep.sh`, forest, 300 steps, 2 seeds):
+
+```
+arm                  goalChurn  cmdChurn   advance          coll
+none (as before)        20.02     19.07    0.569 [0.52,0.61]  0
+pursuit only             2.17      2.44    0.889 [0.89,0.89]  0
+reuse only              37.62     34.92    0.239 [0.16,0.32]  0
+filter only             10.75      9.39    0.471 [0.46,0.48]  0
+pursuit + reuse          2.67      2.42    0.908 [0.83,0.98]  1
+all three                2.35      1.95    0.908 [0.89,0.93]  0   <- shipped
+```
+
+**Pure pursuit is the fix.** The old rule aimed at "the first path waypoint
+more than 3 m away"; the path is interpolated to roughly every 2 m, so that
+waypoint switched every few steps and each switch was a discrete bearing jump —
+at 3 m lookahead, 1 m of lateral offset is an 18° step, for nothing. Aiming at
+a fixed *arclength* along the path instead makes the target slide continuously.
+Churn drops 9×, and the fraction of motion that gets you somewhere goes from
+57% to 89%.
+
+**Path reuse alone is actively harmful** — advance 0.24, worse than doing
+nothing. A long-lived path with a hopping carrot is worse than a fresh one,
+because the carrot has more path to hop along. It is only safe combined with
+pursuit, and even then it buys ~0.02 advance. Enable it *only* with pursuit.
+
+**The bearing filter alone halves the churn and costs progress** (0.569 →
+0.471) — a low-pass adds lag, and lag is distance. Its value is in combination,
+smoothing the step change a replan still causes.
+
+Read the caveats: 2 seeds, 300 steps. The pursuit effect is 9× and unambiguous.
+The differences *between* the last three arms are 0.02 in advance and cannot be
+resolved at this sample size — "all three" is shipped because it is at worst
+equal on every column, not because it is provably best. The 1 collision in
+`pursuit + reuse` is one run out of two; do not read it as the filter fixing a
+safety problem.
+
+Side benefit, and a large one: a stable reference means the heading is held far
+more often, so the general planner's single-bin fast path fires more.
+**4.96 ms/step, down from 13.99 before any of this work**, and onboard total
+22.9 ms/step down from 35.8.
+
 Three further mechanisms were tried and **are off by default because they did
 not work**: smoothing the direction field over time, requiring a challenger to
 beat the incumbent by a margin, and charging extra for deviations beyond 90°.

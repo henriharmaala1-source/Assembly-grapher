@@ -135,6 +135,8 @@ int main(int argc, char** argv) {
     // "which path can I actually fly". Both, so they can be compared on
     // identical worlds rather than argued about.
     bool  useTraj = true;
+    // Coarse far-field companion map -- see where it is constructed.
+    bool  useFar = true;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -162,6 +164,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--goalema")) goalEma = float(std::atof(next("0.25")));
         else if (!std::strcmp(argv[i], "--noreuse")) reuse = false;
         else if (!std::strcmp(argv[i], "--histogram")) useTraj = false;
+        else if (!std::strcmp(argv[i], "--nofar")) useFar = false;
         else if (!std::strcmp(argv[i], "--traj")) useTraj = true;
         else if (!std::strcmp(argv[i], "--trunktex")) trunkTex = float(std::atof(next("0.5")));
         else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
@@ -282,6 +285,32 @@ int main(int argc, char** argv) {
     mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
     if (carveWin >= 0) mp.carveWinPx = carveWin;
     VoxelMap M; M.init(mp, px, py, pz);   // after spawn validation, not before
+
+    // FAR-FIELD MAP. Depth error grows as Z^2, so the range at which a
+    // measurement can be placed within one voxel is Z_max = sqrt(cell*f*B/sigma)
+    // -- 5.2 m at 0.25 m cells on this camera. Coarser cells are not a
+    // compromise: at 12 m a return genuinely has metres of uncertainty along
+    // the ray, and a 0.25 m voxel claims a precision the measurement does not
+    // contain. Sizing the cell to the uncertainty is the honest thing, and it
+    // happens to triple the range:
+    //
+    //     0.25 m cells ->  5.2 m        2.0 m cells -> 14.8 m
+    //
+    // Affordable because it takes every 4th pixel (see integrateStride): a 2 m
+    // cell does not need 76,800 rays when hundreds of them land inside it.
+    //
+    // WHAT IT DOES NOT DO, so nobody expects it to: a coarser voxel does not
+    // make an invisible trunk visible. This extends the horizon the aircraft
+    // can STEER by; it does nothing for obstacles stereo never returns.
+    VoxelMapParams fp2;
+    fp2.cell = 2.0f; fp2.nx = 128; fp2.ny = 128; fp2.nz = 40;   // 256 x 256 x 80 m
+    fp2.maxIntegM = 14.f;          // its own Z_max, not the fine map's
+    fp2.maxCarveM = 40.f;
+    fp2.integrateStride = 4;       // a sixteenth of the rays
+    fp2.depthSigCoef = mp.depthSigCoef;
+    fp2.carveWinPx = 0;            // the min-filter is a fine-scale guard
+    VoxelMap Mfar;
+    if (useFar) Mfar.init(fp2, px, py, pz);
     // Takeoff bootstrap -- see VoxelMap::seedFree. The spawn was validated
     // against truth above, so this asserts something already checked.
     M.seedFree(px, py, pz, 1.5f);
@@ -360,6 +389,7 @@ int main(int argc, char** argv) {
         cv::Mat d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
         int64 tm = cv::getTickCount();
         M.integrate(d, cam, mpose);   // believed pose, not true pose
+        if (useFar) { Mfar.integrate(d, cam, mpose); Mfar.recentre(px + dE, py + dN, pz + dU); }
         tInteg += double(cv::getTickCount() - tm) / cv::getTickFrequency();
         tSense += double(cv::getTickCount() - t0) / cv::getTickFrequency();
         M.recentre(px + dE, py + dN, pz + dU);
@@ -385,11 +415,11 @@ int main(int argc, char** argv) {
         // arbitrarily different one, which is most of why the reference bearing
         // churned. `--replan N` is now the FALLBACK period, not the period.
         bool needReplan = wantRouter &&
-            (reuse ? !pathStillGood(M, path, px + dE, py + dN, pz + dU, mAz, fwp)
+            (reuse ? !pathStillGood(M, path, px + dE, py + dN, pz + dU, mAz, fwp, useFar ? &Mfar : nullptr)
                    : (s % replanEvery == 0));
         if (needReplan) {
             int64 tp = cv::getTickCount();
-            path = planForward(M, px + dE, py + dN, pz + dU, mAz, mEl, fwp);
+            path = planForward(M, px + dE, py + dN, pz + dU, mAz, mEl, fwp, useFar ? &Mfar : nullptr);
             tPrec += double(cv::getTickCount() - tp) / cv::getTickFrequency(); ++nPrec;
             ++replans;
             if (!path.found) ++noPath;
@@ -624,6 +654,23 @@ int main(int argc, char** argv) {
     int nsteps = std::max(1, (int)trail.size());
     printf("  --- onboard cost (per step unless noted) ---\n");
     printf("  map integrate      %6.2f ms\n", 1000 * tInteg / nsteps);
+    if (useFar) {
+        // What did the extra range actually buy? Count cells the coarse map
+        // calls OCCUPIED beyond the fine map's honest marking limit -- structure
+        // the aircraft knows about and would not otherwise.
+        long farOnly = 0, farAll = 0;
+        for (int z = 0; z < fp2.nz; ++z)
+          for (int y = 0; y < fp2.ny; ++y)
+            for (int x = 0; x < fp2.nx; ++x) {
+                if (!(Mfar.logAt(x,y,z) > fp2.occThresh)) continue;
+                ++farAll;
+                float wx, wy, wz; Mfar.cellCentre(x,y,z,wx,wy,wz);
+                if (std::hypot(wx-px, wy-py) > mp.maxIntegM) ++farOnly;
+            }
+        printf("  far map            %ld occupied cells, %ld of them beyond the fine\n"
+               "                     map's %.0f m marking limit\n",
+               farAll, farOnly, mp.maxIntegM);
+    }
     printf("  general planner    %6.2f ms\n", 1000 * tGen / nsteps);
     printf("  forward planner    %6.2f ms per replan (%d replans, every %d steps)\n",
            nPrec ? 1000 * tPrec / nPrec : 0.0, nPrec, replanEvery);

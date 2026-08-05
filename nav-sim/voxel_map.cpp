@@ -263,10 +263,11 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
                       cv::MORPH_RECT, cv::Size(p_.carveWinPx, p_.carveWinPx)));
     }
 
-    for (int v = 0; v < depth.rows; ++v) {
+    const int stride = std::max(1, p_.integrateStride);
+    for (int v = 0; v < depth.rows; v += stride) {
         const float* row = depth.ptr<float>(v);
         const uchar* irow = wantTex ? intensity.ptr<uchar>(v) : nullptr;
-        for (int u = 0; u < depth.cols; ++u) {
+        for (int u = 0; u < depth.cols; u += stride) {
             float r = row[u];
             // THE RULE. No measurement -> no information. Not free, not
             // occupied, nothing. Do not be tempted to carve free space out to

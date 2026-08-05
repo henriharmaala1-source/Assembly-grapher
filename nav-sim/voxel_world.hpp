@@ -169,12 +169,23 @@ struct ForestParams {
     // the trunks as solid holes: bark in shadow against bright sky is a
     // low-contrast surface, and a matcher cannot correlate what it cannot see.
     //
-    // The range straddles texThresh (0.25) deliberately. Some trunks vanish
-    // entirely, most are marginal and drop out in patches, a few in good side
-    // light resolve fine. That is the distribution the real images show, and it
-    // is far harsher than what we had.
-    float trunkTexMin = 0.15f;
-    float trunkTexMax = 0.55f;
+    // The range straddles texThresh (0.25) deliberately. Some trunks are
+    // marginal and drop out in patches, most in reasonable light resolve fine.
+    //
+    // 0.15-0.55 was tried first and was an OVER-CORRECTION from a single
+    // screenshot: it put the median at 0.35, below the 0.40 cliff in the
+    // tolerance curve, and made a quarter of all trunks completely invisible.
+    // One image of unknown provenance does not justify assuming the worst case
+    // is typical. Bark in reasonable light genuinely is textured -- the
+    // original 0.85 was wrong about backlighting, not about bark.
+    //
+    // 0.30-0.75 puts the median at 0.525, so most trunks resolve, a minority
+    // drop out in patches, and none are wholly invisible. Still a guess, and
+    // still the parameter to calibrate first: photograph a backlit trunk, run
+    // build/bark_contrast, and set this from the measurement rather than from
+    // anyone's screenshot.
+    float trunkTexMin = 0.30f;
+    float trunkTexMax = 0.75f;
     unsigned seed    = 1;
 };
 

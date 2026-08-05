@@ -68,6 +68,22 @@ struct CamParams {
     // are, and a mapper that never sees a coherent hole is never tested against
     // the failure that actually occurs.
     int   blockPx    = 8;        // matcher window; 0 reverts to per-pixel
+    // SILHOUETTE BOOST, and this is the correction that mattered most.
+    //
+    // Real depth imagery of a boreal stand shows trunks as black columns with
+    // vivid coloured stripes down ONE EDGE. That is exactly what a block
+    // matcher does: the silhouette of a trunk against bright sky is a strong
+    // horizontal gradient and correlates easily, while the interior of a smooth
+    // shadowed cylinder has nothing to lock onto. The trunk is not invisible --
+    // its OUTLINE is visible, which is enough to know something is there.
+    //
+    // The first model gave each trunk one texture value, so a trunk either
+    // resolved whole or vanished whole. Neither happens. Here, a pixel whose
+    // neighbourhood spans a large depth discontinuity gets its effective
+    // texture raised, because the discontinuity IS the feature being matched.
+    float edgeBoost   = 0.75f;   // effective texture at a strong depth edge
+    float edgeDepthM  = 0.8f;    // depth step across the window that counts as one
+    int   edgeWinPx   = 3;       // neighbourhood for the discontinuity test
     // Post-match rejection, modelling what every real pipeline does: left-right
     // consistency plus a speckle filter. A valid pixel surrounded mostly by
     // invalid ones is thrown away. This is why real output has clean hole

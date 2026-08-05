@@ -101,7 +101,8 @@ bool pursuitPoint(const ForwardPath& p, float px, float py, float pz,
 // same reference as last step, not merely a similar one.
 bool pathStillGood(const VoxelMap& m, const ForwardPath& p,
                    float px, float py, float pz,
-                   float wantAzDeg, const ForwardParams& fp);
+                   float wantAzDeg, const ForwardParams& fp,
+                   const VoxelMap* far = nullptr);
 
 // BEARING FILTER. Even with pure pursuit and path reuse a replan is a step
 // change in the reference. Low-passing it costs a little responsiveness and no
@@ -182,9 +183,16 @@ void setPlannerSeed(unsigned seed);
 
 // Plan a path from (sx,sy,sz) heading roughly along goalAzDeg / goalElDeg,
 // ending near the horizon. Returns found=false if no candidate was reachable.
+// `far` is an optional coarser companion map. Where the fine map has no
+// opinion, the router consults it -- which is the point of having one: the
+// reactive rollout is ~6 m and never leaves the fine map, but this plans to
+// 25 m, well past the range at which 0.25 m voxels can honestly mark anything.
+// The fine map always wins where it HAS an opinion; the coarse map only fills
+// in unknowns, and can therefore only ever make the router more conservative.
 ForwardPath planForward(const VoxelMap& m,
                         float sx, float sy, float sz,
                         float goalAzDeg, float goalElDeg,
-                        const ForwardParams& p = ForwardParams());
+                        const ForwardParams& p = ForwardParams(),
+                        const VoxelMap* far = nullptr);
 
 }  // namespace sim

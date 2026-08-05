@@ -69,6 +69,15 @@ int main(int argc, char** argv) {
     VoxelMapParams mp; mp.cell = cell;
     mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
     VoxelMap M; M.init(mp, px, py, pz);
+    // Coarse far-field companion. 2 m cells reach 14.8 m against the fine map's
+    // 5.2 m, because Z_max = sqrt(cell*f*B/sigma) -- sizing the cell to the
+    // measurement's own uncertainty instead of over-claiming precision.
+    VoxelMapParams fp2;
+    fp2.cell = 2.0f; fp2.nx = 128; fp2.ny = 128; fp2.nz = 40;
+    fp2.maxIntegM = 14.f; fp2.maxCarveM = 40.f;
+    fp2.integrateStride = 4; fp2.carveWinPx = 0;
+    fp2.depthSigCoef = mp.depthSigCoef;
+    VoxelMap Mfar; Mfar.init(fp2, px, py, pz);
     GeneralParams gp; gp.robotR = 0.6f;
     GeneralPlanner gen(gp);
     ForwardParams fwp; fwp.robotR = gp.robotR;
@@ -101,6 +110,8 @@ int main(int argc, char** argv) {
                 inten.at<uchar>(yy,xx) = uchar(std::min(255.f, 40.f + tex * 215.f));
             }
         M.integrate(d, inten, cam, pose);
+        Mfar.integrate(d, cam, pose);
+        Mfar.recentre(px, py, pz);
         M.recentre(px, py, pz);
         // Same steering as voxel_sim and voxel_gui: replan on demand, aim by
         // pure pursuit, low-pass the reference bearing.
@@ -208,6 +219,13 @@ int main(int argc, char** argv) {
     // First person, through the map. maxRange is set from what the map can
     // honestly know rather than from what looks good -- see fpvImage.
     cv::Mat fpv = M.fpvImage(px, py, pz, yaw, -5.f, 440, 90.f, 25.f);
+    // The same view through the COARSE map, so the extra range is visible
+    // rather than merely asserted. Same projection, same colour key.
+    cv::Mat fpvFar = Mfar.fpvImage(px, py, pz, yaw, -5.f, 440, 90.f, 40.f);
+    cv::putText(fpvFar,"FAR MAP (2 m voxels, ~15 m honest)",{10,22},
+                cv::FONT_HERSHEY_SIMPLEX,0.45,{30,30,30},2);
+    cv::putText(fpvFar,"same scene, coarser cells, further reach",{10,42},
+                cv::FONT_HERSHEY_SIMPLEX,0.42,{60,60,70},1);
 
     cv::Mat sliceV = M.sliceImage(pz, 440);
     cv::Mat dv(d.rows,d.cols,CV_8UC3,cv::Scalar(60,60,60));
@@ -275,7 +293,7 @@ int main(int argc, char** argv) {
     cv::Mat rowA, rowB, rowC, row;
     cv::hconcat(std::vector<cv::Mat>{topV,isoV}, rowA);
     cv::hconcat(std::vector<cv::Mat>{fpv,depthV}, rowB);
-    cv::hconcat(std::vector<cv::Mat>{sliceV,key}, rowC);
+    cv::hconcat(std::vector<cv::Mat>{fpvFar,key}, rowC);
     cv::vconcat(std::vector<cv::Mat>{rowA, rowB, rowC}, row);
     cv::Mat bar(64, row.cols, CV_8UC3, cv::Scalar(25,25,30));
     char l1[260], l2[260];

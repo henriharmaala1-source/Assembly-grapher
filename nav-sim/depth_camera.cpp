@@ -67,19 +67,61 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
     const float minRange = fB / float(p_.maxDisp);   // near blind zone
     long valid = 0;
 
+    // PASS 1: geometry. Raycast every pixel, keep the range and the surface's
+    // own texture. No dropout decisions yet -- they need the neighbourhood.
+    cv::Mat raw(p_.height, p_.width, CV_32F, cv::Scalar(-1.f));
+    cv::Mat texM(p_.height, p_.width, CV_32F, cv::Scalar(0.f));
     for (int v = 0; v < p_.height; ++v) {
-        float* row = d.ptr<float>(v);
+        float* rr = raw.ptr<float>(v);
+        float* tr = texM.ptr<float>(v);
         for (int u = 0; u < p_.width; ++u) {
             float dx, dy, dz; rayFor(pose, u, v, dx, dy, dz);
             float tex = 0.f;
             float t = w.raycast(pose.e, pose.n, pose.u, dx, dy, dz, p_.maxRangeM, &tex);
+            if (t >= p_.maxRangeM) continue;         // sky or beyond range
+            if (t < minRange) continue;              // near blind zone
+            if (u < fB / t) continue;                // occlusion band
+            rr[u] = t; tr[u] = tex;
+        }
+    }
 
-            if (t >= p_.maxRangeM) continue;         // nothing there: sky, far
-            if (t < minRange) continue;              // inside the blind zone
+    // PASS 2: SILHOUETTE. A pixel whose neighbourhood spans a large depth step
+    // sits on an edge, and an edge is the easiest thing in the scene to
+    // correlate -- which is why real depth images of a forest show trunks as
+    // black columns with bright stripes down one side. Raise the effective
+    // texture there; the discontinuity IS the feature.
+    if (p_.edgeWinPx > 0 && p_.edgeBoost > 0.f) {
+        cv::Mat boosted = texM.clone();
+        const int W = p_.edgeWinPx;
+        for (int v = 0; v < p_.height; ++v)
+            for (int u = 0; u < p_.width; ++u) {
+                if (!(raw.at<float>(v, u) > 0)) continue;
+                float lo = 1e9f, hi = -1e9f;
+                bool sawSky = false;
+                for (int dv = -W; dv <= W; ++dv) {
+                    int yy = v + dv; if (yy < 0 || yy >= p_.height) continue;
+                    for (int du = -W; du <= W; ++du) {
+                        int xx = u + du; if (xx < 0 || xx >= p_.width) continue;
+                        float q = raw.at<float>(yy, xx);
+                        // No return next door is itself an edge: that is the
+                        // trunk-against-sky case, the strongest cue there is.
+                        if (!(q > 0)) { sawSky = true; continue; }
+                        lo = std::min(lo, q); hi = std::max(hi, q);
+                    }
+                }
+                if (sawSky || (hi - lo) > p_.edgeDepthM)
+                    boosted.at<float>(v, u) = std::max(texM.at<float>(v, u), p_.edgeBoost);
+            }
+        texM = boosted;
+    }
 
-            // Occlusion band: the left f*B/Z columns see surface the right
-            // camera cannot. Nothing to match against, so no depth.
-            if (u < fB / t) continue;
+    // PASS 3: matching, using the effective texture from above.
+    for (int v = 0; v < p_.height; ++v) {
+        float* row = d.ptr<float>(v);
+        for (int u = 0; u < p_.width; ++u) {
+            float t = raw.at<float>(v, u);
+            if (!(t > 0)) continue;
+            float tex = texM.at<float>(v, u);
 
             // TEXTURE. The whole point. A featureless surface yields no match,
             // and the map must treat that as UNKNOWN, never as free.

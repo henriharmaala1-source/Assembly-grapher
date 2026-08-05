@@ -50,10 +50,17 @@ const char* forwardPlannerName() {
 // what "safe" means. A sphere of robotR must contain no OCCUPIED cell; UNKNOWN
 // is permitted or not per unknownOk.
 static bool stateOk(const VoxelMap& m, float x, float y, float z,
-                    float r, bool unknownOk) {
+                    float r, bool unknownOk, const VoxelMap* far = nullptr) {
     static const float O[7][3] = {{0,0,0},{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
     for (const auto& o : O) {
-        VoxelMap::State s = m.stateAt(x + o[0]*r, y + o[1]*r, z + o[2]*r);
+        float qx = x + o[0]*r, qy = y + o[1]*r, qz = z + o[2]*r;
+        VoxelMap::State s = m.stateAt(qx, qy, qz);
+        // Fine map first, always. It only defers where it genuinely has nothing
+        // to say, so the coarse map can add obstacles but never erase one.
+        if (s == VoxelMap::UNKNOWN && far) {
+            VoxelMap::State fs = far->stateAt(qx, qy, qz);
+            if (fs != VoxelMap::UNKNOWN) s = fs;
+        }
         if (s == VoxelMap::OCCUPIED) return false;
         if (!unknownOk && s == VoxelMap::UNKNOWN) return false;
     }
@@ -123,7 +130,8 @@ static inline void dirFrom(float azDeg, float elDeg, float& dx, float& dy, float
 
 bool pathStillGood(const VoxelMap& m, const ForwardPath& p,
                    float px, float py, float pz,
-                   float wantAzDeg, const ForwardParams& fp) {
+                   float wantAzDeg, const ForwardParams& fp,
+                   const VoxelMap* far) {
     if (!p.found || p.pts.size() < 2) return false;
     const bool uok = fp.unknownOk != 0;
 
@@ -153,14 +161,14 @@ bool pathStillGood(const VoxelMap& m, const ForwardPath& p,
     // Still safe? Only the part AHEAD -- whether the bit we already flew is
     // still clear is not a question that can affect anything.
     for (size_t i = bestSeg; i < p.pts.size(); ++i)
-        if (!stateOk(m, p.pts[i][0], p.pts[i][1], p.pts[i][2], fp.robotR, uok))
+        if (!stateOk(m, p.pts[i][0], p.pts[i][1], p.pts[i][2], fp.robotR, uok, far))
             return false;
     return true;
 }
 
 ForwardPath planForward(const VoxelMap& m, float sx, float sy, float sz,
                         float goalAzDeg, float goalElDeg,
-                        const ForwardParams& p) {
+                        const ForwardParams& p, const VoxelMap* far) {
     ForwardPath out;
     const bool uok = p.unknownOk != 0;
 
@@ -190,10 +198,10 @@ ForwardPath planForward(const VoxelMap& m, float sx, float sy, float sz,
     space->setBounds(b);
 
     og::SimpleSetup ss(space);
-    ss.setStateValidityChecker([&m, &p, uok](const ob::State* st) {
+    ss.setStateValidityChecker([&m, &p, uok, far](const ob::State* st) {
         const auto* v = st->as<ob::RealVectorStateSpace::StateType>();
         return stateOk(m, float((*v)[0]), float((*v)[1]), float((*v)[2]),
-                       p.robotR, uok);
+                       p.robotR, uok, far);
     });
     // Motion validation resolution: a fraction of the space extent. Too coarse
     // and the planner tunnels through thin obstacles -- exactly the failure the
@@ -204,7 +212,7 @@ ForwardPath planForward(const VoxelMap& m, float sx, float sy, float sz,
 
     ob::ScopedState<> start(space);
     start[0] = sx; start[1] = sy; start[2] = sz;
-    if (!stateOk(m, sx, sy, sz, p.robotR, true)) {
+    if (!stateOk(m, sx, sy, sz, p.robotR, true, far)) {
         // Vehicle believes it is inside something. Do not plan; the reactive
         // layer's escape behaviour is the right response, and a path from an
         // invalid start is meaningless.
@@ -214,7 +222,7 @@ ForwardPath planForward(const VoxelMap& m, float sx, float sy, float sz,
     for (float off : cand) {
         float dx, dy, dz; dirFrom(goalAzDeg + off, goalElDeg, dx, dy, dz);
         float gxp = sx + dx * H, gyp = sy + dy * H, gzp = sz + dz * H;
-        if (!stateOk(m, gxp, gyp, gzp, p.robotR, uok)) continue;
+        if (!stateOk(m, gxp, gyp, gzp, p.robotR, uok, far)) continue;
 
         ob::ScopedState<> goal(space);
         goal[0] = gxp; goal[1] = gyp; goal[2] = gzp;
@@ -249,7 +257,7 @@ ForwardPath planForward(const VoxelMap& m, float sx, float sy, float sz,
         bool clear = true;
         float step = m.params().cell * 0.75f;
         for (float t = step; t <= p.horizonM; t += step)
-            if (!stateOk(m, sx + dx*t, sy + dy*t, sz + dz*t, p.robotR, uok)) { clear = false; break; }
+            if (!stateOk(m, sx + dx*t, sy + dy*t, sz + dz*t, p.robotR, uok, far)) { clear = false; break; }
         if (!clear) continue;
         out.found = true; out.lengthM = p.horizonM; out.bearingDeg = goalAzDeg + off;
         for (int i = 1; i <= 8; ++i) {

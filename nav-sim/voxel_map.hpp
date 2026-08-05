@@ -118,6 +118,18 @@ struct VoxelMapParams {
     // whatever the sensor turns out to do.
     int   carveWinPx  = 5;     // neighbourhood width in pixels; 0 disables
     float carveSlackM = 0.5f;  // tolerance so smooth surfaces are unaffected
+
+    // Use every Nth pixel of the depth image. 1 is every pixel.
+    //
+    // This is what makes a second, coarser map affordable. A 2 m map does not
+    // need 76,800 rays: at 10 m, adjacent pixels are 4 cm apart and hundreds of
+    // them land in the same 2 m cell, so all but a handful are redundant work.
+    // Stride 4 is a sixteenth of the rays for a map whose cells are 8x wider --
+    // still several rays per cell at every range that matters.
+    //
+    // On the FINE map leave this at 1. There the rays are not redundant; that
+    // is the whole point of a fine map.
+    int   integrateStride = 1;
 };
 
 class VoxelMap {

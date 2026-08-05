@@ -125,6 +125,11 @@ int main(int argc, char** argv) {
     // visible do trunks have to be for this to work" -- which is a spec that
     // can be checked with a real camera.
     float trunkTex = -1.f;    // <0 = use the world default range
+    // The two knobs the safety fixes introduced, exposed so they can be swept
+    // rather than asserted. Both were picked by reasoning and neither has been
+    // measured against the progress they cost.
+    float coreFrac  = -1.f;   // <0 = planner default
+    int   carveWin  = -1;     // <0 = map default
     // Which reactive layer. The histogram answers "which bearing looks open"
     // and hands it to a vehicle that needs 0.35 s to turn; the library answers
     // "which path can I actually fly". Both, so they can be compared on
@@ -159,6 +164,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--histogram")) useTraj = false;
         else if (!std::strcmp(argv[i], "--traj")) useTraj = true;
         else if (!std::strcmp(argv[i], "--trunktex")) trunkTex = float(std::atof(next("0.5")));
+        else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
+        else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
             const char* m = next("stall");
             routerMode = !std::strcmp(m, "never") ? 0
@@ -273,6 +280,7 @@ int main(int argc, char** argv) {
     if (occT  > -90) mp.occThresh = occT;
     if (freeT > -90) mp.freeThresh = freeT;
     mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
+    if (carveWin >= 0) mp.carveWinPx = carveWin;
     VoxelMap M; M.init(mp, px, py, pz);   // after spawn validation, not before
     // Takeoff bootstrap -- see VoxelMap::seedFree. The spawn was validated
     // against truth above, so this asserts something already checked.
@@ -288,6 +296,7 @@ int main(int argc, char** argv) {
     tp.robotR = gp.robotR; tp.vMax = gp.vMax;
     tp.decelMs2 = gp.decelMs2; tp.reactS = gp.reactS; tp.minFreeM = gp.minFreeM;
     tp.dt = dt;              // the rollout must use the control period
+    if (coreFrac >= 0.f) tp.coreFrac = coreFrac;
     TrajectoryPlanner traj(tp);
     if (useTraj)
         printf("  reactive layer: trajectory library, %zu primitives\n", traj.librarySize());

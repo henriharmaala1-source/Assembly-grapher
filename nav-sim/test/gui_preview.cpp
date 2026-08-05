@@ -77,6 +77,7 @@ int main(int argc, char** argv) {
     StallMonitor stall;
 
     float vx=0, vy=0, vz=0, yaw=0, travelled=0, minClear=1e9f;
+    bool collided=false; int collStep=-1;
     const float dt = 0.1f;
     std::vector<cv::Point2f> trail;
     std::vector<cv::Point3f> trail3;
@@ -126,7 +127,20 @@ int main(int argc, char** argv) {
         travelled += std::sqrt(vx*vx+vy*vy+vz*vz)*dt;
         if (std::hypot(vx,vy) > 0.2f) yaw = std::atan2(vx,vy)*180.f/sim::PI_F;
         trail.push_back({px,py}); trail3.push_back({px,py,pz});
-        minClear = std::min(minClear, trueClearance(W, px, py, pz, 2.f));
+        float clr = trueClearance(W, px, py, pz, 2.f);
+        minClear = std::min(minClear, clr);
+        // STOP ON COLLISION, like voxel_sim does. Without this the preview
+        // flies THROUGH obstacles and keeps going, so the frame it renders is
+        // a state the aircraft could never be in -- and a reference picture of
+        // an impossible state is worse than no picture. Caught by exactly that:
+        // a preview reporting 0.09 m clearance with terrain smeared across the
+        // truth pane, because it had passed through a trunk 170 steps earlier.
+        if (clr <= gp.robotR * 0.5f) {
+            collided = true; collStep = s;
+            std::printf("  COLLIDED at step %d, (%.1f,%.1f,%.1f), clearance %.2f m"
+                        " -- rendering the last valid frame\n", s, px, py, pz, clr);
+            break;
+        }
     }
 
     // --- the same four panes voxel_gui shows ---
@@ -267,9 +281,10 @@ int main(int argc, char** argv) {
     char l1[260], l2[260];
     std::snprintf(l1,sizeof l1,"Forest  seed %u  stereo  trail   step %d/%d   %.1f m/s   flown %.0f m   [-/+] 1x",
                   seed, steps, steps, std::hypot(vx,vy), travelled);
-    std::snprintf(l2,sizeof l2,"free %.1f m   open %.1f m   %s   path %s   min clearance %.2f m",
+    std::snprintf(l2,sizeof l2,"free %.1f m   open %.1f m   %s   path %s   min clearance %.2f m%s",
                   gr.freeM, gr.openM, gr.blocked?"BLOCKED":"ok",
-                  path.found?"yes":"none", minClear);
+                  path.found?"yes":"none", minClear,
+                  collided?"   *** COLLIDED ***":"");
     cv::putText(bar,l1,{12,24},cv::FONT_HERSHEY_SIMPLEX,0.46,{235,235,235},1,cv::LINE_AA);
     cv::putText(bar,l2,{12,48},cv::FONT_HERSHEY_SIMPLEX,0.46,{190,190,200},1,cv::LINE_AA);
     cv::Mat full; cv::vconcat(row, bar, full);

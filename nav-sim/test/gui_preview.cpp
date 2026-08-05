@@ -74,6 +74,7 @@ int main(int argc, char** argv) {
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
     BearingFilter gfilt;
+    StallMonitor stall;
 
     float vx=0, vy=0, vz=0, yaw=0, travelled=0, minClear=1e9f;
     const float dt = 0.1f;
@@ -92,7 +93,13 @@ int main(int argc, char** argv) {
         // pure pursuit, low-pass the reference bearing.
         float mAz = std::atan2(goalE-px, goalN-py) * 180.f/sim::PI_F;
         float mEl = std::atan2(goalU-pz, std::hypot(goalE-px, goalN-py)) * 180.f/sim::PI_F;
-        if (!pathStillGood(M, path, px, py, pz, mAz, fwp))
+        // The router is a FALLBACK, not the normal case. Following a routed
+        // path measures worse than pointing at the goal in open forest; a 12 m
+        // reactive horizon cannot see out of a dead end. So run reactive, and
+        // call the router only once progress has actually stalled.
+        stall.update(std::hypot(goalE-px, goalN-py));
+        if (!stall.engaged) path = ForwardPath();
+        else if (!pathStillGood(M, path, px, py, pz, mAz, fwp))
             path = planForward(M, px, py, pz, mAz, mEl, fwp);
         float tE=goalE, tN=goalN, tU=goalU;
         if (path.found) pursuitPoint(path, px, py, pz, 6.f, tE, tN, tU);

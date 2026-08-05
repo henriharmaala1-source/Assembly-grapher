@@ -112,6 +112,11 @@ int main(int argc, char** argv) {
     float lookaheadM = 6.f;    // 0 = old "first waypoint past 3 m" carrot rule
     float goalEma    = 0.25f;  // 1 = no filtering of the reference bearing
     bool  reuse      = true;   // replan on demand instead of every --replan steps
+    // 0 never, 1 only when progress stalls, 2 always. Default 1: the router
+    // costs progress in open forest and is the only thing that can get out of a
+    // dead end, so the honest answer is "when needed" rather than either
+    // extreme.
+    int   routerMode = 1;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -138,6 +143,11 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--lookahead")) lookaheadM = float(std::atof(next("6")));
         else if (!std::strcmp(argv[i], "--goalema")) goalEma = float(std::atof(next("0.25")));
         else if (!std::strcmp(argv[i], "--noreuse")) reuse = false;
+        else if (!std::strcmp(argv[i], "--router")) {
+            const char* m = next("stall");
+            routerMode = !std::strcmp(m, "never") ? 0
+                       : !std::strcmp(m, "always") ? 2 : 1;
+        }
         else if (!std::strcmp(argv[i], "--goal")) {
             goalE = float(std::atof(next("150")));
             goalN = float(std::atof(next("170")));
@@ -256,6 +266,7 @@ int main(int argc, char** argv) {
     ForwardParams fwp; fwp.robotR = gp.robotR;
     ForwardPath path;
     BearingFilter gfilt;
+    StallMonitor stall;
     printf("  forward planner: %s\n", forwardPlannerName());
 
     float vx = 0, vy = 0, vz = 0, yaw = 0;
@@ -265,6 +276,7 @@ int main(int argc, char** argv) {
     // completely, and that is a different (easier) achievement.
     float trailDev = 0; long trailN = 0, trailIn = 0;
     int collisions = 0, stopped = 0, noPath = 0, replans = 0;
+    int stepsRun = 0;
     bool reached = false;
     std::vector<cv::Point2f> trail;
     double tPlan = 0, tSense = 0, tGen = 0, tPrec = 0, tInteg = 0;
@@ -287,6 +299,7 @@ int main(int argc, char** argv) {
 #endif
 
     for (int s = 0; s < steps; ++s) {
+        stepsRun = s + 1;
         // --- sense -----------------------------------------------------------
         // TRUE pose -- what the camera actually observes from.
         CamPose pose; pose.e = px; pose.n = py; pose.u = pz;
@@ -317,11 +330,21 @@ int main(int argc, char** argv) {
         float mAz = std::atan2(goalE - px, goalN - py) * 180.f / sim::PI_F;
         float mEl = std::atan2(goalU - pz,
                                std::hypot(goalE - px, goalN - py)) * 180.f / sim::PI_F;
+        // IS THE ROUTER WANTED AT ALL RIGHT NOW? Following a routed path is
+        // measurably worse than pointing at the goal in open forest -- see the
+        // table in ompl_planner.hpp -- but a 12 m reactive horizon cannot see
+        // out of a dead end. So run reactive, and call the router only once
+        // progress has actually stalled.
+        stall.update(std::hypot(goalE - px, goalN - py));
+        bool wantRouter = !generalOnly &&
+            (routerMode == 2 || (routerMode == 1 && stall.engaged));
+        if (!wantRouter) path = ForwardPath();     // drop it; aim at the goal
+
         // REPLAN ON DEMAND, not on a timer. Replanning every N steps with a
         // randomised planner threw away a perfectly good path and got back an
         // arbitrarily different one, which is most of why the reference bearing
         // churned. `--replan N` is now the FALLBACK period, not the period.
-        bool needReplan = !generalOnly &&
+        bool needReplan = wantRouter &&
             (reuse ? !pathStillGood(M, path, px + dE, py + dN, pz + dU, mAz, fwp)
                    : (s % replanEvery == 0));
         if (needReplan) {
@@ -489,6 +512,10 @@ int main(int argc, char** argv) {
                100.0 * double(trailIn) / double(trailN), trailDev / float(trailN));
     printf("  stopped on         %d of %d steps\n", stopped, steps);
     printf("  A* replans         %d, of which no path %d\n", replans, noPath);
+    printf("  router             %s, engaged %d time(s) for %ld of %d steps (%.0f%%)\n",
+           routerMode == 0 ? "never" : routerMode == 2 ? "always" : "on stall",
+           stall.engagements, stall.engagedSteps, stepsRun,
+           stepsRun ? 100.0 * double(stall.engagedSteps) / stepsRun : 0.0);
     // Split out what would actually run ON THE AIRCRAFT. The depth RENDER is
     // sim-only -- on the Pi that is the stereo matcher, benchmarked separately.
     // Map integration and both planners are real onboard cost.

@@ -375,6 +375,38 @@ more often, so the general planner's single-bin fast path fires more.
 **4.96 ms/step, down from 13.99 before any of this work**, and onboard total
 22.9 ms/step down from 35.8.
 
+### The router is a fallback, not the normal case
+
+Having fixed how the path is followed, the obvious next question is whether it
+should be followed at all. Forest, 300 steps, 2 seeds:
+
+```
+arm            goalChurn  cmdChurn  advance   endDist
+with OMPL           2.35      1.95    0.908      95.5
+bearing only        0.01      0.68    0.979      87.9
+```
+
+**Pointing at the goal beats following a routed path on every column.** A stand
+of scattered trunks has nothing large enough to route around, so the router
+contributes no information and does contribute noise. And note `cmdChurn 0.68`:
+given a steady reference, the reactive layer barely turns at all. It never had
+a spinning problem — everything above was compensating for a middleman.
+
+That is an argument about forests, not about routers. A reactive planner with a
+12 m horizon cannot see out of a dead end, and a courtyard or a long facade is
+exactly that. So the choice is not made once. `--router` selects:
+
+* `never` — pure bearing following
+* `stall` *(default)* — reactive until progress stops, then route
+* `always` — the old behaviour
+
+Stall means **no new closest approach to the goal for 4 s**. Closest approach
+rather than current distance, because a vehicle circling a building has a
+distance that oscillates without ever improving — precisely the case this must
+catch. The router hands back only after buying 5 m of real progress, so the two
+layers cannot flap. `voxel_sim` reports how often it engaged; in open forest
+that is 0% of steps, and the run costs nothing for having the option.
+
 Three further mechanisms were tried and **are off by default because they did
 not work**: smoothing the direction field over time, requiring a challenger to
 beat the incumbent by a margin, and charging extra for deviations beyond 90°.

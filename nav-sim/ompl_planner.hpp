@@ -121,6 +121,55 @@ struct BearingFilter {
     void update(float az, float el, float alpha);
 };
 
+// --- when to use the global planner at all -----------------------------------
+//
+// Measured, forest, 300 steps, 2 seeds:
+//
+//     arm            goalChurn  cmdChurn  advance   endDist
+//     with OMPL           2.35      1.95    0.908      95.5
+//     bearing only        0.01      0.68    0.979      87.9
+//
+// Following a routed path is WORSE than just pointing at the goal, on every
+// column, in a forest. A stand of scattered trunks has nothing large enough to
+// route around, so the router contributes no information and does contribute
+// noise: a randomised path, re-rolled periodically, sampled by a moving target.
+// Given a steady bearing the reactive layer churns 0.68 deg/step -- it never had
+// a spinning problem at all.
+//
+// But that is an argument about FORESTS, not about routers. A reactive planner
+// with a 12 m horizon cannot see out of a dead end, and a courtyard or a long
+// facade is exactly that. So do not choose once: run reactive, notice when it
+// stops making progress, and call the router only then.
+//
+// Stall is defined as "no new closest approach to the goal for stallSteps".
+// Closest approach rather than distance-now, because a vehicle circling a
+// building has a distance that oscillates without ever improving, and that is
+// precisely the situation this is meant to catch. Hand back only after the
+// router has bought recoverM of real progress, so the two layers cannot flap.
+struct StallMonitor {
+    int   stallSteps = 40;      // 4 s at 10 Hz with no improvement
+    float recoverM   = 5.f;     // progress before the router hands back
+    float epsM       = 0.25f;   // improvement that counts as improvement
+
+    float bestDist = 1e30f;     // closest approach achieved so far
+    float engagedAt = 0;
+    int   sinceBest = 0;
+    bool  engaged = false;
+    long  engagedSteps = 0;     // for reporting: how much of the flight needed it
+    int   engagements = 0;
+
+    void update(float distToGoal) {
+        if (distToGoal < bestDist - epsM) { bestDist = distToGoal; sinceBest = 0; }
+        else ++sinceBest;
+        if (!engaged) {
+            if (sinceBest > stallSteps) { engaged = true; engagedAt = bestDist; ++engagements; }
+        } else if (bestDist < engagedAt - recoverM) {
+            engaged = false;
+        }
+        if (engaged) ++engagedSteps;
+    }
+};
+
 // planner backend, selected at build time
 const char* forwardPlannerName();
 

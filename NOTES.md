@@ -281,6 +281,58 @@ to redo the full calibration including the yaw you cannot see.
 This moves mechanical risk DOWN the list. CPU stereo cost is now the most
 likely killer of this route.
 
+### Module comparison — every vendor "range" priced on our own formula
+
+Vendor range figures are disparity-quantisation numbers, not usable-depth
+numbers. OAK-D Lite's "up to 20 m": f = 432 px, B = 75 mm, so f*B = 32.4 px*m.
+At 20 m the disparity is 1.6 px and `dZ = Z^2*sigma/(f*B)` = **+/-3.1 m** against
+our 0.25 m voxels. Honest `Z_max = sqrt(cell*f*B/sigma)*0.75` = **4.3 m**.
+
+    module                        base   depth res   f_px  Z_max   CPU   IMU    wt
+    D435i @480x270 (DeFoP cfg)    50mm    480x270     253   2.5m     0   yes   72g
+    D435i @848x480                50mm    848x480     447   3.5m     0   yes   72g
+    OAK-D Lite                    75mm    640x480     432   4.3m     0   NONE  61g
+    D455 @848x480                 95mm    848x480     447   4.9m     0   yes  110g
+    D455 @1280x720                95mm   1280x720     674   6.0m     0   yes  110g
+    IMX296 pair 4mm @728x544     120mm    728x544     580 6.3-8.6m 13-24ms no ~63g
+    OAK-D LR                     150mm   ~1280x800   ~985  ~9m       0   yes ~100g
+
+OAK-D LR's lens FOV and weight are ESTIMATES — verify before ordering.
+
+**Three consequences:**
+
+1. **OAK-D Lite is not the upgrade it looks like.** 4.3 m, and confirmed **no
+   IMU**. With state estimation now the project's top risk, a depth camera
+   without an IMU is the wrong trade. Roughly a D435i-plus.
+2. **OAK-D LR is genuinely competitive with the custom build, maybe better.**
+   Bigger baseline than ours, has an IMU, factory-rigid (no 26 um mount
+   problem, no calibration ritual), and **zero Pi CPU for depth** — which is
+   worth exactly the 13-24 ms stereo_bench measured.
+3. **D455 should have been on the list earlier.** 95 mm baseline is nearly
+   double the D435's: ~6 m at 720p, IMU, 0 host CPU. A strictly better version
+   of the camera Karjalainen got 7/7 with.
+
+**OAK-D Pro** carries an IR laser dot projector — active stereo, the DeFoP
+configuration, in a rigid factory-calibrated housing. That is the direct answer
+if the tripod trip says passive stereo cannot see spruce bark.
+
+Caveat on OAK: DepthAI is a host library dependency and USB transfer adds
+latency we do not control. Raw stereo pairs are still obtainable, so VO is not
+foreclosed.
+
+### DECISION GATE — do not buy until stereo_bench runs on the Pi
+
+That one measurement now prices the alternatives, not just the custom route:
+
+* under ~35 ms  -> **custom IMX296 wins.** Cheapest (~EUR 100 vs ~400),
+  lightest (63 g), raw pairs for VO and photogrammetry, 8.6 m beats everything
+  except OAK-D LR.
+* over ~60 ms   -> **buy OAK-D LR.** Beats the custom build on range, ships the
+  mount problem pre-solved, hands back the whole CPU budget.
+* bark invisible on the tripod trip -> **OAK-D Pro**, whichever way timing went.
+
+The custom route's case rests entirely on that timing number.
+
 ### The mount — decided
 
 **Rule 1, non-negotiable: soft-mount the ASSEMBLY, never the cameras.**

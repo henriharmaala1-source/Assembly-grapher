@@ -551,6 +551,43 @@ available.**
                                     A*.  **GPLv3** -- check against licensing intent
     mzahana/roboeye                 VIO on RPi, unassessed
 
+**CLOSEST MATCH TO OUR CONSTRAINTS — TU Delft MAVLab.** "Efficient Optical Flow
+and Stereo Vision for Velocity Estimation and Obstacle Avoidance on an
+Autonomous Pocket Drone", arXiv 1612.06702. Our exact two-problem architecture
+-- **stereo for obstacles, optical flow for velocity** -- solved together at
+10 Hz on a **20 g flapping-wing MAV with a microcontroller**. Its premise is our
+problem statement verbatim: even efficient stereo is too heavy for pocket
+drones, so they built one that is not. Code lives in **Paparazzi** (C, no ROS,
+**GPL — check against licensing intent**).
+
+Caveats: their imagery is ~128x96 at short range, so the NUMBERS do not
+transfer to 728x544 at 8 m. What transfers is the APPROACH — sub-sampled/sparse
+stereo, integer arithmetic, exactly what a NEON port would want. And it is
+strong evidence the Pi 5 anxiety is overblown, given they had orders of
+magnitude less compute. It also independently validates the SMF-VO direction:
+flow-derived velocity plus stereo obstacles, on a budget, flying.
+
+**Full stereo camera pipeline references (calibrate -> rectify -> disparity):**
+
+    shubhamwagh/stereo-calib              Charuco calib + rectify + disparity +
+                                          depth. Cleanest structural reference.
+    0xShamil/stereo-calibration-raspberry-pi   C++ on the Pi specifically
+    realizator/stereopi-tutorial          Python, but has the Pi-specific
+                                          real-world gotchas
+    libelas (ELAS)                        efficient large-scale stereo, CPU C++,
+                                          fast on big images -- GPL, check
+
+**PX4/PX4-Avoidance** — VFH+ local planner PLUS an octomap global planner, i.e.
+structurally what we built, arrived at independently. ROS, and PX4 has since
+deprecated it, so read rather than fork. Worth noting it pairs local histogram
+with global octomap **for exactly the dead-end reason the cul-de-sac world
+found** — third independent group, same conclusion.
+
+**CHEAPEST HIGH-VALUE READ:** `librealsense/doc/depth-from-stereo.md` — Intel's
+own writeup of the stereo error model, from people shipping this commercially.
+It will confirm or correct `Z_max = sqrt(cell*f*B/sigma_d)`, the formula every
+purchase decision in these notes rests on. Half an hour.
+
 **SMF-VO has no public code found.** Read-and-reimplement, not fork. Upside:
 sparse flow into a linear velocity solve is a small algorithm, unlike
 reimplementing VINS-Fusion. Confirmed it is benchmarked against Basalt and

@@ -374,6 +374,58 @@ Note: the AI Kit is an M.2 HAT+. If HATs are back on the table, so is the
 Arducam Camarray (hardware I2C/clock sync at any baseline you choose, one CSI
 port, but the rigid-mount problem stays since the boards are separate).
 
+### OAK-FFC — the option that is BOTH ready-made and custom-baseline
+
+Missed in the earlier "ready-made vs roll-your-own" framing. **OAK-FFC-3P/4P**:
+camera modules on FFC flex cables, so **the baseline is yours to choose**, while
+the Myriad X still computes depth in silicon.
+
+* OV9282 global-shutter mono, 1280x800
+* **zero Pi CPU for depth**
+* sync solved (one baseboard clocks both)
+* ~EUR 240 (board + 2 modules) — VERIFY
+
+Z_max on our formula, OV9282 3.0 um pixels, ~72 deg HFOV -> f ~ 881 px:
+
+    baseline   f*B    Z_max
+    12 cm      106     7.7 m
+    15 cm      132     8.6 m
+    20 cm      176     9.9 m
+    25 cm      220    11.1 m
+
+Narrower lens (50 deg, f ~ 1373) at 15 cm -> **10.8 m**.
+
+Matches or beats the custom IMX296 build on range AND returns the 13-24 ms of
+CPU. **Does NOT solve the mount** — flex cables mean two separate boards, so
+the 26 um rigidity problem and the recalibration ritual are unchanged. Same
+tube, same analysis. OAK-D LR is the variant where rigidity is pre-solved in a
+fixed housing; OAK-FFC trades that back for baseline freedom.
+
+Caveats: USB3 to the Pi (bandwidth, power, latency we do not control), DepthAI
+host dependency, and a fixed matcher — though StereoDepth exposes confidence
+thresholding and LR-check, **so it can likely be configured to leave holes
+rather than interpolate. VERIFY THIS** — it decides whether it fails safe or
+fails dangerous, which stereo_bench showed is the distinction that matters for
+a map built on "unknown != free".
+
+**Luxonis open-sources the hardware:** `luxonis/depthai-hardware` (Altium +
+community KiCad, **MIT**) and `luxonis/oak-hardware`. `BG0250TG` is a carrier
+for a SINGLE OV9282, documented as "typically paired with another to create a
+stereo camera pair" — the modular building block, design files public.
+
+**Do NOT spin our own MIPI PCB.** CSI-2 is impedance-controlled differential
+pairs with length matching; a subtle layout error shows up as intermittent
+frame corruption that costs weeks. The Luxonis files are a reference for how it
+is done, not a shortcut past learning it. **Our custom-hardware sweet spot is
+mechanical, not electrical: buy the boards, build the bar.**
+
+### Three viable builds, all sharing the same mount problem
+
+    build                              baseline    Z_max     Pi CPU   ~cost
+    IMX296 x2 + bar                    your choice  6.3-8.6m  13-24ms  EUR 105
+    OAK-FFC-3P + 2x OV9282 + bar       your choice  8.6-11m   0 ms     EUR 240
+    OAK-D LR                           fixed 15cm   ~9 m      0 ms     EUR 400
+
 ### DECISION GATE — do not buy until stereo_bench runs on the Pi
 
 That one measurement now prices the alternatives, not just the custom route:

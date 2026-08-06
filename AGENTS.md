@@ -275,3 +275,8 @@ When you change something, keep this section and the README's tables honest.
 
 The forward plan — hardening fixes (Track F) and phases P2–P6, with acceptance
 criteria and ordering — lives in [`ROADMAP.md`](ROADMAP.md).
+
+Current staging, live decisions, load-bearing unknowns and the deliberately
+deferred sim↔real gaps live in [`NOTES.md`](NOTES.md) — working memory, kept
+terse on purpose. Read it before proposing work; it records what has already
+been ruled out and why.

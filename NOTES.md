@@ -398,7 +398,66 @@ its own IMU inside the housing. If VIO happens on the IMX296 pair, budget an
 IMU **on the stereo bar**. It is a hole in the bar, not a redesign — decide
 before drilling.
 
-### Driver sync
+### Sync is officially supported — use trigger mode, not master/slave
+
+`imx296.trigger_mode=1` in `/boot/firmware/cmdline.txt` enables XTRIG in the
+**mainline RPi kernel module**. Not a patch. RPi docs explicitly endorse the
+stereo use: "multiple cameras can be connected to the same pulse, allowing for
+an alternative way to synchronise two cameras." Exposure is deterministic:
+**low pulse width + 14.26 us**.
+
+**Better than XVS/XHS master/slave, for a reason missed earlier: if both
+cameras see the SAME trigger edge, pulse jitter cancels.** Skew between them is
+only the difference in their response — nanoseconds. Even a sloppy userspace
+GPIO syncs them TO EACH OTHER; jitter only affects frame-rate regularity, which
+matters for VO timestamps and not at all for disparity.
+
+**Catch: trigger mode sets exposure by pulse width, so auto-exposure is gone.**
+Under dappled canopy that is a real cost and it becomes our job — vary pulse
+width from a control loop on the Pi. Known requirement now, not a surprise
+later.
+
+Still 1.8 V — divide any Pi GPIO down before it touches XTR.
+
+### CPU stereo cost — the remaining top risk, but ReS2tAC suggests it is OK
+
+**ReS2tAC** (Ruf et al., Sensors 21(11):3938, arXiv 2106.07927) — SGM optimised
+with **NEON intrinsics for embedded ARM**, built for UAV use. Reported up to
+**46 FPS at VGA**, 3.3 % error. That is ~22 ms/frame at 640x480, which fits
+alongside a 16 ms planner.
+
+**UNVERIFIED — the paper covers both ARM-NEON and CUDA targets and the abstract
+does not say which target the 46 FPS belongs to.** Could well be the GPU
+number. Could not read the paper (arXiv 403s through this proxy) or confirm a
+code release. **Pinning this down is the highest information-per-effort item
+available.**
+
+### Forkable code found
+
+    gishi523/semi-global-matching   SGM CPU, census, OpenMP -- SSE4.1, needs NEON port
+    kbatsos/Real-Time-Stereo        CENSUS/NCC/SAD block matchers -- closest to our
+                                    sim model (blockPx = 8)
+    ermig1979/Simd                  NEON + SVE for ARM -- the porting substrate
+    Eryk-Mozdzen/open_vins_example  ROS-FREE OpenVINS usage -- matters, no ROS here
+    guglielmo610/DeFoP              the paper's own stack; read the geometric
+                                    supervisor, do not fork (Orin + TensorRT + ROS)
+    ZJU-FAST-Lab/EGO-Planner-v2     Karjalainen's base; MINCO, ring-buffer occupancy,
+                                    A*.  **GPLv3** -- check against licensing intent
+    mzahana/roboeye                 VIO on RPi, unassessed
+
+**SMF-VO has no public code found.** Read-and-reimplement, not fork. Upside:
+sparse flow into a linear velocity solve is a small algorithm, unlike
+reimplementing VINS-Fusion. Confirmed it is benchmarked against Basalt and
+ORB-SLAM3 **on a Pi 5** at 100 Hz — a real comparison on our exact hardware.
+Fallback if it stays unavailable: OpenVINS (mature, mostly single-threaded,
+would eat most of the budget) or Basalt (faster, wants more compute).
+
+**Next actions from this:** (1) pin down whether ReS2tAC's 46 FPS is ARM or
+CUDA; (2) benchmark gishi523 and kbatsos on a Pi 5 with synthetic stereo pairs
+— **needs no cameras, doable today**; (3) budget for writing the auto-exposure
+loop that trigger mode forces on us.
+
+### Driver sync (superseded — see trigger mode above)
 
 RPi's `imx296` driver historically had no external-sync support; dtoverlay work
 exists and people have master/slave running, but it is fiddly.

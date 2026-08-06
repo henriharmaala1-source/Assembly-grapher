@@ -161,11 +161,100 @@ Ranked by how much each would move our numbers.
 6. We score any contact as a collision; they allow "minor touches to thin
    vegetation." Keep ours — but the comparison is not like-for-like.
 
+## 2026-08-06 — stereo camera: Waveshare IMX296 M12 mono
+
+1456x1088, 3.45 um pixels, global shutter, M12 (lens bought separately).
+Back-of-board pads: `XTR+ XTR- XVS XHS MAS 3V3`. (Read as XYS; it is XVS —
+Sony naming, V for vertical.)
+
+| pad | what | direction |
+|---|---|---|
+| XVS | frame sync | output in master, **input in slave** |
+| XHS | line sync | output in master, **input in slave** |
+| MAS | XMASTER strap, master vs slave | **latched at reset — a solder decision** |
+| XTR+/- | external trigger in | input |
+| 3V3 | supply pad | not a signal reference |
+
+### DANGER — 1.8 V logic
+
+**XVS, XHS, XTR and XMASTER are 1.8 V. 3.3 V on any of them likely destroys
+the sensor.** Do not drive from a Pi GPIO directly. Divider commonly cited:
+1.5k series + 1.8k to GND. Do NOT assume the `3V3` pad is the drive level.
+Camera-to-camera XVS/XHS is fine unshifted — both ends are already 1.8 V.
+
+Order **three** boards. A 3.3 V slip kills one silently.
+
+Reported working startup order: master first, wait >= 2 s, then slave.
+
+### Why the pads matter — the number that decides it
+
+Exposure time skew becomes disparity error. The ROTATIONAL term is
+**independent of range**, which is what makes it lethal:
+
+    delta_d = f * omega * delta_t
+
+f ~ 1159 px (4 mm lens). Planner commands maxYawRate = 100 deg/s = 1.745 rad/s.
+Our matching-noise budget is sigma_d = 0.25 px.
+
+    skew      disparity err   vs budget
+    1 ms          2.0 px       8x  -- ruinous
+    100 us        0.20 px      marginal
+    10 us         0.02 px      negligible
+
+2 px at 5 m reads as 4.66 m; at 8 m reads as 7.16 m (0.84 m, >3 voxels) and
+carves free space through the obstacle.
+
+**Yaw rate is highest exactly when avoiding something. Unsynced stereo fails
+hardest at the moment it matters most.** Software timestamp alignment buys
+milliseconds; these pads buy sub-microsecond. That is the whole argument.
+
+### Lens sets Z_max — choose deliberately
+
+`Z_max = sqrt(cell*f*B/sigma_d)`, B = 0.12 m, cell = 0.25 m, sigma_d = 0.25 px,
+25 % derate (measured):
+
+    lens      f(px)   HFOV    honest Z_max
+    ~1.6 mm    450    130 deg    5.5 m
+    2.8 mm     812     83 deg    7.4 m
+    4 mm      1159     64 deg    8.8 m   <- take this
+    6 mm      1739     46 deg   10.8 m
+
+4 mm: 64 deg is near the 70 deg the sim assumes, and 2x binned (f ~ 580) it
+still gives ~6.3 m — well past the D435i's 2-3 m. The wide 130 deg option
+throws away most of the range advantage that justified this sensor.
+
+### The actual risk is the driver, not the wiring
+
+RPi's `imx296` driver historically had no external-sync support; dtoverlay work
+exists and people have master/slave running, but it is fiddly.
+
+**Gate on this before anything touches the frame:**
+
+1. one camera streams on Pi 5
+2. both stream simultaneously on the two CSI ports (check CSI bandwidth at the
+   chosen resolution)
+3. solder MAS on one, wire XVS + XHS + common GND, master-first with the 2 s gap
+4. **verify sync by the failure mode:** compute disparity on a static scene
+   while rotating the rig by hand. Synced -> disparity stays put. Unsynced ->
+   disparity shifts with rotation rate, and the slope gives the skew.
+
+Step 4 needs no extra gear and measures exactly the thing that would ruin us.
+It also composes with the tripod/bark experiment above — same rig, same trip.
+
+---
+
 ## Open / unresolved
 
 * SMF-VO unread. Re-check when arXiv is reachable; if it holds, it becomes the
   state-estimation plan.
 * `nav-sim/` and `onboard/` share **zero** code (`grep VoxelMap onboard/` → nothing).
   The stack we measure is not the stack that would fly. Resolve during the lean-out.
-* Stereo camera choice not yet locked; baseline drives `Z_max` directly
-  (12 cm → ~8 m measured; D435i's 5 cm → ~2–3 m).
+* Stereo camera: Waveshare IMX296 M12 mono is the candidate (see above).
+  Baseline drives `Z_max` directly (12 cm → ~8 m; D435i's 5 cm → ~2–3 m).
+  **Open:** whether two can be hardware-synced on a Pi 5 with the current
+  driver. This gates the whole stereo path — resolve on the bench first.
+* Lens not ordered. 4 mm M12 recommended; verify what the Waveshare bundle
+  ships with, since the part number hints at a much wider lens.
+* Stereo matching cost on a Pi 5 CPU is unbudgeted. 728×544 with ~96 disparities
+  is likely too slow for OpenCV SGBM inside a 100 ms cycle. Measure before
+  assuming a resolution.

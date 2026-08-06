@@ -281,6 +281,74 @@ to redo the full calibration including the yaw you cannot see.
 This moves mechanical risk DOWN the list. CPU stereo cost is now the most
 likely killer of this route.
 
+### The mount — decided
+
+**Rule 1, non-negotiable: soft-mount the ASSEMBLY, never the cameras.**
+TPU under each camera separately creates two independently resonating masses
+coupled only through rubber; relative pose then oscillates at the isolator's
+natural frequency and the extrinsic calibration is meaningless.
+
+    RIGHT                          WRONG
+    [cam]==rigid spine==[cam]      [cam]~TPU~        ~TPU~[cam]
+            ~ TPU ~                      \  airframe  /
+           airframe
+
+**Pick: aluminium angle 20x20x2 mm, ~31 g at 150 mm.** Hacksaw + drill, no
+milling. Open section so a nut is reachable on both faces (a 1 mm-wall closed
+tube is not, without rivnut tooling). Lighter alternative if rivnuts are
+available: 20x10x1 rect tube, 23 g.
+
+Weight, 150 mm (120 mm baseline + board width), Al at 2.70 g/cm3:
+
+    20x10x1.0 rect tube    56 mm2    23 g
+    20x10x1.5 U-channel    55 mm2    23 g
+    20x3 flat bar          60 mm2    24 g
+    20x20x2 ANGLE          76 mm2    31 g   <- pick
+    15x15x1.5 sq tube      81 mm2    33 g
+    20x20x1.5 sq tube     111 mm2    45 g
+    2020 T-slot           ~200 mm2  ~75 g
+
+**T-slot extrusion rejected.** 2-3x the weight, and a T-nut is a FRICTION
+joint on a continuous slot — free to creep under vibration, which is precisely
+the systematic drift the map cannot average out. A bolt through a drilled hole
+is positively located. If the slot is wanted for prototyping the baseline:
+slide to find it, then drill through and pin it.
+
+**Orientation matters more than section.** Long dimension FRONT-TO-BACK (along
+the optical axis). Tolerated front-back gradient at the 1 px working budget:
+
+    depth 10 mm -> 3.2 K
+    depth 15 mm -> 4.9 K
+    depth 20 mm -> 6.4 K
+
+Pairs with the error asymmetry: vertical-plane bending -> ROLL (self-calibrates
+free from vertical disparity); horizontal-plane bending -> YAW (does not). Deep
+front-to-back, shallow vertically, puts stiffness where the uncorrectable error
+is. Caveat: do not take "roll is free" to a flimsy section — dynamic roll above
+~1 px within a frame breaks row-wise matching outright rather than just adding
+noise. Angle or channel, not thin flat bar.
+
+**Materials.** PETG disqualified for the spine: 0.4 K of gradient blows the
+0.25 px budget (alpha ~70 ppm/K), plus room-temperature creep under bolt
+preload. Non-structural use only, and never holding preload alone — metal
+washers. Carbon is the later weight upgrade, not the start: near-zero axial CTE
+is excellent (55 K tolerated) but pultruded tube is torsionally floppy, and
+bonded end fittings creep. Aluminium's 150 W/mK also erases the gradients that
+CF's ~1 W/mK transverse would hold, clawing back most of CF's CTE advantage.
+
+**Hole accuracy is a non-issue.** Calibration absorbs constant misalignment to
+~1-2 deg (limited only by rectification crop). Hand drill and centre punch are
+fine. Building something that does not MOVE, not something that is ACCURATE.
+
+**TPU:** 4 grommets, spine to frame, target 50-80 Hz natural frequency (5"
+prop at ~6000 rpm, 2 blades = ~200 Hz fundamental).
+
+**Open consequence:** soft-mounting means the rig's pose relative to the FC's
+IMU is not fixed, and VIO depends on that extrinsic. This is why a D435i has
+its own IMU inside the housing. If VIO happens on the IMX296 pair, budget an
+IMU **on the stereo bar**. It is a hole in the bar, not a redesign — decide
+before drilling.
+
 ### Driver sync
 
 RPi's `imx296` driver historically had no external-sync support; dtoverlay work

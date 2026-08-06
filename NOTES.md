@@ -385,15 +385,52 @@ the Myriad X still computes depth in silicon.
 * sync solved (one baseboard clocks both)
 * ~EUR 240 (board + 2 modules) — VERIFY
 
-Z_max on our formula, OV9282 3.0 um pixels, ~72 deg HFOV -> f ~ 881 px:
+**Lens variants (CORRECTED — an earlier note here assumed 72 deg HFOV; the
+standard part is 80 deg):**
 
-    baseline   f*B    Z_max
-    12 cm      106     7.7 m
-    15 cm      132     8.6 m
-    20 cm      176     9.9 m
-    25 cm      220    11.1 m
+    variant                    DFOV   HFOV
+    standard OAK-FFC-OV9282     89     80
+    wide -W (PY097W)           150    127
+    OAK-FFC-OV9282 M12          --    your lens
 
-Narrower lens (50 deg, f ~ 1373) at 15 cm -> **10.8 m**.
+**What 150 deg costs is LESS than the naive answer.** Treating it as
+rectilinear gives a brutal number and is wrong: at 127 deg it is a FISHEYE, and
+a fisheye spreads pixels uniformly per degree rather than concentrating them
+centrally, so centre resolution does not collapse.
+
+Effective centre focal length over 1280 px, and Z_max at a 15 cm baseline:
+
+    lens            HFOV   f_centre   Z_max@15cm
+    M12 4 mm         52      1333       10.6 m
+    M12 2.8 mm       69       933        8.9 m
+    standard         80       763        8.0 m
+    wide 150 deg    127      ~578       ~7.0 m
+
+**~13 % range loss for 1.6x the horizontal coverage.** Far better trade than it
+looks. Fisheye row is an ESTIMATE (assumed equidistant projection) — check
+Luxonis's actual calibration before banking it.
+
+**Coverage is something we have MEASURED a need for.** With a narrow forward
+camera the sides and rear are permanently UNKNOWN and the aircraft spent
+**638 of 700 steps stationary** because nothing could be confirmed safe. Escape
+primitives exist purely to work around that. 127 deg HFOV would see most of the
+space the escape set wants to move into, so the wide variant is arguably the
+better fit for our specific failure mode.
+
+Two real objections: (1) **fisheye breaks the pinhole assumption** that
+rectification, the Z_max derivation, `depth_camera.hpp` and `voxel_map`
+raycasting all rest on — `cv::fisheye` makes it tractable but the sim would
+model the wrong camera until updated; (2) edge quality — worse calibration
+residual, more distortion, shrinking stereo overlap at the extremes.
+
+**Pick the M12 variant.** It makes OAK-FFC identical to the IMX296 plan in the
+one respect that matters (we choose the lens) while keeping zero-CPU depth and
+hardware sync. Start at 2.8 mm — 69 deg is close to what the sim already models
+— and go wider later if coverage proves binding.
+
+**What the third FFC port enables: narrow stereo pair for RANGE plus a separate
+wide camera for COVERAGE.** Both, without compromising either. No fixed-housing
+camera can do that; it is the actual value of the modularity.
 
 Matches or beats the custom IMX296 build on range AND returns the 13-24 ms of
 CPU. **Does NOT solve the mount** — flex cables mean two separate boards, so

@@ -223,7 +223,65 @@ milliseconds; these pads buy sub-microsecond. That is the whole argument.
 still gives ~6.3 m — well past the D435i's 2-3 m. The wide 130 deg option
 throws away most of the range advantage that justified this sensor.
 
-### The actual risk is the driver, not the wiring
+### Calibration vs stability — 26 um is NOT a machining tolerance
+
+Corrects an earlier framing. Relative rotation eps between the cameras gives
+disparity error `f*eps`; at f = 1159 px, 0.25 px costs eps = 2.2e-4 rad
+(0.012 deg) = **26 um differential over a 12 cm bar**. That is a **stability**
+budget, not a build tolerance.
+
+**Calibration absorbs any constant misalignment.** Build limit is ~1-2 deg, and
+only because rectifying a badly rotated pair crops the usable overlap. Mount it
+straight by eye, calibrate, done.
+
+**The three rotational DOF are not equal:**
+
+    drift   effect                          self-correctable?
+    roll    vertical shift varying with x   YES
+    pitch   uniform vertical shift          YES
+    yaw     horizontal shift ~ f*eps        NO
+
+Roll/pitch break the epipolar constraint, so **residual vertical disparity is a
+direct target-free measurement of both** — computable from ordinary matches in
+any scene (this is what RealSense's self-calibration does). Yaw shifts points
+horizontally, indistinguishable from everything being closer/further; epipolar
+geometry cannot see it. Needs external scale: known-size target, ground plane,
+or stereo-vs-IMU-scaled-SfM disagreement.
+
+**Which drift sources bite:**
+
+* vibration — mostly benign. Both cameras expose simultaneously, so flex at
+  exposure is a RANDOM per-frame disparity error. Random -> noise -> log-odds
+  averages it out. Raises effective sigma_d, does not bias the map.
+* baseline length change — negligible. Al over 12 cm across 20 K is ~55 um,
+  but that is a change in B, i.e. a 0.05 % scale error.
+* **asymmetric thermal + mechanical creep — the killers.** Slow, systematic,
+  and systematic error is exactly what a probabilistic map cannot average away.
+
+Design consequence is not exotic material: **symmetric mount, thermally
+uniform, no heat source (ESC) next to one camera, cables strain-relieved so
+they cannot preload one side.**
+
+**Failure mode is graceful.** A yaw drift of delta px is a constant disparity
+offset, `Z' = fB/(d+delta)`:
+
+    true 3 m  ->  3.07 m   (7 cm)
+    true 8 m  ->  8.48 m   (48 cm)
+
+It degrades exactly the long range the wide baseline bought and barely touches
+the near field. A drifted rig behaves like a rig with lower Z_max — which is
+the condition `maxIntegM` and the carve guard already defend against. Risk is
+"lose the range advantage", not "fly into a tree".
+
+**Build:** symmetric mount; target calibration (Kalibr/OpenCV) after assembly
+and after any hard landing; **log mean residual vertical disparity every
+frame** — free, direct measurement of roll/pitch drift, and the early warning
+to redo the full calibration including the yaw you cannot see.
+
+This moves mechanical risk DOWN the list. CPU stereo cost is now the most
+likely killer of this route.
+
+### Driver sync
 
 RPi's `imx296` driver historically had no external-sync support; dtoverlay work
 exists and people have master/slave running, but it is fiddly.

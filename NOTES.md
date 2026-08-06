@@ -293,10 +293,59 @@ natural frequency and the extrinsic calibration is meaningless.
             ~ TPU ~                      \  airframe  /
            airframe
 
-**Pick: aluminium angle 20x20x2 mm, ~31 g at 150 mm.** Hacksaw + drill, no
-milling. Open section so a nut is reachable on both faces (a 1 mm-wall closed
-tube is not, without rivnut tooling). Lighter alternative if rivnuts are
-available: 20x10x1 rect tube, 23 g.
+**PICK: aluminium rectangular tube 20x10x1 mm, ~23 g at 150 mm**, oriented
+20 mm FRONT-TO-BACK, 10 mm vertical. Hacksaw + drill, no milling.
+
+(Superseded an earlier pick of 20x20x2 angle once the flex was actually
+computed -- see the stiffness table below. Angle loses on torsion and on
+section symmetry, and is 8 g heavier.)
+
+Nut access in a 1 mm closed wall, three ways: M2 rivnuts (cleanest); a 6 mm
+access hole drilled in the opposite face to drop a nut in with tweezers or a
+magnet; or simply tapping the 1 mm wall -- loads are 0.78 N, so ~2 threads
+carries it, though preload for a friction-stable joint is the weaker argument.
+
+### Stiffness — computed, not asserted
+
+20 g per camera (board + M12 lens), 4 g manoeuvre -> F = 0.78 N per end.
+Mounts at +/-30 mm, cameras at +/-60 mm, so 30 mm cantilever each side.
+E = 69 GPa. Tip rotation `theta = F*l^2 / 2EI`.
+
+Budget: 220 urad (0.25 px), 880 urad (1 px working).
+
+    section            mode                      I or J     theta    vs 0.25px
+    20x20x2 angle      bending, weak diagonal    1175 mm4   4.4 urad     2 %
+    20x20x2 angle      TORSION, offset load       101 mm4   135 urad    61 %
+    20x10x1 tube       bending, yaw              2779 mm4   1.8 urad     1 %
+    20x10x1 tube       bending, vertical          899 mm4   5.7 urad     3 %
+    20x10x1 tube       torsion                   2089 mm4   6.8 urad     3 %
+    20x3 flat bar      bending, vertical           45 mm4   114 urad    52 %
+    PETG, angle sect.  bending                       --     148 urad    67 %
+
+First natural frequencies 700 Hz - 3.4 kHz, all >= 3.5x the ~200 Hz prop
+fundamental. So quasi-static analysis holds, no resonance, and the TPU
+(50-80 Hz) is the compliant element with the bar rigid on top of it.
+
+**Bending flex is a non-issue** -- 2-3 % of budget. Even the worst geometry
+(single central mount, 60 mm cantilevers) reaches only 35 urad relative, 6x
+inside budget.
+
+**Why the angle lost:**
+
+1. Torsionally weak. Open sections have tiny J (101 vs 2089 mm4, 20x worse).
+   A camera bolted ~15 mm off the shear centre eats 61 % of the tight budget
+   on torque alone. It lands in PITCH, which self-calibrates, so it is
+   survivable -- but it is the largest term on the table and it is dynamic
+   under vibration, which degrades matching rather than merely biasing it.
+2. Unsymmetric section: I_xy != 0, so a purely vertical load ALSO deflects it
+   sideways by 59 %. That breaks the "vertical bending -> harmless roll"
+   separation the orientation argument depends on. A closed tube is symmetric.
+
+Everything scales linearly with camera mass. At 20 g the tube is 30x inside
+budget so even 60 g cameras are fine; the angle's torsion term would not be.
+
+**Headline: flex is not what gets you. Thermal gradient and creep are.**
+5 K front-to-back costs more than a 4 g pull-up.
 
 Weight, 150 mm (120 mm baseline + board width), Al at 2.70 g/cm3:
 

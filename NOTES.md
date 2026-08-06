@@ -320,6 +320,60 @@ Caveat on OAK: DepthAI is a host library dependency and USB transfer adds
 latency we do not control. Raw stereo pairs are still obtainable, so VO is not
 foreclosed.
 
+### NPU route — settled, do not re-litigate
+
+Cost claim is CORRECT: IMX296 + Hailo AI Kit is cheaper than a ready-made
+long-range stereo camera. But the NPU cannot do the job it would be bought for.
+
+**Checked the Hailo-8L model zoo. Its entire depth-estimation section is two
+models, both MONOCULAR:**
+
+    fast_depth    224x224    1090 FPS   RMSE 0.61
+    scdepthv3     256x320     145 FPS   RMSE 0.48
+
+Single-image, indoor-trained, and **scale-ambiguous**. Monocular depth gives
+relative structure, not metres. Our speed budget and voxel map are metric end
+to end; an unscaled depth field feeds neither. **There is no stereo matcher in
+the zoo.**
+
+Porting one (HITNet, MobileStereoNet) through the Dataflow Compiler is a
+project not a purchase: op-support risk (cost volumes and 3D convs are exactly
+what NPUs handle badly -- HITNet exists BECAUSE 3D cost aggregation is 60-75 %
+of inference in PSMNet-class nets), INT8 quantisation loss, and forest training
+data we do not have.
+
+**The architectural objection is stronger than the practical one.** stereo_bench
+measured that BM fails safe (declines -> holes -> UNKNOWN -> no speed earned)
+and SGBM fails dangerous (interpolates -> confident wrong depth -> carves
+through a trunk). A learned network is that axis taken further: its entire
+value proposition is filling in where geometry is ambiguous, which on
+low-texture bark means hallucinating a smooth surface at the wrong depth. For a
+map built on "unknown != free" that is backwards. DeFoP hit this exactly --
+their learned CPN "occasionally proposes unsafe velocity commands", which is
+why they bolted a geometric supervisor on top. We would be buying the thing
+they had to defend against.
+
+**Cost, with the NPU's weight penalty included:**
+
+    IMX296 x3 + lenses + tube, CPU stereo   ~EUR 105    ~63 g
+    IMX296 + AI Kit                         ~EUR 175    ~90 g
+    OAK-D LR                                ~EUR 400   ~100 g
+    Gemini 336L                             ~EUR 300-400    ?
+
+The NPU erases most of the weight advantage. And **the strongest version of the
+cheap argument drops the NPU entirely**: if the Pi runs classical stereo in
+25-35 ms, that is EUR 105 vs EUR 400 with the fail-safe matcher intact.
+
+**Where the NPU DOES earn its place: stage 2, lock-on.** Detection and tracking
+are genuinely neural and Hailo support is mature (YOLOv8n etc.). Moving the
+tracker and detector off the CPU FREES budget for classical stereo. Correct
+split: **NPU does the neural things, CPU does the geometric things.** Buy it
+for lock-on if it helps there, never as a stereo accelerator.
+
+Note: the AI Kit is an M.2 HAT+. If HATs are back on the table, so is the
+Arducam Camarray (hardware I2C/clock sync at any baseline you choose, one CSI
+port, but the rigid-mount problem stays since the boards are separate).
+
 ### DECISION GATE — do not buy until stereo_bench runs on the Pi
 
 That one measurement now prices the alternatives, not just the custom route:

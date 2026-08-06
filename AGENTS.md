@@ -171,6 +171,7 @@ in-flight validation of the autonomy.
 | `fc_link.*` | `FcLink` — FC serviced on its OWN thread; the fly loop hands it intent (thread-safe), so a hung camera can't stall RC; neutralises a stale command |
 | `black_box.*` | `BlackBox` — crash-survivable flight-data logger: append-only fixed-size records, per-record CRC32, periodic fsync, sync-word resync. `--blackbox=<path>`; one record/tick. Decoded offline by `tools/blackbox_decode` (CSV) |
 | `sim_fc_backend.*` | `SimFcBackend` — software-in-the-loop FC (responds to control) for hardware-free testing |
+| `tools/stereo_bench.cpp` | Ground tool, no cameras needed. Times OpenCV StereoBM/SGBM on a synthetic forest stereo pair across resolutions, and prints `Z_max` (assumed **and** re-derived from the σ_d each matcher actually delivered) beside ms/frame. Answers whether CPU stereo fits the flight budget on a Pi 5 — **run it on the Pi**, it warns loudly on non-ARM hosts |
 | `mavlink_backend.hpp` | ArduPilot MAVLink backend — documented stub |
 | `serial_port.*` | POSIX termios serial |
 | `tof_source.hpp` | `ITofSource` interface |

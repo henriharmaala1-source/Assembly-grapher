@@ -453,9 +453,56 @@ Fallback if it stays unavailable: OpenVINS (mature, mostly single-threaded,
 would eat most of the budget) or Basalt (faster, wants more compute).
 
 **Next actions from this:** (1) pin down whether ReS2tAC's 46 FPS is ARM or
-CUDA; (2) benchmark gishi523 and kbatsos on a Pi 5 with synthetic stereo pairs
-— **needs no cameras, doable today**; (3) budget for writing the auto-exposure
-loop that trigger mode forces on us.
+CUDA; (2) budget for writing the auto-exposure loop that trigger mode forces
+on us.
+
+### stereo_bench — BUILT. Run it on the Pi.
+
+`onboard/tools/stereo_bench.cpp`. No cameras, no other deps.
+`cmake --build build --target stereo_bench && ./build/stereo_bench`
+
+Synthetic forest stereo pair (ground plane, backdrop, vertical trunks with
+deliberately low bark contrast), swept over resolution x {BM, SGBM_3WAY, SGBM}.
+Reports ms/frame, valid%, bad%, measured inlier sigma_d, and Z_max both as
+ASSUMED (0.25 px, from voxel_map.hpp) and as RE-DERIVED from the sigma_d each
+matcher actually delivered.
+
+**x86 dev-host baseline (Xeon 2.8 GHz, 4 threads) — NOT the Pi:**
+
+    res        algo        f_px   D |     ms  valid%  bad% | sd_px  Zmax_m
+    1456x1088  BM          1159 144 |  89.1*   78.7%  0.2% |  0.12   12.5m
+    1456x1088  SGBM_3WAY   1159 144 | 157.8*   84.2%  0.5% |  0.18   10.3m
+    728x544    BM           580  80 |  13.0    76.6%  1.3% |  0.13    8.6m
+    728x544    SGBM_3WAY    580  80 |  23.9    83.3%  0.9% |  0.23    6.5m
+    485x362    BM           386  48 |   7.7    76.0%  1.8% |  0.13    7.1m
+    364x272    SGBM_3WAY    290  48 |   7.1    81.7%  2.1% |  0.24    4.5m
+    242x181    BM           193  32 |   2.4    67.5%  5.4% |  0.23    3.8m
+
+Full resolution does NOT fit a 40 ms budget in any mode. 728x544 does, at
+13-24 ms, with ~8.6 m of range. **Expect the Pi 5 to be 1.5-3x slower** (A76
+2.4 GHz, 128-bit NEON vs the host's 256-bit AVX2), so 13 ms here plausibly
+becomes 20-40 ms there — straddling the budget. The tool prints a loud warning
+on non-ARM hosts for exactly this reason.
+
+**Cost scales as scale^3, range as sqrt(scale).** Halving resolution is ~8x
+cheaper (measured 6.2x, since D rounds to multiples of 16) and costs only 29 %
+of the range. That asymmetry is the whole reason the tool prints Z_max beside
+milliseconds.
+
+**Measured inlier sigma_d is 0.12-0.24 px, i.e. voxel_map.hpp's assumed 0.25 px
+is conservative** — for inliers, on this synthetic scene. Do not bank it: real
+bark, real foliage and real lighting will be worse, and the scene here is
+mostly fronto-parallel slabs with band-limited texture.
+
+**The finding worth keeping: valid% and bad% are NOT symmetric for us.** A
+missing pixel is UNKNOWN, and unknown is safe — the speed budget earns nothing
+through it. A confidently WRONG pixel is what carves free space through a
+trunk. Drop bark contrast (`--trunktex 0.06`) and the families separate exactly
+along that line: BM declines to guess and sheds valid pixels (76.6 -> 71.4 %),
+SGBM interpolates and gains wrong ones (bad% 0.9 -> 2.9 %). **BM fails safe,
+SGBM fails dangerous.** For a map built on "unknown != free", that inverts the
+usual benchmark preference — BM is the better fit despite looking worse on a
+leaderboard.
 
 ### Driver sync (superseded — see trigger mode above)
 

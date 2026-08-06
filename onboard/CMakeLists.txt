@@ -10,6 +10,9 @@ endif()
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS
   core imgproc video videoio highgui tracking dnn)
+# calib3d carries StereoBM/StereoSGBM; only the stereo bench needs it, so it is
+# looked up separately and the tool is skipped rather than failing the build.
+find_package(OpenCV QUIET COMPONENTS calib3d)
 
 add_executable(kestrel
   src/main.cpp
@@ -53,6 +56,19 @@ add_executable(blackbox_decode
 target_include_directories(blackbox_decode PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(blackbox_decode PRIVATE ${OpenCV_LIBS})
+
+# Stereo matching cost on the Pi 5 CPU -- the number the IMX296 bet rests on.
+# Needs no cameras and nothing else from the tree; run it on the Pi directly.
+include(CheckCXXCompilerFlag)
+if(OpenCV_calib3d_FOUND OR TARGET opencv_calib3d)
+  add_executable(stereo_bench tools/stereo_bench.cpp)
+  target_include_directories(stereo_bench PRIVATE ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(stereo_bench PRIVATE ${OpenCV_LIBS})
+  check_cxx_compiler_flag("-mcpu=cortex-a76" HAS_A76_SB)
+  if(HAS_A76_SB AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    target_compile_options(stereo_bench PRIVATE -mcpu=cortex-a76)
+  endif()
+endif()
 
 # Cortex-A76 tuning when building natively on the Pi 5.
 include(CheckCXXCompilerFlag)

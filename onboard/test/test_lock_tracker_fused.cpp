@@ -366,6 +366,34 @@ void testCallerBufferReuse() {
                 worst, LockTracker::stateName(t.state()));
 }
 
+// CoastFlow in isolation: seed on one frame, step to a frame shifted by a KNOWN
+// amount, and require the median displacement to be exactly that. Deterministic
+// -- no chaos, no battery -- which is what makes it able to catch the defect the
+// reference found: mode 2 must REPLACE the extrapolation, and a matcher that is
+// off by a pixel per frame compounds into a box-width of drift in three frames.
+//
+// 18 px is the case that motivates the pyramid at all: a single-scale search
+// would need +-20 px (1681 positions) and would still lose the blurred target.
+void testCoastFlowMeasuresKnownShift() {
+    const int shifts[] = {0, 5, 11, 18};
+    for (int sh : shifts) {
+        Rng rng;
+        CoastFlow cf;
+        GrayFrame a = makeFrame(320, 240, 160, 120, 60, rng, false, 1.f);
+        cf.seed(a, 160.f, 120.f, 60.f);
+        CHECK(cf.ready(), "shift %d: seed found no points", sh);
+        GrayFrame b = makeFrame(320, 240, 160.f + sh, 120.f + sh / 2.f, 60, rng, false, 1.f);
+        float dx = 0, dy = 0;
+        const bool ok = cf.step(b, dx, dy);
+        CHECK(ok, "shift %d: no verdict", sh);
+        if (!ok) continue;
+        CHECK(std::fabs(dx - sh) <= 1.f, "shift %d: dx = %.1f", sh, dx);
+        CHECK(std::fabs(dy - sh / 2.f) <= 1.f, "shift %d: dy = %.1f", sh, dy);
+        std::printf("  coast flow: truth (%d,%.1f) measured (%.1f,%.1f)\n",
+                    sh, sh / 2.f, dx, dy);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -379,6 +407,7 @@ int main() {
     testCueSwitchKeepsLock();
     testWideSearchScratchReuse();
     testCallerBufferReuse();
+    testCoastFlowMeasuresKnownShift();
     if (failures) { std::printf("\n%d FAILURE(S)\n", failures); return 1; }
     std::printf("\nall checks passed\n");
     return 0;

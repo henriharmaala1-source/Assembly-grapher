@@ -52,7 +52,7 @@ void LockTracker::reset() {
     keyframes_.clear(); keyframeNorms_.clear();
     lumaTmpl_.clear();  lumaNorm_ = 0.f;
     histFg_.clear();    histBg_.clear();
-    haveLastCrop_ = false; havePrev_ = false; prevLuma_.clear();
+    haveLastCrop_ = false; havePrev_ = false; prevLuma_.clear(); coast_.clear();
     state_ = State::IDLE; badFrames_ = 0; conf_ = 0.f; psrEma_ = 0.f; occLow_ = 0;
 }
 
@@ -73,6 +73,8 @@ void LockTracker::designate(const GrayFrame& frame, float px, float py, float si
     badFrames_ = 0; conf_ = 1.f; state_ = State::LOCKED;
     psrEma_ = 0.f; occLow_ = 0;
     stashPrev(frame);
+    coast_.clear();
+    if (lkAssist) coast_.seed(frame, bcx_, bcy_, bsize_);
 }
 
 LockTracker::Result LockTracker::update(const GrayFrame& frame) {
@@ -99,6 +101,9 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame) {
     stashPrev(frame);
     tFlowMs_ = 0.9f * tFlowMs_ + 0.1f * float(nowMs() - tFlow0);
 
+    // Position BEFORE the prediction step, so the mode-2 assist below can
+    // REPLACE the extrapolation rather than add to it.
+    prex_ = cf_.x(); prey_ = cf_.y();
     float pcx = 0, pcy = 0;
     cf_.predict(edx, edy, pcx, pcy);
 
@@ -272,6 +277,33 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame) {
                : wide                        ? State::SEARCHING
                                              : State::COASTING;
         if (state_ == State::LOST) { Result r = result(); reset(); r.state = State::LOST; return r; }
+    }
+
+    // LK COAST ASSIST, mode 2. The search has already had its say and come back
+    // empty; what is reported and carried forward is then pure extrapolation,
+    // and this replaces it with measured image displacement.
+    //
+    // REPLACE, do not add. This was a real defect in the reference: the coast
+    // branch has already set bcx to prev + vx + edx, and flow measures TOTAL
+    // image motion -- target plus camera -- so `bcx += d` counts the velocity
+    // step and the camera pan TWICE. Measured on a target moving exactly
+    // 5.00 px/frame, the first coast step came out at 10.12 px and over 8 forced
+    // coast frames the box finished +12.5 px PAST the target where plain
+    // coasting finished 13.9 px short.
+    if (lkAssist) {
+        if (state_ != State::LOCKED && state_ != State::IDLE && coast_.ready()) {
+            float ldx = 0, ldy = 0;
+            if (coast_.step(frame, ldx, ldy)) {
+                bcx_ = prex_ + ldx; bcy_ = prey_ + ldy;
+                cf_.setPos(bcx_, bcy_);
+            }
+        } else if (state_ == State::LOCKED) {
+            // Re-seed on EVERY locked frame: the flow reference frame only
+            // advances when the points do, so a stale seed means tracking from a
+            // frame several old exactly when the target is already hard to
+            // follow. Measured, every-4th scored 69 % against 75 %.
+            coast_.seed(frame, bcx_, bcy_, bsize_);
+        }
     }
 
     if (state_ == State::LOCKED) {

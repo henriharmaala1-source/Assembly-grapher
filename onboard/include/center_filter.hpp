@@ -50,6 +50,10 @@ public:
     // the last sighting instead of sailing out of frame on stale speed.
     void decay(float f) { vx_ *= f; vy_ *= f; }
 
+    // Force the filtered position, e.g. when the LK coast assist REPLACES the
+    // extrapolation for a frame that failed to lock. Velocity is untouched.
+    void setPos(float px, float py) { x_ = px; y_ = py; }
+
     float x() const { return x_; }
     float y() const { return y_; }
     float speed() const { return std::sqrt(vx_ * vx_ + vy_ * vy_); }

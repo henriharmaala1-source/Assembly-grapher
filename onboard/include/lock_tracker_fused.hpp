@@ -49,17 +49,16 @@
 // Carried across here: LATTICE_FIX, GRID_SYM and KF_DEGEN_GUARD (the three
 // verified defects; see the comments at each site).
 //
-// STILL MISSING, and the reason this is not yet at parity:
-//   * LK COAST ASSIST (LK_ASSIST / LK_MODE in simtrack.py). Sparse
-//     Lucas-Kanade inside the last good box supplies image evidence while
-//     coasting, instead of extrapolating blind on constant velocity. Measured
-//     +2.35 +/- 0.97 under a paired ensemble (t = 2.43). The reference commit
-//     notes the port needs SUB-PIXEL LK, not the block matcher in
-//     optical_flow.cpp -- so this is real work, not a transcription.
-//   * The shared template-independent NCC factorisation across the bank (perf).
-//   * Cue ORDER matters because EARLY_TERM_PSR lets the first cue suppress the
-//     rest; android's FUSE list was reversed vs the reference and cost 25.8
-//     points on the low-contrast clip. Pass cues in reference order.
+// Also carried across: LK COAST ASSIST in mode 2 (CoastFlow in optical_flow.hpp,
+// the reference's portable SSD variant, +2.35 +/- 0.97 paired), and the caller
+// default cue order, which matters because EARLY_TERM_PSR lets the first cue
+// suppress the rest -- android's list was REVERSED vs the reference and cost
+// 25.8 points on the low-contrast clip. Reference order is edge, chroma, none.
+//
+// STILL MISSING: the shared template-independent NCC factorisation across the
+// appearance bank (reference commit 2fb40f3). Pure throughput, no behaviour
+// change -- the anchor, adaptive and keyframe matches all recompute the same
+// per-position patch mean and norm, which depend only on the crop.
 //
 // KNOWN UNCLOSED REGRESSION from LATTICE_FIX: PSR roughly doubles, so the
 // ABSOLUTE psrWarn/psrLock gates are effectively half as strict and lock is held
@@ -94,6 +93,7 @@ public:
     float psrLock       = 5.5f;
     float psrWarn       = 3.8f;
     float latencyFrames = 4.5f;   // ~150 ms at 30 fps -- output aim leads by this
+    bool  lkAssist      = true;   // LK coast assist (mode 2)
 
     void setCues(const std::vector<CropFilter>& c);
     const std::vector<CropFilter>& cues() const { return cues_; }
@@ -202,6 +202,13 @@ private:
     float bcx_ = 0, bcy_ = 0, bsize_ = 0;
     CenterFilter cf_;
     OpticalFlow  flow_;
+    // LK COAST ASSIST, mode 2: correct the OUTPUT of a frame that failed to
+    // lock, rather than the prediction that fed the search. Feeding the same
+    // number into the prediction instead (the obvious integration) is nearly a
+    // no-op, because any frame where the NCC does accept a peak discards it --
+    // measured 14 % vs 62 % on the manoeuvre clip.
+    CoastFlow coast_;
+    float prex_ = 0, prey_ = 0;   // position BEFORE the prediction step
     int   badFrames_ = 0;
     float psrEma_ = 0.f;
     int   occLow_ = 0;

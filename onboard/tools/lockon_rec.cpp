@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
         "{aux           | 5     | RC channel index to watch; AUX1 = 4 }"
         "{aux-hi        | 1700  | us at/above which the switch reads HIGH }"
         "{aux-lo        | 1300  | us at/below which it reads LOW }"
-        "{cues          | none,edge | fused channels: none,stretch,edge,threshold,sharpen,chroma }"
+        "{cues          | edge,chroma,none | fused channels: none,stretch,edge,threshold,sharpen,chroma }"
         "{boxsize       | 64    | lock box side, px }"
         "{out           | .     | output directory }"
         "{record        | session | session | always | off }"

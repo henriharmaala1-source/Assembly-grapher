@@ -52,6 +52,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <cmath>
 #include <string>
 #include <thread>
 
@@ -160,6 +161,37 @@ private:
     bool high_ = false;
 };
 
+// --- synthetic camera ------------------------------------------------------
+// --camera=-1 replaces the capture with a generated scene: textured background,
+// a textured target on a slow lissajous. It exists so the WHOLE pipeline --
+// designate, track, overlay, writer, CSV, signal handling -- can be validated on
+// the Pi with no camera and no flight controller attached. Every other failure
+// then has one fewer place to hide.
+void synthFrame(cv::Mat& out, int w, int h, double t) {
+    if (out.empty() || out.cols != w || out.rows != h) out = cv::Mat(h, w, CV_8UC3);
+    const double tx = w * 0.5 + w * 0.28 * std::sin(t * 0.7);
+    const double ty = h * 0.5 + h * 0.24 * std::sin(t * 1.1);
+    const int half = 22;
+    for (int y = 0; y < h; ++y) {
+        unsigned char* row = out.data + size_t(y) * out.step;
+        for (int x = 0; x < w; ++x) {
+            int v = int(90 + 40 * std::sin(x * 0.06) * std::cos(y * 0.045));
+            int b = v, g = v, r = v;
+            const double dx = x - tx, dy = y - ty;
+            if (std::fabs(dx) <= half && std::fabs(dy) <= half) {
+                // Deterministic hash -> broadband, non-repeating target texture.
+                const unsigned k = unsigned(int(dx) + 64) * 73856093u
+                                 ^ unsigned(int(dy) + 64) * 19349663u;
+                v = 120 + int((k >> 8) & 0x7F);
+                b = v / 2; g = v; r = 255 - v / 2;          // colour-distinct
+            }
+            row[x * 3 + 0] = (unsigned char)std::min(std::max(b, 0), 255);
+            row[x * 3 + 1] = (unsigned char)std::min(std::max(g, 0), 255);
+            row[x * 3 + 2] = (unsigned char)std::min(std::max(r, 0), 255);
+        }
+    }
+}
+
 // --- cv::Mat -> GrayFrame, allocation-free after the first frame ------------
 // The returned view borrows these buffers; it must not outlive the next call.
 std::vector<float> gLuma, gU, gV;
@@ -210,7 +242,7 @@ void putShadowed(cv::Mat& img, const std::string& s, cv::Point p,
 int main(int argc, char** argv) {
     const cv::String keys =
         "{help h        |       | show this }"
-        "{camera        | 0     | V4L2 camera index }"
+        "{camera        | 0     | V4L2 camera index; -1 = synthetic scene, no hardware }"
         "{width         | 640   | capture width }"
         "{height        | 480   | capture height }"
         "{fps           | 30    | capture fps request }"
@@ -227,7 +259,8 @@ int main(int argc, char** argv) {
         "{preroll       | 2.0   | seconds of video kept before each lock }"
         "{fourcc        | MJPG  | writer codec }"
         "{display       | false | show a window (needs a desktop) }"
-        "{autolock      | 0     | with --fc=none: lock N seconds after start }"
+        "{autolock      | 0     | with --fc=none: lock N s after start, then cycle }"
+        "{rcscan        | false | print every RC channel and exit -- find your AUX }"
         ;
 
     cv::CommandLineParser parser(argc, argv, keys);
@@ -270,12 +303,40 @@ int main(int argc, char** argv) {
         if (cues.empty()) cues.push_back(track::CropFilter::NONE);
     }
 
+    // ---- rcscan: which channel is the switch on?
+    // Nothing else can be validated until this is known, and it is not
+    // discoverable from the FC without watching the frame. Flick the switch and
+    // read which column moves. No camera involved.
+    if (parser.get<bool>("rcscan")) {
+        FcReader scan;
+        if (!scan.open(parser.get<std::string>("fc-port"), parser.get<int>("fc-baud"))) {
+            std::fprintf(stderr, "[fc] cannot open %s\n",
+                         parser.get<std::string>("fc-port").c_str());
+            return 1;
+        }
+        scan.start();
+        std::signal(SIGINT, onSignal);
+        std::printf("Flick the switch you want to use. Ctrl-C to stop.\n");
+        while (!gStop) {
+            const FcTelemetry tl = scan.snapshot();
+            std::printf("\rlink=%d n=%2d ch:", (int)tl.linkUp, tl.rcCount);
+            for (int i = 0; i < tl.rcCount && i < 12; ++i)
+                std::printf(" %d:%4d", i, tl.rc[i]);
+            std::fflush(stdout);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        std::printf("\n");
+        scan.stop();
+        return 0;
+    }
+
     // ---- camera
     std::signal(SIGINT,  onSignal);
     std::signal(SIGTERM, onSignal);
 
+    const bool synth = (camIdx < 0);
     cv::VideoCapture cap;
-    cap.open(camIdx, cv::CAP_V4L2);
+    if (!synth) cap.open(camIdx, cv::CAP_V4L2);
     // Ask the CAMERA for MJPG. A USB webcam on a Pi defaults to YUYV, which at
     // 640x480 is 18 MB/s over USB2 and is commonly capped to 10-15 fps by
     // bandwidth alone -- the recording then looks like the tracker is slow when
@@ -285,12 +346,14 @@ int main(int argc, char** argv) {
     cap.set(cv::CAP_PROP_FRAME_WIDTH,  camW);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, camH);
     cap.set(cv::CAP_PROP_FPS,          camFps);
-    if (!cap.isOpened()) {
-        std::fprintf(stderr, "Cannot open camera %d\n", camIdx);
+    if (!synth && !cap.isOpened()) {
+        std::fprintf(stderr, "Cannot open camera %d (use --camera=-1 to run "
+                             "synthetic, no hardware)\n", camIdx);
         return 1;
     }
-    const int W = (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
-    const int H = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+    const int W = synth ? camW : (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
+    const int H = synth ? camH : (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+    if (synth) std::printf("[cam] SYNTHETIC scene -- no camera, no FC needed\n");
     std::printf("[cam] %dx%d requested %d fps\n", W, H, camFps);
 
     // ---- FC (read only)
@@ -370,8 +433,12 @@ int main(int argc, char** argv) {
 
     std::printf("[run] ctrl-C to stop\n");
     while (!gStop) {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
+        static cv::Mat frame;
+        if (synth) {
+            synthFrame(frame, W, H, nowS());
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(std::max(1, 1000 / std::max(1, camFps))));
+        } else if (!cap.read(frame) || frame.empty()) {
             std::fprintf(stderr, "[cam] read failed\n");
             break;
         }
@@ -387,7 +454,11 @@ int main(int argc, char** argv) {
             tel = fcr.snapshot();
             if (auxIdx >= 0 && auxIdx < tel.rcCount) auxUs = tel.rc[auxIdx];
         } else if (autolock > 0) {
-            auxUs = (t - tStart >= autolock) ? 2000 : 1000;
+            // Cycle rather than latch: a bench run should exercise the rising
+            // edge, the release, and a SECOND session, which is where file
+            // handling actually breaks.
+            const double ph = std::fmod(t - tStart, autolock * 2.0);
+            auxUs = (t - tStart >= autolock && ph >= autolock) ? 2000 : 1000;
         } else {
             auxUs = manualLock ? 2000 : 1000;
         }

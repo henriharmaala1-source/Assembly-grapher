@@ -44,6 +44,29 @@
 // unit-tested headless and diffed against desktop/simtrack.py, which is the
 // validation mirror for BOTH implementations. Any cv::Mat belongs at the caller.
 //
+// PARITY WITH THE REFERENCE. desktop/simtrack.py is the NEWEST implementation,
+// not the Kotlin -- it moved six commits ahead between 2026-07-28 and 08-03.
+// Carried across here: LATTICE_FIX, GRID_SYM and KF_DEGEN_GUARD (the three
+// verified defects; see the comments at each site).
+//
+// STILL MISSING, and the reason this is not yet at parity:
+//   * LK COAST ASSIST (LK_ASSIST / LK_MODE in simtrack.py). Sparse
+//     Lucas-Kanade inside the last good box supplies image evidence while
+//     coasting, instead of extrapolating blind on constant velocity. Measured
+//     +2.35 +/- 0.97 under a paired ensemble (t = 2.43). The reference commit
+//     notes the port needs SUB-PIXEL LK, not the block matcher in
+//     optical_flow.cpp -- so this is real work, not a transcription.
+//   * The shared template-independent NCC factorisation across the bank (perf).
+//   * Cue ORDER matters because EARLY_TERM_PSR lets the first cue suppress the
+//     rest; android's FUSE list was reversed vs the reference and cost 25.8
+//     points on the low-contrast clip. Pass cues in reference order.
+//
+// KNOWN UNCLOSED REGRESSION from LATTICE_FIX: PSR roughly doubles, so the
+// ABSOLUTE psrWarn/psrLock gates are effectively half as strict and lock is held
+// longer on an empty scene (reference: z_below_floor 15 -> 1, g_occlusion
+// 65 -> 54, both 0W-8L). Scaling the gates by 2 was tested there and is
+// DECISIVELY WORSE (-10.77 +/- 1.48, t = -7.28). Do not retry it.
+//
 // The tunables below are NOT free parameters -- most were swept in simtrack.py
 // and several are non-monotonic. See android-tracker/TRACKER_PLAN.md before
 // changing one, and re-run the A/B rather than reasoning about it.

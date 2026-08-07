@@ -133,8 +133,18 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame) {
         ? maxHalf
         : std::min(std::max(int(SEARCH + velCrop * 2.f), SEARCH), maxHalf);
 
+    // GRID_SYM. Round the half-width DOWN to a whole number of strides,
+    // otherwise the grid is asymmetric about the prediction whenever
+    // searchHalf % stride != 0 -- which is every default configuration:
+    // [-22,+20] locked, [-50,+49] coasting, [-178,+173] in a 3x wide search. The
+    // search then reached further one way than the other, and cc = (gw-1)/2
+    // mislocated the prediction by up to 2.5 crop px, biasing the proximity
+    // weight and the distractor prior DIRECTIONALLY. Centring error goes to 0 in
+    // all three regimes. See the LATTICE_FIX note -- they ship together.
+    const int searchHalfSym =
+        std::max(strideEff, (searchHalf / strideEff) * strideEff);
     const int c0 = cropPix / 2;
-    const int g0 = c0 - searchHalf, g1 = c0 + searchHalf;
+    const int g0 = c0 - searchHalfSym, g1 = c0 + searchHalfSym;
     const int gw = (g1 - g0) / strideEff + 1;
     const float cc = (gw - 1) / 2.f;
     const float sigP = (badFrames_ > 0) ? gw / 1.4f : gw / 2.5f;
@@ -330,6 +340,16 @@ void LockTracker::adaptTemplates(const GrayFrame& rawCrop, float cx, float cy) {
 // every current slot), keeping the bank diverse.
 void LockTracker::maybeBankKeyframe(int ci, const Patch& fresh) {
     const float fn = normOf(fresh);
+    // KF_DEGEN_GUARD. A patch that is locally FLAT in this cue (a uniform target
+    // in chroma, a texture-free one in edge) has norm 1e-6 from normOf's floor,
+    // so its similarity to every stored slot is 0/(1e-6*1e-6) = 0 -- read as
+    // MAXIMALLY NOVEL, so it always passes the gate below. Worse, eviction keeps
+    // it forever: a zero patch is never the most-redundant slot. Measured in the
+    // Python reference: both chroma slots fill with zeros by update frame 12,
+    // and are then max'd into the response exactly when the primary is weak --
+    // the case the bank exists for -- rectifying every negative correlation to 0
+    // and corrupting the sidelobe statistics psrOf measures.
+    if (fn < 1e-3f) return;
     float maxSim = dot(fresh, anchors_[ci]) / (fn * anchorNorms_[ci]);
     maxSim = std::max(maxSim, dot(fresh, templates_[ci]) / (fn * tmplNorms_[ci]));
     auto& kf = keyframes_[ci];
@@ -595,7 +615,26 @@ float LockTracker::dot(const Patch& a, const Patch& b) {
 
 LockTracker::Patch LockTracker::normPatch(const GrayFrame& g, float cx, float cy,
                                           int size) const {
-    const GrayFrame patch = g.cropResample(cx - size / 2.f, cy - size / 2.f,
+    // LATTICE_FIX. The -0.5 puts the samples on the INTEGER lattice nccAt slices
+    // from, instead of on pixel CENTRES half a pixel to the right of it.
+    // cropResample samples centres (rx + i + 0.5) while nccAt indexes integer
+    // rows, so without this every template was a half-pixel bilinear BLUR of the
+    // source, offset half a pixel from every candidate it is compared against.
+    //
+    // Measured on an identical noiseless crop, where self-match must be 1.000:
+    //     cue      peak unfixed -> fixed     PSR unfixed -> fixed
+    //     none         0.4991 -> 1.0000        14.41 -> 28.57
+    //     edge         0.5433 -> 1.0000        12.42 -> 27.39
+    //     chroma       0.5017 -> 1.0000        13.87 -> 27.15
+    // Every template was matching ITSELF at half strength, and PSR -- which
+    // drives the fusion weight, the accept gate, the adapt gate and the
+    // occlusion baseline -- was halved with it.
+    //
+    // Ships together with GRID_SYM in update(): the two are biases of OPPOSITE
+    // sign that partly cancel, and fixing either alone measures worse than
+    // fixing neither.
+    const GrayFrame patch = g.cropResample(cx - size / 2.f - 0.5f,
+                                           cy - size / 2.f - 0.5f,
                                            float(size), float(size), size, size);
     return meanSub(patch.d, size * size);
 }

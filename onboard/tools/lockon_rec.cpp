@@ -45,6 +45,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -60,6 +61,13 @@
 #include "msp_backend.hpp"
 
 namespace {
+
+// Ctrl-C must CLOSE THE FILE, not kill the process. An AVI needs its index
+// written on release(); a SIGKILLed writer leaves an unplayable stub, which on a
+// field trip means the flight happened and the evidence did not. This is the
+// normal way to stop a headless run, so it is the path that has to be clean.
+std::atomic<bool> gStop{false};
+void onSignal(int) { gStop = true; }
 
 using clock_t_ = std::chrono::steady_clock;
 
@@ -263,8 +271,17 @@ int main(int argc, char** argv) {
     }
 
     // ---- camera
+    std::signal(SIGINT,  onSignal);
+    std::signal(SIGTERM, onSignal);
+
     cv::VideoCapture cap;
     cap.open(camIdx, cv::CAP_V4L2);
+    // Ask the CAMERA for MJPG. A USB webcam on a Pi defaults to YUYV, which at
+    // 640x480 is 18 MB/s over USB2 and is commonly capped to 10-15 fps by
+    // bandwidth alone -- the recording then looks like the tracker is slow when
+    // it is the pipe. Harmless on a CSI camera, which ignores it.
+    cap.set(cv::CAP_PROP_FOURCC,
+            cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
     cap.set(cv::CAP_PROP_FRAME_WIDTH,  camW);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, camH);
     cap.set(cv::CAP_PROP_FPS,          camFps);
@@ -352,7 +369,7 @@ int main(int argc, char** argv) {
     long frameNo = 0;
 
     std::printf("[run] ctrl-C to stop\n");
-    for (;;) {
+    while (!gStop) {
         cv::Mat frame;
         if (!cap.read(frame) || frame.empty()) {
             std::fprintf(stderr, "[cam] read failed\n");
@@ -474,7 +491,10 @@ int main(int argc, char** argv) {
             cv::circle(vis, cv::Point(W - 16, 16), 6, cv::Scalar(0, 0, 255), -1);
 
         // ---- record
-        if (prerollN) {
+        if (prerollN && !writer.isOpened()) {
+            // Only while IDLE: during a session every frame is already going to
+            // the file, and a clone is ~0.9 MB at 640x480 -- 27 MB/s of pointless
+            // memcpy on the capture thread.
             ring.push_back(vis.clone());
             while (ring.size() > prerollN) ring.pop_front();
         }
@@ -508,7 +528,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    closeSession();
+    closeSession();          // writes the AVI index -- see onSignal
     fcr.stop();
     cap.release();
     std::printf("[done] %ld frames, %ld written, %ld slow writes\n",

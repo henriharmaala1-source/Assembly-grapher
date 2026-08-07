@@ -57,6 +57,22 @@ target_include_directories(blackbox_decode PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(blackbox_decode PRIVATE ${OpenCV_LIBS})
 
+# Field-test recorder for the lock-on tracker: AUX switch on the FC arms the
+# lock, everything is recorded with the overlay burned in plus a CSV.
+# READ ONLY on the FC -- it links MspBackend for telemetry and never calls
+# sendControl. Keep it that way; control belongs in kestrel behind the arbiter.
+add_executable(lockon_rec
+  tools/lockon_rec.cpp
+  src/lock_tracker_fused.cpp
+  src/gray_frame.cpp
+  src/crop_filters.cpp
+  src/optical_flow.cpp
+  src/msp_backend.cpp
+  src/serial_port.cpp)
+target_include_directories(lockon_rec PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(lockon_rec PRIVATE ${OpenCV_LIBS} Threads::Threads)
+
 # Stereo matching cost on the Pi 5 CPU -- the number the IMX296 bet rests on.
 # Needs no cameras and nothing else from the tree; run it on the Pi directly.
 include(CheckCXXCompilerFlag)
@@ -123,4 +139,17 @@ if(BUILD_TESTS)
                src/world_model.cpp src/realtime.cpp)
   kestrel_test(test_realtime src/realtime.cpp)
   kestrel_test(test_black_box src/black_box.cpp src/world_model.cpp)
+
+  # The fused tracker is deliberately OpenCV-free, so its tests link nothing but
+  # the tracker itself -- they run anywhere a compiler does, including a machine
+  # with no OpenCV dev packages. Kept out of kestrel_test() for that reason.
+  add_executable(test_lock_tracker_fused
+    test/test_lock_tracker_fused.cpp
+    src/lock_tracker_fused.cpp
+    src/gray_frame.cpp
+    src/crop_filters.cpp
+    src/optical_flow.cpp)
+  target_include_directories(test_lock_tracker_fused PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME lock_tracker_fused COMMAND test_lock_tracker_fused)
 endif()

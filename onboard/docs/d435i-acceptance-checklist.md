@@ -172,8 +172,19 @@ Turn on **Depth**. Stand about 1 m from a flat, textured wall, filling the frame
 Still on the flat wall: **More → On-Chip Calibration**. It runs in about 15 s
 and prints a **health score**.
 
-* **Lower is better, closer to zero.** Around 0.25 is quoted as a good result.
-  These are guidelines, not thresholds.
+* **It is the ABSOLUTE value that matters. The sign is a direction, not a
+  ranking.** A health of −0.42 is 0.42, not "better than 0.25" — and saying
+  "lower is better" without saying "in magnitude" gets that exactly backwards.
+
+  | \|health\| | means | do |
+  |---|---|---|
+  | ≤ 0.25 | good | nothing |
+  | 0.25 – 0.75 | could be improved | accept the self-calibration, run again, confirm it drops |
+  | ≥ 0.75 | needs recalibration | on-chip first; OEM/dynamic calibration if it will not come down |
+
+  Guidelines, not hard thresholds — but a value that will not come down after
+  two rounds of on-chip calibration is a different signal from a high first
+  reading, and only the second one is worrying.
 * You can read the score **without burning the result to flash** — the Viewer
   asks before writing. On a camera you have not bought yet, read it and decline.
 

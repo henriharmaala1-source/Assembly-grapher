@@ -1109,6 +1109,27 @@ estimator.
 
 ---
 
+## 2026-08-11 — first real D435i numbers
+
+Seller meet, RealSense Viewer only.
+
+* **On-chip calibration health: −0.42.** Absolute value is what counts, so 0.42
+  — the middle band (0.25–0.75, "could be improved"). Not a walk-away: this is
+  precisely the recoverable drift a used unit is expected to have, and on-chip
+  calibration is the tool for it. The test that matters is whether it *comes
+  down* after applying: a high first reading is normal, a reading that will not
+  improve after two rounds is mechanical.
+* **Stereo works** — depth streams. Worth more than it sounds: producing depth
+  at all requires both IR imagers to be functional enough to match, so a
+  totally dead imager is ruled out. A *degraded* one is not.
+* **Not validated:** IMU / Motion Module, the two IR streams individually, the
+  emitter toggle, the connector flex.
+
+**The open item that matters is the IMU.** No Motion Module means it is a D435,
+not a D435i, and that is both the reason for the price premium and the thing
+VIO depends on. Everything else outstanding is either fixable or a price
+argument; that one is the wrong camera.
+
 ## Open / unresolved
 
 * SMF-VO unread. Re-check when arXiv is reachable; if it holds, it becomes the

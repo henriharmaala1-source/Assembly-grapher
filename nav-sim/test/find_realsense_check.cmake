@@ -60,6 +60,32 @@ unset(realsense2_FOUND)
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/find_realsense.cmake")
 expect(realsense2_FOUND "finds a plain <prefix>/lib layout")
 
+# 2b. A DIFFERENTLY NAMED product folder under Program Files, found by glob
+#     rather than by a hard-coded name. This is the case that matters most:
+#     the project moved from Intel to RealSense AI and the Windows installer
+#     asset was renamed, so "Intel RealSense SDK 2.0" is a guess. A guess that
+#     misses looks exactly like a missing SDK.
+file(REMOVE_RECURSE "${TMP}")
+make_sdk("${TMP}/pf/RealSense SDK 2.0" "lib/x64")
+set(ENV{REALSENSE2_DIR} "")
+set(ENV{ProgramFiles} "${TMP}/pf")
+unset(RS2_INCLUDE_DIR CACHE)
+unset(RS2_LIBRARY CACHE)
+unset(realsense2_FOUND)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/find_realsense.cmake")
+expect(realsense2_FOUND "finds a RENAMED product folder by glob under Program Files")
+
+# 2c. And an Intel-branded one, for the installs that already exist.
+file(REMOVE_RECURSE "${TMP}")
+make_sdk("${TMP}/pf/Intel RealSense SDK 2.0" "lib/x64")
+set(ENV{ProgramFiles} "${TMP}/pf")
+unset(RS2_INCLUDE_DIR CACHE)
+unset(RS2_LIBRARY CACHE)
+unset(realsense2_FOUND)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/find_realsense.cmake")
+expect(realsense2_FOUND "and the Intel-branded folder name too")
+set(ENV{ProgramFiles} "")
+
 # 3. Nothing there at all -> must NOT claim to have found it.
 file(REMOVE_RECURSE "${TMP}")
 file(MAKE_DIRECTORY "${TMP}/empty")

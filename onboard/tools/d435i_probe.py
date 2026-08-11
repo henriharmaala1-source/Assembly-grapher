@@ -135,6 +135,14 @@ def analyse(roi_m, fx, baseline_m, cell_m=0.25, tape_m=None):
         out["error"] = "no ROI pixel returned depth in at least half the frames"
         return out
 
+    # Fixed-pattern error against a best-fit plane, from the TEMPORAL MEAN so
+    # random noise is already averaged out.
+    mean_img = np.where(ok, per_px_mean, np.nan)
+    pr = plane_residual(mean_img, fx, baseline_m)
+    if pr:
+        out["plane_rms_px"] = pr["rms_px"]
+        out["plane_p95_px"] = pr["p95_px"]
+
     sigma_z = float(np.median(per_px_std[ok]))
     z = float(np.median(per_px_mean[ok]))
     out["sigma_z_m"] = sigma_z
@@ -179,6 +187,49 @@ def analyse(roi_m, fx, baseline_m, cell_m=0.25, tape_m=None):
                 "The Z^2 linearisation is marginal here; sigma_d is over-estimated. "
                 "Re-measure at a shorter range.")
     return out
+
+
+
+def plane_residual(roi_mean_m, fx, baseline_m):
+    """FIXED-PATTERN disparity error against a best-fit plane, in pixels.
+
+    THIS IS THE CALIBRATION MEASUREMENT, and it is a different thing from
+    sigma_d. sigma_d is RANDOM noise -- it is set by the imagers, the lens and
+    the ASIC's matcher, and it does not drift with age. Calibration drift shows
+    up as SHAPE: a flat wall reads as bowed or tilted because the rectification
+    between the two imagers has moved. Averaging over frames first removes the
+    random part, so what is left is the fixed pattern.
+
+    Done in DISPARITY space on purpose. For a planar surface seen by a pinhole
+    camera, depth is NOT linear across the image but disparity IS -- so a plane
+    fit to d = fx*B/Z has a residual that is directly comparable, in the same
+    pixels, to the temporal sigma_d. That comparison is the whole diagnostic:
+
+        spatial ~ temporal      noise-limited. Calibration is fine.
+        spatial >> temporal     the wall is not coming out flat. Run on-chip
+                                calibration; this is exactly what it fixes.
+
+    Only meaningful pointed at a genuinely flat surface, which the caller has to
+    assert -- nothing here can tell a bowed wall from a bowed calibration."""
+    z = np.asarray(roi_mean_m, dtype=np.float64)
+    ok = np.isfinite(z) & (z > 0.05)
+    if ok.sum() < 30 or fx <= 0 or baseline_m <= 0:
+        return None
+    h, w = z.shape
+    v, u = np.mgrid[0:h, 0:w]
+    disp = np.zeros_like(z)
+    disp[ok] = fx * baseline_m / z[ok]
+    A = np.stack([u[ok].ravel(), v[ok].ravel(), np.ones(int(ok.sum()))], axis=1)
+    b = disp[ok].ravel()
+    try:
+        coef, *_ = np.linalg.lstsq(A, b, rcond=None)
+    except Exception:
+        return None
+    resid = b - A @ coef
+    return dict(rms_px=float(np.sqrt(np.mean(resid ** 2))),
+                p95_px=float(np.percentile(np.abs(resid), 95)),
+                tilt_px_per_px=(float(coef[0]), float(coef[1])),
+                n=int(ok.sum()))
 
 
 def synth_roi(frames, h, w, z_true, fx, baseline_m, sigma_d_px, rng,
@@ -304,6 +355,44 @@ def selftest():
     st, lines = classify_sdk(False, None, pyver=(3, 14))
     check(any("3.14" in l for l in lines), "a too-new Python is called out")
     check(classify_sdk(True, None)[0] == "ok", "a working SDK classifies as ok")
+
+    # 7b. FLATNESS, which is the CALIBRATION measurement -- a different thing
+    #     from sigma_d. A flat wall plus noise must come out noise-limited; a
+    #     bowed rectification must come out as fixed-pattern error well above
+    #     the noise. If this cannot tell those apart it cannot tell a
+    #     drifted camera from a noisy one, which is the whole question.
+    fx2, B2 = 425.0, 0.050
+    flat = synth_roi(120, 48, 84, 2.0, fx2, B2, 0.25, rng)
+    rflat = analyse(flat, fx2, B2, tape_m=2.0)
+    ratio_flat = rflat["plane_rms_px"] / rflat["sigma_d_px"]
+    check(ratio_flat < 1.0, "a flat wall reads as noise-limited",
+          f"fixed-pattern {ratio_flat:.2f}x the random sigma_d")
+
+    #     Now bow it, the way a drifted rectification does: a quadratic error
+    #     across the image in DISPARITY, a few tenths of a pixel at the edges.
+    h2, w2 = 48, 84
+    vv, uu = np.mgrid[0:h2, 0:w2]
+    #     Note the arithmetic, because it sets what the threshold MEANS: a
+    #     quadratic of amplitude A across the frame has an RMS of 0.298*A once
+    #     the plane fit has absorbed its linear part. So 1.5 px of bow against
+    #     0.25 px of noise is a ratio of 1.8, not 6 -- a real but mild bow that
+    #     deliberately does NOT trip the warning. The 2x threshold means "fixed
+    #     pattern DOMINATES noise", not "any bow at all".
+    def bowed_stack(amp_px):
+        bow = amp_px * (((uu - w2 / 2) / (w2 / 2)) ** 2 - 0.5)
+        z_b = fx2 * B2 / (fx2 * B2 / 2.0 + bow)
+        return np.broadcast_to(z_b, (120, h2, w2)) + (flat - 2.0)   # same noise
+
+    rbow = analyse(bowed_stack(4.0), fx2, B2, tape_m=2.0)
+    ratio_bow = rbow["plane_rms_px"] / rbow["sigma_d_px"]
+    check(ratio_bow > 3.0, "a bowed rectification reads as fixed-pattern, not noise",
+          f"4 px bow -> fixed-pattern {ratio_bow:.1f}x the random sigma_d")
+    rmild = analyse(bowed_stack(1.5), fx2, B2, tape_m=2.0)
+    ratio_mild = rmild["plane_rms_px"] / rmild["sigma_d_px"]
+    check(1.2 < ratio_mild < 2.0, "a MILD bow is visible but below the warning line",
+          f"1.5 px bow -> {ratio_mild:.1f}x (0.298*A/sigma_d, as predicted)")
+    check(abs(rbow["sigma_d_px"] - rflat["sigma_d_px"]) / rflat["sigma_d_px"] < 0.25,
+          "and the bow does NOT inflate sigma_d -- they are separate faults")
 
     # 8. The Windows frame-drop trap. Half the affected machines behave
     #    normally, so this cannot be caught by observation -- only by knowing.
@@ -669,6 +758,16 @@ def report_arm(log, label, r, args):
             f"{r['z_max_derated_m']:.2f} m with the 25 % derate")
         if "model_warning" in r:
             log(f"  !! {r['model_warning']}")
+        if "plane_rms_px" in r:
+            ratio = r["plane_rms_px"] / max(1e-9, r["sigma_d_px"])
+            log(f"  flatness (ON A FLAT WALL ONLY)  {r['plane_rms_px']:.3f} px rms "
+                f"fixed-pattern, {ratio:.1f}x the random sigma_d")
+            if ratio > 2.0:
+                log("  !! the wall is not coming out flat. That is CALIBRATION, not")
+                log("     noise, and it is what on-chip calibration exists to fix:")
+                log("     RealSense Viewer > More > On-Chip Calibration (~15 s).")
+            elif ratio > 0:
+                log("     (noise-limited -- nothing for on-chip calibration to fix)")
     else:
         log("  -> sigma_d not computed (needs intrinsics and a valid ROI)")
     log("")

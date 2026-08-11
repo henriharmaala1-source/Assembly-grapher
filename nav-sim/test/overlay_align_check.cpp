@@ -163,6 +163,45 @@ int main() {
               "a point behind the camera is rejected, not mirrored to the front");
     }
 
+    // --- the chase view's unknown fog -------------------------------------
+    // Standing BEHIND the aircraft means every ray crosses metres of space
+    // nobody ever measured before it reaches the scene. At first-person fog
+    // strength that space is charged as uncertainty and the pane goes white --
+    // which is right when the eye is the aircraft's and wrong when it is not,
+    // because that unknown is a property of where the eye was PUT.
+    //
+    // Measured on the same post, from 2 m back and 1.2 m up.
+    {
+        const float eN = camN - 2.0f, eU = camU + 1.2f;
+        const float pd = -std::atan2(1.2f, 3.0f) * 180.f / 3.14159265f;
+        auto contrast = [&](const FpvStyle& st, int& hits) {
+            cv::Mat hm;
+            cv::Mat img = M.fpvImageWH(camE, eN, eU, yaw, pd, 200, 200, 60.f,
+                                       9.f, &hm, st);
+            const cv::Vec3f FOG(238, 240, 244);
+            double sum = 0; hits = 0;
+            for (int y = 0; y < img.rows; ++y)
+                for (int x = 0; x < img.cols; ++x) {
+                    if (!hm.at<uchar>(y, x)) continue;
+                    const cv::Vec3b p = img.at<cv::Vec3b>(y, x);
+                    sum += std::fabs(p[0] - FOG[0]) + std::fabs(p[1] - FOG[1]) +
+                           std::fabs(p[2] - FOG[2]);
+                    ++hits;
+                }
+            return hits ? float(sum / hits) : 0.f;
+        };
+        int hFp = 0, hCh = 0;
+        FpvStyle chase; chase.unknownFogM = 24.f; chase.unknownFogMax = 0.30f;
+        const float cFp = contrast(FpvStyle(), hFp);
+        const float cCh = contrast(chase, hCh);
+        check(hFp > 20 && hFp == hCh,
+              "the fog setting changes colour only, never what was HIT",
+              std::to_string(hFp) + " vs " + std::to_string(hCh) + " px");
+        check(cCh > cFp * 1.4f,
+              "and the chase setting leaves the map visible against the fog",
+              "contrast " + std::to_string(cFp) + " -> " + std::to_string(cCh));
+    }
+
     // Explicitly reject the two flips a plausible-looking render would pass.
     check(std::fabs((2 * cx0 - vx_) - dx_) > 20.f,
           "a LEFT/RIGHT flip of the render would NOT match");

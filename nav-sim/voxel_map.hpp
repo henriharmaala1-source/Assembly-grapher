@@ -132,6 +132,23 @@ struct VoxelMapParams {
     int   integrateStride = 1;
 };
 
+// Rendering knobs for the first-person raycast render. The defaults ARE the
+// first-person ones, so every caller that does not mention this gets exactly
+// what it got before.
+//
+// Only the chase view overrides them, and only the unknown fog. That fog is an
+// honesty device for a view from the aircraft: it says "you are looking through
+// space nobody has measured". Move the camera outside the aircraft and the same
+// number stops meaning that -- the unknown between a chase camera and the scene
+// is unknown because I chose to stand back there, not because the map is
+// ignorant of it. Charged at first-person strength it saturates on the first
+// ray and whites out the pane, which is exactly how the chase view looked until
+// I rendered it and went looking for the term responsible.
+struct FpvStyle {
+    float unknownFogM   = 6.f;      // metres of UNKNOWN that saturates the fog
+    float unknownFogMax = 0.85f;    // and how opaque saturation is
+};
+
 class VoxelMap {
 public:
     void init(const VoxelMapParams& p, float cx, float cy, float cz);
@@ -338,7 +355,8 @@ public:
     cv::Mat fpvImageWH(float px, float py, float pz,
                        float yawDeg, float pitchDeg,
                        int outW, int outH, float hfovDeg,
-                       float maxRange, cv::Mat* hitMask = nullptr) const;
+                       float maxRange, cv::Mat* hitMask = nullptr,
+                       const FpvStyle& style = FpvStyle()) const;
 
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }

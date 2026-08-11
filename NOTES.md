@@ -1313,8 +1313,34 @@ empty.
 So: a CHASE view, the same renderer from behind and above the aircraft, framed
 on the PLAN's own length (`horizonS * vMax`, 3 m at 1.5 m/s) rather than on the
 map's range. The first attempt sat a whole map-range back with a 90 deg lens and
-put the aircraft alone in an empty field; 0.8 span back, 0.45 up, 62 deg reads
-properly. `v` cycles first-person / overlay / chase.
+put the aircraft alone in an empty field. `v` cycles first-person / overlay /
+chase.
+
+Then three more things had to be fixed before the pane showed anything, and all
+three were found by rendering it and reading the picture rather than the code:
+
+* **It was drawing the NEAR layer.** That grid is sized to its own honest range
+  and no more — 2.4 x 2.2 m across, which is the whole reason a fine layer is
+  cheap. A camera two metres *behind* the aircraft stands at its edge. Correct
+  for a near layer, wrong for an overview; the chase pane uses the 0.25 m map.
+* **The unknown fog whited it out.** That fog is an honesty device for a view
+  from the aircraft: it says "you are looking through space nobody measured".
+  Move the eye outside the aircraft and the number stops meaning that — the
+  unknown between a chase camera and the scene is unknown because I chose to
+  stand there. At first-person strength (`min(0.85, unknownM/6)`) it saturates
+  on the first ray. `FpvStyle` makes it a parameter; chase uses 24 m / 0.30 cap,
+  measured at 2.2x the contrast against fog, pinned in `overlay_align_check`.
+* **Elevation, not distance, is what makes it read as 3D.** A path's forward
+  extent projects to `sin(elevation)` of itself. At the 14 deg the first framing
+  gave, three metres of rollout became half a metre of picture. 0.55 span back,
+  0.62 up, aimed at the *middle* of the plan, is 31 deg — half the forward
+  extent survives — and a 55 deg lens magnifies the plan without pushing the
+  camera further from it.
+
+Unrelated but found the same way: `voxel_live` silently ignored unknown flags,
+so `--steps 40` (there is no such flag; it is `--frames`) opened a windowed
+session that ran forever and wrote nothing, and looked exactly like a hang. It
+now exits 2 and says so.
 
 `VoxelMap::fpvProject` is the exact inverse of `fpvRay`, which the renderer now
 calls too — so the projection cannot drift from the render. Pinned at 0.0001 px

@@ -895,6 +895,22 @@ vanishing point. Seeing a path as a path needs a viewpoint the path is not
 pointing at. It is framed on the plan's own length (`horizonS × vMax`) rather
 than on the map's range, for the same reason.
 
+Two details in that pane are worth knowing, because both were wrong first and
+both are invisible from the code:
+
+* It renders the **0.25 m map**, not the finest layer available. The near layer's
+  grid covers its own honest range and no more — that is what makes a fine layer
+  cheap — so a camera two metres behind the aircraft is already at its edge.
+* Its **unknown fog is turned down** (`FpvStyle`). Fog for metres of unmeasured
+  space is honest when the eye is the aircraft's; when the eye is two metres
+  behind it, that unknown is a property of where the eye was put, and at
+  first-person strength it saturates immediately and whites out the pane.
+
+The viewpoint sits 0.55 × span back and 0.62 × span up, aimed at the middle of
+the plan — about 31° above it. Elevation is the number that matters: a path's
+forward extent projects to `sin(elevation)` of itself, so a shallow chase angle
+turns three metres of rollout into half a metre of picture.
+
 Paths are projected with `VoxelMap::fpvProject`, the exact inverse of the ray
 `fpvImageWH` casts — pinned to 0.0001 px by `overlay_align_check`, which also
 asserts that a point behind the camera is rejected rather than mirrored to the

@@ -176,7 +176,8 @@ cv::Mat VoxelMap::fpvImage(float px, float py, float pz,
 cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
                              float yawDeg, float pitchDeg,
                              int outW, int outH, float hfovDeg,
-                             float maxRange, cv::Mat* hitMask) const {
+                             float maxRange, cv::Mat* hitMask,
+                             const FpvStyle& style) const {
     cv::Mat img(outH, outW, CV_8UC3);
     if (hitMask) *hitMask = cv::Mat(outH, outW, CV_8U, cv::Scalar(0));
     // One focal length for both axes: the vertical FOV then falls out of the
@@ -220,7 +221,8 @@ cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
                 // Uncertainty fog: how much UNKNOWN we looked through to see
                 // this. A surface behind 4 m of unknown is a guess, and it
                 // should look like one.
-                float ufog = std::min(0.85f, h.unknownM / 6.f);
+                float ufog = std::min(style.unknownFogMax,
+                                      h.unknownM / std::max(0.01f, style.unknownFogM));
                 col = col * (1.f - ufog) + FOG * ufog;
             } else {
                 col = FOG;

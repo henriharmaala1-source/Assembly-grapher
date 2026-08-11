@@ -528,6 +528,15 @@ int mainCli(int argc, char** argv) {
                 haveLiveSupport() ? "" : "  [NOT in this build -- no librealsense]");
             return 0;
         }
+        // An unrecognised flag is an ERROR, not a shrug. This used to fall off
+        // the end of the chain and be ignored, so `--steps 40` (there is no
+        // such flag; it is --frames) ran an endless windowed session that wrote
+        // nothing, and looked exactly like a hang.
+        else {
+            std::fprintf(stderr, "voxel_live: unknown option '%s'. --help lists them.\n",
+                         argv[i]);
+            return 2;
+        }
     }
     return runSession(C);
 }
@@ -942,24 +951,46 @@ static int runSession(Config C) {
             // CHASE. Same renderer, same projection, a viewpoint moved back and
             // up along the aircraft's own heading -- so the plan has extent in
             // the image instead of vanishing down the optical axis.
-            const VoxelMap& src = haveNear ? Mnear : M;
+            // The MEDIUM map, deliberately, and not the finest one available.
+            // The near layer's grid is sized to its own honest range and no
+            // more -- 2.4 * 2.2 m across -- so a camera two metres BEHIND the
+            // aircraft stands at its edge and sees a couple of metres of the
+            // scene before running out of grid. That is correct behaviour for a
+            // near layer and wrong for an overview.
+            const VoxelMap& src = M;
             // Framed on the PLAN, not on the map: the rollouts are
             // horizonS * vMax long (3 m at 1.5 m/s), and that is what has to
             // fill the pane. Sitting a whole map-range back with a 90 deg lens
             // put the aircraft in the middle of an empty field -- rendered it,
             // saw it, moved in.
             const float span = std::max(2.5f, tp.horizonS * vmax);
-            const float back = span * 0.8f, up = span * 0.45f;
-            const float chaseFov = 62.f;
+            // ELEVATION is what makes this a 3D view, and it is the number to
+            // reason about rather than guess. A path's forward extent projects
+            // to sin(elevation) of itself: at the 14 deg the first framing gave,
+            // three metres of rollout became half a metre of picture and the fan
+            // stayed a smear. Standing 0.7*span back and 0.72*span up, aimed at
+            // the MIDDLE of the plan, puts the sightline about 31 deg above the
+            // path -- half the forward extent survives into the image, and the
+            // lateral spread still fills the width.
+            const float back = span * 0.55f, up = span * 0.62f;
+            const float aimAhead = back + span * 0.5f;
+            // 55 deg, not the 90 the first-person pane uses. Field of view and
+            // standing-back are two ways to buy the same context and the lens is
+            // the cheap one: a narrower lens magnifies the plan without pushing
+            // the camera further from it, and the map beyond the plan is not
+            // what this pane is for.
+            const float chaseFov = 55.f;
             const float yr = yaw * sim::PI_F / 180.f;
             const float ex2 = pose.e - std::sin(yr) * back;
             const float ny2 = pose.n - std::cos(yr) * back;
             const float uz2 = pose.u + up;
-            const float pitchDown = -std::atan2(up, back) * 180.f / sim::PI_F;
+            const float pitchDown = -std::atan2(up, aimAhead) * 180.f / sim::PI_F;
+            FpvStyle cs;
+            cs.unknownFogM = 24.f; cs.unknownFogMax = 0.30f;
             cv::Mat v3 = src.fpvImageWH(ex2, ny2, uz2, yaw, pitchDown,
-                                        PH, PH, chaseFov,
+                                        PW, PH, chaseFov,
                                         back + std::max(mp.maxIntegM, span) * 1.4f,
-                                        nullptr);
+                                        nullptr, cs);
             // Project through the CHASE pose, not the aircraft's.
             auto projC = [&](const std::array<float, 3>& w, cv::Point& o) {
                 float u, v;
@@ -990,8 +1021,8 @@ static int runSession(Config C) {
             fPane = fit(v3, PW, PH);
             banner(fPane, "CHASE  the map and the plan, from behind");
             char cb[96];
-            std::snprintf(cb, sizeof(cb), "blue = the aircraft   green = chosen   "
-                          "%.0f m back, %.0f m up", back, up);
+            std::snprintf(cb, sizeof(cb), "blue = you   green = chosen   "
+                          "eye %.1f m behind", back);
             banner(fPane, cb, 44);
         } else {
             // Render from the FINEST level available. The first-person view is

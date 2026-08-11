@@ -143,7 +143,7 @@ struct TrajParams {
     // this term a no-op. Unknown therefore scores like open, which is safe here
     // precisely because it grants no speed.
     float farWeight  = 0.5f;
-    float farRangeM  = 30.f;
+    float farRangeM  = 20.f;   // proven value; do not move it and a level in the same test
 };
 
 class TrajectoryPlanner {

@@ -505,6 +505,45 @@ dense forest WITH COARSE VOXELS is dangerous -- narrower, and believable.
 **Next, to make it decisive:** add `--vmax`, run at 1.0 m/s, 4+ seeds per
 configuration so the noise floor is visible. Until then no cell size is chosen.
 
+## 2026-08-11 — coarse map: measured, 8 paired seeds
+
+Lanes world (thickets and clear lanes side by side, trails OFF), D435i geometry,
+0.25 m cells, 1.5 m/s, 400 steps. Coarse far map ON vs OFF, same seed both arms.
+
+Metric: distance CLOSED toward goal / elapsed time / vMax. Raw "travelled" is
+useless across speeds — the sim runs a FIXED STEP COUNT, so distance is just
+time x velocity. That mistake made 3 m/s look 3x better than 1 m/s.
+
+    seed      ON     OFF     diff
+    1      0.807   0.692   +0.115
+    2      0.780   0.595   +0.185
+    3      0.723   0.722   +0.002
+    4      0.755   0.705   +0.050
+    5      0.638   0.707   -0.068
+    6      0.832   0.545   +0.287
+    7      0.725   0.725   +0.000
+    8      0.783   0.670   +0.113
+
+    n=8  mean +0.085  sd 0.114  SE 0.040  t=2.12  better in 6/8
+    ON 0.755   OFF 0.670
+
+**Verdict: real but modest, and weaker than 3 seeds suggested.** t=2.12 is at
+the conventional threshold, not past it. One seed negative, two dead level. The
+per-seed SIGN (6/8) is the honest summary, not the mean. Do not quote +13 %.
+
+Long runs, 1500 steps (150 s), seed 1: ON closed 56.8 m (eff 0.252), OFF 44.9 m
+(eff 0.200). Same sign, same magnitude. Both ended on step exhaustion, neither
+crashed. False-free < 0.7 % in both — duration did not degrade the map.
+**Efficiency is NOT comparable across run lengths**, only within them (longer
+runs spend more time working laterally across lanes).
+
+Collisions across the whole matrix: 2, both in the OFF arm. Suggestive only —
+the coarse map cannot prevent a collision, it only picks a different route.
+
+**Still open:** the 1 m/s mixed-world result (+32 %) was 2 seeds and has not been
+re-run at n=8. If the coarse map's value really is largest at low speed, that is
+the run that matters, because 1 m/s is what both reference papers flew.
+
 ## 2026-08-11 — STEREO: DECIDED. Buy a used D435i, do not build.
 
 **Decision: buy a used D435i (~EUR 200). The custom stereo bar is shelved.**

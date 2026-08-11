@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
     int   camW = 320, camH = 240;
     float hfov = 70.f, baseline = 0.12f, maxIntegOverride = -1.f;
     bool  mixed = false;
+    float vmax = -1.f;
     float goalE = 150, goalN = 170, goalU = 8;
     bool useTruth = false, generalOnly = false, display = false;
     int replanEvery = 25;
@@ -150,6 +151,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
         else if (!std::strcmp(argv[i], "--cell")) cell = float(std::atof(next("0.25")));
         else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
+        else if (!std::strcmp(argv[i], "--vmax")) vmax = float(std::atof(next("3.0")));
         else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("320"));
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("240"));
         else if (!std::strcmp(argv[i], "--hfov")) hfov = float(std::atof(next("70")));
@@ -364,6 +366,7 @@ int main(int argc, char** argv) {
     if (commitN >= 0) gp.commitSteps  = commitN;
     GeneralPlanner gen(gp);
     TrajParams tp;
+    if (vmax > 0.f) gp.vMax = vmax;
     tp.robotR = gp.robotR; tp.vMax = gp.vMax;
     tp.decelMs2 = gp.decelMs2; tp.reactS = gp.reactS; tp.minFreeM = gp.minFreeM;
     tp.dt = dt;              // the rollout must use the control period
@@ -505,7 +508,8 @@ int main(int argc, char** argv) {
         // --- general plan, every step ----------------------------------------
         int64 tg = cv::getTickCount();
         GeneralResult gr = useTraj
-            ? traj.plan(M, px + dE, py + dN, pz + dU, yaw, gAz, gEl)
+            ? traj.plan(M, px + dE, py + dN, pz + dU, yaw, gAz, gEl,
+                        useFar ? &Mfar : nullptr)
             : gen.plan(M, px + dE, py + dN, pz + dU, gAz, gEl);
         tGen += double(cv::getTickCount() - tg) / cv::getTickFrequency();
         tPlan += double(cv::getTickCount() - t1) / cv::getTickFrequency();

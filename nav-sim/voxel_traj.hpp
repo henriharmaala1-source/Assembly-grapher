@@ -129,6 +129,21 @@ struct TrajParams {
     float goalWeight   = 1.0f;   // alignment of the endpoint with the goal bearing
     float clearWeight  = 0.7f;   // how far along the primitive stays clear
     float smoothWeight = 0.25f;  // prefer low yaw rate, all else equal
+    // COARSE FAR MAP -- AWARENESS ONLY, NEVER PERMISSION.
+    //
+    // The fine map decides what may be flown through: swept-volume clearance and
+    // the confirmed-FREE speed budget both read it alone. The far map only says
+    // which BEARING looks open beyond the fine map's honest range, and that is
+    // added to the SCORE. A coarse cell is the size of the robot; it can tell you
+    // there is a gap at 12 m, it cannot tell you the gap is free of a 0.3 m
+    // trunk, and it must never be asked to.
+    //
+    // Marching stops at OCCUPIED only -- UNKNOWN does not block, because
+    // unknown at range is the normal state and treating it as closed would make
+    // this term a no-op. Unknown therefore scores like open, which is safe here
+    // precisely because it grants no speed.
+    float farWeight  = 0.5f;
+    float farRangeM  = 20.f;
 };
 
 class TrajectoryPlanner {
@@ -140,8 +155,11 @@ public:
     // can be swapped behind one flag and compared on identical worlds. The
     // extra argument is the vehicle's current heading, which a body-frame
     // library needs and a world-frame histogram did not.
+    // `far` is the OPTIONAL coarse map. It influences scoring only; every
+    // safety test in plan() reads `m`. Pass nullptr to disable.
     GeneralResult plan(const VoxelMap& m, float px, float py, float pz,
-                       float curYawDeg, float goalAzDeg, float goalElDeg);
+                       float curYawDeg, float goalAzDeg, float goalElDeg,
+                       const VoxelMap* far = nullptr);
 
     // The winning rollout in WORLD coordinates, for drawing. Empty if blocked.
     const std::vector<std::array<float, 3>>& chosen() const { return chosen_; }

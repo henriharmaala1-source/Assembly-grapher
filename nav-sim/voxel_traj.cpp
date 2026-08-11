@@ -102,7 +102,8 @@ TrajectoryPlanner::TrajectoryPlanner(const TrajParams& p) : p_(p) {
 }
 
 GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, float pz,
-                                      float curYawDeg, float goalAzDeg, float goalElDeg) {
+                                      float curYawDeg, float goalAzDeg, float goalElDeg,
+                                      const VoxelMap* far) {
     GeneralResult r;
     chosen_.clear();
     cands_.clear();
@@ -151,9 +152,27 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         float clear = freeLen / std::max(0.1f, p_.vMax * p_.horizonS);
         float smooth = std::fabs(pr.yawRate) / std::max(1.f, p_.maxYawRate);
 
+        // Coarse-map openness along the bearing this primitive ends on. Reward
+        // only -- it cannot veto, and it cannot raise the speed budget.
+        float farOpen = 0.f;
+        if (far && p_.farWeight > 0.f) {
+            const float st = std::max(0.5f, far->params().cell * 0.5f);
+            const float dx = std::sin(deg2rad(endAz)) * std::cos(deg2rad(endEl));
+            const float dy = std::cos(deg2rad(endAz)) * std::cos(deg2rad(endEl));
+            const float dz = std::sin(deg2rad(endEl));
+            float reach = 0.f;
+            for (float t = st; t <= p_.farRangeM; t += st) {
+                if (far->stateAt(ex + dx * t, ey + dy * t, ez + dz * t)
+                        == VoxelMap::OCCUPIED) break;
+                reach = t;
+            }
+            farOpen = reach / p_.farRangeM;
+        }
+
         float score = p_.clearWeight * clear
                     - p_.goalWeight * gd
-                    - p_.smoothWeight * smooth;
+                    - p_.smoothWeight * smooth
+                    + p_.farWeight * farOpen;
         if (score > best) {
             best = score; bestPrim = &pr; bestFree = freeLen; bestClear = nClear;
         }

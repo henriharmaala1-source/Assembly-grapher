@@ -1261,6 +1261,47 @@ range.
 Also: 0.25 m cells are a forest default and look absurdly chunky at 1 m indoors.
 The menu cycles 0.15–0.50; use 0.15 on a bench.
 
+### A FINE near layer, and the stride result that came out of it
+
+The coarse map's argument runs both ways. Cell size should match the depth
+uncertainty at the range it covers, which is why 2 m cells are honest at 10 m —
+and equally why 0.25 m cells are needlessly coarse at 1.5 m, where
+dZ = Z^2*sigma/(f*B) is only 10 cm. Indoors the 0.25 m map throws away
+resolution the measurement actually contains.
+
+    cell 0.05 -> honest to 1.55 m       cell 0.15 -> 2.68 m
+    cell 0.10 -> honest to 2.19 m       cell 0.25 -> 3.46 m
+
+**Finer does not mean bigger**, because a level only has to cover its OWN honest
+range: 0.10 m cells over a 5 m box is 53x53x26 = **0.07 M cells**, a seventieth
+of the 0.25 m grid. Memory was never the constraint.
+
+**TIME was, and the fix inverts the obvious.** Measured per integrate, 848x480:
+
+    fine 0.25 m, stride 2   14.8 ms
+    near 0.10 m, stride 2   19.4 ms      finer AND dearer
+    near 0.10 m, stride 4    6.4 ms      and no less useful
+
+Cost per ray rises as the cell shrinks (DDA steps scale as 1/cell), while a
+NEAR object is angularly LARGE and needs less angular sampling — at f = 425 a
+10 cm object at 1.5 m spans 28 px, so every fourth pixel still puts seven
+samples across it. **A finer layer wants FEWER rays.** Stride should follow
+angular size, not resolution; both the coarse and the fine companion levels end
+up wanting a bigger stride than the middle one, for opposite reasons.
+
+(`recentre` was the first suspect and was not the culprit: 14.81 vs 14.85 ms.)
+
+Three layers together: **21.7 ms/frame, 46 Hz**, against 14.3 ms for the fine
+map alone. `--nearcell` / `--nonear`, on by default at 0.10 m.
+
+**AWARENESS AND DISPLAY ONLY.** `sphereClear` still reads the 0.25 m map alone.
+Wiring a second level into the swept-volume test changes the one piece of code
+that must not be wrong, and it earns that only with a measurement — the MID rung
+of the coarse ladder was reverted for exactly this reason. But the real prize is
+there: a 3 cm branch cannot cross occThresh in a 0.25 m cell and is most of a
+cell at 0.05 m, and late thin-branch detection is the documented cause of real
+failure in both reference papers.
+
 **Still untested: everything after a device is found** — stream negotiation,
 intrinsics readback, depth scale, whether the baseline comes from the
 extrinsics or falls through to the nominal 50 mm, and the uint16→metres loop.

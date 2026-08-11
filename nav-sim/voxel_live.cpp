@@ -166,6 +166,27 @@ struct Config {
     // AWARENESS ONLY, NEVER PERMISSION. The fine map alone decides what may be
     // flown through; this only says which bearing looks open beyond it.
     float farCell = 2.0f;      // 0 disables
+    // FINE NEAR LAYER -- the coarse map's argument run in the other direction.
+    //
+    // Cell size should match the depth uncertainty at the range it covers. That
+    // is why 2 m cells are honest at 10 m; it is equally why 0.25 m cells are
+    // needlessly coarse at 1.5 m, where dZ = Z^2*sigma/(f*B) is only 10 cm.
+    // Indoors at arm's length the 0.25 m map is throwing away resolution the
+    // measurement actually contains.
+    //
+    // AND IT IS CHEAP, because a level only has to cover its OWN honest range:
+    // 0.10 m cells are honest to 2.2 m, so a 5 m box is enough -- 50x50x25
+    // cells, a tenth of the 0.25 m map's grid. Finer does not mean bigger.
+    //
+    //     cell 0.05 -> honest to 1.55 m      cell 0.15 -> 2.68 m
+    //     cell 0.10 -> honest to 2.19 m      cell 0.25 -> 3.46 m
+    //
+    // AWARENESS AND DISPLAY ONLY, exactly like the coarse map. The swept-volume
+    // safety test still reads the 0.25 m map alone. Wiring a second level into
+    // the safety path is a change to the one piece of code that must not be
+    // wrong, and it earns that only with a measurement behind it -- see NOTES
+    // for why the MID rung of the coarse ladder was reverted.
+    float nearCell = 0.10f;    // 0 disables
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -426,7 +447,7 @@ int mainCli(int argc, char** argv) {
     int& camW = C.camW; int& camH = C.camH; int& fps = C.fps; int& steps = C.steps;
     bool& emitter = C.emitter; bool& headless = C.headless; bool& showTruth = C.showTruth;
     int& stride = C.stride; int& dirMode = C.dirMode; int& viewMode = C.viewMode;
-    float& farCell = C.farCell;
+    float& farCell = C.farCell; float& nearCell = C.nearCell;
 
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
@@ -448,6 +469,8 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
         else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--nofar")) farCell = 0.f;
+        else if (!std::strcmp(argv[i], "--nearcell")) nearCell = float(std::atof(next("0.10")));
+        else if (!std::strcmp(argv[i], "--nonear")) nearCell = 0.f;
         else if (!std::strcmp(argv[i], "--emitter")) emitter = true;
         else if (!std::strcmp(argv[i], "--frames")) steps = std::atoi(next("-1"));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/voxel_live");
@@ -487,6 +510,8 @@ int mainCli(int argc, char** argv) {
                 "                      59 ms/frame at 848x480 and cannot keep up\n"
                 "                      with a 30 fps camera; 2 is 19 ms\n"
                 "  --overlay           composite the voxel view ON the depth image\n"
+                "  --nearcell 0.10     fine near layer, 0 = off. Honest to 2.2 m\n"
+                "  --farcell 2.0       coarse far layer, 0 = off. Honest to 10 m\n"
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"
                 "  --frames N          stop after N frames\n"
@@ -559,6 +584,39 @@ static int runSession(Config C) {
     VoxelMap M;
     M.init(mp, px, py, pz);
 
+    // --- fine near layer ------------------------------------------------------
+    VoxelMap Mnear;
+    VoxelMapParams np;
+    if (C.nearCell > 0.f && C.nearCell < cell) {
+        np.cell = C.nearCell;
+        np.maxIntegM = std::sqrt(np.cell * cam.fpx() * cp.baselineM / 0.25f) * 0.75f;
+        // The grid covers its own honest range and no more. This is what makes
+        // a finer level cheap rather than expensive.
+        const int n = std::max(32, int(np.maxIntegM * 2.4f / np.cell));
+        np.nx = n; np.ny = n; np.nz = std::max(16, n / 2);
+        np.maxCarveM = np.maxIntegM * 2.f;
+        np.depthSigCoef = mp.depthSigCoef;
+        // A FINER layer wants FEWER rays, not more, and that is not a typo.
+        // Stride controls angular sampling density; a near object is
+        // angularly LARGE, so it needs less of it. At f = 425 a 10 cm object
+        // at 1.5 m spans 28 px, and every fourth pixel still puts seven
+        // samples across it. Meanwhile the cost per ray goes UP as the cell
+        // shrinks, because DDA steps scale as 1/cell.
+        //
+        // Measured, 848x480, this forest, per integrate:
+        //     fine 0.25 m, stride 2   14.8 ms
+        //     near 0.10 m, stride 2   19.4 ms      <- finer AND dearer
+        //     near 0.10 m, stride 4    6.4 ms      <- and no less useful
+        //
+        // (recentre is free: 14.81 vs 14.85 ms with it. It was the first
+        // suspect and it was not the culprit.)
+        np.integrateStride = C.stride * 2;
+        Mnear.init(np, px, py, pz);
+        std::printf("[near] cell %.2f m -> marks to %.1f m, grid %dx%dx%d "
+                    "(%.2f M cells)\n", np.cell, np.maxIntegM, np.nx, np.ny, np.nz,
+                    double(np.nx) * np.ny * np.nz / 1e6);
+    }
+
     // --- coarse companion, for the range the fine map cannot honestly claim ---
     VoxelMap Mfar;
     VoxelMapParams fp;
@@ -628,6 +686,8 @@ static int runSession(Config C) {
         int64 t0 = cv::getTickCount();
         M.integrate(depth, cam, pose);
         if (C.farCell > 0.f) Mfar.integrate(depth, cam, pose);
+        const bool haveNear = C.nearCell > 0.f && C.nearCell < cell;
+        if (haveNear) { Mnear.integrate(depth, cam, pose); Mnear.recentre(pose.e, pose.n, pose.u); }
         integUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
 
         t0 = cv::getTickCount();
@@ -682,6 +742,21 @@ static int runSession(Config C) {
                     else if (f2 == cv::Vec3b(245, 245, 245)) d = cv::Vec3b(165, 165, 150);
                 }
         }
+        // The NEAR layer goes on top of the fine one, wherever it knows more.
+        if (haveNear) {
+            cv::Mat nearSlice = Mnear.sliceImage(pose.u);
+            const float sc = mp.cell / np.cell;      // fine cells per near cell
+            for (int y = 0; y < sliceFull.rows; ++y)
+                for (int x = 0; x < sliceFull.cols; ++x) {
+                    const int nx2 = int((x - sliceFull.cols * 0.5f) * sc + nearSlice.cols * 0.5f);
+                    const int ny2 = int((y - sliceFull.rows * 0.5f) * sc + nearSlice.rows * 0.5f);
+                    if (nx2 < 0 || ny2 < 0 || nx2 >= nearSlice.cols || ny2 >= nearSlice.rows) continue;
+                    const cv::Vec3b n2 = nearSlice.at<cv::Vec3b>(ny2, nx2);
+                    if (n2 != cv::Vec3b(128, 128, 128))
+                        sliceFull.at<cv::Vec3b>(y, x) = n2;
+                }
+        }
+
         cv::Mat sPane;
         {
             const float halfM = 12.f;
@@ -711,13 +786,25 @@ static int runSession(Config C) {
             // because "the ray got through" survives an imprecise endpoint.
             // The pane shows free space well past the green ring, and that is
             // correct rather than a bug.
-            if (C.farCell > 0.f)
-                std::snprintf(b, sizeof(b),
-                              "fine %.2f m to %.1f m | COARSE %.1f m to %.1f m (blue/olive)",
-                              mp.cell, mp.maxIntegM, fp.cell, fp.maxIntegM);
-            else
-                std::snprintf(b, sizeof(b), "mark %.1f m (green)  carve %.0f m  cell %.2f m",
-                              mp.maxIntegM, mp.maxCarveM, mp.cell);
+            // Short enough to fit the pane. The first version ran off the edge,
+            // which loses exactly the part that says how far the coarse layer
+            // reaches -- the number the caption exists for.
+            {
+                std::string cells, ranges;
+                char t[32];
+                if (haveNear) {
+                    std::snprintf(t, sizeof(t), "%.2f/", np.cell); cells += t;
+                    std::snprintf(t, sizeof(t), "%.1f/", np.maxIntegM); ranges += t;
+                }
+                std::snprintf(t, sizeof(t), "%.2f", mp.cell); cells += t;
+                std::snprintf(t, sizeof(t), "%.1f", mp.maxIntegM); ranges += t;
+                if (C.farCell > 0.f) {
+                    std::snprintf(t, sizeof(t), "/%.1f", fp.cell); cells += t;
+                    std::snprintf(t, sizeof(t), "/%.1f", fp.maxIntegM); ranges += t;
+                }
+                std::snprintf(b, sizeof(b), "cells %s m -> honest %s m",
+                              cells.c_str(), ranges.c_str());
+            }
             banner(sPane, b, 44);
         }
 
@@ -800,11 +887,22 @@ static int runSession(Config C) {
             banner(fPane, "OVERLAY  voxels ON the depth they came from");
             banner(fPane, "aligned = intrinsics, frame and pose all agree", 44);
         } else {
-            fPane = fit(M.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
-                                     PH, PH, 90.f, fpvRange, nullptr),
+            // Render from the FINEST level available. The first-person view is
+            // a near-field view by construction -- everything past a few metres
+            // is fog -- so the level whose cells are honest there is the right
+            // one to draw. Shorter horizon, two and a half times the detail.
+            const VoxelMap& src = haveNear ? Mnear : M;
+            const float rng = haveNear ? std::max(3.f, np.maxIntegM * 1.6f) : fpvRange;
+            fPane = fit(src.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
+                                       PH, PH, 90.f, rng, nullptr),
                         PW, PH);
             banner(fPane, "FIRST PERSON  the MAP, from inside");
-            banner(fPane, "pale = UNKNOWN, drawn as fog and not as air", 44);
+            char nb[96];
+            std::snprintf(nb, sizeof(nb), "%.2f m voxels, honest to %.1f m   "
+                          "pale = UNKNOWN, never air",
+                          haveNear ? np.cell : mp.cell,
+                          haveNear ? np.maxIntegM : mp.maxIntegM);
+            banner(fPane, nb, 44);
         }
 
         cv::Mat full(PH * 2, PW * 2, CV_8UC3);

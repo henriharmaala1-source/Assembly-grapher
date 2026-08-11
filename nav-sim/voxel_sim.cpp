@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
     float cell = 0.25f, dt = 0.1f;
     int   camW = 320, camH = 240;
     float hfov = 70.f, baseline = 0.12f, maxIntegOverride = -1.f;
-    bool  mixed = false;
+    bool  mixed = false, lanes = false;
     float vmax = -1.f;
     float goalE = 150, goalN = 170, goalU = 8;
     bool useTruth = false, generalOnly = false, display = false;
@@ -151,6 +151,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
         else if (!std::strcmp(argv[i], "--cell")) cell = float(std::atof(next("0.25")));
         else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
+        else if (!std::strcmp(argv[i], "--lanes")) lanes = true;
         else if (!std::strcmp(argv[i], "--vmax")) vmax = float(std::atof(next("3.0")));
         else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("320"));
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("240"));
@@ -214,7 +215,15 @@ int main(int argc, char** argv) {
         px = p.streetM * 0.5f; py = 5.f; pz = 6.f;
     } else {
         ForestParams p; p.cell = cell; p.seed = seed;
-        if (mixed) {
+        if (lanes) {
+            // Thickets and clear lanes side by side. A goal straight ahead is
+            // reachable through either; the open lane costs path length and saves
+            // risk. Trails OFF, so the clear route is a DENSITY feature the
+            // planner has to find, not a carved corridor handed to it.
+            p.bandMul = {0.15f, 2.5f, 0.15f, 2.5f, 0.15f};
+            p.bandAlongX = true;
+            p.trails = 0;
+        } else if (mixed) {
             // Heavy clutter -> medium -> open, banded along the flight axis, so a
             // single run crosses all three regimes and the metrics are comparable
             // within one seed instead of across three worlds.

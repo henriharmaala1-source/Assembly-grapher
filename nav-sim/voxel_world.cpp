@@ -279,7 +279,8 @@ void genForest(VoxelWorld& w, const ForestParams& p, std::vector<Trail>* trailsO
         float x = u01(rng) * p.sizeM, y = u01(rng) * p.sizeM;
         if (!p.bandMul.empty()) {
             const int nb = int(p.bandMul.size());
-            int b = int(y / (p.sizeM / nb));
+            const float axis = p.bandAlongX ? x : y;
+            int b = int(axis / (p.sizeM / nb));
             b = std::min(std::max(b, 0), nb - 1);
             if (u01(rng) > p.bandMul[b] / mulMax) continue;   // thin this band
         }

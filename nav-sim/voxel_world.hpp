@@ -166,6 +166,14 @@ struct ForestParams {
     // bandsY divides the world along +y into equal bands and multiplies
     // stemsPerHa by bandMul[i % bandMul.size()]. Empty = uniform (old behaviour).
     std::vector<float> bandMul;
+    // Band axis. false = bands run ACROSS the flight path (+y), so the aircraft
+    // must fly THROUGH each density in turn -- no choice; that tests speed
+    // modulation. true = bands run ALONG the flight path (+x), giving parallel
+    // lanes of differing density side by side, so a goal straight ahead forces a
+    // CHOICE: plough through the thicket or divert to the clear lane. The second
+    // is the realistic question -- you do not want to navigate extreme clutter,
+    // you want to avoid it.
+    bool  bandAlongX = false;
     int   trails     = 3;
     float trailWidthM= 3.5f;    // cleared width; 0 disables trails entirely
     // TRUNK TEXTURE, and getting this wrong made every safety number in this

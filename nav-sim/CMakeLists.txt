@@ -175,3 +175,55 @@ if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
   endif()
   message(STATUS "nav_sim: voxel_gui enabled")
 endif()
+
+# --- voxel_live: the real map and planner over REAL depth --------------------
+# Optional librealsense. Without it the target still builds and --replay works
+# on recordings, which is the mode that needs no camera at all; --live then
+# reports that this build has no SDK rather than silently doing nothing.
+find_package(realsense2 QUIET)
+add_executable(voxel_live
+  voxel_live.cpp
+  frame_source.cpp
+  depth_record.cpp
+  voxel_world.cpp
+  depth_camera.cpp
+  voxel_map.cpp
+  voxel_planner.cpp
+  voxel_traj.cpp)
+target_include_directories(voxel_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(voxel_live PRIVATE ${OpenCV_LIBS})
+if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
+  target_compile_definitions(voxel_live PRIVATE SIM_HAVE_HIGHGUI=1)
+endif()
+if(realsense2_FOUND)
+  target_compile_definitions(voxel_live PRIVATE NAVSIM_HAVE_REALSENSE=1)
+  target_link_libraries(voxel_live PRIVATE realsense2::realsense2)
+  message(STATUS "nav_sim: librealsense found -- voxel_live --live enabled")
+else()
+  message(STATUS "nav_sim: no librealsense -- voxel_live --replay only "
+                 "(install the RealSense SDK to enable --live)")
+endif()
+
+# .kdr recording format: round trip, truncation, refusals, and that the replay
+# source rebuilds a camera from the file's own intrinsics.
+add_executable(depth_record_check
+  test/depth_record_check.cpp
+  depth_record.cpp
+  frame_source.cpp
+  depth_camera.cpp
+  voxel_world.cpp)
+target_include_directories(depth_record_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(depth_record_check PRIVATE ${OpenCV_LIBS})
+if(BUILD_TESTS)
+  add_test(NAME depth_record_check COMMAND depth_record_check)
+  # Python writes / C++ reads, and back. Needs the C++ test to have run first,
+  # so it reads the file that one wrote.
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_FOUND)
+    add_test(NAME kdr_crosscheck
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/test/kdr_crosscheck.py
+                     $<TARGET_FILE:voxel_live>)
+    set_tests_properties(kdr_crosscheck PROPERTIES DEPENDS depth_record_check)
+  endif()
+endif()

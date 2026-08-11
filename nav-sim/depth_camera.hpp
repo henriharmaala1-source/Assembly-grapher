@@ -92,6 +92,19 @@ struct CamParams {
     int   speckleWin = 2;        // half-window for the validity majority test
     float speckleKeep= 0.45f;    // keep only if this fraction of neighbours valid
     unsigned seed    = 7;
+    // MEASURED INTRINSICS, when we have them. Zero means "derive from hfovDeg
+    // with a centred principal point", which is what the synthetic worlds use
+    // and what every number in this tree was measured against -- so leaving
+    // these at zero is bit-identical to the behaviour before they existed.
+    //
+    // A REAL camera is not that. The D435i reports fx != fy and a principal
+    // point a few pixels off centre, and replaying a recording through rays
+    // built from an assumed pinhole would quietly bend every one of them --
+    // small, systematic, and indistinguishable from a calibration fault in the
+    // map. Recording intrinsics alongside the pixels (see depth_record.hpp) is
+    // only useful if something then uses them; this is that something.
+    float fxPx  = 0.f, fyPx = 0.f;
+    float ppxPx = 0.f, ppyPx = 0.f;
 };
 
 // Pose: position in ENU metres, yaw about +z (0 = +y/North, CW positive to
@@ -106,6 +119,9 @@ public:
     explicit DepthCamera(const CamParams& p = CamParams());
 
     float fpx() const { return fpx_; }
+    float fy()  const { return fy_; }
+    float ppx() const { return ppx_; }
+    float ppy() const { return ppy_; }
     const CamParams& params() const { return p_; }
 
     // GROUND TRUTH depth (CV_32F, metres, <=0 invalid). No degradation at all.
@@ -128,7 +144,7 @@ public:
 
 private:
     CamParams p_;
-    float fpx_ = 0;
+    float fpx_ = 0, fy_ = 0, ppx_ = 0, ppy_ = 0;
     mutable uint32_t rng_ = 12345;
     float urand() const;   // xorshift, so rendering is deterministic per seed
 };

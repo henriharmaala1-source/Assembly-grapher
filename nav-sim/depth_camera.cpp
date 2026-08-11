@@ -6,7 +6,12 @@
 namespace sim {
 
 DepthCamera::DepthCamera(const CamParams& p) : p_(p), rng_(p.seed ? p.seed : 1u) {
-    fpx_ = (p_.width * 0.5f) / std::tan(p_.hfovDeg * 0.5f * sim::PI_F / 180.f);
+    fpx_ = (p_.fxPx > 0.f)
+         ? p_.fxPx
+         : (p_.width * 0.5f) / std::tan(p_.hfovDeg * 0.5f * sim::PI_F / 180.f);
+    fy_  = (p_.fyPx > 0.f) ? p_.fyPx : fpx_;
+    ppx_ = (p_.ppxPx > 0.f) ? p_.ppxPx : (p_.width  - 1) * 0.5f;
+    ppy_ = (p_.ppyPx > 0.f) ? p_.ppyPx : (p_.height - 1) * 0.5f;
 }
 
 float DepthCamera::urand() const {
@@ -17,9 +22,8 @@ float DepthCamera::urand() const {
 void DepthCamera::rayFor(const CamPose& pose, int u, int v,
                          float& dx, float& dy, float& dz) const {
     // Camera frame: +X right, +Y down, +Z forward. Pixel -> normalised ray.
-    const float cx = (p_.width - 1) * 0.5f, cy = (p_.height - 1) * 0.5f;
-    float rx = (u - cx) / fpx_;
-    float ry = (v - cy) / fpx_;
+    float rx = (u - ppx_) / fpx_;
+    float ry = (v - ppy_) / fy_;
     float rz = 1.f;
 
     // Rotate into world. Yaw is measured from +North, clockwise (matching

@@ -841,3 +841,47 @@ layer and questionable for the A*. Before investing more in it, compare against:
 
 Benchmarking against OMPL would separate "this planner is buggy" from "this
 problem is hard", which the current numbers cannot do.
+
+## voxel_live — the real map and planner over REAL depth
+
+Everything else in this directory runs on synthetic depth. `voxel_live` runs the
+**same `VoxelMap` and the same `TrajectoryPlanner`** over frames from an actual
+D435i, or from a recording of one.
+
+```
+voxel_live --replay walk.kdr     a recording — NO CAMERA NEEDED
+voxel_live --live                a connected D435i (needs the RealSense SDK)
+voxel_live --sim                 the raycaster, as a control
+```
+
+Three panes: **DEPTH** (grey = no return, not far), **MAP SLICE** (grey =
+UNKNOWN, green ring = the occupancy MARK limit, orange = the free-space CARVE
+limit), **PLAN** (faint = admissible primitives, green = chosen).
+
+Keys: `space` pause, `s` save a PNG, `q` quit.
+
+### Pose is the honest limit
+
+A world-anchored map needs to know where each frame was taken from. The sim has
+perfect pose by construction; a handheld camera has none, and inventing one
+produces a map that looks plausible and means nothing. So the camera is assumed
+**fixed**, or rotating in place at a rate you state with `--yawrate`. Translation
+is not offered, because we cannot measure it yet — that is the missing odometry
+(`StateEstimator::updateVisionVelocity()`), and it plugs in here when it exists.
+
+**Move the camera and the map will be wrong.** That is not a bug in this tool.
+
+### Recording a walk
+
+`onboard/tools/d435i_probe.py --record N` writes both an `.npz` (for the noise
+analysis) and a `.kdr` (for this). The `.kdr` format is a 64-byte header plus
+raw `uint16` frames — see `depth_record.hpp`. It carries the camera's own
+intrinsics, because the mapper carves along rays and a ray built from an assumed
+pinhole is systematically wrong in a way that looks like a calibration fault once
+it reaches the map.
+
+### Building with live camera support
+
+`find_package(realsense2)` is optional. Without the SDK the target still builds
+and `--replay` works; `--live` then says so rather than silently failing. On
+Windows the RealSense SDK installer provides the CMake package.

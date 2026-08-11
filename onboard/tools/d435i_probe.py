@@ -848,6 +848,74 @@ def load_raw(path):
 # If a Viewer-compatible bag is wanted, realsense-viewer records one itself.
 # That is the supported route and it does not need this code to be right.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# .kdr -- the recording format nav-sim/voxel_live consumes.
+#
+# 64-byte header then raw uint16 frames, little-endian. Deliberately the dumbest
+# thing that works, so a C++ reader is thirty lines and needs no zlib, no ZIP
+# and no librealsense. Spec and the C++ side: nav-sim/depth_record.hpp.
+#
+# Intrinsics travel WITH the pixels. A depth frame without fx/ppx cannot be
+# turned into a ray, so a recording without them is uninterpretable six months
+# later -- and the mapper carves along rays, so getting them from the file
+# rather than from an assumption is the difference between a map and a guess.
+# ---------------------------------------------------------------------------
+KDR_MAGIC = b"KDEPTH01"
+KDR_HEADER_BYTES = 64
+KDR_FLAG_EMITTER_ON = 1
+
+
+def kdr_header(width, height, frames, depth_scale, fx, fy, ppx, ppy,
+               baseline_m, emitter_on):
+    import struct
+    b = bytearray(KDR_HEADER_BYTES)
+    b[0:8] = KDR_MAGIC
+    struct.pack_into("<III", b, 8, int(width), int(height), int(frames))
+    struct.pack_into("<ffffff", b, 20, float(depth_scale), float(fx), float(fy),
+                     float(ppx), float(ppy), float(baseline_m))
+    struct.pack_into("<I", b, 44, KDR_FLAG_EMITTER_ON if emitter_on else 0)
+    return bytes(b)
+
+
+def kdr_open_writer(path, width, height, depth_scale, fx, fy, ppx, ppy,
+                    baseline_m, emitter_on):
+    f = open(path, "wb")
+    f.write(kdr_header(width, height, 0, depth_scale, fx, fy, ppx, ppy,
+                       baseline_m, emitter_on))
+    return f
+
+
+def kdr_finish(f, frames):
+    """Patch the frame count LAST. A capture killed by a pulled cable then has
+    frames = 0, and the C++ reader falls back to the file length -- so an
+    interrupted recording stays readable instead of becoming a corrupt file."""
+    import struct
+    f.seek(16)
+    f.write(struct.pack("<I", int(frames)))
+    f.close()
+
+
+def kdr_read(path):
+    """Returns (frames_uint16, meta). numpy only."""
+    import struct
+    with open(path, "rb") as f:
+        hdr = f.read(KDR_HEADER_BYTES)
+        if len(hdr) < KDR_HEADER_BYTES or hdr[0:8] != KDR_MAGIC:
+            raise ValueError("not a .kdr recording")
+        w, h, n = struct.unpack_from("<III", hdr, 8)
+        scale, fx, fy, ppx, ppy, base = struct.unpack_from("<ffffff", hdr, 20)
+        flags, = struct.unpack_from("<I", hdr, 44)
+        raw = np.frombuffer(f.read(), dtype="<u2")
+    per = w * h
+    actual = len(raw) // per                       # trust the bytes, not the header
+    n = min(n, actual) if n else actual
+    frames = raw[:n * per].reshape(n, h, w)
+    return frames, dict(width=w, height=h, frames=int(n), depth_scale=scale,
+                        fx=fx, fy=fy, ppx=ppx, ppy=ppy, baseline_m=base,
+                        emitter_on=bool(flags & KDR_FLAG_EMITTER_ON))
+
+
 def save_record(path, frames_u16, meta, log):
     """frames_u16: (n, h, w) uint16 in DEVICE units. Stored raw, not converted:
     the depth scale is metadata, and keeping the integers means the file is half
@@ -1057,12 +1125,13 @@ def run_device(args, log):
         return result
     w, h, fps, pipe, prof = started
 
-    fx = fy = 0.0
+    fx = fy = ppx = ppy = 0.0
     baseline = 0.050
     try:
         dprof = prof.get_stream(rs.stream.depth).as_video_stream_profile()
         intr = dprof.get_intrinsics()
         fx, fy = intr.fx, intr.fy
+        ppx, ppy = intr.ppx, intr.ppy
         hfov = 2 * np.degrees(np.arctan(intr.width / (2 * intr.fx)))
         try:
             ir2 = prof.get_stream(rs.stream.infrared, 2)
@@ -1076,6 +1145,7 @@ def run_device(args, log):
             f"depth scale {depth_scale * 1000:.3f} mm/unit")
         log("")
         result.update(dict(width=w, height=h, fps=fps, fx=fx, fy=fy,
+                           ppx=ppx, ppy=ppy,
                            baseline_m=baseline, depth_scale=depth_scale))
     except Exception as e:
         log(f"  [warn] could not read intrinsics: {e}")
@@ -1123,11 +1193,28 @@ def run_device(args, log):
             meta = dict(result)
             meta.update(dict(recorded=datetime.datetime.now().isoformat(timespec="seconds"),
                              emitter="on" if emit else "off",
-                             fx=fx, baseline_m=baseline, depth_scale=depth_scale,
+                             fx=fx, fy=fy, ppx=ppx, ppy=ppy,
+                             baseline_m=baseline, depth_scale=depth_scale,
                              width=w, height=h, fps=fps))
-            save_record(args.npz, np.stack(frames), meta, log)
-            log(f"  analyse it with:  python3 d435i_probe.py --replay {args.npz} "
-                f"--range <tape distance>")
+            stack = np.stack(frames)
+            save_record(args.npz, stack, meta, log)
+            # And the .kdr, which is what nav-sim/voxel_live replays through the
+            # REAL map and planner. Same pixels, a format C++ can read without
+            # a ZIP library.
+            kdr = args.npz.replace(".npz", "") + ".kdr"
+            try:
+                kf = kdr_open_writer(kdr, w, h, depth_scale, fx, fy, ppx, ppy,
+                                     baseline, emit)
+                for fr in stack:
+                    kf.write(np.ascontiguousarray(fr, dtype="<u2").tobytes())
+                kdr_finish(kf, len(stack))
+                log(f"[saved] {len(stack)} frames -> {kdr}  "
+                    f"({os.path.getsize(kdr) / 1e6:.1f} MB)")
+                log(f"  replay through the map and planner:  voxel_live --replay {kdr}")
+            except Exception as e:
+                log(f"[warn] could not write .kdr: {e}")
+            log(f"  analyse the noise with:  <py|python3> d435i_probe.py "
+                f"--replay {args.npz} --range <tape distance>")
         else:
             log(f"  !! only {len(frames)} frames captured, nothing saved")
         return result

@@ -59,6 +59,34 @@ at — a painted wall or a poster is fine.
 * **Straight into the laptop, no hub.** A hub shares bandwidth and adds a
   suspect.
 
+### No USB 3 cable in time? Go anyway.
+
+**Every walk-away criterion in this checklist works on a USB 2 link.** They are
+all unfixable-hardware checks, and none of them needs bandwidth: both IR streams,
+the emitter toggle, the Motion Module, depth on a wall, the connector wiggle. USB
+2 costs you RESOLUTION and FRAME RATE, and those feed the quality grading that is
+deferred to home regardless.
+
+The one thing that matters is knowing which link you are on. Read the USB Type
+Descriptor first and expect `2.1`; then **skip the FPS check in §5 and do not
+judge image quality**, because a degraded link looks exactly like a failing
+camera and that confusion is the entire trap.
+
+If the seller has a cable too, try both — if theirs reads `3.2` you have learned
+the camera negotiates USB 3 properly, which is worth knowing.
+
+### What is NOT evidence of a USB 3 cable
+
+* **Mouse polling rate.** 8000 Hz is the USB 2.0 **High Speed** ceiling —
+  125 µs microframes, so 1/125 µs = 8 kHz exactly. That is where 8K mice come
+  from; Full Speed's 1 ms frames cap at 1 kHz, which is why 1K was the old
+  standard. An 8K mouse proves High Speed, i.e. USB **2.0**. If anything it is
+  evidence against: mouse cables are deliberately thin and flexible, and the
+  SuperSpeed pairs are extra shielded conductors nobody puts in a mouse cable.
+* **Charging wattage.** See above — separate conductors, separate claims.
+* **Port or connector colour.** Advisory, and about the port, not the cable.
+* **A USB-C connector.** USB-C says nothing at all about data rate.
+
 ---
 
 ## 1. It enumerates, on a real USB 3 link  ·  30 s

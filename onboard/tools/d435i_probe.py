@@ -83,6 +83,7 @@ import datetime
 import json
 import os
 import sys
+import time
 import traceback
 import warnings
 
@@ -306,16 +307,22 @@ def selftest():
 
     # 8. The Windows frame-drop trap. Half the affected machines behave
     #    normally, so this cannot be caught by observation -- only by knowing.
-    check(windows_frame_drop_warning("win32", 22631) != [],
-          "warns on Windows 11 build 22631 (KB5035853 frame drops)")
-    check(windows_frame_drop_warning("win32", 22621) != [],
-          "warns on Windows 11 build 22621")
-    check(windows_frame_drop_warning("win32", 19045) == [],
+    check(windows_frame_drop_warning("win32", 22631, 3296) != [],
+          "warns on the AFFECTED revision 22631.3296")
+    check(windows_frame_drop_warning("win32", 22631, 6199) == [],
+          "stays quiet on 22631.6199 -- past the bad revision")
+    check(windows_frame_drop_warning("win32", 22631, None) != [],
+          "asks for winver when the revision cannot be read")
+    check(windows_frame_drop_warning("win32", 19045, 4046) == [],
           "stays quiet on Windows 10")
-    check(windows_frame_drop_warning("linux", 22631) == [],
+    check(windows_frame_drop_warning("linux", 22631, 3296) == [],
           "stays quiet off Windows")
-    check(windows_frame_drop_warning("win32", None) == [],
-          "stays quiet when the build cannot be read")
+
+    # 8b. The symptom check, which does not care why frames went missing.
+    check(fps_warning(30, 6.0, 60) != [], "flags 6 fps delivered against 30 requested")
+    check(fps_warning(30, 29.4, 60) == [], "quiet at 29.4 of 30")
+    check(fps_warning(30, 18.5, 60) == [], "quiet at 18.5 of 30 (62 %, within tolerance)")
+    check(fps_warning(30, 5.0, 3) == [], "no verdict from 3 frames")
 
     # 9. THE SDK, reported SEPARATELY from the maths above.
     #
@@ -359,23 +366,58 @@ def selftest():
 # you to check winver rather than pretending to a precision it does not have.
 # ---------------------------------------------------------------------------
 AFFECTED_WIN_BUILDS = {22621, 22631}
+AFFECTED_WIN_UBR = 3296
 
 
-def windows_frame_drop_warning(plat, build):
-    """Pure, so --selftest can check it. build: int major build, or None."""
+def windows_frame_drop_warning(plat, build, ubr=None):
+    """Pure, so --selftest can check it. build: int major build. ubr: the update
+    revision (the .3296 part), or None if it could not be read.
+
+    KNOWING THE REVISION IS THE WHOLE POINT. Build 22631 is Windows 11 23H2 --
+    an enormous population, almost all of it fine. Warning on the build alone
+    fires on every 23H2 machine, and a check that cries wolf is a check that
+    gets ignored on the one day it is right. Only revision .3296 is affected;
+    anything later has moved past it."""
     if not str(plat).startswith("win") or build is None:
         return []
     if int(build) not in AFFECTED_WIN_BUILDS:
         return []
+    if ubr is None:
+        return [
+            f"Windows 11 build {build}, revision unknown.",
+            "  Revisions 22621.3296 and 22631.3296 (KB5035853) drop up to 80 % of",
+            "  frames on about half of machines. Run `winver`: if yours ends",
+            "  .3296, the frame counts below measure WINDOWS, not the camera.",
+        ]
+    if int(ubr) != AFFECTED_WIN_UBR:
+        return []          # past it, or before it. Not this bug.
     return [
-        f"Windows 11 build {build} is in the range affected by a known",
-        "librealsense frame-drop bug: revisions 22621.3296 and 22631.3296",
-        "(KB5035853) drop up to 80 % of frames, on about half of machines.",
-        "",
-        "  Run `winver` and read the full revision. If it ends .3296, the frame",
-        "  counts and valid fractions below are measuring WINDOWS, not the",
-        "  camera -- and it looks identical to a failing cable. KB5030219",
-        "  (22621.2283) and Windows 10 RS5 are unaffected.",
+        f"THIS MACHINE IS ON THE AFFECTED REVISION {build}.{ubr} (KB5035853).",
+        "  Up to 80 % of frames are dropped, on about half of machines, and it",
+        "  looks identical to a failing cable or a USB 2 link. Update Windows",
+        "  before trusting any number below.",
+    ]
+
+
+def fps_warning(requested, measured, frames):
+    """Catch the SYMPTOM, whatever the cause. A version check only knows about
+    the bugs we happened to read about; delivered frame rate is the thing that
+    actually matters and it is free to measure while capturing anyway."""
+    if requested <= 0 or frames < 5 or measured <= 0:
+        return []
+    ratio = measured / float(requested)
+    if ratio >= 0.6:
+        return []
+    return [
+        f"DELIVERED {measured:.1f} fps AGAINST {requested} REQUESTED "
+        f"({100 * ratio:.0f} %).",
+        "  Something is dropping frames. In rough order of likelihood:",
+        "    - USB 2 link or a charge-only cable (see the usb descriptor above)",
+        "    - a USB hub, or another device sharing the controller's bandwidth",
+        "    - the Windows 11 KB5035853 frame-drop bug (revision .3296)",
+        "    - a laptop power profile throttling the USB controller",
+        "  The statistics below are still valid per frame, but a low frame rate",
+        "  on the aircraft means a stale map, which is a safety property.",
     ]
 
 
@@ -385,7 +427,7 @@ def host_report(emit):
     emit("=== host ===")
     emit(f"  {platform.platform()}")
     emit(f"  python {platform.python_version()} ({sys.executable})")
-    build = None
+    build = ubr = None
     if sys.platform.startswith("win"):
         try:
             build = int(sys.getwindowsversion().build)
@@ -394,7 +436,19 @@ def host_report(emit):
                 build = int(platform.version().split(".")[2])
             except Exception:
                 build = None
-    for ln in windows_frame_drop_warning(sys.platform, build):
+        # The update revision lives only in the registry -- sys.getwindowsversion
+        # stops at the build. Without it we cannot tell a bad .3296 machine from
+        # the millions of fine ones on the same build.
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as k:
+                ubr = int(winreg.QueryValueEx(k, "UBR")[0])
+        except Exception:
+            ubr = None
+        emit(f"  windows build {build}" + (f".{ubr}" if ubr is not None else
+                                           " (revision unreadable)"))
+    for ln in windows_frame_drop_warning(sys.platform, build, ubr):
         emit("  !! " + ln if ln else "")
     emit("")
 
@@ -587,6 +641,12 @@ def report_arm(log, label, r, args):
     log(f"=== {label} ===")
     if "frames" in r:
         log(f"  frames used                 {r['frames']}")
+    if "fps_measured" in r:
+        log(f"  delivered frame rate       {r['fps_measured']:5.1f} fps  "
+            f"(requested {r['fps_requested']})")
+        for ln in fps_warning(r.get("fps_requested", 0), r["fps_measured"],
+                              r.get("frames", 0)):
+            log("  !! " + ln if ln else "")
     if "frame_valid_mean" in r:
         log(f"  valid pixels, whole frame   {r['frame_valid_mean'] * 100:5.1f} %  "
             f"(worst frame {r['frame_valid_min'] * 100:.1f} %)")
@@ -914,6 +974,7 @@ def run_device(args, log):
                 safe(lambda: pipe.wait_for_frames(5000))     # let AE settle
             log(f"=== recording {args.record} frames "
                 f"({'emitter ON' if emit else 'emitter OFF'}) ===")
+            t_start = time.monotonic()
             for i in range(args.record):
                 fs = safe(lambda: pipe.wait_for_frames(5000))
                 if fs is None:
@@ -928,6 +989,10 @@ def run_device(args, log):
             log(f"  [warn] recording stopped: {str(e)[:80]}")
         finally:
             safe(lambda: pipe.stop())
+        elapsed = max(1e-6, time.monotonic() - t_start)
+        got = len(frames) * max(1, args.record_every)
+        for ln in fps_warning(fps, got / elapsed, got):
+            log("  !! " + ln if ln else "")
         if len(frames) >= 2:
             meta = dict(result)
             meta.update(dict(recorded=datetime.datetime.now().isoformat(timespec="seconds"),
@@ -969,6 +1034,7 @@ def run_device(args, log):
                 log(f"  [warn] {label}: emitter_enabled not supported; arms are identical")
 
             valid, roi = [], []
+            t_start = time.monotonic()
             # Discard the first second: measuring through auto-exposure
             # convergence measures the AE loop, not the camera.
             for _ in range(fps):
@@ -990,6 +1056,7 @@ def run_device(args, log):
         finally:
             safe(lambda: pipe.stop())
 
+        elapsed = max(1e-6, time.monotonic() - t_start)
         if len(roi) < 2:
             log(f"  [warn] {label}: only {len(roi)} usable frames, skipping")
             continue
@@ -999,6 +1066,8 @@ def run_device(args, log):
         r["frame_valid_mean"] = float(np.mean(valid))
         r["frame_valid_min"] = float(np.min(valid))
         r["frames"] = len(roi)
+        r["fps_measured"] = len(roi) / elapsed
+        r["fps_requested"] = fps
         saved[label] = (stack, r)
         result[label.replace(" ", "_")] = r
 

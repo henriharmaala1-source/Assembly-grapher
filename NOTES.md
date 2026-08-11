@@ -1122,13 +1122,28 @@ Seller meet, RealSense Viewer only.
 * **Stereo works** — depth streams. Worth more than it sounds: producing depth
   at all requires both IR imagers to be functional enough to match, so a
   totally dead imager is ruled out. A *degraded* one is not.
-* **Not validated:** IMU / Motion Module, the two IR streams individually, the
-  emitter toggle, the connector flex.
+* **Motion Module present.** It is a genuine D435i, not a D435. That was the
+  only walk-away item that could not be worked around later, and it is closed.
+* **Still unchecked:** the two IR streams individually, the emitter, the
+  connector flex. All fixable or price arguments; none decide anything.
 
-**The open item that matters is the IMU.** No Motion Module means it is a D435,
-not a D435i, and that is both the reason for the price premium and the thing
-VIO depends on. Everything else outstanding is either fixable or a price
-argument; that one is the wrong camera.
+**And the stack has now seen real photons.** `voxel_live --live` runs: real
+depth into the real `VoxelMap` and the real `TrajectoryPlanner`. Every number in
+this project up to this point came from the raycaster.
+
+The `--live` button had been reporting "this build has no RealSense SDK" on a
+machine where the SDK was installed and the Viewer worked. Not a missing SDK —
+`find_package(realsense2)` searches `<prefix>/lib/cmake/realsense2`, and the
+installer puts it one directory deeper, inside `Intel RealSense SDK 2.0/`. Fixed
+in `cmake/find_realsense.cmake`, with a search-path test.
+
+**Next, and it is the one that replaces assumptions:** record a walk
+(`d435i_probe.py --record 600 --record-every 6 --emitter off`, which writes both
+the `.npz` and a `.kdr`), then `--replay` it for sigma_d on real bark and
+`voxel_live --replay` for the map's behaviour on it. That gives the first honest
+`Z_max` and the first real valid-return fraction — the two figures the whole
+range budget currently rests on as assumptions (sigma_d = 0.25 px, and a depth
+model fitted to one screenshot).
 
 ## 2026-08-11 — stereo occlusion shadow: real, now modelled, and negligible for us
 

@@ -868,9 +868,26 @@ voxel_live --sim                 the raycaster, as a control
 voxel_live --menu-preview m.png  dump the menu layout to a PNG (no window)
 ```
 
-Three panes: **DEPTH** (grey = no return, not far), **MAP SLICE** (grey =
-UNKNOWN, green ring = the occupancy MARK limit, orange = the free-space CARVE
-limit), **PLAN** (faint = admissible primitives, green = chosen).
+Four panes in a 2×2 grid: **DEPTH** (grey = no return, not far), **FIRST
+PERSON** (the map from inside — pale is UNKNOWN drawn as fog, never as air),
+**MAP SLICE** (green ring = the occupancy MARK limit, orange = the free-space
+CARVE limit), **PLAN** (faint = admissible primitives, green = chosen).
+
+The first-person pane renders the **map, never the world**: where the model is
+wrong, you fly into fog. Its horizon is short because the map's honest marking
+limit is short, which is a sensor property and the useful part to see. It is a
+visualisation and is *not* counted in the onboard cost the run reports.
+
+### Steering with no goal
+
+On a bench there is no destination, so scoring alignment with a fixed bearing
+would quietly pull every chosen path North. Two modes:
+
+* **OPENNESS ONLY** (default, `--openness`) — `goalWeight = 0`. The score is
+  clearance, smoothness and far-field openness: *where would you go if you only
+  wanted room.*
+* **GENERAL DIRECTION** (`--forward`) — the goal bearing is wherever the camera
+  is pointing: *where would you go, roughly forwards.*
 
 Keys: `space` pause, `s` save a PNG, `q` quit.
 

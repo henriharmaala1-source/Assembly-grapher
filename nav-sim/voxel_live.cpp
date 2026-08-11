@@ -131,6 +131,16 @@ struct Config {
     // costs nothing detectable: a 0.2 m trunk at 4 m spans ~11 px, so every
     // second pixel still puts five samples across it.
     int   stride = 2;
+    // DIRECTION. On a bench there is no goal, and steering toward a fictional
+    // one makes the chosen path a lie: the default used to score alignment with
+    // azimuth 0, so the green primitive was always being pulled North for no
+    // reason anybody looking at it could have known.
+    //
+    //   0  OPENNESS ONLY -- goalWeight 0. The score is clearance, smoothness
+    //      and far-field openness. "Where would you go if you only wanted room."
+    //   1  GENERAL DIRECTION -- the goal bearing is wherever the camera points,
+    //      so it answers "where would you go, roughly forwards."
+    int   dirMode = 0;
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -331,6 +341,13 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
     label(img, "mapping cost is linear in rays; 1 will not keep up at 30 fps",
           218, yset + 88, 0.42, {140, 140, 140});
 
+    btns.push_back(Button{{240, yset + 62, 280, 40},
+                          C.dirMode == 0 ? "steer: OPENNESS only"
+                                         : "steer: general direction", "", 15,
+                          true, C.dirMode == 1});
+    label(img, "no goal on a bench -- do not pretend there is one",
+          530, yset + 88, 0.42, {140, 140, 140});
+
     std::snprintf(b, sizeof(b), "spin  %.0f deg/s", C.yawRateDps);
     btns.push_back(Button{{20, yset + 112, 210, 40}, b, "", 13, true, C.yawRateDps != 0.f});
     label(img, "only if you know the real rate -- there is no odometry",
@@ -369,7 +386,7 @@ int mainCli(int argc, char** argv) {
     float& maxIntegOverride = C.maxIntegOverride;
     int& camW = C.camW; int& camH = C.camH; int& fps = C.fps; int& steps = C.steps;
     bool& emitter = C.emitter; bool& headless = C.headless; bool& showTruth = C.showTruth;
-    int& stride = C.stride;
+    int& stride = C.stride; int& dirMode = C.dirMode;
 
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
@@ -386,6 +403,8 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("480"));
         else if (!std::strcmp(argv[i], "--fps")) fps = std::atoi(next("30"));
         else if (!std::strcmp(argv[i], "--stride")) stride = std::max(1, std::atoi(next("2")));
+        else if (!std::strcmp(argv[i], "--forward")) dirMode = 1;
+        else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
         else if (!std::strcmp(argv[i], "--emitter")) emitter = true;
         else if (!std::strcmp(argv[i], "--frames")) steps = std::atoi(next("-1"));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/voxel_live");
@@ -417,6 +436,8 @@ int mainCli(int argc, char** argv) {
                 "  --stride 2          use every Nth pixel when mapping. 1 is\n"
                 "                      59 ms/frame at 848x480 and cannot keep up\n"
                 "                      with a 30 fps camera; 2 is 19 ms\n"
+                "  --openness          score on room alone (default; no goal)\n"
+                "  --forward           score toward wherever the camera points\n"
                 "  --frames N          stop after N frames\n"
                 "  --headless          no window; write PNGs to --out\n",
                 haveLiveSupport() ? "" : "  [NOT in this build -- no librealsense]");
@@ -499,11 +520,16 @@ static int runSession(Config C) {
 
     TrajParams tp;
     tp.robotR = robotR; tp.vMax = vmax; tp.dt = 0.1f;
+    // No goal means no goal term. Leaving goalWeight at 1 while feeding a fixed
+    // bearing does not mean "no preference", it means "prefer North".
+    if (C.dirMode == 0) tp.goalWeight = 0.f;
     TrajectoryPlanner traj(tp);
 
     const int total = src->frameCount();
-    std::printf("[plan] %zu primitives, robot r %.2f m, vMax %.1f m/s\n",
-                traj.librarySize(), robotR, vmax);
+    std::printf("[plan] %zu primitives, robot r %.2f m, vMax %.1f m/s, %s\n",
+                traj.librarySize(), robotR, vmax,
+                C.dirMode == 0 ? "OPENNESS ONLY (no goal)"
+                               : "general direction = where the camera points");
 
 #if SIM_HAVE_HIGHGUI
     const char* WIN = "voxel_live";
@@ -512,6 +538,7 @@ static int runSession(Config C) {
 #endif
 
     bool backToMenu = false;
+    cv::Mat lastComposite;
     cv::Mat depth;
     PoseHint hint;
     float yaw = 0.f;
@@ -534,7 +561,10 @@ static int runSession(Config C) {
         integUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
 
         t0 = cv::getTickCount();
-        GeneralResult gr = traj.plan(M, pose.e, pose.n, pose.u, yaw, 0.f, 0.f);
+        // dirMode 1 aims along the camera's own heading; dirMode 0 has
+        // goalWeight 0 so the bearing passed here is ignored entirely.
+        GeneralResult gr = traj.plan(M, pose.e, pose.n, pose.u, yaw,
+                                     C.dirMode == 1 ? yaw : 0.f, 0.f);
         planUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
 
         ++n;
@@ -627,10 +657,23 @@ static int runSession(Config C) {
             banner(pPane, b, PH - 14);
         }
 
-        cv::Mat full(PH, PW * 3, CV_8UC3);
+        // FIRST PERSON: the map, from inside, out of the camera's own eyes.
+        // Renders the MAP and never the world, which is the entire point --
+        // where the model is wrong you fly into fog, and UNKNOWN is drawn as
+        // fog rather than as air. maxRange is the map's honest marking limit,
+        // so the horizon SHOULD look short: that is a sensor property, and
+        // seeing where the world stops is the useful part.
+        cv::Mat fPane = fit(M.fpvImage(pose.e, pose.n, pose.u, yaw, pitchDeg,
+                                       PH, 90.f, std::max(4.f, mp.maxIntegM * 2.f)),
+                            PW, PH);
+        banner(fPane, "FIRST PERSON  the MAP, from inside");
+        banner(fPane, "pale = UNKNOWN, drawn as fog and not as air", 44);
+
+        cv::Mat full(PH * 2, PW * 2, CV_8UC3);
         dPane.copyTo(full(cv::Rect(0, 0, PW, PH)));
-        sPane.copyTo(full(cv::Rect(PW, 0, PW, PH)));
-        pPane.copyTo(full(cv::Rect(PW * 2, 0, PW, PH)));
+        fPane.copyTo(full(cv::Rect(PW, 0, PW, PH)));
+        sPane.copyTo(full(cv::Rect(0, PH, PW, PH)));
+        pPane.copyTo(full(cv::Rect(PW, PH, PW, PH)));
 
 #if SIM_HAVE_HIGHGUI
         if (!headless) {
@@ -643,6 +686,11 @@ static int runSession(Config C) {
                             std::printf("wrote %s_frame.png\n", out.c_str()); }
         }
 #endif
+        // Save the FIRST and the LAST frame. Frame 1 is the map with nothing in
+        // it yet, which is honest but uninformative -- the accumulated view is
+        // the one worth looking at, and a headless run that only dumps frame 1
+        // shows an empty first-person pane and invites the wrong conclusion.
+        lastComposite = full.clone();
         if (headless && (n == 1 || (total > 0 && n == total / 2))) {
             char b[256];
             std::snprintf(b, sizeof(b), "%s_%03d.png", out.c_str(), n);
@@ -659,6 +707,11 @@ static int runSession(Config C) {
         std::printf("  ONBOARD TOTAL   %6.2f ms/frame  (%.0f Hz sustainable)\n",
                     (integUs + planUs) / 1000.0 / n,
                     1000.0 / std::max(0.001, (integUs + planUs) / 1000.0 / n));
+    }
+    if (n && !lastComposite.empty()) {
+        cv::imwrite(out + "_last.png", lastComposite);
+        std::printf("  wrote %s_last.png (frame %d, the accumulated view)\n",
+                    out.c_str(), n);
     }
     if (n) {
         cv::imwrite(out + "_slice.png", M.sliceImage(pz));
@@ -738,6 +791,7 @@ int main(int argc, char** argv) {
         else if (id == 12) C.emitter = !C.emitter;
         else if (id == 13) { iSpin = (iSpin + 1) % 5; C.yawRateDps = SPINS[iSpin]; }
         else if (id == 14) { C.stride = (C.stride >= 4) ? 1 : C.stride * 2; }
+        else if (id == 15) { C.dirMode = 1 - C.dirMode; }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

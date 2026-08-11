@@ -86,6 +86,21 @@ include("${CMAKE_CURRENT_LIST_DIR}/../cmake/find_realsense.cmake")
 expect(realsense2_FOUND "and the Intel-branded folder name too")
 set(ENV{ProgramFiles} "")
 
+# 2d. -DREALSENSE2_DIR=... as a CMAKE variable, with spaces and parentheses in
+#     the path. Reading only the ENVIRONMENT variable made the obvious command
+#     line silently do nothing, which is worse than not supporting it.
+file(REMOVE_RECURSE "${TMP}")
+make_sdk("${TMP}/Program Files (x86)/Intel RealSense SDK 2.0" "lib/x64")
+set(ENV{REALSENSE2_DIR} "")
+set(ENV{ProgramFiles} "")
+set(REALSENSE2_DIR "${TMP}/Program Files (x86)/Intel RealSense SDK 2.0")
+unset(RS2_INCLUDE_DIR CACHE)
+unset(RS2_LIBRARY CACHE)
+unset(realsense2_FOUND)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/find_realsense.cmake")
+expect(realsense2_FOUND "-DREALSENSE2_DIR works, spaces and parentheses and all")
+unset(REALSENSE2_DIR)
+
 # 3. Nothing there at all -> must NOT claim to have found it.
 file(REMOVE_RECURSE "${TMP}")
 file(MAKE_DIRECTORY "${TMP}/empty")

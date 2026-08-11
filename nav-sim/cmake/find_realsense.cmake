@@ -24,7 +24,16 @@
 
 set(_rs_hints "")
 
-# Environment first, and through TO_CMAKE_PATH: env vars come back with
+# A CMake variable first, so -DREALSENSE2_DIR=... works. This is the form a
+# person reaches for, and reading only the ENVIRONMENT variable made the
+# obvious command line silently do nothing -- the exact failure this module
+# exists to stop.
+if(REALSENSE2_DIR)
+  file(TO_CMAKE_PATH "${REALSENSE2_DIR}" _p)
+  list(APPEND _rs_hints "${_p}")
+endif()
+
+# Environment next, and through TO_CMAKE_PATH: env vars come back with
 # backslashes on Windows, and "C:\Program Files/Intel..." is a string CMake is
 # entitled to mangle.
 foreach(_v REALSENSE2_DIR ProgramW6432 ProgramFiles "ProgramFiles(x86)")

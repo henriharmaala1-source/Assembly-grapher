@@ -240,6 +240,18 @@ public:
     }
     size_t librarySize() const { return prims_.size(); }
 
+    // WHY nothing was admissible. "0 admissible" is a fact; this is the reason,
+    // and they are different questions with different fixes. Rejected at the
+    // very first rollout point means the aircraft is already boxed in; rejected
+    // later means it simply cannot go far enough to earn any speed.
+    struct Reject {
+        int occupied = 0;   // an OCCUPIED cell inside the robot ball
+        int unknown  = 0;   // the centreline was not confirmed FREE
+        int tooShort = 0;   // cleared some distance, but under minFreeM
+        int atStart  = 0;   // of those, rejected on the FIRST rollout point
+    };
+    const Reject& lastReject() const { return reject_; }
+
 private:
     struct Prim {
         std::vector<std::array<float, 3>> pts;  // body frame, +y forward
@@ -251,6 +263,7 @@ private:
     std::vector<std::vector<std::array<float, 3>>> cands_;
     float lastAz_ = 0, lastEl_ = 0;
     bool  haveLast_ = false;
+    Reject reject_;
 };
 
 }  // namespace sim

@@ -127,6 +127,7 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         wz = pz + b[2];
     };
 
+    reject_ = Reject();
     float best = -1e30f;
     const Prim* bestPrim = nullptr;
     float bestFree = 0;
@@ -137,19 +138,25 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         // blocked sample; everything past it is unreachable, not merely costly.
         size_t nClear = 0;
         float freeLen = 0, prevX = px, prevY = py, prevZ = pz;
+        int why = 0;                       // 1 occupied, 2 unknown
         for (size_t i = 0; i < pr.pts.size(); ++i) {
             float wx, wy, wz; toWorld(pr.pts[i], wx, wy, wz);
-            if (!sphereClear(m, wx, wy, wz, p_.robotR, p_.coreFrac)) break;
+            if (!sphereClear(m, wx, wy, wz, p_.robotR, p_.coreFrac)) { why = 1; break; }
             // Only CONFIRMED-FREE length earns speed. Unknown space is
             // traversable but pays nothing, which is the rule that stopped this
             // aircraft flying into a tree at 1.5 m/s on perfect depth.
-            if (m.stateAt(wx, wy, wz) != VoxelMap::FREE) break;
+            if (m.stateAt(wx, wy, wz) != VoxelMap::FREE) { why = 2; break; }
             freeLen += std::sqrt((wx-prevX)*(wx-prevX) + (wy-prevY)*(wy-prevY)
                                + (wz-prevZ)*(wz-prevZ));
             prevX = wx; prevY = wy; prevZ = wz;
             ++nClear;
         }
-        if (nClear == 0) continue;
+        if (nClear == 0) {
+            if (why == 1) ++reject_.occupied; else ++reject_.unknown;
+            ++reject_.atStart;
+            continue;
+        }
+        if (why == 1) ++reject_.occupied; else if (why == 2) ++reject_.unknown;
 
         // Score on where it ENDS UP, not where it points. A primitive that
         // curves toward the goal beats one that starts toward it and turns

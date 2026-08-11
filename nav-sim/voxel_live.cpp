@@ -687,6 +687,25 @@ static int runSession(Config C) {
                           traj.candidates().size(), gr.freeM, gr.speed,
                           gr.blocked ? "  BLOCKED" : "");
             banner(pPane, b, 44);
+            if (gr.blocked || traj.candidates().empty()) {
+                // WHY, not just THAT. Blocked by something SEEN and blocked by
+                // something merely UNSEEN want opposite responses -- back off
+                // versus look around -- and they are indistinguishable from a
+                // count of zero.
+                const auto& rj = traj.lastReject();
+                std::snprintf(b, sizeof(b),
+                              "rejected: %d occupied, %d unknown  (%d at the very first step)",
+                              rj.occupied, rj.unknown, rj.atStart);
+                banner(pPane, b, 66);
+                const char* hint =
+                    rj.unknown > rj.occupied
+                        ? "mostly UNKNOWN: the map has not seen enough beside you."
+                        : "mostly OCCUPIED: something real is inside the robot radius.";
+                banner(pPane, hint, 88);
+                std::snprintf(b, sizeof(b), "robot radius %.2f m -- a %.1f m wide vehicle",
+                              robotR, robotR * 2.f);
+                banner(pPane, b, 110);
+            }
             std::snprintf(b, sizeof(b), "integrate %.1f ms   plan %.2f ms",
                           integUs / 1000.0 / n, planUs / 1000.0 / n);
             banner(pPane, b, PH - 14);

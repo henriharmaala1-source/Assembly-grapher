@@ -1203,6 +1203,32 @@ the loader now enumerates `*realsense*` folders under Program Files and checks
 `bin/x64`, `bin`, `lib/x64`, `lib` in each, so the next build should find it
 unaided.
 
+## 2026-08-11 — FIRST REAL DEPTH THROUGH THE REAL STACK
+
+Indoors, handheld, D435i -> VoxelMap -> TrajectoryPlanner. The whole thing runs.
+
+    integrate  10.6 - 11.2 ms      plan  0.35 - 0.37 ms
+    valid pixels  85 - 97 %        (indoors, close range, emitter on)
+
+~90 Hz capable, and the planner is a rounding error next to the mapper, exactly
+as in sim. The first-person pane reconstructs a recognisable room in voxels.
+
+**The planner reported BLOCKED, 0 admissible, in a corridor and against a near
+wall — and that is almost certainly correct rather than a fault.** `robotR` is
+0.6 m, i.e. a 1.2 m wide vehicle, and the map is FOV-limited: with an 87 deg
+forward camera the cells beside the robot ball are UNKNOWN, never OCCUPIED, so
+`sphereClear` passes but the centreline FREE test truncates. Indoors at arm's
+length there is genuinely nowhere a 1.2 m ball is confirmed clear. This is the
+same deadlock the escape primitives exist for, and the 638-of-700-steps-
+stationary note in `voxel_traj.hpp` is the same phenomenon in sim.
+
+But "0 admissible" does not distinguish blocked-by-something-SEEN from
+blocked-by-something-UNSEEN, and those want opposite responses — back off versus
+look around. `TrajectoryPlanner::lastReject()` now counts occupied / unknown /
+at-the-first-step, and the PLAN pane prints the dominant reason plus the robot
+diameter. Confirming that the indoor BLOCKED is dominated by UNKNOWN is the next
+five seconds of work with the camera.
+
 **Still untested: everything after a device is found** — stream negotiation,
 intrinsics readback, depth scale, whether the baseline comes from the
 extrinsics or falls through to the nominal 50 mm, and the uint16→metres loop.

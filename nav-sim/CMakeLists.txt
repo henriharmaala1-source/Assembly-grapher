@@ -82,6 +82,26 @@ add_executable(far_map_demo
 target_include_directories(far_map_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(far_map_demo PRIVATE ${OpenCV_LIBS})
 
+# Depth improver checks, including a brute-force differential test of the
+# O(1)-per-pixel window minimum. Needs only opencv core, so it runs anywhere.
+add_executable(depth_improve_check
+  test/depth_improve_check.cpp
+  depth_improve.cpp)
+target_include_directories(depth_improve_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(depth_improve_check PRIVATE ${OpenCV_LIBS})
+if(BUILD_TESTS)
+  add_test(NAME depth_improve_check COMMAND depth_improve_check)
+endif()
+
+# Yaw-coupled sideslip: asserts |v| is preserved, straight primitives are
+# untouched, and the lateral gain is where the header claims it is.
+add_executable(sideslip_check test/sideslip_check.cpp)
+target_include_directories(sideslip_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(sideslip_check PRIVATE ${OpenCV_LIBS})
+if(BUILD_TESTS)
+  add_test(NAME sideslip_check COMMAND sideslip_check)
+endif()
+
 # Calibrates the forest world's trunk-visibility parameter against a REAL
 # photograph, so that number stops being a guess read off someone's screenshot.
 add_executable(bark_contrast test/bark_contrast.cpp)
@@ -102,6 +122,7 @@ add_executable(voxel_sim
   ompl_planner.cpp
   voxel_world.cpp
   depth_camera.cpp
+  depth_improve.cpp
   voxel_map.cpp
   voxel_planner.cpp
   voxel_traj.cpp)

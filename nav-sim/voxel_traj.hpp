@@ -124,6 +124,50 @@ struct TrajParams {
     float escapeSpeed= 1.0f;     // m/s
     float escapeMinDeg = 60.f;   // only directions at least this far off nose
 
+    // LATERAL VELOCITY COUPLED TO YAW RATE -- the forward arcs are still a car
+    // model even though the aircraft is not a car.
+    //
+    // DeFoP (arXiv 2512.17553) sets v_y = arctan(yaw command): while turning, a
+    // multirotor also translates sideways, so the velocity vector LEADS the
+    // heading instead of waiting for it. That is the manoeuvre a quad actually
+    // performs to step around a trunk, and no arc in this library can express
+    // it -- every one of them begins by moving straight ahead and only displaces
+    // laterally as the integrated heading comes round. The escape set already
+    // exploits holonomy, but only for retreat.
+    //
+    // IMPLEMENTED AS A SIDESLIP ANGLE, NOT AS AN ADDED VELOCITY, and the
+    // difference is a safety property rather than a preference. DeFoP's literal
+    // form adds a lateral component, which raises ground speed to
+    // sqrt(v^2 + v_y^2) -- above the speed the primitive was scored and
+    // stopping-distance budgeted at. Rotating the velocity vector by beta
+    // instead keeps |v| exactly equal to the primitive's speed, so the one
+    // invariant this planner has (never command faster than you can stop inside
+    // what you have confirmed free) is untouched, and the whole change is
+    // expressible as where the rollout points land.
+    //
+    //     beta = latSlipDeg * (2/pi) * arctan(yawRate / latKneeDps)
+    //
+    // Continuous and saturating, exactly as in the paper -- not discretised into
+    // a few lateral primitives, which would multiply the library size for a
+    // parameter that is naturally smooth.
+    //
+    // SIM CAVEAT, stated because it bounds what the A/B can show: voxel_sim
+    // slaves heading to course (yaw = atan2(vx, vy)), so the modelled vehicle
+    // has no sideslip of its own. What this measures there is the SHAPE of the
+    // primitives -- turning candidates displace laterally sooner, so different
+    // paths become admissible. The other half of the benefit, keeping the camera
+    // pointed where it was while the body slides, cannot be measured until the
+    // simulated vehicle gets a yaw model independent of its velocity.
+    //
+    // AND IT IS "SOONER", NOT "WIDER" -- test/sideslip_check.cpp measures this.
+    // At 20 deg and 100 deg/s the lateral offset roughly DOUBLES at the 0.2 s
+    // aim point (0.027 -> 0.056 m) and grows 50 % at 0.5 s, but at the 2 s
+    // horizon it is SMALLER (1.62 -> 1.54 m), because a 200 deg turn has carried
+    // the phase-led point back round the circle. The radius is unchanged by
+    // construction: |v| is fixed and the heading rate is fixed, so v/w is too.
+    float latSlipDeg = 0.f;      // max sideslip; 0 = off (the car model)
+    float latKneeDps = 40.f;     // yaw rate at which beta reaches half of latSlipDeg
+
     // Scoring. Deliberately few terms: this project has already measured that
     // adding weights to a badly-posed problem does not fix it.
     float goalWeight   = 1.0f;   // alignment of the endpoint with the goal bearing

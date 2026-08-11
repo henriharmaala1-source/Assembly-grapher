@@ -252,6 +252,24 @@ voxel_sim --world forest|city     which world
           --replan 25             A* replan interval, steps
           --display               live GUI
           --out /tmp/nav          PNG output prefix
+          --seed 1                world seed -- vary it before believing anything
+
+          --lanes                 thickets and clear lanes side by side (route choice)
+          --mixed                 clutter banded ACROSS the path (speed modulation)
+          --camw/--camh/--hfov/--baseline    camera geometry; Z_max follows from it
+          --vmax 1.5              speed cap, m/s
+
+          --farcell 2.0           coarse awareness map cell size
+          --farmode 0|1           openness metric: 0 first-blocked, 1 density (default)
+          --mid                   add a 1 m rung to the ladder (measured: does not help)
+          --nofar                 no coarse map at all
+
+          --improve               depth improver: fill holes against NEAR returns only
+          --impnear 2.0           how near a return has to be to seed a fill, m
+          --imprad 4              fill kernel half-width, px
+          --impseed 6             near returns needed in the kernel before filling
+          --slip 20               max sideslip, deg -- velocity leads heading while turning
+          --slipknee 40           yaw rate at which sideslip reaches half of --slip
 ```
 
 Exit code: `0` reached goal, `1` ran out of steps, `2` collided.

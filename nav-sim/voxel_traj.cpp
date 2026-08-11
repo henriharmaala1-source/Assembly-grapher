@@ -65,9 +65,19 @@ TrajectoryPlanner::TrajectoryPlanner(const TrajParams& p) : p_(p) {
                 pr.pts.reserve(steps);
                 float x = 0, y = 0, z = 0, yaw = 0;
                 float vx = 0, vy = 0, vz = 0;
+                // Sideslip: the velocity vector leads the heading by beta while
+                // turning, and |v| is unchanged so the speed budget still
+                // means what it says. Sign follows the turn -- a right turn
+                // slides right. Zero for a straight primitive at any latSlipDeg,
+                // which is why this cannot affect the forward-flight case.
+                const float beta = (p_.latSlipDeg != 0.f)
+                    ? deg2rad(p_.latSlipDeg) * (2.f / sim::PI_F)
+                        * std::atan(yawRate / std::max(1e-3f, p_.latKneeDps))
+                    : 0.f;
                 for (int s = 0; s < steps; ++s) {
                     yaw += deg2rad(yawRate) * p_.dt;
-                    float cx = std::sin(yaw) * speed, cy = std::cos(yaw) * speed;
+                    const float crs = yaw + beta;      // course, not heading
+                    float cx = std::sin(crs) * speed, cy = std::cos(crs) * speed;
                     vx += (cx - vx) * k; vy += (cy - vy) * k; vz += (climb - vz) * k;
                     x += vx * p_.dt; y += vy * p_.dt; z += vz * p_.dt;
                     pr.pts.push_back({x, y, z});

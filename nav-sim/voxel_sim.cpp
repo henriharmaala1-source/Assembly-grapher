@@ -31,6 +31,7 @@
 #endif
 
 #include "depth_camera.hpp"
+#include "depth_improve.hpp"
 #include "voxel_map.hpp"
 #include "ompl_planner.hpp"
 #include "voxel_planner.hpp"
@@ -142,6 +143,13 @@ int main(int argc, char** argv) {
     bool  useTraj = true;
     // Coarse far-field companion map -- see where it is constructed.
     bool  useFar = true;
+    // Depth improver (depth_improve.hpp) and yaw-coupled sideslip
+    // (TrajParams::latSlipDeg). Both OFF by default: each is an unproven idea
+    // taken from a paper, and the point of putting them behind a flag is that
+    // the arm without them is the same binary rather than a different one.
+    bool  improve = false;
+    DepthImproveParams dip;
+    float latSlip = 0.f, latKnee = -1.f;
     // The router's search cone about the goal bearing. 75 deg means it can
     // never plan a path that goes BACKWARDS -- which is exactly the manoeuvre
     // escaping a dead end requires. Exposed to test that.
@@ -156,6 +164,12 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--farmode")) farMode = std::atoi(next("1"));
         else if (!std::strcmp(argv[i], "--mid")) useMid = true;
+        else if (!std::strcmp(argv[i], "--improve")) improve = true;
+        else if (!std::strcmp(argv[i], "--impnear")) { improve = true; dip.nearM = float(std::atof(next("2.0"))); }
+        else if (!std::strcmp(argv[i], "--imprad")) { improve = true; dip.radiusPx = std::atoi(next("4")); }
+        else if (!std::strcmp(argv[i], "--impseed")) { improve = true; dip.minSeeds = std::atoi(next("6")); }
+        else if (!std::strcmp(argv[i], "--slip")) latSlip = float(std::atof(next("20")));
+        else if (!std::strcmp(argv[i], "--slipknee")) latKnee = float(std::atof(next("40")));
         else if (!std::strcmp(argv[i], "--vmax")) vmax = float(std::atof(next("3.0")));
         else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("320"));
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("240"));
@@ -410,7 +424,15 @@ int main(int argc, char** argv) {
     tp.decelMs2 = gp.decelMs2; tp.reactS = gp.reactS; tp.minFreeM = gp.minFreeM;
     tp.dt = dt;              // the rollout must use the control period
     if (coreFrac >= 0.f) tp.coreFrac = coreFrac;
+    tp.latSlipDeg = latSlip;
+    if (latKnee > 0.f) tp.latKneeDps = latKnee;
     TrajectoryPlanner traj(tp);
+    if (latSlip != 0.f)
+        printf("  sideslip           %.0f deg max, knee %.0f deg/s "
+               "(velocity leads heading while turning)\n", tp.latSlipDeg, tp.latKneeDps);
+    if (improve)
+        printf("  depth improver     near %.1f m, radius %d px, %d seeds\n",
+               dip.nearM, dip.radiusPx, dip.minSeeds);
     if (useTraj)
         printf("  reactive layer: trajectory library, %zu primitives\n", traj.librarySize());
     else
@@ -433,8 +455,9 @@ int main(int argc, char** argv) {
     long corridorLies = 0;
     bool reached = false;
     std::vector<cv::Point2f> trail;
-    double tPlan = 0, tSense = 0, tGen = 0, tPrec = 0, tInteg = 0;
+    double tPlan = 0, tSense = 0, tGen = 0, tPrec = 0, tInteg = 0, tImprove = 0;
     int nPrec = 0;
+    long impFilled = 0, impHoles = 0, impNear = 0;
 
     const float startDist = std::hypot(goalE - px, goalN - py);
     FILE* csv = csvPath.empty() ? nullptr : std::fopen(csvPath.c_str(), "w");
@@ -472,6 +495,17 @@ int main(int argc, char** argv) {
         mpose.e += dE; mpose.n += dN; mpose.u += dU; mpose.yawDeg += dY;
         int64 t0 = cv::getTickCount();
         cv::Mat d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
+        // Fill holes that sit against a NEAR return, and only those. Applied to
+        // the depth image before anything reads it, so every consumer -- fine
+        // map, mid, far -- sees the same frame. Once per frame: the improver is
+        // not idempotent by design (a fill is not a seed only within one call),
+        // so running it per-map would dilate obstacles once per level.
+        if (improve) {
+            int64 ti = cv::getTickCount();
+            DepthImproveStats ist = improveDepth(d, dip);
+            tImprove += double(cv::getTickCount() - ti) / cv::getTickFrequency();
+            impFilled += ist.filled; impHoles += ist.holes; impNear += ist.nearPx;
+        }
         int64 tm = cv::getTickCount();
         M.integrate(d, cam, mpose);   // believed pose, not true pose
         if (useFar) { Mfar.integrate(d, cam, mpose); Mfar.recentre(px + dE, py + dN, pz + dU); }
@@ -754,6 +788,19 @@ int main(int argc, char** argv) {
     // Map integration and both planners are real onboard cost.
     int nsteps = std::max(1, (int)trail.size());
     printf("  --- onboard cost (per step unless noted) ---\n");
+    if (improve) {
+        // Report the fill against BOTH denominators. Against holes it says how
+        // much of the missing image was recovered; against the frame it says
+        // how much of the map is now fabricated. The second is the one that can
+        // hurt you, so it does not get to hide behind the first.
+        const double px = double(camW) * camH * std::max(1, nsteps);
+        printf("  depth improver     %6.2f ms;  filled %.2f%% of holes, %.2f%% of the frame"
+               "  (holes %.1f%%, near returns %.1f%%)\n",
+               1000 * tImprove / nsteps,
+               impHoles ? 100.0 * double(impFilled) / double(impHoles) : 0.0,
+               100.0 * double(impFilled) / px,
+               100.0 * double(impHoles) / px, 100.0 * double(impNear) / px);
+    }
     printf("  map integrate      %6.2f ms\n", 1000 * tInteg / nsteps);
     if (useFar) {
         // What did the extra range actually buy? Count cells the coarse map

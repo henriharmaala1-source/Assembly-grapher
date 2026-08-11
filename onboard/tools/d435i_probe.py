@@ -3,14 +3,33 @@
 D435i acceptance probe -- run this on a laptop before the camera goes near the
 airframe.
 
-    python3 -m pip install pyrealsense2 numpy      # -m python3, NOT bare pip
-    python3 d435i_probe.py --selftest       # NO CAMERA NEEDED. Do this first.
-    python3 d435i_probe.py                  # full check with the camera
-    python3 d435i_probe.py --range 3.0      # you tape-measured 3.0 m to the target
-    python3 d435i_probe.py --record 600 --record-every 6 --emitter off
+  Linux / macOS:                        Windows (PowerShell):
+    python3 -m pip install ...             py -m pip install pyrealsense2 numpy
+    python3 d435i_probe.py ...             py d435i_probe.py ...
+
+  ON WINDOWS, `python3` DOES NOT EXIST and is not a typo you can fix by adding
+  an alias. Windows ships a stub called python3.exe -- an "App Execution Alias"
+  -- whose entire job is to offer to open the Microsoft Store. It reports
+  "Python was not found" even when Python is installed and working, which sends
+  people off reinstalling a Python they already have. Use `py`, the Python
+  launcher, which is what the python.org installer puts on PATH. Turning the
+  aliases off (Settings > Apps > Advanced app settings > App execution aliases)
+  stops the stub intercepting.
+
+  Use -m pip, never bare `pip`: it guarantees the packages land in the
+  interpreter you are about to run rather than some other one on PATH.
+
+    <py|python3> d435i_probe.py --selftest  # NO CAMERA NEEDED. Do this first.
+    <py|python3> d435i_probe.py             # full check with the camera
+    <py|python3> d435i_probe.py --range 3.0 # you tape-measured 3.0 m to the target
+    <py|python3> d435i_probe.py --record 600 --record-every 6 --emitter off
                                             # walk the forest with it on a stick
-    python3 d435i_probe.py --replay walk.npz --range 2.5
+    <py|python3> d435i_probe.py --replay walk.npz --range 2.5
                                             # analyse it later, numpy only
+
+  Python 3.11 or 3.12. pyrealsense2 wheels lag new Python releases badly, so
+  3.13+ tends to give "no matching distribution". On Windows prefer the
+  python.org build over the Store one, which sandboxes file access.
 
 WHY THIS EXISTS ALONGSIDE realsense-viewer, RATHER THAN INSTEAD OF IT.
 
@@ -340,6 +359,8 @@ def classify_sdk(spec_found, exc, plat=None, pyver=None):
             "",
             "  Fix -- install with the interpreter itself, never bare pip:",
             f"      {sys.executable} -m pip install pyrealsense2 numpy",
+            ("      (on Windows the launcher spelling is:  py -m pip install "
+             "pyrealsense2 numpy)" if plat.startswith("win") else ""),
             "",
             f"  This interpreter: {sys.executable}",
             f"  Version:          {sys.version.split()[0]} on {plat}",

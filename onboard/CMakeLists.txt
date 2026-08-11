@@ -24,6 +24,8 @@ add_executable(kestrel
   src/state_estimator.cpp
   src/serial_port.cpp
   src/msp_backend.cpp
+  src/mavlink_v2.cpp
+  src/mavlink_backend.cpp
   src/lock_tracker.cpp
   src/kalman_center.cpp
   src/depth_nav.cpp
@@ -129,6 +131,14 @@ if(BUILD_TESTS)
                src/mission.cpp src/nav_map.cpp src/world_model.cpp)
   kestrel_test(test_msp src/msp_backend.cpp src/serial_port.cpp)
   target_link_libraries(test_msp PRIVATE util)   # openpty
+  # MAVLink codec against golden frames from pymavlink. No serial, no hardware:
+  # the frames ARE the specification, so this runs anywhere.
+  kestrel_test(test_mavlink src/mavlink_v2.cpp)
+  # The backend over a PTY: proves it USES the codec correctly, which is a
+  # different failure mode from the codec being right.
+  kestrel_test(test_mavlink_backend src/mavlink_backend.cpp src/mavlink_v2.cpp
+               src/serial_port.cpp)
+  target_link_libraries(test_mavlink_backend PRIVATE util)   # openpty
   kestrel_test(test_config src/config.cpp src/controller.cpp
                src/mission.cpp src/nav_map.cpp src/control_mode.cpp src/world_model.cpp
                src/rc_command.cpp)

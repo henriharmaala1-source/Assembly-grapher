@@ -992,6 +992,121 @@ rewrite is the version benchmarked here under load. Either way this is not the
 sub-millisecond component the supervisor will be — a Pi would spend a large
 fraction of its cycle here, which is a further argument against it.
 
+### Follow-ups: both verdicts firmed up, and neither goes on by default
+
+**Sideslip, 16 seeds now (8 fresh).** The first batch said +0.021, t=+1.43, 6/8.
+Fresh seeds 9–16 say **−0.007, t=−0.22, and 6/8 again**. Pooled:
+
+    n=16   mean +0.007   sd 0.067   SE 0.017   t=+0.44   better 12/16
+    median +0.015
+
+**Wins often, loses big.** 12 of 16 seeds improve and the median gain is +0.015,
+but two seeds lose 0.090 and 0.182 and wipe the mean out. A sign test on 12/16 is
+p≈0.04 one-sided; the mean is indistinguishable from zero. Both statements are
+true and the second is the one that decides it — a mechanism that occasionally
+costs 0.18 does not go on by default on the strength of frequent small gains.
+
+The asymmetry is a lead, not noise. Sideslip puts the aim bearing off the
+aircraft's heading, and voxel_sim slaves heading to course, so the simulated
+vehicle turns to follow the sideslip and ends up looking somewhere the map is
+thinner. Worth checking on the bad seeds before either fixing or dropping this —
+and it is exactly the coupling that disappears on ArduPilot, where yaw and
+course are genuinely independent.
+
+**Depth improver: a clean dose-response, and no operating point that helps.**
+Plain forest at trunktex 0.25 (trunks partly resolving — the regime where its
+claim should bite most):
+
+    arm          mean    vs base                       fill        minclear
+    base         0.538   --                            --          0.46
+    imp3         0.453   -0.085 SE .068 t=-1.26  2/8   10% of holes 0.35
+    imp3strict   0.535   -0.003 SE .044 t=-0.07  4/8    2% of holes 0.42
+
+Strict settings (radius 2, 9 seeds) fill a fifth as much and the harm vanishes —
+along with any effect at all. **The damage scales with the fill rate and so does
+nothing else.** Seed 6 is the picture: 0.578 → 0.023 at the loose setting, an
+aircraft essentially walled in by fabricated cells, recovering to 0.295 when the
+fill is throttled. Minimum clearance tracks the same way.
+
+That closes it as far as this simulator can. The improver stays off, and the
+thing that would reopen it is thin branches in the world model, not a better
+parameter.
+
+---
+
+## 2026-08-11 — FLIGHT STACK: ArduPilot, decided
+
+Moving off iNAV/MSP. The reasoning is not about acro quality, it is about what
+each stack lets a companion computer be:
+
+* **MSP has no companion concept.** The only way in is RC override — the Pi
+  impersonates a pilot's sticks and the FC never knows. That works (it is what
+  `msp_backend.cpp` does) but it forecloses velocity setpoints, vision pose into
+  the estimator, and any mode the autopilot understands as "something else is
+  flying". Every one of those is a first-class message on ArduPilot.
+* **ACRO is mode 1** (`COPTER_MODE_ACRO`), confirmed against the dialect, and it
+  sits on the same mode switch as GUIDED. Manual flying and autonomy do not have
+  to be separate aircraft.
+* **VISION_POSITION_ESTIMATE / VISION_SPEED_ESTIMATE** are the supported path
+  into the EKF. That is the missing state-estimation subsystem's landing spot,
+  and it is the strongest single argument here.
+
+**Honest caveats, none of them blocking:**
+
+1. **ACRO is not Betaflight.** ArduCopter's rate controller runs a 400 Hz loop
+   and is tuned for stability, not freestyle feel. It is flyable; it will not
+   feel locked-in the way a BF quad does. If the aim were freestyle this would
+   be the wrong call — it is not.
+2. **Board support is the real constraint.** F405 targets are flash-squeezed on
+   ArduCopter 4.4+ and some features get trimmed or dropped. **H743 is the safe
+   choice.** Check the specific FC against the ArduPilot hardware list before
+   ordering anything, because this is the one decision that is expensive to undo.
+3. **Non-GPS setup is not the default.** GUIDED needs a position estimate;
+   without GPS that means `EK3_SRC*` pointed at an external nav source, and the
+   pre-arm checks have to be told what is legitimately absent. Getting this
+   wrong looks like "it refuses to arm" and eats an afternoon.
+
+**Two configuration facts that will cost an afternoon each if missed** (both now
+printed by the backend on connect):
+
+* `SYSID_MYGCS` (`MAV_GCS_SYSID` on 4.5+) gates who may send
+  RC_CHANNELS_OVERRIDE and mode changes. Default 255, so the backend's sysid
+  defaults to 255. If a real GCS is also on the link, one of them has to move.
+* `RC_OVERRIDE_TIME` (default 3 s) releases an override that stops being resent,
+  and a channel value of **0 means "give this channel back to the receiver"**.
+  Both are safety features. The backend writes 0 to every channel it is not
+  driving, so the pilot's mode switch always reaches the FC — that is the single
+  most important line in `sendControl()`.
+
+**Implemented** (`onboard/`): `mavlink_v2.{hpp,cpp}` — dependency-free MAVLink v2
+framing and the fourteen messages actually used; `mavlink_backend.{hpp,cpp}` —
+the real backend replacing the stub that used to refuse to connect. Two control
+paths: RC override (works in any mode, no EKF, same ControlCmd as MSP) and
+body-frame velocity setpoints (needs GUIDED, and therefore needs the estimator
+that does not exist yet — implemented so it has somewhere to plug in, not
+because it is ready to fly).
+
+**Not generated from common.xml, and pinned by golden frames instead.** Fourteen
+messages did not justify vendoring mavgen into a tree whose whole discipline is
+having no dependencies. The risk of hand-rolling is that a wrong CRC_EXTRA or a
+transposed field does not error — the autopilot silently drops the frame, which
+on a bench is indistinguishable from a bad solder joint. So every message is
+checked byte-for-byte against what pymavlink emits for the same arguments.
+
+That caught two real defects before any hardware existed:
+* `RC_CHANNELS.chancount` is a **uint8 at offset 40**, not a uint16 at 38 (which
+  is chan18). The backend read the wrong one: on a 16-channel link that is zero,
+  so assist mode would never have latched a baseline.
+* `connect()` reported `linkUp()` **before the autopilot had ever spoken**,
+  copied from the MSP backend where a grace period is right (MSP is
+  request/response). ArduPilot heartbeats unprompted at 1 Hz, so silence means
+  silence — and claiming a link tells `main.cpp` it may take control of a serial
+  port with nothing on the other end.
+
+**Next on this path:** set the FC parameters above on real hardware, confirm the
+link with `--fc=mavlink`, and fly RC-override first. GUIDED waits for the
+estimator.
+
 ---
 
 ## Open / unresolved
@@ -1002,8 +1117,17 @@ fraction of its cycle here, which is a further argument against it.
   it is the reason the depth improver cannot be evaluated on the case it exists
   for, and it flatters every other result too, since branches are what a forest
   actually hits you with.
-* Sideslip at 20° is +0.021 at t=1.43 — the right sign on 6/8 seeds but not
-  significant at n=8. Needs fresh seeds before it goes on by default.
+* Sideslip at 20°: 12/16 seeds better, mean +0.007 (t=+0.44). Wins often, loses
+  big — two seeds cost 0.09 and 0.18. Off by default. **Lead worth chasing:**
+  voxel_sim slaves heading to course, so a sideslipping aircraft turns to look
+  where it is sliding. That coupling is a simulator artefact and does not exist
+  on ArduPilot, where yaw and course are independent — so this may be measuring
+  the sim rather than the idea.
+* **FC hardware not confirmed against the ArduPilot board list.** H743 is the
+  safe target; F405 is flash-squeezed on 4.4+. This is the expensive-to-undo
+  decision and it is still open.
+* Non-GPS ArduPilot setup (`EK3_SRC*`, pre-arm checks) is unwritten. GUIDED will
+  refuse to engage until it is done, and the symptom looks like a broken link.
 * Earlier sweep command lines were never recorded and the baseline has drifted
   (0.794 vs 0.761 for the same nominal arm). Record the full command line with
   every table from now on.

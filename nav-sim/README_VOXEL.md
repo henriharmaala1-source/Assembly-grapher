@@ -873,8 +873,8 @@ PERSON** (the map from inside — pale is UNKNOWN drawn as fog, never as air),
 **MAP SLICE** (green ring = the occupancy MARK limit, orange = the free-space
 CARVE limit), **PLAN** (faint = admissible primitives, green = chosen).
 
-Press `v` (or use the menu) to switch the top-right pane between **FIRST
-PERSON** and **OVERLAY** — the same voxel render composited *onto the depth
+Press `v` (or use the menu) to cycle the top-right pane through **FIRST
+PERSON**, **OVERLAY** and **CHASE** — the same voxel render composited *onto the depth
 image it was built from*, at the camera's own resolution and horizontal FOV so
 the two line up pixel for pixel.
 
@@ -886,6 +886,20 @@ wrong — and in every other view both halves would look individually plausible.
 `overlay_align_check` pins it to sub-pixel and explicitly rejects a left/right
 and an up/down flip, because on a forest a mirrored render looks entirely
 convincing.
+
+**CHASE** is the same renderer from a viewpoint behind and above the aircraft,
+with every admissible rollout and the chosen one drawn into the scene. That
+viewpoint is not decoration: forward paths are *invisible* from the aircraft's
+own eye, because they run along the optical axis and project to a dot at the
+vanishing point. Seeing a path as a path needs a viewpoint the path is not
+pointing at. It is framed on the plan's own length (`horizonS × vMax`) rather
+than on the map's range, for the same reason.
+
+Paths are projected with `VoxelMap::fpvProject`, the exact inverse of the ray
+`fpvImageWH` casts — pinned to 0.0001 px by `overlay_align_check`, which also
+asserts that a point behind the camera is rejected rather than mirrored to the
+front. A projection written separately from the render it draws into is a sign
+error waiting to happen, and one that looks entirely plausible.
 
 The first-person pane renders the **map, never the world**: where the model is
 wrong, you fly into fog. Its horizon is short because the map's honest marking

@@ -145,6 +145,12 @@ struct Config {
     //   0 FIRST PERSON  the map alone, rendered from inside
     //   1 OVERLAY       the same render composited ON the depth image it was
     //                   built from, pixel for pixel
+    //   2 CHASE         the same renderer from BEHIND AND ABOVE, with the plan
+    //                   drawn in. Forward paths are invisible from the
+    //                   aircraft's own eye -- they run along the view axis and
+    //                   project to a dot at the vanishing point, which is what
+    //                   drawing them there actually produced. Seeing a path as
+    //                   a path needs a viewpoint the path is not pointing at.
     //
     // The overlay is the pane that can catch a whole class of fault nothing
     // else here can. Map and depth are separate estimates of the same scene; if
@@ -413,7 +419,9 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                           C.mode != "replay" || !C.path.empty()});
     btns.push_back(Button{{286, H - 78, 140, 56}, "QUIT", "", 21});
     btns.push_back(Button{{530, yset + 112, 300, 40},
-                          C.viewMode == 0 ? "view: FIRST PERSON" : "view: OVERLAY on depth",
+                          C.viewMode == 0 ? "view: FIRST PERSON"
+                                          : C.viewMode == 1 ? "view: OVERLAY on depth"
+                                                            : "view: CHASE (3D plan)",
                           "", 16, true, C.viewMode == 1});
 
     label(img, "In the view:  space pause   v overlay   s save PNG   m menu   q quit",
@@ -467,6 +475,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--forward")) dirMode = 1;
         else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
+        else if (!std::strcmp(argv[i], "--chase")) viewMode = 2;
         else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--nofar")) farCell = 0.f;
         else if (!std::strcmp(argv[i], "--nearcell")) nearCell = float(std::atof(next("0.10")));
@@ -867,6 +876,48 @@ static int runSession(Config C) {
         // seeing where the world stops is the useful part.
         cv::Mat fPane;
         const float fpvRange = std::max(4.f, mp.maxIntegM * 2.f);
+
+        // Draw the plan INTO the first-person view: every candidate rollout and
+        // the chosen one, projected through the same camera the scene was
+        // rendered with. This is the pane where a plan is legible as a plan --
+        // a top-down fan of lines shows you the geometry, this shows you where
+        // the aircraft would actually go, in the scene it would go through.
+        //
+        // fpvProject is the exact inverse of the ray fpvImageWH casts (pinned to
+        // 0.0001 px in overlay_align_check), so a path lands where the geometry
+        // puts it rather than where a second implementation of the maths does.
+        auto drawPlanInto = [&](cv::Mat& img, float fovDeg) {
+            auto proj = [&](const std::array<float, 3>& w, cv::Point& out) {
+                float u, v;
+                if (!VoxelMap::fpvProject(pose.e, pose.n, pose.u, yaw, pitchDeg,
+                                          img.cols, img.rows, fovDeg,
+                                          w[0], w[1], w[2], u, v)) return false;
+                out = cv::Point(int(u), int(v));
+                return true;
+            };
+            auto polyline = [&](const std::vector<std::array<float, 3>>& pts,
+                                cv::Scalar col, int thick) {
+                cv::Point a;
+                bool have = false;
+                for (const auto& w : pts) {
+                    cv::Point b;
+                    const bool ok = proj(w, b);
+                    if (ok && have) cv::line(img, a, b, col, thick, cv::LINE_AA);
+                    a = b; have = ok;
+                }
+            };
+            for (const auto& c : traj.candidates()) polyline(c, {210, 170, 120}, 1);
+            polyline(traj.chosen(), {40, 190, 40}, 3);
+            // The aim point: what the controller is actually commanded toward,
+            // which is a short way along the winning path and NOT its endpoint.
+            if (!traj.chosen().empty()) {
+                const size_t k = std::min(traj.chosen().size() - 1,
+                                          size_t(std::max(1, int(tp.aimS / tp.dt))));
+                cv::Point a;
+                if (proj(traj.chosen()[k], a))
+                    cv::circle(img, a, 6, {40, 190, 40}, 2, cv::LINE_AA);
+            }
+        };
         if (C.viewMode == 1) {
             // OVERLAY. Rendered at the DEPTH IMAGE's own size and horizontal
             // FOV, so the two line up pixel for pixel and any disagreement is
@@ -883,9 +934,65 @@ static int runSession(Config C) {
             // whole frame and hide the one thing being compared.
             base *= 0.45;
             vox.copyTo(base, mask);
+            drawPlanInto(base, cp.hfovDeg);
             fPane = fit(base, PW, PH);
             banner(fPane, "OVERLAY  voxels ON the depth they came from");
             banner(fPane, "aligned = intrinsics, frame and pose all agree", 44);
+        } else if (C.viewMode == 2) {
+            // CHASE. Same renderer, same projection, a viewpoint moved back and
+            // up along the aircraft's own heading -- so the plan has extent in
+            // the image instead of vanishing down the optical axis.
+            const VoxelMap& src = haveNear ? Mnear : M;
+            // Framed on the PLAN, not on the map: the rollouts are
+            // horizonS * vMax long (3 m at 1.5 m/s), and that is what has to
+            // fill the pane. Sitting a whole map-range back with a 90 deg lens
+            // put the aircraft in the middle of an empty field -- rendered it,
+            // saw it, moved in.
+            const float span = std::max(2.5f, tp.horizonS * vmax);
+            const float back = span * 0.8f, up = span * 0.45f;
+            const float chaseFov = 62.f;
+            const float yr = yaw * sim::PI_F / 180.f;
+            const float ex2 = pose.e - std::sin(yr) * back;
+            const float ny2 = pose.n - std::cos(yr) * back;
+            const float uz2 = pose.u + up;
+            const float pitchDown = -std::atan2(up, back) * 180.f / sim::PI_F;
+            cv::Mat v3 = src.fpvImageWH(ex2, ny2, uz2, yaw, pitchDown,
+                                        PH, PH, chaseFov,
+                                        back + std::max(mp.maxIntegM, span) * 1.4f,
+                                        nullptr);
+            // Project through the CHASE pose, not the aircraft's.
+            auto projC = [&](const std::array<float, 3>& w, cv::Point& o) {
+                float u, v;
+                if (!VoxelMap::fpvProject(ex2, ny2, uz2, yaw, pitchDown,
+                                          v3.cols, v3.rows, chaseFov,
+                                          w[0], w[1], w[2], u, v)) return false;
+                o = cv::Point(int(u), int(v));
+                return true;
+            };
+            auto polyC = [&](const std::vector<std::array<float, 3>>& pts,
+                             cv::Scalar col, int th) {
+                cv::Point a; bool have = false;
+                for (const auto& w : pts) {
+                    cv::Point b; const bool ok = projC(w, b);
+                    if (ok && have) cv::line(v3, a, b, col, th, cv::LINE_AA);
+                    a = b; have = ok;
+                }
+            };
+            for (const auto& c : traj.candidates()) polyC(c, {210, 170, 120}, 1);
+            polyC(traj.chosen(), {40, 190, 40}, 3);
+            {   // the aircraft itself, so the paths have somewhere to start
+                cv::Point a;
+                if (projC({pose.e, pose.n, pose.u}, a)) {
+                    cv::circle(v3, a, 7, {60, 60, 200}, 2, cv::LINE_AA);
+                    cv::circle(v3, a, 2, {60, 60, 200}, cv::FILLED);
+                }
+            }
+            fPane = fit(v3, PW, PH);
+            banner(fPane, "CHASE  the map and the plan, from behind");
+            char cb[96];
+            std::snprintf(cb, sizeof(cb), "blue = the aircraft   green = chosen   "
+                          "%.0f m back, %.0f m up", back, up);
+            banner(fPane, cb, 44);
         } else {
             // Render from the FINEST level available. The first-person view is
             // a near-field view by construction -- everything past a few metres
@@ -893,10 +1000,11 @@ static int runSession(Config C) {
             // one to draw. Shorter horizon, two and a half times the detail.
             const VoxelMap& src = haveNear ? Mnear : M;
             const float rng = haveNear ? std::max(3.f, np.maxIntegM * 1.6f) : fpvRange;
-            fPane = fit(src.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
-                                       PH, PH, 90.f, rng, nullptr),
-                        PW, PH);
-            banner(fPane, "FIRST PERSON  the MAP, from inside");
+            cv::Mat fpv = src.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
+                                         PH, PH, 90.f, rng, nullptr);
+            drawPlanInto(fpv, 90.f);
+            fPane = fit(fpv, PW, PH);
+            banner(fPane, "FIRST PERSON  the map + the plan, from inside");
             char nb[96];
             std::snprintf(nb, sizeof(nb), "%.2f m voxels, honest to %.1f m   "
                           "pale = UNKNOWN, never air",
@@ -917,7 +1025,7 @@ static int runSession(Config C) {
             const int k = cv::waitKey(paused ? 0 : 1);
             if (k == 'q' || k == 27) break;
             if (k == 'm') { backToMenu = true; break; }
-            if (k == 'v') C.viewMode = 1 - C.viewMode;   // first person <-> overlay
+            if (k == 'v') C.viewMode = (C.viewMode + 1) % 3;  // fpv / overlay / chase
             if (k == ' ') paused = !paused;
             if (k == 's') { cv::imwrite(out + "_frame.png", full);
                             std::printf("wrote %s_frame.png\n", out.c_str()); }
@@ -1029,7 +1137,7 @@ int main(int argc, char** argv) {
         else if (id == 13) { iSpin = (iSpin + 1) % 5; C.yawRateDps = SPINS[iSpin]; }
         else if (id == 14) { C.stride = (C.stride >= 4) ? 1 : C.stride * 2; }
         else if (id == 15) { C.dirMode = 1 - C.dirMode; }
-        else if (id == 16) { C.viewMode = 1 - C.viewMode; }
+        else if (id == 16) { C.viewMode = (C.viewMode + 1) % 3; }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

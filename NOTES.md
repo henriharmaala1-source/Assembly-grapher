@@ -1302,6 +1302,26 @@ there: a 3 cm branch cannot cross occThresh in a 0.25 m cell and is most of a
 cell at 0.05 m, and late thin-branch detection is the documented cause of real
 failure in both reference papers.
 
+### 3D plan view, and why the obvious viewpoint does not work
+
+Drew the trajectory library into the FIRST-PERSON view first. It renders
+correctly and is useless: forward paths run along the optical axis, so they
+project to a cluster a few pixels across at the vanishing point. Rendering it
+was the only way to find that out — the maths was right and the picture was
+empty.
+
+So: a CHASE view, the same renderer from behind and above the aircraft, framed
+on the PLAN's own length (`horizonS * vMax`, 3 m at 1.5 m/s) rather than on the
+map's range. The first attempt sat a whole map-range back with a 90 deg lens and
+put the aircraft alone in an empty field; 0.8 span back, 0.45 up, 62 deg reads
+properly. `v` cycles first-person / overlay / chase.
+
+`VoxelMap::fpvProject` is the exact inverse of `fpvRay`, which the renderer now
+calls too — so the projection cannot drift from the render. Pinned at 0.0001 px
+over 165 pixels, plus an assertion that a point BEHIND the camera is rejected
+rather than folded to the front, which is the failure that would draw a retreat
+primitive as though it went forwards.
+
 **Still untested: everything after a device is found** — stream negotiation,
 intrinsics readback, depth scale, whether the baseline comes from the
 extrinsics or falls through to the nominal 50 mm, and the uint16→metres loop.

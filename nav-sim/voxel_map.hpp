@@ -321,6 +321,20 @@ public:
     // whatever the aspect ratio is, which looks like a calibration error and
     // is really a rendering shortcut. The vertical FOV follows from the
     // horizontal one and the aspect, exactly as it does in a real pinhole.
+    // Pixel -> world ray for the first-person render, and its exact inverse.
+    // Both are here, next to each other and used by the renderer itself, so a
+    // path drawn into that view lands where the geometry says it does. A
+    // projection written separately from the render it draws into is a sign
+    // error waiting to happen, and one that looks plausible.
+    static void fpvRay(float yawDeg, float pitchDeg, int outW, int outH,
+                       float hfovDeg, float u, float v,
+                       float& dx, float& dy, float& dz);
+    // Returns false when the point is behind the camera or off the image.
+    static bool fpvProject(float px, float py, float pz,
+                           float yawDeg, float pitchDeg, int outW, int outH,
+                           float hfovDeg, float wx, float wy, float wz,
+                           float& u, float& v);
+
     cv::Mat fpvImageWH(float px, float py, float pz,
                        float yawDeg, float pitchDeg,
                        int outW, int outH, float hfovDeg,

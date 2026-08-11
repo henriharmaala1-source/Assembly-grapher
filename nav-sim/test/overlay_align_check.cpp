@@ -127,6 +127,42 @@ int main() {
     check(cy0 - dy_ > 15.f, "and really is above centre",
           std::to_string(cy0 - dy_) + " px");
 
+    // --- the projection must be the exact inverse of the render ray --------
+    // Paths are drawn into the first-person view with fpvProject; if it is not
+    // the inverse of the ray the renderer casts, the plan is drawn somewhere
+    // the geometry does not put it, and on a voxel scene that looks entirely
+    // convincing.
+    {
+        float worst = 0.f; int tested = 0, behind = 0;
+        for (int vv = 8; vv < d.rows; vv += 23)
+            for (int uu = 8; uu < d.cols; uu += 29) {
+                float rx, ry, rz;
+                VoxelMap::fpvRay(yaw, pitch, d.cols, d.rows, cp.hfovDeg,
+                                 float(uu), float(vv), rx, ry, rz);
+                // A point 3 m along that ray must project back to that pixel.
+                float bu, bv;
+                if (!VoxelMap::fpvProject(camE, camN, camU, yaw, pitch,
+                                          d.cols, d.rows, cp.hfovDeg,
+                                          camE + rx * 3.f, camN + ry * 3.f,
+                                          camU + rz * 3.f, bu, bv)) { ++behind; continue; }
+                worst = std::max(worst, std::max(std::fabs(bu - uu), std::fabs(bv - vv)));
+                ++tested;
+            }
+        check(tested > 50 && worst < 0.01f,
+              "fpvProject inverts fpvRay to under 0.01 px",
+              std::to_string(tested) + " pixels, worst " + std::to_string(worst));
+        check(behind == 0, "and no in-frame pixel was reported as behind the camera");
+    }
+
+    // A point BEHIND the camera must be rejected, not folded to the front --
+    // the failure that draws a retreat primitive as though it went forwards.
+    {
+        float bu, bv;
+        check(!VoxelMap::fpvProject(camE, camN, camU, yaw, pitch, d.cols, d.rows,
+                                    cp.hfovDeg, camE, camN - 3.f, camU, bu, bv),
+              "a point behind the camera is rejected, not mirrored to the front");
+    }
+
     // Explicitly reject the two flips a plausible-looking render would pass.
     check(std::fabs((2 * cx0 - vx_) - dx_) > 20.f,
           "a LEFT/RIGHT flip of the render would NOT match");

@@ -122,6 +122,50 @@ VoxelMap::Hit VoxelMap::raycast(float px, float py, float pz,
     return h;
 }
 
+
+// --- first-person projection, forward and inverse ---------------------------
+// Camera frame: +X right, +Y down, +Z forward; then pitch, then yaw clockwise
+// from North. Identical to DepthCamera::rayFor, because two conventions for the
+// same thing is a bug waiting to happen.
+void VoxelMap::fpvRay(float yawDeg, float pitchDeg, int outW, int outH,
+                      float hfovDeg, float u, float v,
+                      float& dx, float& dy, float& dz) {
+    const float f = (outW * 0.5f) / std::tan(hfovDeg * 0.5f * PI_F / 180.f);
+    const float cx = (outW - 1) * 0.5f, cy = (outH - 1) * 0.5f;
+    const float cy_ = std::cos(yawDeg * PI_F / 180.f), sy_ = std::sin(yawDeg * PI_F / 180.f);
+    const float cp = std::cos(pitchDeg * PI_F / 180.f), sp = std::sin(pitchDeg * PI_F / 180.f);
+    const float rx = (u - cx) / f, ry = (v - cy) / f;
+    const float y2 = ry * cp - sp, z2 = ry * sp + cp;
+    const float fE = rx, fN = z2, fU = -y2;
+    dx = fE * cy_ + fN * sy_;
+    dy = -fE * sy_ + fN * cy_;
+    dz = fU;
+}
+
+bool VoxelMap::fpvProject(float px, float py, float pz,
+                          float yawDeg, float pitchDeg, int outW, int outH,
+                          float hfovDeg, float wx, float wy, float wz,
+                          float& u, float& v) {
+    const float f = (outW * 0.5f) / std::tan(hfovDeg * 0.5f * PI_F / 180.f);
+    const float cx = (outW - 1) * 0.5f, cy = (outH - 1) * 0.5f;
+    const float cy_ = std::cos(yawDeg * PI_F / 180.f), sy_ = std::sin(yawDeg * PI_F / 180.f);
+    const float cp = std::cos(pitchDeg * PI_F / 180.f), sp = std::sin(pitchDeg * PI_F / 180.f);
+
+    const float dx = wx - px, dy = wy - py, dz = wz - pz;
+    // Undo the yaw. (The forward map is dx = fE*cy + fN*sy, dy = -fE*sy + fN*cy.)
+    const float fE = dx * cy_ - dy * sy_;
+    const float fN = dx * sy_ + dy * cy_;
+    const float fU = dz;
+    // Undo the pitch. lambda is the distance along the optical axis; solving
+    // the two pitch equations for it gives fN*cos + fU*sin, and it is negative
+    // exactly when the point is behind the image plane.
+    const float lam = fN * cp + fU * sp;
+    if (lam <= 1e-4f) return false;
+    u = (fE / lam) * f + cx;
+    v = ((fN * sp - fU * cp) / lam) * f + cy;
+    return u >= 0.f && v >= 0.f && u < float(outW) && v < float(outH);
+}
+
 cv::Mat VoxelMap::fpvImage(float px, float py, float pz,
                            float yawDeg, float pitchDeg,
                            int outPx, float hfovDeg, float maxRange) const {
@@ -158,12 +202,9 @@ cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
             // Camera frame: +X right, +Y down, +Z forward, then pitch, then yaw
             // clockwise from North -- identical to DepthCamera::rayFor, because
             // two conventions for the same thing is a bug waiting to happen.
-            float rx = (u - cx_) / f, ry = (v - cy2_) / f;
-            float y2 = ry * cp - sp, z2 = ry * sp + cp;
-            float fE = rx, fN = z2, fU = -y2;
-            float dx = fE * cy_ + fN * sy_;
-            float dy = -fE * sy_ + fN * cy_;
-            float dz = fU;
+            float dx, dy, dz;
+            fpvRay(yawDeg, pitchDeg, outW, outH, hfovDeg, float(u), float(v),
+                   dx, dy, dz);
 
             Hit h = raycast(px, py, pz, dx, dy, dz, maxRange);
             cv::Vec3f col;

@@ -162,17 +162,23 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
             // Step with the FINEST level in play, so resolution degrades with
             // distance instead of falling off a cliff at the first handover.
             float reach = 0.f, t = std::max(0.5f, coarse.front().map->params().cell * 0.5f);
+            int nSamp = 0, nOcc = 0;
             while (t <= p_.farRangeM) {
                 const VoxelMap* lv = nullptr;
                 float step = 0.f;
                 for (const CoarseLevel& c : coarse)       // fine first
                     if (t <= c.rangeM) { lv = c.map; step = std::max(0.5f, c.map->params().cell * 0.5f); break; }
                 if (!lv) break;                            // past every level's honest range
-                if (lv->stateAt(ex + dx * t, ey + dy * t, ez + dz * t) == VoxelMap::OCCUPIED) break;
-                reach = t;
+                const bool occ =
+                    lv->stateAt(ex + dx * t, ey + dy * t, ez + dz * t) == VoxelMap::OCCUPIED;
+                ++nSamp; if (occ) ++nOcc;
+                if (occ && p_.farMode == TrajParams::FarMode::FIRST_BLOCKED) break;
+                if (!occ) reach = t;
                 t += step;
             }
-            farOpen = reach / p_.farRangeM;
+            farOpen = (p_.farMode == TrajParams::FarMode::DENSITY)
+                    ? (nSamp ? 1.f - float(nOcc) / float(nSamp) : 0.f)
+                    : reach / p_.farRangeM;
         }
 
         float score = p_.clearWeight * clear

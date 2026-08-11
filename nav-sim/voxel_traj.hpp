@@ -144,6 +144,23 @@ struct TrajParams {
     // precisely because it grants no speed.
     float farWeight  = 0.5f;
     float farRangeM  = 20.f;   // proven value; do not move it and a level in the same test
+    // HOW OPENNESS IS MEASURED ALONG A BEARING.
+    //
+    // FIRST_BLOCKED: distance to the first cell any level calls OCCUPIED. This
+    // is what shipped, and it only worked because 2 m cells are BLIND to
+    // individual trunks -- it was a proxy for density, not a measure of it.
+    // Adding a 1 m rung broke it outright: in a forest every bearing has a trunk
+    // within 7 m, so a finer first-blocker returns the same small number in every
+    // direction, the term goes flat and stops discriminating (measured: 3-level
+    // 0.666 against 0.670 with no ladder at all).
+    //
+    // DENSITY: fraction of sampled cells along the bearing that are OCCUPIED.
+    // Immune to any single cell, so resolution stops being load-bearing and the
+    // level count stops mattering. Same shape as a depth-image supervisor that
+    // thresholds on the FRACTION of pixels nearer than d_min rather than on the
+    // nearest one.
+    enum class FarMode { FIRST_BLOCKED, DENSITY };
+    FarMode farMode = FarMode::DENSITY;
 };
 
 class TrajectoryPlanner {

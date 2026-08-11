@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
     int   camW = 320, camH = 240;
     float hfov = 70.f, baseline = 0.12f, maxIntegOverride = -1.f;
     bool  mixed = false, lanes = false;
+    float farCell = 2.0f; int farMode = 1; bool useMid = false;
     float vmax = -1.f;
     float goalE = 150, goalN = 170, goalU = 8;
     bool useTruth = false, generalOnly = false, display = false;
@@ -152,6 +153,9 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--cell")) cell = float(std::atof(next("0.25")));
         else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
         else if (!std::strcmp(argv[i], "--lanes")) lanes = true;
+        else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
+        else if (!std::strcmp(argv[i], "--farmode")) farMode = std::atoi(next("1"));
+        else if (!std::strcmp(argv[i], "--mid")) useMid = true;
         else if (!std::strcmp(argv[i], "--vmax")) vmax = float(std::atof(next("3.0")));
         else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("320"));
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("240"));
@@ -357,8 +361,10 @@ int main(int argc, char** argv) {
     // make an invisible trunk visible. This extends the horizon the aircraft
     // can STEER by; it does nothing for obstacles stereo never returns.
     VoxelMapParams fp2;
-    fp2.cell = 2.0f; fp2.nx = 128; fp2.ny = 128; fp2.nz = 40;   // 256 x 256 x 80 m
-    fp2.maxIntegM = 14.f;          // its own Z_max, not the fine map's
+    fp2.cell = farCell;
+    { const int n = std::max(48, int(256.f / farCell)); fp2.nx = n; fp2.ny = n; fp2.nz = std::max(16, n / 3); }
+    // Its own Z_max, derived like every other level rather than hardcoded.
+    fp2.maxIntegM = std::sqrt(fp2.cell * fpx * baseline / 0.25f) * 0.75f;
     fp2.maxCarveM = 40.f;
     fp2.integrateStride = 4;       // a sixteenth of the rays
     fp2.depthSigCoef = mp.depthSigCoef;
@@ -380,9 +386,9 @@ int main(int argc, char** argv) {
     midp.depthSigCoef = mp.depthSigCoef;
     midp.carveWinPx = 0;
     VoxelMap Mmid;
-    if (useFar) Mmid.init(midp, px, py, pz);
-    if (useFar) { coarseLadder.push_back({&Mmid, midp.maxIntegM});
-                  coarseLadder.push_back({&Mfar, fp2.maxIntegM}); }
+    if (useFar && useMid) Mmid.init(midp, px, py, pz);
+    if (useFar && useMid) coarseLadder.push_back({&Mmid, midp.maxIntegM});
+    if (useFar)           coarseLadder.push_back({&Mfar, fp2.maxIntegM});
     if (useFar)
         std::printf("[map] fine %.2f m -> %.1f m | mid %.2f m -> %.1f m | far %.2f m -> %.1f m\n",
                     mp.cell, mp.maxIntegM, midp.cell, midp.maxIntegM, fp2.cell, fp2.maxIntegM);
@@ -399,6 +405,8 @@ int main(int argc, char** argv) {
     TrajParams tp;
     if (vmax > 0.f) gp.vMax = vmax;
     tp.robotR = gp.robotR; tp.vMax = gp.vMax;
+    tp.farMode = farMode ? TrajParams::FarMode::DENSITY
+                         : TrajParams::FarMode::FIRST_BLOCKED;
     tp.decelMs2 = gp.decelMs2; tp.reactS = gp.reactS; tp.minFreeM = gp.minFreeM;
     tp.dt = dt;              // the rollout must use the control period
     if (coreFrac >= 0.f) tp.coreFrac = coreFrac;
@@ -466,8 +474,8 @@ int main(int argc, char** argv) {
         cv::Mat d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
         int64 tm = cv::getTickCount();
         M.integrate(d, cam, mpose);   // believed pose, not true pose
-        if (useFar) { Mfar.integrate(d, cam, mpose); Mfar.recentre(px + dE, py + dN, pz + dU);
-                      Mmid.integrate(d, cam, mpose); Mmid.recentre(px + dE, py + dN, pz + dU); }
+        if (useFar) { Mfar.integrate(d, cam, mpose); Mfar.recentre(px + dE, py + dN, pz + dU); }
+        if (useFar && useMid) { Mmid.integrate(d, cam, mpose); Mmid.recentre(px + dE, py + dN, pz + dU); }
         tInteg += double(cv::getTickCount() - tm) / cv::getTickFrequency();
         tSense += double(cv::getTickCount() - t0) / cv::getTickFrequency();
         M.recentre(px + dE, py + dN, pz + dU);

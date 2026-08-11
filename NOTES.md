@@ -1193,6 +1193,16 @@ cannot rot behind an `#ifdef`, and the API version handed to
 impossible. `voxel_live --rs-check` answers "can this machine do live" in one
 command with no camera.
 
+**Confirmed on the Windows target machine:** the runtime loader works. The CI
+artifact — built on a runner with no SDK — loads librealsense on the laptop once
+`realsense2.dll` is beside the exe, and `--rs-check` reports the version. That
+is the whole point of the approach proved end to end on the machine it was for.
+
+The DLL had to be copied by hand because the four hard-coded paths all missed;
+the loader now enumerates `*realsense*` folders under Program Files and checks
+`bin/x64`, `bin`, `lib/x64`, `lib` in each, so the next build should find it
+unaided.
+
 **Still untested: everything after a device is found** — stream negotiation,
 intrinsics readback, depth scale, whether the baseline comes from the
 extrinsics or falls through to the nominal 50 mm, and the uint16→metres loop.

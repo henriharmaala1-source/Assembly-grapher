@@ -304,13 +304,28 @@ def selftest():
     check(any("3.14" in l for l in lines), "a too-new Python is called out")
     check(classify_sdk(True, None)[0] == "ok", "a working SDK classifies as ok")
 
-    # 8. THE SDK, reported SEPARATELY from the maths above.
+    # 8. The Windows frame-drop trap. Half the affected machines behave
+    #    normally, so this cannot be caught by observation -- only by knowing.
+    check(windows_frame_drop_warning("win32", 22631) != [],
+          "warns on Windows 11 build 22631 (KB5035853 frame drops)")
+    check(windows_frame_drop_warning("win32", 22621) != [],
+          "warns on Windows 11 build 22621")
+    check(windows_frame_drop_warning("win32", 19045) == [],
+          "stays quiet on Windows 10")
+    check(windows_frame_drop_warning("linux", 22631) == [],
+          "stays quiet off Windows")
+    check(windows_frame_drop_warning("win32", None) == [],
+          "stays quiet when the build cannot be read")
+
+    # 9. THE SDK, reported SEPARATELY from the maths above.
     #
     #    Everything before this point is numpy only. If those passed, the
     #    analysis is sound whatever the SDK is doing, and conflating the two
     #    would say "SELFTEST FAILED" when the only problem is a pip that
     #    installed into a different Python. So the SDK gets its own section, its
     #    own exit code (3), and a real diagnosis rather than a shrug.
+    print()
+    host_report(print)
     sdk_ok = sdk_report(print)
 
     print(f"\n  {'ANALYSIS FAILED' if fails else 'analysis checks passed'} "
@@ -321,6 +336,67 @@ def selftest():
         print("  -> the maths is fine; you cannot talk to a camera until the SDK is.")
         return 3
     return 0
+
+
+
+# ---------------------------------------------------------------------------
+# A WINDOWS TRAP THAT LOOKS EXACTLY LIKE A BROKEN CAMERA.
+#
+# The librealsense v2.58.3 release notes carry this warning verbatim: "There is
+# 50% probability of up to 80% frame drops with Windows 11 builds 22621.3296 and
+# 22631.3296 (KB5035853)." Windows 10 RS5, or Windows 11 with KB5030219 (build
+# 22621.2283), are unaffected.
+#
+# This matters here more than it looks. Eighty per cent frame drops on a probe
+# whose outputs are a valid-pixel fraction and a per-pixel temporal variance
+# would read as a dying camera, a bad cable, or a USB 2 link -- all of which we
+# check for and none of which would be the cause. Worse, half the machines with
+# the bad update are FINE, so it does not reproduce reliably enough to be
+# diagnosed on the spot.
+#
+# We can read the build number but not the update revision (the .3296 part)
+# without poking the registry, so this names the affected revisions and tells
+# you to check winver rather than pretending to a precision it does not have.
+# ---------------------------------------------------------------------------
+AFFECTED_WIN_BUILDS = {22621, 22631}
+
+
+def windows_frame_drop_warning(plat, build):
+    """Pure, so --selftest can check it. build: int major build, or None."""
+    if not str(plat).startswith("win") or build is None:
+        return []
+    if int(build) not in AFFECTED_WIN_BUILDS:
+        return []
+    return [
+        f"Windows 11 build {build} is in the range affected by a known",
+        "librealsense frame-drop bug: revisions 22621.3296 and 22631.3296",
+        "(KB5035853) drop up to 80 % of frames, on about half of machines.",
+        "",
+        "  Run `winver` and read the full revision. If it ends .3296, the frame",
+        "  counts and valid fractions below are measuring WINDOWS, not the",
+        "  camera -- and it looks identical to a failing cable. KB5030219",
+        "  (22621.2283) and Windows 10 RS5 are unaffected.",
+    ]
+
+
+def host_report(emit):
+    """What machine is this, and is it one of the known-bad ones."""
+    import platform
+    emit("=== host ===")
+    emit(f"  {platform.platform()}")
+    emit(f"  python {platform.python_version()} ({sys.executable})")
+    build = None
+    if sys.platform.startswith("win"):
+        try:
+            build = int(sys.getwindowsversion().build)
+        except Exception:
+            try:
+                build = int(platform.version().split(".")[2])
+            except Exception:
+                build = None
+    for ln in windows_frame_drop_warning(sys.platform, build):
+        emit("  !! " + ln if ln else "")
+    emit("")
 
 
 # ---------------------------------------------------------------------------
@@ -981,6 +1057,7 @@ def main():
     log(f"d435i_probe  {datetime.datetime.now().isoformat(timespec='seconds')}")
     log(f"argv: {' '.join(sys.argv[1:]) or '(defaults)'}")
     log("")
+    host_report(log)
 
     if args.dryrun:
         rc = dryrun(args, log)

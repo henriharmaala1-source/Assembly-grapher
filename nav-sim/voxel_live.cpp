@@ -153,6 +153,19 @@ struct Config {
     // mirrored, one of those three is wrong -- and every other view in this
     // program would show both halves looking individually plausible.
     int   viewMode = 0;
+    // COARSE FAR MAP. voxel_sim has had one for a long time; voxel_live did
+    // not, which is why the live view showed nothing but the fine map's 3.5 m
+    // and no larger voxels anywhere. That was a missing feature, not a camera
+    // limit -- the depth image is full of valid returns far past 3.5 m.
+    //
+    // Sizing the cell to the uncertainty is the honest move rather than a
+    // compromise: at 12 m a return genuinely has metres of error along the ray,
+    // and a 0.25 m voxel claims a precision the measurement does not contain.
+    // Z_max = sqrt(cell*f*B/sigma) so a 2 m cell roughly triples the range.
+    //
+    // AWARENESS ONLY, NEVER PERMISSION. The fine map alone decides what may be
+    // flown through; this only says which bearing looks open beyond it.
+    float farCell = 2.0f;      // 0 disables
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -413,6 +426,7 @@ int mainCli(int argc, char** argv) {
     int& camW = C.camW; int& camH = C.camH; int& fps = C.fps; int& steps = C.steps;
     bool& emitter = C.emitter; bool& headless = C.headless; bool& showTruth = C.showTruth;
     int& stride = C.stride; int& dirMode = C.dirMode; int& viewMode = C.viewMode;
+    float& farCell = C.farCell;
 
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
@@ -432,6 +446,8 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--forward")) dirMode = 1;
         else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
+        else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
+        else if (!std::strcmp(argv[i], "--nofar")) farCell = 0.f;
         else if (!std::strcmp(argv[i], "--emitter")) emitter = true;
         else if (!std::strcmp(argv[i], "--frames")) steps = std::atoi(next("-1"));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/voxel_live");
@@ -543,6 +559,24 @@ static int runSession(Config C) {
     VoxelMap M;
     M.init(mp, px, py, pz);
 
+    // --- coarse companion, for the range the fine map cannot honestly claim ---
+    VoxelMap Mfar;
+    VoxelMapParams fp;
+    std::vector<TrajectoryPlanner::CoarseLevel> coarse;
+    if (C.farCell > 0.f) {
+        fp.cell = C.farCell;
+        const int n = std::max(48, int(256.f / C.farCell));
+        fp.nx = n; fp.ny = n; fp.nz = std::max(16, n / 3);
+        fp.maxIntegM = std::sqrt(fp.cell * cam.fpx() * cp.baselineM / 0.25f) * 0.75f;
+        fp.maxCarveM = 40.f;
+        fp.integrateStride = std::max(4, C.stride * 2);   // a sixteenth of the rays
+        fp.depthSigCoef = mp.depthSigCoef;
+        fp.carveWinPx = 0;                                // the min-filter is fine-scale
+        Mfar.init(fp, px, py, pz);
+        std::printf("[far] cell %.2f m -> marks to %.1f m  (the fine map stops at %.1f m)\n",
+                    fp.cell, fp.maxIntegM, mp.maxIntegM);
+    }
+
     std::printf("[map] cell %.2f m -> honest carve range %.2f m "
                 "(f %.0f px, B %.0f mm), ray stride %d -> %d rays/frame\n",
                 mp.cell, mp.maxIntegM, cam.fpx(), cp.baselineM * 1000.f,
@@ -593,13 +627,16 @@ static int runSession(Config C) {
 
         int64 t0 = cv::getTickCount();
         M.integrate(depth, cam, pose);
+        if (C.farCell > 0.f) Mfar.integrate(depth, cam, pose);
         integUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
 
         t0 = cv::getTickCount();
         // dirMode 1 aims along the camera's own heading; dirMode 0 has
         // goalWeight 0 so the bearing passed here is ignored entirely.
+        if (C.farCell > 0.f && coarse.empty())
+            coarse.push_back({&Mfar, fp.maxIntegM});
         GeneralResult gr = traj.plan(M, pose.e, pose.n, pose.u, yaw,
-                                     C.dirMode == 1 ? yaw : 0.f, 0.f);
+                                     C.dirMode == 1 ? yaw : 0.f, 0.f, coarse);
         planUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
 
         ++n;
@@ -626,6 +663,25 @@ static int runSession(Config C) {
         // across and the honest carve range is under 4 m, so the whole-map view
         // renders the only interesting part as a smudge a few pixels wide.
         cv::Mat sliceFull = M.sliceImage(pose.u);
+        // Composite the COARSE map underneath. Where the fine map is UNKNOWN
+        // (its flat 128 grey) but the coarse one is not, show the coarse cell,
+        // tinted so the two are never confused: a 2 m voxel is eight times the
+        // robot and must not be mistaken for something you may fly through.
+        if (C.farCell > 0.f) {
+            cv::Mat farSlice = Mfar.sliceImage(pose.u);
+            const float sc = fp.cell / mp.cell;   // coarse cells per fine cell
+            for (int y = 0; y < sliceFull.rows; ++y)
+                for (int x = 0; x < sliceFull.cols; ++x) {
+                    cv::Vec3b& d = sliceFull.at<cv::Vec3b>(y, x);
+                    if (d != cv::Vec3b(128, 128, 128)) continue;   // fine knows
+                    const int fx2 = int((x - sliceFull.cols * 0.5f) / sc + farSlice.cols * 0.5f);
+                    const int fy2 = int((y - sliceFull.rows * 0.5f) / sc + farSlice.rows * 0.5f);
+                    if (fx2 < 0 || fy2 < 0 || fx2 >= farSlice.cols || fy2 >= farSlice.rows) continue;
+                    const cv::Vec3b f2 = farSlice.at<cv::Vec3b>(fy2, fx2);
+                    if (f2 == cv::Vec3b(40, 40, 40))        d = cv::Vec3b(60, 60, 150);
+                    else if (f2 == cv::Vec3b(245, 245, 245)) d = cv::Vec3b(165, 165, 150);
+                }
+        }
         cv::Mat sPane;
         {
             const float halfM = 12.f;
@@ -655,8 +711,13 @@ static int runSession(Config C) {
             // because "the ray got through" survives an imprecise endpoint.
             // The pane shows free space well past the green ring, and that is
             // correct rather than a bug.
-            std::snprintf(b, sizeof(b), "mark %.1f m (green)  carve %.0f m  cell %.2f m",
-                          mp.maxIntegM, mp.maxCarveM, mp.cell);
+            if (C.farCell > 0.f)
+                std::snprintf(b, sizeof(b),
+                              "fine %.2f m to %.1f m | COARSE %.1f m to %.1f m (blue/olive)",
+                              mp.cell, mp.maxIntegM, fp.cell, fp.maxIntegM);
+            else
+                std::snprintf(b, sizeof(b), "mark %.1f m (green)  carve %.0f m  cell %.2f m",
+                              mp.maxIntegM, mp.maxCarveM, mp.cell);
             banner(sPane, b, 44);
         }
 

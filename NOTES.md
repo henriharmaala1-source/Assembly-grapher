@@ -1229,6 +1229,38 @@ at-the-first-step, and the PLAN pane prints the dominant reason plus the robot
 diameter. Confirming that the indoor BLOCKED is dominated by UNKNOWN is the next
 five seconds of work with the camera.
 
+### The short range was OUR POLICY, and one missing feature
+
+Observed live: nothing beyond ~3.5 m, and no coarse voxels at all. Two separate
+causes, neither of them the camera:
+
+1. **`voxel_live` never built a far map.** `voxel_sim` has had one for months.
+   That is why there were no larger voxels anywhere — there was no coarse level,
+   not a coarse level that failed. Now built, integrated, fed to the openness
+   term, and drawn under the fine slice in a distinct tint. Fine 0.25 m to
+   3.5 m, coarse 2.0 m to **10.0 m**. Costs ~6 ms/frame (stride 4).
+
+2. **3.5 m is `Z_max = sqrt(cell·f·B/sigma_d)·0.75` with sigma_d ASSUMED at
+   0.25 px.** The depth image is full of valid returns well past it; we choose
+   not to mark obstacles there because a 0.25 m voxel would be claiming a
+   precision the measurement does not contain.
+
+**Where range actually comes from**, f = 425 px, B = 50 mm:
+
+    cell 0.25  sigma 0.25   ->  3.5 m      (today)
+    cell 0.25  sigma 0.15   ->  4.5 m      (a better preset or calibration)
+    cell 0.25  sigma 0.25  B 95 mm -> 4.8 m (a D455)
+    cell 1.0   sigma 0.25   ->  6.9 m
+    cell 2.0   sigma 0.25   ->  9.8 m      (the coarse map, now in)
+
+**Cell size dominates.** Measuring sigma_d is worth doing and buys perhaps 30 %;
+it is not the lever it looks like. The ladder is. That is an argument for
+measuring sigma_d to stop ASSUMING it, not for expecting it to transform the
+range.
+
+Also: 0.25 m cells are a forest default and look absurdly chunky at 1 m indoors.
+The menu cycles 0.15–0.50; use 0.15 on a bench.
+
 **Still untested: everything after a device is found** — stream negotiation,
 intrinsics readback, depth scale, whether the baseline comes from the
 extrinsics or falls through to the nominal 50 mm, and the uint16→metres loop.

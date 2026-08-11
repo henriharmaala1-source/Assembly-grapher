@@ -1,6 +1,44 @@
 KESTREL VOXEL NAVIGATION SIM - Windows build
 
-Double-click  voxel_gui.exe
+Double-click  voxel_gui.exe      the simulator: fly a synthetic forest
+Double-click  voxel_live.exe     REAL depth: a connected D435i, or a recording
+
+
+VOXEL_LIVE - the real map and planner over real depth
+
+Runs the SAME VoxelMap and TrajectoryPlanner as the simulator, over frames from
+an actual camera. A menu opens: LIVE CAMERA / REPLAY A RECORDING / SIMULATED
+FOREST, then START.
+
+There is NOTHING to install for the live camera to work. librealsense is loaded
+at runtime, so this exe needs no SDK to have been present when it was built. It
+needs realsense2.dll to be findable when you RUN it, which it is if you have
+installed the RealSense SDK or the Viewer.
+
+  To check, with no camera plugged in, open PowerShell here and run:
+      .\voxel_live.exe --rs-check
+
+  -> "librealsense 2.58.3 (realsense2.dll)"   good, LIVE will be enabled
+  -> "could not load librealsense. Tried: ..."  copy realsense2.dll next to
+     this exe, or put its folder on PATH. The list tells you where it looked.
+
+In the view:  space pause   v first-person <-> overlay   s save PNG
+              m menu        q quit
+
+  DEPTH         what the camera returned. GREY IS NO RETURN, not far away.
+  FIRST PERSON  the map from inside. Pale is UNKNOWN, drawn as fog, never air.
+  OVERLAY (v)   the same voxels composited ON the depth image they came from.
+                If they land on the trunks, the intrinsics, the frame
+                convention and the pose all agree. This is the fastest check
+                that the whole geometry chain is right.
+  MAP SLICE     top-down. Green ring = how far obstacles are MARKED, orange =
+                how far free space is CARVED. They are deliberately different.
+  PLAN          faint = primitives that are flyable, green = the one chosen.
+
+THE CAMERA IS ASSUMED TO BE HELD STILL. There is no odometry yet, so if you
+walk around with it the map will be wrong. That is a missing subsystem, not a
+bug in this program.
+
 
 A menu opens. Click a world, choose Simulated stereo or Perfect (control),
 and for the forest choose Open stand or Follow a trail. Then FLY. Keep this

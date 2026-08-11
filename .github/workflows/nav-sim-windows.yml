@@ -5,9 +5,18 @@ name: build nav-sim (Windows exe)
 # Repo -> Actions tab -> this workflow -> latest run -> Artifacts ->
 # "kestrel-voxel-sim-windows-x64". Unzip, double-click voxel_gui.exe.
 #
-# The zip carries: voxel_gui.exe (the GUI), voxel_sim.exe and voxel_demo.exe
-# (scriptable), nav_sim.exe (the 2D tool), the OpenCV DLLs, worlds/*.txt for the
-# Finnish city maps, and RUN_ME.txt.
+# The zip carries: voxel_gui.exe (the GUI), voxel_live.exe (real depth from a
+# D435i, or a recording), voxel_sim.exe and voxel_demo.exe (scriptable),
+# nav_sim.exe (the 2D tool), the OpenCV DLLs, worlds/*.txt for the Finnish city
+# maps, and RUN_ME.txt.
+#
+# LIVE CAMERA WORKS FROM THIS ZIP even though the runner has no RealSense SDK.
+# It used to not: librealsense was a BUILD-time dependency behind an #ifdef, the
+# runner obviously has no SDK, so every downloaded exe had the LIVE button
+# permanently disabled -- and it said "this build has no RealSense SDK", which
+# is true of the RUNNER and reads as a statement about the machine running it.
+# librealsense is loaded at RUN time now (nav-sim/realsense_dyn.hpp), so the
+# same exe enables LIVE on any machine where realsense2.dll is findable.
 #
 # Uses the official PREBUILT OpenCV release (a ~2-3 min download+extract) rather
 # than compiling OpenCV from source (which took ~40 min via vcpkg). The prebuilt
@@ -43,14 +52,26 @@ jobs:
           if (-not (Test-Path 'C:\ocv\opencv\build\OpenCVConfig.cmake')) { throw 'OpenCV extract failed' }
 
       - name: Configure
+        # BUILD_TESTS=ON so CI actually runs the suite. Cheap, and it now covers
+        # the live-camera code path too: that used to sit behind an #ifdef the
+        # runner never defined, so it was never compiled here and a Python-only
+        # API call survived in C++ for as long as it took someone with a camera
+        # to try building it.
+        #
         # Point at the vc16 (VS2019) config directly, NOT the top-level one:
         # the runner's MSVC is newer than any vcXX folder the prebuilt ships, so
         # the auto-detecting top-level config finds "no compatible binaries". The
         # vc16 libs are ABI-compatible with newer MSVC, so this links fine.
-        run: cmake -B build -DOpenCV_DIR="C:/ocv/opencv/build/x64/vc16/lib"
+        run: cmake -B build -DBUILD_TESTS=ON -DOpenCV_DIR="C:/ocv/opencv/build/x64/vc16/lib"
 
       - name: Build
         run: cmake --build build --config Release -j 4
+
+      - name: Test
+        # numpy for the .kdr cross-language check (Python writes, C++ reads).
+        run: |
+          python -m pip install --quiet numpy
+          ctest --test-dir build -C Release --output-on-failure
 
       - name: Generate the Finnish city worlds
         # voxel_gui's Hervanta / Tampere / Helsinki buttons read these footprint

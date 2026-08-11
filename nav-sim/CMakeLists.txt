@@ -245,15 +245,6 @@ if(BUILD_TESTS)
   add_test(NAME occlusion_check COMMAND occlusion_check)
 endif()
 
-if(BUILD_TESTS)
-  # Search-path test for cmake/find_realsense.cmake. Needs no librealsense: it
-  # builds synthetic SDK trees and asserts the module locates them. The bug it
-  # exists for was an SDK that WAS installed and simply not looked for in the
-  # right place, which only a positive-path test can catch.
-  add_test(NAME find_realsense_check
-           COMMAND ${CMAKE_COMMAND} -P
-                   ${CMAKE_CURRENT_SOURCE_DIR}/test/find_realsense_check.cmake)
-endif()
 
 # Overlay alignment: the voxel render must land on the same pixels as the depth
 # image it was built from. Explicitly rejects a left/right and an up/down flip,

@@ -42,7 +42,10 @@ def check(ok, what, detail=""):
 def main():
     print("kdr cross-language checks")
     W, H, N = 64, 48, 5
-    path = "/tmp/kdr_from_python.kdr"
+    # Relative, not /tmp: there is no /tmp on Windows, and the C++ half writes
+    # its fixture into the working directory for the same reason. ctest runs
+    # both with the build directory as CWD, so they meet there.
+    path = "kdr_from_python.kdr"
     fx, fy, ppx, ppy, scale, base = 425.3, 424.9, 31.2, 24.7, 0.001, 0.0499
 
     # --- Python writes ----------------------------------------------------
@@ -65,7 +68,7 @@ def main():
     check(meta["emitter_on"] is True, "emitter flag round-trips")
 
     # --- C++ writes, Python reads (the direction that catches layout bugs) --
-    cxx = "/tmp/kdr_test.kdr"
+    cxx = "kdr_test.kdr"
     if os.path.exists(cxx):
         cframes, cmeta = kdr_read(cxx)
         check(cmeta["width"] == 64 and cmeta["height"] == 48,
@@ -83,7 +86,7 @@ def main():
         check(False, "C++-written file present (run depth_record_check first)", cxx)
 
     # --- truncation, from the Python side ---------------------------------
-    trunc = "/tmp/kdr_from_python_trunc.kdr"
+    trunc = "kdr_from_python_trunc.kdr"
     with open(path, "rb") as a, open(trunc, "wb") as b:
         b.write(a.read(KDR_HEADER_BYTES + int(2.5 * W * H * 2)))
     tf, tm = kdr_read(trunc)
@@ -91,11 +94,20 @@ def main():
           "a truncated recording yields only COMPLETE frames", tm["frames"])
 
     # --- and the app actually replays the Python file ----------------------
-    exe = sys.argv[1] if len(sys.argv) > 1 else "/tmp/voxel_live"
+    exe = sys.argv[1] if len(sys.argv) > 1 else "./voxel_live"
     if os.path.exists(exe):
-        r = subprocess.run([exe, "--replay", path, "--headless", "--frames", str(N),
-                            "--out", "/tmp/kdr_xcheck"],
-                           capture_output=True, text=True)
+        # TIMEOUT, always. Without one this hung a CI build for 17 minutes:
+        # a child that never exits takes the whole job with it, and "the build
+        # is slow today" is how that gets misread.
+        try:
+            r = subprocess.run([exe, "--replay", path, "--headless", "--frames", str(N),
+                                "--out", "kdr_xcheck"],
+                               capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            check(False, "voxel_live replays the PYTHON-written recording",
+                  "TIMED OUT after 120 s")
+            print(f"{'FAILED' if fails else 'all checks passed'} ({fails})")
+            return 1
         ok = r.returncode == 0 and "frames from replay" in r.stdout
         check(ok, "voxel_live replays the PYTHON-written recording",
               (r.stdout + r.stderr).strip().splitlines()[-1] if not ok else "")

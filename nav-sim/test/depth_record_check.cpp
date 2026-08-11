@@ -30,7 +30,12 @@ static void check(bool ok, const char* what, const std::string& detail = "") {
 
 int main() {
     std::printf("depth recording (.kdr) checks\n");
-    const std::string path = "/tmp/kdr_test.kdr";
+    // RELATIVE paths, because /tmp does not exist on Windows and every one of
+    // these opens silently failed there -- a test suite that cannot write its
+    // own fixtures is not testing anything. ctest runs each test with the build
+    // directory as its working directory, so a bare name is portable and lands
+    // somewhere writable on every platform.
+    const std::string path = "kdr_test.kdr";
     const int W = 64, H = 48, N = 7;
 
     DepthRecordHeader h;
@@ -90,7 +95,7 @@ int main() {
     // --- truncation -------------------------------------------------------
     // A capture killed by a pulled cable is the NORMAL way a recording ends.
     {
-        const std::string tpath = "/tmp/kdr_trunc.kdr";
+        const std::string tpath = "kdr_trunc.kdr";
         FILE* in = std::fopen(path.c_str(), "rb");
         FILE* out = std::fopen(tpath.c_str(), "wb");
         // Header plus 3.5 frames: a partial frame at the end, and a header that
@@ -114,7 +119,7 @@ int main() {
 
     // --- refusals ---------------------------------------------------------
     {
-        const std::string bad = "/tmp/kdr_bad.kdr";
+        const std::string bad = "kdr_bad.kdr";
         FILE* f = std::fopen(bad.c_str(), "wb");
         const char junk[128] = {'n', 'o', 't', ' ', 'a', ' ', 'k', 'd', 'r'};
         std::fwrite(junk, 1, sizeof(junk), f);
@@ -125,7 +130,7 @@ int main() {
         check(err.find("magic") != std::string::npos, "and says why", err);
 
         DepthRecordReader r2;
-        check(!r2.open("/tmp/definitely_not_here.kdr", &err), "refuses a missing file");
+        check(!r2.open("definitely_not_here.kdr", &err), "refuses a missing file");
     }
 
     // --- the replay source rebuilds the right camera ----------------------

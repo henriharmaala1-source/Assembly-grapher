@@ -1182,6 +1182,17 @@ Headers from git plus the wheel's `.so` gives a real link.
 compiles, the LIVE button enables, `--live` executes and reports
 `No device connected` cleanly.
 
+**librealsense is now loaded at RUNTIME** (`realsense_dyn.*`), after three
+rounds of CMake search paths failed to find an SDK that was installed and whose
+Viewer streamed fine. The C++ API is a header-only inline wrapper over a flat C
+ABI, so the two dozen `rs2_*` functions this needs are declared locally and
+resolved with `dlopen`/`LoadLibrary`. Consequences: no build-time dependency at
+all, one binary for both cases, the branch is compiled on every machine so it
+cannot rot behind an `#ifdef`, and the API version handed to
+`rs2_create_context` is read FROM the library so a point-release mismatch is
+impossible. `voxel_live --rs-check` answers "can this machine do live" in one
+command with no camera.
+
 **Still untested: everything after a device is found** — stream negotiation,
 intrinsics readback, depth scale, whether the baseline comes from the
 extrinsics or falls through to the nominal 50 mm, and the uint16→metres loop.

@@ -304,10 +304,10 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
 
     label(img, "1.  WHERE DO THE FRAMES COME FROM", 20, 92, 0.55, {40, 40, 40});
 
+    const bool liveOk = haveLiveSupport();
     Button live{{20, 106, 290, 66}, "LIVE CAMERA",
-                haveLiveSupport() ? "a connected D435i"
-                                  : "this build has no RealSense SDK", 1,
-                haveLiveSupport(), C.mode == "live"};
+                liveOk ? "a connected D435i" : "librealsense not loadable", 1,
+                liveOk, C.mode == "live"};
     int nGood = 0;
     for (const Recording& r : recs) if (r.ok) ++nGood;
     Button rep {{325, 106, 290, 66}, "REPLAY A RECORDING",
@@ -317,7 +317,17 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                 "the control -- known ground truth", 3, true, C.mode == "sim"};
     btns.push_back(live); btns.push_back(rep); btns.push_back(sim);
 
-    label(img, "2.  RECORDINGS FOUND", 20, 204, 0.55, {40, 40, 40});
+    {
+        // Say WHY, always. "not available" with no reason is what turned a
+        // missing DLL into three rounds of guessing.
+        std::string d = liveSupportDetail();
+        const size_t nl = d.find('\n');
+        if (nl != std::string::npos) d = d.substr(0, nl);
+        if (d.size() > 90) d = d.substr(0, 90) + "...";
+        label(img, d, 20, 190, 0.40, liveOk ? cv::Scalar(120, 140, 120)
+                                            : cv::Scalar(60, 60, 190));
+    }
+    label(img, "2.  RECORDINGS FOUND", 20, 210, 0.55, {40, 40, 40});
     if (recs.empty()) {
         label(img, "None. Put a .kdr beside this program, or record one with", 20, 230);
         label(img, "d435i_probe.py --record 600 --record-every 6", 20, 252, 0.5, {40, 90, 160});
@@ -439,11 +449,18 @@ int mainCli(int argc, char** argv) {
                         bs.size(), recs.size());
             return 0;
         }
+        else if (!std::strcmp(argv[i], "--rs-check")) {
+            // "Can this machine do --live, and if not, why." One command, and
+            // it needs no camera.
+            std::printf("%s\n", liveSupportDetail().c_str());
+            return haveLiveSupport() ? 0 : 1;
+        }
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf(
                 "voxel_live -- the real map and planner over real depth\n"
                 "  --replay FILE.kdr   a recording (no camera needed)\n"
                 "  --live              a connected D435i%s\n"
+                "  --rs-check          report whether librealsense can be loaded\n"
                 "  --sim               the raycaster, as a control\n"
                 "  --cell 0.25         voxel size, m\n"
                 "  --yawrate 0         camera rotation in place, deg/s (KNOWN rate only)\n"

@@ -925,10 +925,29 @@ intrinsics, because the mapper carves along rays and a ray built from an assumed
 pinhole is systematically wrong in a way that looks like a calibration fault once
 it reaches the map.
 
-### Building with live camera support
+### Live camera: nothing to configure
 
-librealsense is optional: without it the target still builds and `--replay`
-works, and LIVE CAMERA is disabled with a reason rather than failing silently.
+**There is no build-time RealSense dependency.** librealsense is loaded at *run*
+time, so `voxel_live` builds identically whether or not the SDK is installed,
+and `--live` works the moment the library is present anywhere the loader looks —
+which includes the folder the Viewer put it in, and the PATH entry its installer
+added.
+
+Check it in one command, no camera needed:
+
+```powershell
+voxel_live --rs-check
+```
+
+That prints either `librealsense 2.58.3 (realsense2.dll)` or the exact list of
+paths it tried. If it fails, the fix is to make the DLL findable — put its
+folder on `PATH`, or copy `realsense2.dll` beside the exe — rather than to
+reconfigure anything.
+
+This replaced three rounds of increasingly clever CMake search paths that kept
+failing to find an SDK that *was* installed. A dependency only needed at runtime
+should not be able to break a build, and a build should not have to guess at an
+install directory whose name changes between vendors.
 
 **If it says "this build has no RealSense SDK" and you HAVE installed the SDK**,
 CMake is simply not looking in the right place. A bare `find_package(realsense2)`

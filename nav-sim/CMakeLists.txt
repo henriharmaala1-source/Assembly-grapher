@@ -177,14 +177,16 @@ if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
 endif()
 
 # --- voxel_live: the real map and planner over REAL depth --------------------
-# Optional librealsense. Without it the target still builds and --replay works
-# on recordings, which is the mode that needs no camera at all; --live then
-# reports that this build has no SDK rather than silently doing nothing.
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/find_realsense.cmake)
-
+# NO BUILD-TIME REALSENSE DEPENDENCY. librealsense is loaded at RUN time (see
+# realsense_dyn.hpp), so this target builds identically whether or not the SDK
+# is installed, and --live works the moment the library is present anywhere the
+# loader looks. Three rounds of ever-cleverer CMake search paths failed to find
+# an SDK that WAS installed; a dependency only needed at runtime should not be
+# able to break a build at all.
 add_executable(voxel_live
   voxel_live.cpp
   frame_source.cpp
+  realsense_dyn.cpp
   depth_record.cpp
   voxel_world.cpp
   depth_camera.cpp
@@ -193,45 +195,14 @@ add_executable(voxel_live
   voxel_traj.cpp)
 target_include_directories(voxel_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_live PRIVATE ${OpenCV_LIBS})
+if(NOT WIN32)
+  target_link_libraries(voxel_live PRIVATE ${CMAKE_DL_LIBS})
+endif()
 if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
   target_compile_definitions(voxel_live PRIVATE SIM_HAVE_HIGHGUI=1)
 endif()
-if(realsense2_FOUND)
-  target_compile_definitions(voxel_live PRIVATE NAVSIM_HAVE_REALSENSE=1)
-  target_link_libraries(voxel_live PRIVATE realsense2::realsense2)
-  message(STATUS "nav_sim: librealsense found -- voxel_live --live enabled")
-else()
-  # Loud and actionable. The old message said only that the SDK was missing,
-  # which is exactly wrong on the common case where it is installed and merely
-  # not on CMake's search path.
-  message(WARNING
-    "nav_sim: librealsense NOT found -- voxel_live will build with --replay only "
-    "and the LIVE CAMERA button will be disabled.\n"
-    "  If the RealSense SDK IS installed, CMake is simply not looking in the "
-    "right place. Point it there:\n"
-    "    cmake -B build -Drealsense2_DIR=\"C:/Program Files (x86)/Intel RealSense "
-    "SDK 2.0/lib/cmake/realsense2\"\n"
-    "  or set the REALSENSE2_DIR environment variable to the SDK root.\n"
-    "  If it is NOT installed: https://github.com/realsenseai/librealsense/releases/latest "
-    "-> RealSense.SDK.exe")
-endif()
-
-# THE DLL. On Windows the link succeeds and the program then fails to start,
-# because realsense2.dll is not beside the exe. Copy it there. This is the
-# classic "it built, why will it not run" and it is one line to prevent.
-if(realsense2_FOUND AND WIN32)
-  find_file(RS2_DLL realsense2.dll
-            HINTS ${_rs_hints} PATH_SUFFIXES bin bin/x64)
-  if(RS2_DLL)
-    add_custom_command(TARGET voxel_live POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-              "${RS2_DLL}" "$<TARGET_FILE_DIR:voxel_live>")
-    message(STATUS "nav_sim: will copy ${RS2_DLL} beside voxel_live.exe")
-  else()
-    message(STATUS "nav_sim: realsense2.dll not located -- if voxel_live.exe "
-                   "fails to start, copy it beside the exe by hand")
-  endif()
-endif()
+message(STATUS "nav_sim: voxel_live -- librealsense loaded at runtime, "
+               "no SDK needed to build")
 
 # .kdr recording format: round trip, truncation, refusals, and that the replay
 # source rebuilds a camera from the file's own intrinsics.
@@ -239,10 +210,14 @@ add_executable(depth_record_check
   test/depth_record_check.cpp
   depth_record.cpp
   frame_source.cpp
+  realsense_dyn.cpp
   depth_camera.cpp
   voxel_world.cpp)
 target_include_directories(depth_record_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(depth_record_check PRIVATE ${OpenCV_LIBS})
+if(NOT WIN32)
+  target_link_libraries(depth_record_check PRIVATE ${CMAKE_DL_LIBS})
+endif()
 if(BUILD_TESTS)
   add_test(NAME depth_record_check COMMAND depth_record_check)
   # Python writes / C++ reads, and back. Needs the C++ test to have run first,

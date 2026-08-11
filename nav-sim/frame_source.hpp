@@ -133,7 +133,13 @@ private:
 std::unique_ptr<FrameSource> makeLiveSource(int width, int height, int fps,
                                             bool emitter, std::string* err);
 
-// True when this binary was built against librealsense.
+// Can a live camera be opened RIGHT NOW -- i.e. can librealsense be loaded.
+// A runtime question, deliberately: this binary is built the same way whether
+// or not the SDK is installed, so there is nothing to ask at compile time.
 bool haveLiveSupport();
+
+// Human-readable: the library version and path when available, and the paths
+// that were tried when not.
+std::string liveSupportDetail();
 
 }  // namespace sim

@@ -3,9 +3,7 @@
 #include <cmath>
 #include <cstdio>
 
-#ifdef NAVSIM_HAVE_REALSENSE
-#include <librealsense2/rs.hpp>
-#endif
+#include "realsense_dyn.hpp"
 
 namespace sim {
 
@@ -51,43 +49,55 @@ bool ReplayFrameSource::next(cv::Mat& depth, PoseHint& hint) {
 }
 
 // ---------------------------------------------------------------------------
-#ifdef NAVSIM_HAVE_REALSENSE
-
+// LIVE. No #ifdef, no build-time SDK, no find_package: librealsense is loaded
+// at RUN time through realsense_dyn. See that header for why -- briefly, the
+// build kept failing to find an SDK that was installed, and a dependency that
+// only has to exist at runtime should not be able to break a build at all.
+//
+// One consequence worth stating: this branch is now compiled on EVERY machine,
+// so it cannot rot behind an #ifdef nobody defines. It already had.
 class RealSenseSource : public FrameSource {
 public:
     bool start(int w, int h, int fps, bool emitter, std::string* err) {
-        try {
-            cfg_.enable_stream(RS2_STREAM_DEPTH, w, h, RS2_FORMAT_Z16, fps);
-            auto prof = pipe_.start(cfg_);
-            // first_depth_sensor() exists in the PYTHON bindings, not in C++.
-            // The C++ API is the templated device::first<T>(). Caught only by
-            // compiling this block, which nothing had done until the headers
-            // were fetched -- an #ifdef'd branch that never compiles anywhere
-            // is not code, it is a plan.
-            auto ds = prof.get_device().first<rs2::depth_sensor>();
-            scale_ = ds.get_depth_scale();
-            if (ds.supports(RS2_OPTION_EMITTER_ENABLED))
-                ds.set_option(RS2_OPTION_EMITTER_ENABLED, emitter ? 1.f : 0.f);
-
-            auto vsp = prof.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
-            auto in  = vsp.get_intrinsics();
-            CamParams p;
-            p.width = in.width; p.height = in.height;
-            p.fxPx = in.fx; p.fyPx = in.fy; p.ppxPx = in.ppx; p.ppyPx = in.ppy;
-            p.hfovDeg = 2.f * std::atan(in.width * 0.5f / in.fx) * 180.f / sim::PI_F;
-            p.baselineM = 0.05f;
-            try {
-                auto ir2 = prof.get_stream(RS2_STREAM_INFRARED, 2);
-                p.baselineM = std::fabs(vsp.get_extrinsics_to(ir2).translation[0]);
-            } catch (...) { /* nominal 50 mm; reported in the banner */ }
-            p.maxRangeM = 40.f;
-            cam_.reset(new DepthCamera(p));
-            ok_ = true;
-            return true;
-        } catch (const std::exception& e) {
-            if (err) *err = e.what();
+        if (!pipe_.start(w, h, fps)) {
+            if (err) *err = pipe_.error();
             return false;
         }
+        pipe_.setEmitter(emitter);
+
+        // Pull one frame before reporting success. The intrinsics come from the
+        // frame's own profile, so until a frame has arrived we do not actually
+        // know the geometry -- and a device that starts but never delivers is a
+        // failure the caller should hear about now rather than at frame 1.
+        int fw = 0, fh = 0;
+        if (!pipe_.waitDepth(raw_, fw, fh, 5000)) {
+            if (err) *err = pipe_.error();
+            pipe_.stop();
+            return false;
+        }
+        const rsdyn::Intrinsics in = pipe_.intrinsics();
+
+        CamParams p;
+        p.width = fw; p.height = fh;
+        if (in.fx > 0.f) {
+            p.fxPx = in.fx; p.fyPx = in.fy; p.ppxPx = in.ppx; p.ppyPx = in.ppy;
+            p.hfovDeg = 2.f * std::atan(fw * 0.5f / in.fx) * 180.f / sim::PI_F;
+        } else {
+            // No intrinsics is survivable but must be said out loud: the rays
+            // will be built from an assumed pinhole and every carve is then
+            // systematically off.
+            std::fprintf(stderr, "[live] WARNING: no intrinsics reported; "
+                                 "assuming a centred pinhole at %.0f deg\n",
+                         p.hfovDeg);
+        }
+        p.baselineM = 0.05f;      // D435i nominal; not reported by this path
+        p.maxRangeM = 40.f;
+        cam_.reset(new DepthCamera(p));
+        scale_ = pipe_.depthScale();
+        pending_ = true;          // the frame just read is the first one out
+        pendingW_ = fw; pendingH_ = fh;
+        ok_ = true;
+        return true;
     }
 
     const char* name() const override { return "realsense"; }
@@ -96,60 +106,59 @@ public:
     const DepthCamera& camera() const override { return *cam_; }
 
     bool next(cv::Mat& depth, PoseHint& hint) override {
-        try {
-            rs2::frameset fs;
-            if (!pipe_.try_wait_for_frames(&fs, 2000)) return false;
-            rs2::depth_frame df = fs.get_depth_frame();
-            if (!df) return false;
-            const int w = df.get_width(), h = df.get_height();
-            depth.create(h, w, CV_32F);
-            const uint16_t* src = static_cast<const uint16_t*>(df.get_data());
-            for (int y = 0; y < h; ++y) {
-                float* dst = depth.ptr<float>(y);
-                for (int x = 0; x < w; ++x) {
-                    const uint16_t u = src[y * w + x];
-                    dst[x] = u ? float(u) * scale_ : -1.f;
-                }
-            }
-            ++idx_;
-            hint.valid = false;      // no odometry yet -- the caller decides
-            return true;
-        } catch (const std::exception&) {
+        int w = pendingW_, h = pendingH_;
+        if (pending_) {
+            pending_ = false;               // reuse the frame start() already took
+        } else if (!pipe_.waitDepth(raw_, w, h, 2000)) {
             return false;
         }
+        depth.create(h, w, CV_32F);
+        for (int y = 0; y < h; ++y) {
+            float* dst = depth.ptr<float>(y);
+            const uint16_t* src = raw_.data() + size_t(y) * w;
+            for (int x = 0; x < w; ++x) dst[x] = src[x] ? float(src[x]) * scale_ : -1.f;
+        }
+        ++idx_;
+        hint.valid = false;      // no odometry yet -- the caller decides
+        return true;
     }
 
     int index() const override { return idx_; }
+    std::string info(int which) const { return pipe_.deviceInfo(which); }
     float depthScale() const { return scale_; }
 
 private:
-    rs2::pipeline pipe_;
-    rs2::config   cfg_;
+    rsdyn::Pipeline pipe_;
+    std::vector<uint16_t> raw_;
     std::unique_ptr<DepthCamera> cam_;
     float scale_ = 0.001f;
-    bool  ok_ = false;
-    int   idx_ = 0;
+    bool  ok_ = false, pending_ = false;
+    int   pendingW_ = 0, pendingH_ = 0, idx_ = 0;
 };
 
 std::unique_ptr<FrameSource> makeLiveSource(int w, int h, int fps, bool emitter,
                                             std::string* err) {
     auto s = std::unique_ptr<RealSenseSource>(new RealSenseSource());
     if (!s->start(w, h, fps, emitter, err)) return nullptr;
+    std::printf("[live] %s  serial %s  fw %s  usb %s\n",
+                s->info(rsdyn::CAMERA_INFO_NAME).c_str(),
+                s->info(rsdyn::CAMERA_INFO_SERIAL).c_str(),
+                s->info(rsdyn::CAMERA_INFO_FIRMWARE).c_str(),
+                s->info(rsdyn::CAMERA_INFO_USB_TYPE).c_str());
     return std::unique_ptr<FrameSource>(s.release());
 }
-bool haveLiveSupport() { return true; }
 
-#else
+// Runtime, not compile time: can the library be loaded right now.
+bool haveLiveSupport() { return rsdyn::load(nullptr); }
 
-std::unique_ptr<FrameSource> makeLiveSource(int, int, int, bool, std::string* err) {
-    if (err)
-        *err = "this build has no librealsense. Rebuild with the RealSense SDK "
-               "installed (CMake finds it via find_package(realsense2)); until "
-               "then use --replay on a .kdr recording.";
-    return nullptr;
+std::string liveSupportDetail() {
+    std::string err;
+    if (rsdyn::load(&err))
+        return "librealsense " + std::to_string(rsdyn::apiVersion() / 10000) + "." +
+               std::to_string((rsdyn::apiVersion() / 100) % 100) + "." +
+               std::to_string(rsdyn::apiVersion() % 100) + " (" +
+               rsdyn::libraryPath() + ")";
+    return err;
 }
-bool haveLiveSupport() { return false; }
-
-#endif
 
 }  // namespace sim

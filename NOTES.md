@@ -1113,6 +1113,15 @@ estimator.
 
 * SMF-VO unread. Re-check when arXiv is reachable; if it holds, it becomes the
   state-estimation plan.
+* **`depth_camera.hpp` treats `subpixelPx` as a CONSTANT (0.25 px).** It is not.
+  Real disparity noise scales with texture contrast, and the sim currently makes
+  texture a binary gate (`texThresh` decides match/no-match) with a fixed noise
+  on everything that survives. So low-contrast bark that *does* match is modelled
+  as being as precise as a resolution chart, and `Z_max` is optimistic wherever
+  the scene is marginal — which is most of a forest. Also preset-dependent:
+  high_accuracy and high_density are different `subpixelPx` values on the same
+  hardware. Measure both with `d435i_probe.py --preset sweep`, then make the
+  noise a function of texture rather than a constant.
 * **No thin obstacles in `voxel_world.cpp`.** Trunks only. This is now blocking:
   it is the reason the depth improver cannot be evaluated on the case it exists
   for, and it flatters every other result too, since branches are what a forest

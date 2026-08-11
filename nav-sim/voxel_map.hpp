@@ -314,6 +314,18 @@ public:
                      int outPx = 320, float hfovDeg = 90.f,
                      float maxRange = 25.f) const;
 
+    // Non-square variant, for OVERLAYING the map on the depth image it was
+    // built from. Alignment is the whole point of the overlay, so the render
+    // has to match the camera's aspect AND its horizontal FOV -- a square
+    // render letterboxed onto a 16:9 frame is wrong in the vertical by
+    // whatever the aspect ratio is, which looks like a calibration error and
+    // is really a rendering shortcut. The vertical FOV follows from the
+    // horizontal one and the aspect, exactly as it does in a real pinhole.
+    cv::Mat fpvImageWH(float px, float py, float pz,
+                       float yawDeg, float pitchDeg,
+                       int outW, int outH, float hfovDeg,
+                       float maxRange, cv::Mat* hitMask = nullptr) const;
+
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }
     void rayInsert(float px, float py, float pz, float dx, float dy, float dz,

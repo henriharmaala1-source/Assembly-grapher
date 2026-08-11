@@ -141,6 +141,18 @@ struct Config {
     //   1  GENERAL DIRECTION -- the goal bearing is wherever the camera points,
     //      so it answers "where would you go, roughly forwards."
     int   dirMode = 0;
+    // VIEW for the top-right pane:
+    //   0 FIRST PERSON  the map alone, rendered from inside
+    //   1 OVERLAY       the same render composited ON the depth image it was
+    //                   built from, pixel for pixel
+    //
+    // The overlay is the pane that can catch a whole class of fault nothing
+    // else here can. Map and depth are separate estimates of the same scene; if
+    // the voxels sit where the returns are, the intrinsics, the frame
+    // convention and the pose all agree. If they are offset, sheared or
+    // mirrored, one of those three is wrong -- and every other view in this
+    // program would show both halves looking individually plausible.
+    int   viewMode = 0;
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -356,7 +368,11 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
     btns.push_back(Button{{20, H - 78, 250, 56}, "START", "", 20,
                           C.mode != "replay" || !C.path.empty()});
     btns.push_back(Button{{286, H - 78, 140, 56}, "QUIT", "", 21});
-    label(img, "In the view:  space pause   s save PNG   m menu   q quit",
+    btns.push_back(Button{{530, yset + 112, 300, 40},
+                          C.viewMode == 0 ? "view: FIRST PERSON" : "view: OVERLAY on depth",
+                          "", 16, true, C.viewMode == 1});
+
+    label(img, "In the view:  space pause   v overlay   s save PNG   m menu   q quit",
           446, H - 62, 0.46, {110, 110, 110});
     label(img, "Camera pose is assumed FIXED. Move it and the map",
           446, H - 42, 0.42, {150, 110, 60});
@@ -386,7 +402,7 @@ int mainCli(int argc, char** argv) {
     float& maxIntegOverride = C.maxIntegOverride;
     int& camW = C.camW; int& camH = C.camH; int& fps = C.fps; int& steps = C.steps;
     bool& emitter = C.emitter; bool& headless = C.headless; bool& showTruth = C.showTruth;
-    int& stride = C.stride; int& dirMode = C.dirMode;
+    int& stride = C.stride; int& dirMode = C.dirMode; int& viewMode = C.viewMode;
 
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
@@ -405,6 +421,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--stride")) stride = std::max(1, std::atoi(next("2")));
         else if (!std::strcmp(argv[i], "--forward")) dirMode = 1;
         else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
+        else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
         else if (!std::strcmp(argv[i], "--emitter")) emitter = true;
         else if (!std::strcmp(argv[i], "--frames")) steps = std::atoi(next("-1"));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/voxel_live");
@@ -436,6 +453,7 @@ int mainCli(int argc, char** argv) {
                 "  --stride 2          use every Nth pixel when mapping. 1 is\n"
                 "                      59 ms/frame at 848x480 and cannot keep up\n"
                 "                      with a 30 fps camera; 2 is 19 ms\n"
+                "  --overlay           composite the voxel view ON the depth image\n"
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"
                 "  --frames N          stop after N frames\n"
@@ -663,11 +681,34 @@ static int runSession(Config C) {
         // fog rather than as air. maxRange is the map's honest marking limit,
         // so the horizon SHOULD look short: that is a sensor property, and
         // seeing where the world stops is the useful part.
-        cv::Mat fPane = fit(M.fpvImage(pose.e, pose.n, pose.u, yaw, pitchDeg,
-                                       PH, 90.f, std::max(4.f, mp.maxIntegM * 2.f)),
-                            PW, PH);
-        banner(fPane, "FIRST PERSON  the MAP, from inside");
-        banner(fPane, "pale = UNKNOWN, drawn as fog and not as air", 44);
+        cv::Mat fPane;
+        const float fpvRange = std::max(4.f, mp.maxIntegM * 2.f);
+        if (C.viewMode == 1) {
+            // OVERLAY. Rendered at the DEPTH IMAGE's own size and horizontal
+            // FOV, so the two line up pixel for pixel and any disagreement is
+            // real rather than a rendering artefact. A square render stretched
+            // onto a 16:9 frame would be wrong in the vertical by the aspect
+            // ratio and would look exactly like a calibration fault.
+            cv::Mat mask;
+            cv::Mat vox = M.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
+                                       depth.cols, depth.rows, cp.hfovDeg,
+                                       fpvRange, &mask);
+            cv::Mat base = colourDepth(depth, 8.f);
+            // Darken the camera image and lay the voxels over it only where
+            // something was actually HIT. Blending the fog too would wash the
+            // whole frame and hide the one thing being compared.
+            base *= 0.45;
+            vox.copyTo(base, mask);
+            fPane = fit(base, PW, PH);
+            banner(fPane, "OVERLAY  voxels ON the depth they came from");
+            banner(fPane, "aligned = intrinsics, frame and pose all agree", 44);
+        } else {
+            fPane = fit(M.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
+                                     PH, PH, 90.f, fpvRange, nullptr),
+                        PW, PH);
+            banner(fPane, "FIRST PERSON  the MAP, from inside");
+            banner(fPane, "pale = UNKNOWN, drawn as fog and not as air", 44);
+        }
 
         cv::Mat full(PH * 2, PW * 2, CV_8UC3);
         dPane.copyTo(full(cv::Rect(0, 0, PW, PH)));
@@ -681,6 +722,7 @@ static int runSession(Config C) {
             const int k = cv::waitKey(paused ? 0 : 1);
             if (k == 'q' || k == 27) break;
             if (k == 'm') { backToMenu = true; break; }
+            if (k == 'v') C.viewMode = 1 - C.viewMode;   // first person <-> overlay
             if (k == ' ') paused = !paused;
             if (k == 's') { cv::imwrite(out + "_frame.png", full);
                             std::printf("wrote %s_frame.png\n", out.c_str()); }
@@ -792,6 +834,7 @@ int main(int argc, char** argv) {
         else if (id == 13) { iSpin = (iSpin + 1) % 5; C.yawRateDps = SPINS[iSpin]; }
         else if (id == 14) { C.stride = (C.stride >= 4) ? 1 : C.stride * 2; }
         else if (id == 15) { C.dirMode = 1 - C.dirMode; }
+        else if (id == 16) { C.viewMode = 1 - C.viewMode; }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

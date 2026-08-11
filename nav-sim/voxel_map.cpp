@@ -125,9 +125,21 @@ VoxelMap::Hit VoxelMap::raycast(float px, float py, float pz,
 cv::Mat VoxelMap::fpvImage(float px, float py, float pz,
                            float yawDeg, float pitchDeg,
                            int outPx, float hfovDeg, float maxRange) const {
-    cv::Mat img(outPx, outPx, CV_8UC3);
-    const float f = (outPx * 0.5f) / std::tan(hfovDeg * 0.5f * PI_F / 180.f);
-    const float c = (outPx - 1) * 0.5f;
+    return fpvImageWH(px, py, pz, yawDeg, pitchDeg, outPx, outPx, hfovDeg,
+                      maxRange, nullptr);
+}
+
+cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
+                             float yawDeg, float pitchDeg,
+                             int outW, int outH, float hfovDeg,
+                             float maxRange, cv::Mat* hitMask) const {
+    cv::Mat img(outH, outW, CV_8UC3);
+    if (hitMask) *hitMask = cv::Mat(outH, outW, CV_8U, cv::Scalar(0));
+    // One focal length for both axes: the vertical FOV then falls out of the
+    // aspect ratio, which is what a pinhole does and what makes this line up
+    // with the depth image pixel for pixel.
+    const float f = (outW * 0.5f) / std::tan(hfovDeg * 0.5f * PI_F / 180.f);
+    const float cx_ = (outW - 1) * 0.5f, cy2_ = (outH - 1) * 0.5f;
     const float cy_ = std::cos(yawDeg * PI_F / 180.f), sy_ = std::sin(yawDeg * PI_F / 180.f);
     const float cp = std::cos(pitchDeg * PI_F / 180.f), sp = std::sin(pitchDeg * PI_F / 180.f);
     // Same colour key as the isometric pane so the two views agree: red is at
@@ -139,13 +151,14 @@ cv::Mat VoxelMap::fpvImage(float px, float py, float pz,
     static const float FACE[6] = {0.62f, 0.62f, 0.45f, 0.45f, 0.30f, 1.00f};
     const cv::Vec3f FOG(238, 240, 244);      // matches the iso pane background
 
-    for (int v = 0; v < outPx; ++v) {
+    for (int v = 0; v < outH; ++v) {
         cv::Vec3b* row = img.ptr<cv::Vec3b>(v);
-        for (int u = 0; u < outPx; ++u) {
+        uchar* mrow = hitMask ? hitMask->ptr<uchar>(v) : nullptr;
+        for (int u = 0; u < outW; ++u) {
             // Camera frame: +X right, +Y down, +Z forward, then pitch, then yaw
             // clockwise from North -- identical to DepthCamera::rayFor, because
             // two conventions for the same thing is a bug waiting to happen.
-            float rx = (u - c) / f, ry = (v - c) / f;
+            float rx = (u - cx_) / f, ry = (v - cy2_) / f;
             float y2 = ry * cp - sp, z2 = ry * sp + cp;
             float fE = rx, fN = z2, fU = -y2;
             float dx = fE * cy_ + fN * sy_;
@@ -172,14 +185,21 @@ cv::Mat VoxelMap::fpvImage(float px, float py, float pz,
                 col = FOG;
             }
             row[u] = cv::Vec3b(uchar(col[0]), uchar(col[1]), uchar(col[2]));
+            if (mrow) mrow[u] = h.hit ? 255 : 0;
         }
     }
     // Caption strips, top and bottom. Unlike every other pane here the content
     // of this one is arbitrary -- a trunk can be anywhere -- so labels drawn
     // straight onto it become unreadable exactly when the view is interesting.
     // A translucent band costs two rectangles and makes them always legible.
-    for (const cv::Rect& r : {cv::Rect(0, 0, outPx, 50),
-                              cv::Rect(0, outPx - 44, outPx, 44)}) {
+    //
+    // NOT drawn when a hit mask was asked for: the caller is compositing this
+    // over a camera image, and washing two bands of that image is vandalism
+    // rather than legibility.
+    for (const cv::Rect& r : hitMask ? std::vector<cv::Rect>{}
+                                     : std::vector<cv::Rect>{
+                                           cv::Rect(0, 0, outW, 50),
+                                           cv::Rect(0, outH - 44, outW, 44)}) {
         cv::Mat band = img(r);
         cv::Mat wash(band.size(), band.type(), cv::Scalar(238, 240, 244));
         cv::addWeighted(band, 0.55, wash, 0.45, 0.0, band);

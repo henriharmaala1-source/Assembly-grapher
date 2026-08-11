@@ -279,3 +279,17 @@ if(BUILD_TESTS)
            COMMAND ${CMAKE_COMMAND} -P
                    ${CMAKE_CURRENT_SOURCE_DIR}/test/find_realsense_check.cmake)
 endif()
+
+# Overlay alignment: the voxel render must land on the same pixels as the depth
+# image it was built from. Explicitly rejects a left/right and an up/down flip,
+# because on a forest a mirrored render looks entirely plausible.
+add_executable(overlay_align_check
+  test/overlay_align_check.cpp
+  voxel_map.cpp
+  depth_camera.cpp
+  voxel_world.cpp)
+target_include_directories(overlay_align_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(overlay_align_check PRIVATE ${OpenCV_LIBS})
+if(BUILD_TESTS)
+  add_test(NAME overlay_align_check COMMAND overlay_align_check)
+endif()

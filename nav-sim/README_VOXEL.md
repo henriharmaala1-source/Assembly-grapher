@@ -873,6 +873,20 @@ PERSON** (the map from inside — pale is UNKNOWN drawn as fog, never as air),
 **MAP SLICE** (green ring = the occupancy MARK limit, orange = the free-space
 CARVE limit), **PLAN** (faint = admissible primitives, green = chosen).
 
+Press `v` (or use the menu) to switch the top-right pane between **FIRST
+PERSON** and **OVERLAY** — the same voxel render composited *onto the depth
+image it was built from*, at the camera's own resolution and horizontal FOV so
+the two line up pixel for pixel.
+
+The overlay is the pane that catches a class of fault nothing else here can. The
+map and the depth image are independent estimates of the same scene: if the
+voxels sit where the returns are, then the intrinsics, the frame convention and
+the pose all agree. If they are offset, sheared or mirrored, one of the three is
+wrong — and in every other view both halves would look individually plausible.
+`overlay_align_check` pins it to sub-pixel and explicitly rejects a left/right
+and an up/down flip, because on a forest a mirrored render looks entirely
+convincing.
+
 The first-person pane renders the **map, never the world**: where the model is
 wrong, you fly into fog. Its horizon is short because the map's honest marking
 limit is short, which is a sensor property and the useful part to see. It is a

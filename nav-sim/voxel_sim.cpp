@@ -77,6 +77,8 @@ int main(int argc, char** argv) {
     std::string world = "forest", out = "/tmp/nav";
     int steps = 600;
     float cell = 0.25f, dt = 0.1f;
+    int   camW = 320, camH = 240;
+    float hfov = 70.f, baseline = 0.12f, maxIntegOverride = -1.f;
     float goalE = 150, goalN = 170, goalU = 8;
     bool useTruth = false, generalOnly = false, display = false;
     int replanEvery = 25;
@@ -146,6 +148,11 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
         else if (!std::strcmp(argv[i], "--cell")) cell = float(std::atof(next("0.25")));
+        else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("320"));
+        else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("240"));
+        else if (!std::strcmp(argv[i], "--hfov")) hfov = float(std::atof(next("70")));
+        else if (!std::strcmp(argv[i], "--baseline")) baseline = float(std::atof(next("0.12")));
+        else if (!std::strcmp(argv[i], "--maxinteg")) maxIntegOverride = float(std::atof(next("-1")));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/nav");
         else if (!std::strcmp(argv[i], "--truth")) useTruth = true;
         else if (!std::strcmp(argv[i], "--general-only")) generalOnly = true;
@@ -288,8 +295,22 @@ int main(int argc, char** argv) {
     printf("world '%s' %dx%dx%d @ %.2f m   start (%.1f,%.1f,%.1f) -> goal (%.0f,%.0f,%.0f)\n",
            world.c_str(), W.nx(), W.ny(), W.nz(), W.cell(), px, py, pz, goalE, goalN, goalU);
 
-    CamParams cp; DepthCamera cam(cp);
+    CamParams cp;
+    cp.width = camW; cp.height = camH; cp.hfovDeg = hfov; cp.baselineM = baseline;
+    DepthCamera cam(cp);
     VoxelMapParams mp; mp.cell = cell;
+    // Z_max = sqrt(cell * f * B / sigma_d), derated 25 % -- the measured
+    // over-estimate. Derived from the CAMERA rather than left at the default, so
+    // swapping in a different sensor moves the carve limit with it instead of
+    // silently keeping the old one.
+    {
+        const float f = (camW * 0.5f) / std::tan(hfov * 0.5f * sim::PI_F / 180.f);
+        mp.maxIntegM = std::sqrt(cell * f * baseline / cp.subpixelPx) * 0.75f;
+        if (maxIntegOverride > 0.f) mp.maxIntegM = maxIntegOverride;
+        std::printf("[cam] %dx%d hfov %.0f deg baseline %.0f mm -> f %.0f px, "
+                    "cell %.2f m -> Z_max %.2f m\n",
+                    camW, camH, hfov, baseline * 1000.f, f, cell, mp.maxIntegM);
+    }
     if (lHit  > 0)   mp.lHit = lHit;
     if (lMiss > 0)   mp.lMiss = lMiss;
     if (occT  > -90) mp.occThresh = occT;

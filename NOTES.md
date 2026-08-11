@@ -463,6 +463,48 @@ mechanical, not electrical: buy the boards, build the bar.**
     OAK-FFC-3P + 2x OV9282 + bar       your choice  8.6-11m   0 ms     EUR 240
     OAK-D LR                           fixed 15cm   ~9 m      0 ms     EUR 400
 
+## 2026-08-11 — SIM RUN on D435i geometry. One real warning, three noisy numbers.
+
+Added `--camw/--camh/--hfov/--baseline/--maxinteg` to voxel_sim, and made Z_max
+DERIVE from the camera rather than sit at a stale default -- swapping sensors now
+moves the carve limit with it instead of silently keeping the old one.
+
+Forest world, 848x480 / 87 deg / 50 mm baseline, 220 steps, seed 1, vMax 3.0:
+
+    cell   Z_max    travelled   stopped    false-free
+    0.15   2.75 m    62.0 m      6/220      1.24 %
+    0.25   3.54 m     5.6 m    201/220      0.80 %
+    0.40   4.48 m    50.9 m     45/220      0.95 %
+    0.60   5.49 m    35.9 m      0/220      4.81 %   <-- COLLISION
+
+**BELIEVE THIS ONE: coarse cells bought range and paid for it in a crash.** At
+0.60 m cells Z_max reaches 5.49 m, the aircraft never stops, and it hits a tree
+at step 122 doing 2.96 m/s. The diagnostic is unambiguous -- "of 3 truth-SOLID
+cells in the robot volume, the map called 3 FREE, 0 UNKNOWN, 0 OCCUPIED". Not
+unknown, FREE. That is the carve-through failure the Z_max discipline exists to
+prevent, and false-free jumped 6x (0.80 -> 4.81 %).
+
+**Coarse voxels are NOT a free way to buy range.** That answers the "accurate
+and coarse pixels" question directionally.
+
+**DO NOT BELIEVE THE REST.** The ordering is non-monotonic: 0.15 has the
+SHORTEST range yet travelled FURTHEST (62 m, 6 stops) while 0.25 has longer
+range and got completely stuck (5.6 m, 201 stops). That cannot be a real effect
+of range -- single-seed noise dominates, exactly the trap eval_noisefloor.py
+documented on the tracker side (mean swinging 18 points on perturbations that
+could not matter).
+
+**The test was also harsher than reality.** vMax = 3.0 m/s; BOTH papers flew
+1.0 m/s. Stopping distance at 3 m/s is ~2.25 m against a Z_max of 2.75-3.5 m --
+no margin, and very likely what produced the 201-stop result. At 1 m/s the
+budget is 0.42 m and the picture should change completely.
+
+So this run does NOT say the D435i cannot work. It says the D435i AT 3 m/s in
+dense forest WITH COARSE VOXELS is dangerous -- narrower, and believable.
+
+**Next, to make it decisive:** add `--vmax`, run at 1.0 m/s, 4+ seeds per
+configuration so the noise floor is visible. Until then no cell size is chosen.
+
 ## 2026-08-11 — STEREO: DECIDED. Buy a used D435i, do not build.
 
 **Decision: buy a used D435i (~EUR 200). The custom stereo bar is shelved.**

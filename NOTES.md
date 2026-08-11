@@ -1172,7 +1172,31 @@ Seller meet, RealSense Viewer only.
 * **The camera passes on every axis checked.** Nothing outstanding on the
   hardware.
 
-**`voxel_live --live` BUILDS AND LAUNCHES. IT HAS NOT BEEN TESTED.** An earlier
+**`voxel_live --live` COMPILES AND LAUNCHES. IT HAS NEVER RUN AGAINST A CAMERA.**
+
+And the `--live` branch had **never been compiled anywhere** until the
+librealsense headers were fetched by hand — it sits behind `#ifdef
+NAVSIM_HAVE_REALSENSE`, and no machine that built this tree had the SDK. It did
+not compile: `prof.get_device().first_depth_sensor()` is a PYTHON binding, and
+the C++ API is the templated `device::first<rs2::depth_sensor>()`. An
+`#ifdef`-ed branch that never compiles anywhere is not code, it is a plan. It
+compiles now.
+
+**Mapping cost, measured, forest world, 0.25 m cells:**
+
+    848x480  stride 1   407 k rays   58.8 ms    17 Hz
+             stride 2   102 k rays   19.2 ms    52 Hz
+             stride 4    25 k rays    5.3 ms   190 Hz
+    424x240  stride 1   102 k rays    8.4 ms   119 Hz
+
+Integration dominates completely — the planner is 1.5 ms against 59 ms of
+mapping. **Stride 1 at full resolution cannot keep a 30 fps camera**, on a
+desktop, never mind a laptop or a Pi. `voxel_live` now defaults to stride 2
+(16 ms/frame end to end, 62 Hz) and exposes it. Costs nothing detectable: a
+0.2 m trunk at 4 m spans ~11 px, so every second pixel still puts five samples
+across it.
+
+ An earlier
 version of this entry claimed the real map and planner had been fed real depth.
 They have not. What was confirmed is that CMake now finds the SDK and the LIVE
 button is enabled — the pipeline itself is unexercised on real frames and no

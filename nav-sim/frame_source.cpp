@@ -59,7 +59,12 @@ public:
         try {
             cfg_.enable_stream(RS2_STREAM_DEPTH, w, h, RS2_FORMAT_Z16, fps);
             auto prof = pipe_.start(cfg_);
-            auto ds = prof.get_device().first_depth_sensor();
+            // first_depth_sensor() exists in the PYTHON bindings, not in C++.
+            // The C++ API is the templated device::first<T>(). Caught only by
+            // compiling this block, which nothing had done until the headers
+            // were fetched -- an #ifdef'd branch that never compiles anywhere
+            // is not code, it is a plan.
+            auto ds = prof.get_device().first<rs2::depth_sensor>();
             scale_ = ds.get_depth_scale();
             if (ds.supports(RS2_OPTION_EMITTER_ENABLED))
                 ds.set_option(RS2_OPTION_EMITTER_ENABLED, emitter ? 1.f : 0.f);

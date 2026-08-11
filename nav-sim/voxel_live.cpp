@@ -116,6 +116,21 @@ struct Config {
     float cell = 0.25f, robotR = 0.6f, vmax = 1.5f;
     float yawRateDps = 0.f, pitchDeg = 0.f, maxIntegOverride = -1.f;
     int   camW = 848, camH = 480, fps = 30, steps = -1;
+    // RAY STRIDE. Integration cost is linear in rays and it dominates
+    // everything else; the planner is 1.5 ms against 59 ms of mapping at
+    // 848x480 with every pixel. Measured on the dev box, forest world,
+    // 0.25 m cells:
+    //
+    //     848x480  stride 1   407 k rays   58.8 ms    17 Hz
+    //              stride 2   102 k rays   19.2 ms    52 Hz
+    //              stride 4    25 k rays    5.3 ms   190 Hz
+    //     424x240  stride 1   102 k rays    8.4 ms   119 Hz
+    //
+    // So stride 1 at full resolution CANNOT keep up with a 30 fps camera, on a
+    // desktop, let alone a laptop or a Pi. Default 2, which is comfortable and
+    // costs nothing detectable: a 0.2 m trunk at 4 m spans ~11 px, so every
+    // second pixel still puts five samples across it.
+    int   stride = 2;
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -255,7 +270,7 @@ void applyStartupDefaults(Config& C, const std::vector<Recording>& recs) {
 
 cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                    std::vector<Button>& btns, const std::string& note) {
-    const int W = 1000, H = 690;
+    const int W = 1000, H = 740;
     cv::Mat img(H, W, CV_8UC3, cv::Scalar(246, 246, 248));
     btns.clear();
 
@@ -311,10 +326,15 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                           C.emitter ? "emitter ON" : "emitter OFF", "", 12, true, C.emitter});
     label(img, "off = the outdoor case", 718, yset + 38, 0.42, {140, 140, 140});
 
+    std::snprintf(b, sizeof(b), "ray stride  %d", C.stride);
+    btns.push_back(Button{{20, yset + 62, 190, 40}, b, "", 14, true, C.stride > 1});
+    label(img, "mapping cost is linear in rays; 1 will not keep up at 30 fps",
+          218, yset + 88, 0.42, {140, 140, 140});
+
     std::snprintf(b, sizeof(b), "spin  %.0f deg/s", C.yawRateDps);
-    btns.push_back(Button{{20, yset + 62, 210, 40}, b, "", 13, true, C.yawRateDps != 0.f});
+    btns.push_back(Button{{20, yset + 112, 210, 40}, b, "", 13, true, C.yawRateDps != 0.f});
     label(img, "only if you know the real rate -- there is no odometry",
-          240, yset + 88, 0.42, {140, 140, 140});
+          240, yset + 138, 0.42, {140, 140, 140});
 
     btns.push_back(Button{{20, H - 78, 250, 56}, "START", "", 20,
                           C.mode != "replay" || !C.path.empty()});
@@ -349,6 +369,7 @@ int mainCli(int argc, char** argv) {
     float& maxIntegOverride = C.maxIntegOverride;
     int& camW = C.camW; int& camH = C.camH; int& fps = C.fps; int& steps = C.steps;
     bool& emitter = C.emitter; bool& headless = C.headless; bool& showTruth = C.showTruth;
+    int& stride = C.stride;
 
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
@@ -364,6 +385,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("848"));
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("480"));
         else if (!std::strcmp(argv[i], "--fps")) fps = std::atoi(next("30"));
+        else if (!std::strcmp(argv[i], "--stride")) stride = std::max(1, std::atoi(next("2")));
         else if (!std::strcmp(argv[i], "--emitter")) emitter = true;
         else if (!std::strcmp(argv[i], "--frames")) steps = std::atoi(next("-1"));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/voxel_live");
@@ -392,6 +414,9 @@ int mainCli(int argc, char** argv) {
                 "  --pitch 0           camera pitch, deg (nose-up positive)\n"
                 "  --vmax 1.5          speed cap for the planner's budget\n"
                 "  --emitter           IR projector on (default off: the outdoor case)\n"
+                "  --stride 2          use every Nth pixel when mapping. 1 is\n"
+                "                      59 ms/frame at 848x480 and cannot keep up\n"
+                "                      with a 30 fps camera; 2 is 19 ms\n"
                 "  --frames N          stop after N frames\n"
                 "  --headless          no window; write PNGs to --out\n",
                 haveLiveSupport() ? "" : "  [NOT in this build -- no librealsense]");
@@ -453,6 +478,7 @@ static int runSession(Config C) {
     mp.depthSigCoef = 0.25f / (cam.fpx() * cp.baselineM);
     mp.maxIntegM = std::sqrt(cell * cam.fpx() * cp.baselineM / 0.25f) * 0.75f;
     if (maxIntegOverride > 0.f) mp.maxIntegM = maxIntegOverride;
+    mp.integrateStride = C.stride;
 
     // The camera sits at the middle of the grid looking +y (North), so the map
     // has room behind it as well -- a mapper that can only grow forwards would
@@ -462,8 +488,10 @@ static int runSession(Config C) {
     M.init(mp, px, py, pz);
 
     std::printf("[map] cell %.2f m -> honest carve range %.2f m "
-                "(f %.0f px, B %.0f mm)\n",
-                mp.cell, mp.maxIntegM, cam.fpx(), cp.baselineM * 1000.f);
+                "(f %.0f px, B %.0f mm), ray stride %d -> %d rays/frame\n",
+                mp.cell, mp.maxIntegM, cam.fpx(), cp.baselineM * 1000.f,
+                mp.integrateStride,
+                (cp.width / mp.integrateStride) * (cp.height / mp.integrateStride));
     if (mode != "sim")
         std::printf("[pose] %s -- NO translation is estimated. Move the camera and the\n"
                     "       map is wrong; that is the missing odometry, not a bug here.\n",
@@ -709,6 +737,7 @@ int main(int argc, char** argv) {
         else if (id == 11) { iVmax = (iVmax + 1) % 5; C.vmax = VMAXS[iVmax]; }
         else if (id == 12) C.emitter = !C.emitter;
         else if (id == 13) { iSpin = (iSpin + 1) % 5; C.yawRateDps = SPINS[iSpin]; }
+        else if (id == 14) { C.stride = (C.stride >= 4) ? 1 : C.stride * 2; }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

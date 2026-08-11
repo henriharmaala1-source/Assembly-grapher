@@ -131,9 +131,22 @@ fault here explains everything else and cannot be calibrated away.
 
 ## 3. The projector works  ·  30 s
 
-With an IR stream still visible, toggle **Emitter Enabled** off and on in the
-Stereo Module options. The dot pattern should appear and vanish in the IR view.
-It is invisible to the eye, so this is the only way to check it.
+**You do not need the toggle.** The emitter is ON by default, so the check is
+just: look at **Infrared 1** in a dim room at something 0.5–1 m away. A dense
+speckled dot pattern all over the surface means the projector works. Put your
+hand 20–30 cm in front to be sure — the dots on skin are unmistakable, and they
+move with the CAMERA rather than with the hand, which is what distinguishes them
+from scene texture.
+
+If you do want the toggle, it is a control on the **Stereo Module** — the sensor
+— and not on the Depth or Infrared stream entries underneath it. Expand Stereo
+Module and look in **Controls** for `Emitter Enabled` (Off/On/Auto) and
+`Laser Power`. It is routinely missed because people look under the stream they
+happen to be viewing.
+
+Or bypass the UI: `d435i_probe.py --emitter both` sets it programmatically and
+prints the valid-pixel fraction with it on and off, and says so if the option is
+unsupported or refuses to change.
 
 **Not a deal-breaker for us** — outdoors a ~1 W pattern against sunlight does
 almost nothing past a couple of metres, and our forest numbers assume passive

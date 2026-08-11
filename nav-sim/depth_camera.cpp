@@ -89,6 +89,38 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
         }
     }
 
+    // PASS 1b: OCCLUSION SHADOW. A pixel is visible to the left imager but
+    // hidden from the right whenever some pixel FURTHER RIGHT maps to the same
+    // or a smaller right-image coordinate -- i.e. something nearer has moved in
+    // front of it by more than the disparity difference.
+    //
+    //     x_right(u) = u - f*B/Z(u)
+    //     u is occluded  <=>  min over u' > u of x_right(u')  <=  x_right(u)
+    //
+    // One right-to-left sweep per row, O(1) per pixel. This is the same
+    // left-right consistency test a real matcher runs, which is why real
+    // hardware produces exactly this artefact rather than merely something
+    // like it: the strip is not noise, it is the geometry admitting it has no
+    // second view.
+    //
+    // The shadow falls on the LEFT of a near object because the right imager
+    // sits at +X. Same convention as the frame-edge band above, and it is worth
+    // stating because a shadow on the wrong side would look plausible and quietly
+    // mirror every obstacle boundary in the map.
+    if (p_.modelOcclusion) {
+        for (int v = 0; v < p_.height; ++v) {
+            float* rr = raw.ptr<float>(v);
+            float* tr = texM.ptr<float>(v);
+            float minXr = 1e30f;
+            for (int u = p_.width - 1; u >= 0; --u) {
+                if (!(rr[u] > 0.f)) continue;
+                const float xr = float(u) - fB / rr[u];
+                if (xr >= minXr) { rr[u] = -1.f; tr[u] = 0.f; }   // no second view
+                else minXr = xr;
+            }
+        }
+    }
+
     // PASS 2: SILHOUETTE. A pixel whose neighbourhood spans a large depth step
     // sits on an edge, and an edge is the easiest thing in the scene to
     // correlate -- which is why real depth images of a forest show trunks as

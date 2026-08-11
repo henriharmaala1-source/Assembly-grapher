@@ -227,3 +227,16 @@ if(BUILD_TESTS)
     set_tests_properties(kdr_crosscheck PROPERTIES DEPENDS depth_record_check)
   endif()
 endif()
+
+# Stereo occlusion shadow: asserts the SIDE (a mirrored shadow would look
+# plausible and bias every obstacle boundary) and the WIDTH against
+# f*B*(1/Zn - 1/Zf).
+add_executable(occlusion_check
+  test/occlusion_check.cpp
+  depth_camera.cpp
+  voxel_world.cpp)
+target_include_directories(occlusion_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(occlusion_check PRIVATE ${OpenCV_LIBS})
+if(BUILD_TESTS)
+  add_test(NAME occlusion_check COMMAND occlusion_check)
+endif()

@@ -37,6 +37,18 @@
 //                     counterpart in the right image. At 1 m and a 25 cm
 //                     baseline that is 18% of the frame with no stereo at all.
 //
+//   OCCLUSION SHADOW  and this one is not just at the frame edge. EVERY
+//                     foreground object hides a strip of the background from
+//                     the second imager, so a band down one side of it returns
+//                     nothing. Width is exactly the disparity difference,
+//                     f*B*(1/Z_near - 1/Z_far) pixels, and at f = 425 px and
+//                     B = 50 mm a hand at 0.4 m against a 2 m wall casts a
+//                     42 px shadow. In a forest that means a dead strip beside
+//                     EVERY trunk -- precisely where the map most needs data,
+//                     since it is the obstacle boundary. Modelling only the
+//                     frame-edge band, as the first version did, understated
+//                     the hole count everywhere that matters.
+//
 //   SPECKLE / OUTLIER A small fraction of pixels match wrongly and confidently,
 //                     typically on repetitive texture. These are worse than
 //                     holes: a hole is safe, a confident wrong depth is not.
@@ -88,6 +100,10 @@ struct CamParams {
     // consistency plus a speckle filter. A valid pixel surrounded mostly by
     // invalid ones is thrown away. This is why real output has clean hole
     // EDGES rather than a fringe of surviving pixels.
+    // Stereo shadow beside foreground objects (see OCCLUSION SHADOW above).
+    // Off restores the old behaviour exactly, for comparing against numbers
+    // measured before it existed.
+    bool  modelOcclusion = true;
     bool  filterSpeckle = true;
     int   speckleWin = 2;        // half-window for the validity majority test
     float speckleKeep= 0.45f;    // keep only if this fraction of neighbours valid

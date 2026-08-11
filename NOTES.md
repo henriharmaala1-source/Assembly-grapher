@@ -1130,6 +1130,42 @@ not a D435i, and that is both the reason for the price premium and the thing
 VIO depends on. Everything else outstanding is either fixable or a price
 argument; that one is the wrong camera.
 
+## 2026-08-11 — stereo occlusion shadow: real, now modelled, and negligible for us
+
+Observed on the real camera: a hand held up casts a shadow in the depth image.
+That is the classic stereo occlusion band — every foreground object hides a
+strip of background from the SECOND imager, so a band down one side returns
+nothing. Width is exactly the disparity difference:
+
+    shadow_px = f*B*(1/Z_near - 1/Z_far)
+
+`depth_camera.cpp` modelled only the FRAME-EDGE band (`u < fB/t`), not this.
+Now it does, via one right-to-left sweep per row — the same left-right
+consistency test a real matcher runs, which is why the hardware produces exactly
+this artefact rather than merely something like it. `modelOcclusion=false`
+restores the old renderer bit-identically, so earlier numbers stay comparable.
+
+`test/occlusion_check.cpp` pins the SIDE as well as the width. The side matters
+more than it looks: a correct-width shadow on the wrong side would look entirely
+plausible and would mirror every obstacle boundary in the map, biasing the free
+space beside every trunk in a direction nothing downstream could detect. It
+falls LEFT of a near object, because the right imager sits at +X. Measured 6 px
+against a predicted 7.0 px at 1.5 m / 4.0 m.
+
+**And the point of measuring it: it barely matters at forest ranges.** Forest
+world, 848x480, 87 deg, 50 mm baseline, eight yaws:
+
+    valid pixels   60.7 % with shadow   61.0 % without   -0.2 points
+
+Because the effect scales with the disparity DIFFERENCE, and at forest distances
+everything is far so that difference is small. A trunk at 4 m against 10 m of
+background is a 3 px strip; a hand at 0.4 m against a 2 m wall is 45 px. **This
+is a near-field phenomenon on a 50 mm baseline** — spectacular at arm's length,
+almost invisible past 4 m.
+
+Kept because it is correct, not because it changed anything. It would matter on
+a wider baseline (a D455's 95 mm doubles it) or flying in close quarters.
+
 ## Open / unresolved
 
 * SMF-VO unread. Re-check when arXiv is reachable; if it holds, it becomes the

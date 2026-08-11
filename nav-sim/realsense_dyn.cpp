@@ -2,6 +2,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -81,10 +83,17 @@ void* openLib(const char* name) {
 #endif
 }
 
-// Every place the library plausibly is. On Windows LoadLibrary already searches
-// the exe directory and PATH, and the SDK installer puts realsense2.dll in both
-// its own bin/ and on PATH -- so the bare name usually wins on its own. The
-// explicit paths are for the installs that do neither.
+// Every place the library plausibly is.
+//
+// The fixed list below was not enough on a real machine: the SDK was installed
+// and none of the four hard-coded paths existed, because the product folder is
+// named by an installer whose vendor changed. So the fixed list is only the
+// first pass -- after it, every directory under Program Files whose name
+// mentions RealSense is enumerated and the usual subfolders tried inside it.
+//
+// std::filesystem rather than FindFirstFile, so the search can be exercised on
+// a machine that is not Windows. A Windows-only code path that nothing else can
+// run is how the last three of these bugs survived.
 const char* kCandidates[] = {
 #ifdef _WIN32
     "realsense2.dll",
@@ -99,6 +108,62 @@ const char* kCandidates[] = {
     "/usr/local/lib/librealsense2.so",
 #endif
 };
+
+#ifdef _WIN32
+const char* kLibName = "realsense2.dll";
+#else
+const char* kLibName = "librealsense2.so";
+#endif
+
+// Roots to hunt under, and the subfolders an install puts the library in.
+std::vector<std::string> searchRoots() {
+    std::vector<std::string> roots;
+#ifdef _WIN32
+    for (const char* env : {"ProgramW6432", "ProgramFiles", "ProgramFiles(x86)",
+                            "LOCALAPPDATA"}) {
+        const char* v = std::getenv(env);
+        if (v && *v) roots.push_back(v);
+    }
+    roots.push_back("C:/Program Files");
+    roots.push_back("C:/Program Files (x86)");
+#else
+    roots.push_back("/usr/lib");
+    roots.push_back("/usr/local/lib");
+    roots.push_back("/opt");
+#endif
+    if (const char* v = std::getenv("REALSENSE2_DIR")) if (*v) roots.push_back(v);
+    return roots;
+}
+
+// Any directory whose name mentions realsense, one level under each root, plus
+// the roots themselves. Returns full candidate paths to the library.
+std::vector<std::string> globCandidates() {
+    namespace fs = std::filesystem;
+    std::vector<std::string> out;
+    const char* subs[] = {"bin/x64", "bin", "lib/x64", "lib", ""};
+    auto tryDir = [&](const fs::path& d) {
+        for (const char* sub : subs) {
+            fs::path p = *sub ? (d / sub / kLibName) : (d / kLibName);
+            std::error_code ec;
+            if (fs::exists(p, ec)) out.push_back(p.string());
+        }
+    };
+    for (const std::string& root : searchRoots()) {
+        std::error_code ec;
+        fs::path r(root);
+        if (!fs::exists(r, ec)) continue;
+        tryDir(r);                                   // the root itself
+        for (fs::directory_iterator it(r, fs::directory_options::skip_permission_denied, ec), end;
+             it != end && !ec; it.increment(ec)) {
+            std::error_code ec2;
+            if (!it->is_directory(ec2)) continue;
+            std::string name = it->path().filename().string();
+            for (char& c : name) c = char(std::tolower((unsigned char)c));
+            if (name.find("realsense") != std::string::npos) tryDir(it->path());
+        }
+    }
+    return out;
+}
 
 // An error out-parameter that cleans itself up.
 struct Err {
@@ -168,11 +233,18 @@ int apiVersion() { return g_api; }
 bool load(std::string* err) {
     if (g_handle) return true;
     std::string tried;
-    for (const char* cand : kCandidates) {
-        void* h = openLib(cand);
+
+    // Fixed list first (cheap, and the bare name lets the OS loader do its own
+    // search), then anything the filesystem hunt turns up.
+    std::vector<std::string> all;
+    for (const char* c : kCandidates) all.push_back(c);
+    for (const std::string& c : globCandidates()) all.push_back(c);
+
+    for (const std::string& cand : all) {
+        void* h = openLib(cand.c_str());
         if (!h) {
             if (!tried.empty()) tried += "\n";
-            tried += std::string("  ") + cand;
+            tried += "  " + cand;
             continue;
         }
         g_handle = h;

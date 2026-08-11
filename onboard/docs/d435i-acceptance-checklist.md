@@ -19,10 +19,43 @@ at — a painted wall or a poster is fine.
 
 * **Install the SDK and open the Viewer at home first.** Debugging a driver
   install in a car park is not a negotiation position.
-* **Bring your own cable.** A USB 2.0 cable with a C connector plugs in happily
-  and negotiates USB 2, and the camera then refuses the higher modes and drops
-  frames — which looks exactly like a bad camera. Blue port ≠ USB 3 cable; the
-  colour convention is advisory and says nothing about what you plugged in.
+* **Bring your own cable, and know it is USB 3 before you go.** A USB 2.0 cable
+  with a C connector plugs in happily and negotiates USB 2; the camera then
+  refuses the higher modes and drops frames, which looks exactly like a bad
+  camera. Blue port ≠ USB 3 cable — the colour convention is advisory and says
+  nothing about what you plugged in. How to check a cable with no camera:
+
+  **If it has a USB-A end: count the contacts.** This is definitive, free and
+  instant. Look into the rectangular plug at the gold contacts on the tongue:
+
+  | contacts | verdict |
+  |---|---|
+  | 4, in a row at the front edge | **USB 2.0.** Will not do |
+  | 9 — the same 4, plus 5 more set further back | **USB 3.** Good |
+
+  The extra five are the SuperSpeed pairs; a USB 2 cable physically does not
+  have the wires. The tongue is usually blue as well, but count rather than
+  trust the colour.
+
+  **If it is C-to-C there is no visual test** — both ends look identical either
+  way. You need either a printed marking (`SS`, the SuperSpeed trident, "5Gbps",
+  "USB 3.2 Gen 1") or a live test with a device you already own: plug a USB 3
+  flash drive or external SSD through the candidate cable and copy a large file
+  **off** it. A plateau around 35–40 MB/s is a USB 2 link; USB 3 goes well past
+  100 MB/s. Windows also pops "this device can perform faster" on a USB 2 link.
+
+  **The trap worth naming: charging wattage tells you nothing about data rate.**
+  A 100 W USB-C power-delivery cable is very often USB 2.0 for data. High
+  wattage and high bandwidth are separate conductors and separate claims.
+
+  **Prefer C-to-A into a blue port over C-to-C**, precisely because you can
+  physically verify the A end by eye.
+
+* **Keep it to 1 m.** Long or cheap USB 3 cables cause frame drops on this
+  camera; the boxed unit shipped with a 1 m cable for that reason. If in doubt,
+  a cable explicitly rated "USB 3.2 Gen 1 / 5 Gbps" costs about EUR 10 and
+  removes a variable from an acceptance test where that variable would
+  masquerade as a bad camera.
 * **Straight into the laptop, no hub.** A hub shares bandwidth and adds a
   suspect.
 

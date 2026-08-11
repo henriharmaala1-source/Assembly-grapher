@@ -463,6 +463,79 @@ mechanical, not electrical: buy the boards, build the bar.**
     OAK-FFC-3P + 2x OV9282 + bar       your choice  8.6-11m   0 ms     EUR 240
     OAK-D LR                           fixed 15cm   ~9 m      0 ms     EUR 400
 
+## 2026-08-11 — STEREO: DECIDED. Buy a used D435i, do not build.
+
+**Decision: buy a used D435i (~EUR 200). The custom stereo bar is shelved.**
+
+Reasoning, in order of weight:
+
+1. **Stereo is stage 4 of our own plan** and nothing is blocking on it. The
+   lock-on tracker runs on the analog feed. Software is validated, the airframe
+   flies, and the two have never met. Building a stereo rig now is working out
+   of order on the one stage that blocks nothing.
+2. **It buys away four problems we did real analysis on**: the 26 um mount
+   budget, hardware sync + the 1.8 V trigger wiring, calibration drift and the
+   recalibration ritual, and 13-24 ms of Pi CPU per frame.
+3. **Both published systems that actually fly under canopy use this camera.**
+   Karjalainen 7/7 at 650 trees/ha on a D435 with the emitter DISABLED; DeFoP
+   15/15 on a D435i. 2.5 m of honest range is the configuration that works in
+   the field, not a compromise.
+4. It carries an IMU rigidly co-located with the cameras -- exactly the problem
+   flagged for a soft-mounted custom rig.
+
+Used-unit checks: genuine Intel via `rs-enumerate-devices`; IMU actually present
+(some listings mislabel a plain D435); `realsense-viewer` for dropped USB3 frames
+and dead columns; budget 0.7-1.5 A on USB3 out of the PD chain; librealsense on
+ARM means building from source.
+
+### The range fear, and why Z_max was the wrong number to fear
+
+**Z_max is the CARVING limit, not the seeing limit.** The camera returns depth
+far past it; what degrades is precision, and `dZ = Z^2*sigma_d/(f*B)` says how
+much. D435i at 848x480 (f = 447 px, B = 50 mm):
+
+    range    dZ        as %
+    2 m      +-4.5 cm   2 %     <- matches Intel's own "<2% at 2 m" spec
+    3 m      +-10 cm    3 %
+    5 m      +-28 cm    5.6 %
+    8 m      +-72 cm    9 %
+    10 m     +-1.1 m    11 %
+
+**At 5 m you get +-28 cm.** That is not blind. For "is there a 3 m gap over
+there" it is overwhelming precision. Z_max landed at ~2.5 m only because it was
+defined as dZ <= one voxel, which is the budget for CARVING FREE SPACE -- the
+one error that kills you. It is the wrong budget for every other decision.
+
+**Three ranges, not one** (voxel_map.hpp already says this: "a ray that returns
+30 m still proves the first several metres are empty"):
+
+* carve free space -- short and conservative, ~2.5-3 m. Unchanged.
+* mark occupied -- much further. An obstacle at 5 +- 0.28 m is still an
+  obstacle; 28 cm is small against a 0.6 m robot radius.
+* **assess openness for steering -- read the RAW DEPTH IMAGE, no map involved.**
+  This is DeFoP's geometric supervisor: sector the frame, check the fraction of
+  pixels nearer than a threshold. Works to whatever range the sensor returns,
+  because "this sector is empty to 5 m" needs no sub-voxel precision.
+
+The third is the piece we do not have and the direct answer to the range worry.
+We do not need the MAP to see a gap at 5 m; we need the depth image.
+
+Also: the map is a rolling window. At 1-3 m/s, space 5 m away is 2.5 m away in
+under two seconds and fills in properly as we approach.
+
+**If range still binds after real flights, the fix is a D455, not custom
+stereo.** Same family, same software, 95 mm baseline instead of 50 -- doubles
+f*B, halves dZ at every range (+-15 cm at 5 m), Z_max ~2.5 m -> ~4.9 m. Drop-in
+swap, ~EUR 100 more, ~40 g.
+
+**What survives from the custom-stereo work:** the error model itself. It is
+what tells us to trust ~2.5 m rather than the datasheet's 10 m, and what stops
+the mapper carving through a trunk at 8 m. Used on day one.
+
+**stereo_bench is now diagnostic, not a gate** -- the D435i computes depth in
+silicon, so CPU matching cost no longer decides anything. Keep it for the day a
+custom pipeline is reconsidered.
+
 ### DECISION GATE — do not buy until stereo_bench runs on the Pi
 
 That one measurement now prices the alternatives, not just the custom route:

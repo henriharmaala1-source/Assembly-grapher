@@ -269,8 +269,20 @@ void genForest(VoxelWorld& w, const ForestParams& p, std::vector<Trail>* trailsO
 
     const float areaHa = (p.sizeM * p.sizeM) / 10000.f;
     const int nTrees = int(areaHa * p.stemsPerHa);
-    for (int i = 0; i < nTrees; ++i) {
+    // Oversample when bands are in use: a band with multiplier < 1 rejects
+    // candidates, so generate against the LARGEST multiplier and reject down to
+    // each band's share. Without this the dense bands would be thinned too.
+    float mulMax = 1.f;
+    for (float m : p.bandMul) mulMax = std::max(mulMax, m);
+    const int nGen = p.bandMul.empty() ? nTrees : int(nTrees * mulMax);
+    for (int i = 0; i < nGen; ++i) {
         float x = u01(rng) * p.sizeM, y = u01(rng) * p.sizeM;
+        if (!p.bandMul.empty()) {
+            const int nb = int(p.bandMul.size());
+            int b = int(y / (p.sizeM / nb));
+            b = std::min(std::max(b, 0), nb - 1);
+            if (u01(rng) > p.bandMul[b] / mulMax) continue;   // thin this band
+        }
         int cx, cy, cz;
         w.worldToCell(x, y, 0, cx, cy, cz);
         float base = 0.f;

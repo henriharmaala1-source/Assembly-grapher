@@ -157,6 +157,15 @@ struct ForestParams {
     // the harness discriminating: uniform forest rewards any planner that
     // wanders competently, whereas a trail asks whether the planner can FIND
     // and HOLD a corridor, which is a strictly harder and more useful question.
+    // DENSITY BANDS. A real stand is not uniform: it has thickets, ordinary
+    // forest, and open ground you can actually make progress through. A uniform
+    // Poisson field rewards any planner that wanders competently; banded density
+    // asks the harder question -- does it FIND the open route and commit to it,
+    // and does it slow down when the stand closes in?
+    //
+    // bandsY divides the world along +y into equal bands and multiplies
+    // stemsPerHa by bandMul[i % bandMul.size()]. Empty = uniform (old behaviour).
+    std::vector<float> bandMul;
     int   trails     = 3;
     float trailWidthM= 3.5f;    // cleared width; 0 disables trails entirely
     // TRUNK TEXTURE, and getting this wrong made every safety number in this

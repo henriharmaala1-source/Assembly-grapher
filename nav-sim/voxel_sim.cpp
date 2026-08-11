@@ -79,6 +79,7 @@ int main(int argc, char** argv) {
     float cell = 0.25f, dt = 0.1f;
     int   camW = 320, camH = 240;
     float hfov = 70.f, baseline = 0.12f, maxIntegOverride = -1.f;
+    bool  mixed = false;
     float goalE = 150, goalN = 170, goalU = 8;
     bool useTruth = false, generalOnly = false, display = false;
     int replanEvery = 25;
@@ -148,6 +149,7 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
         else if (!std::strcmp(argv[i], "--cell")) cell = float(std::atof(next("0.25")));
+        else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
         else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("320"));
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("240"));
         else if (!std::strcmp(argv[i], "--hfov")) hfov = float(std::atof(next("70")));
@@ -210,6 +212,13 @@ int main(int argc, char** argv) {
         px = p.streetM * 0.5f; py = 5.f; pz = 6.f;
     } else {
         ForestParams p; p.cell = cell; p.seed = seed;
+        if (mixed) {
+            // Heavy clutter -> medium -> open, banded along the flight axis, so a
+            // single run crosses all three regimes and the metrics are comparable
+            // within one seed instead of across three worlds.
+            p.bandMul = {2.0f, 1.0f, 0.35f, 1.0f, 2.0f};
+            p.trails  = 2;      // a clear route exists, but it is not handed to you
+        }
         if (trunkTex >= 0.f) { p.trunkTexMin = trunkTex; p.trunkTexMax = trunkTex; }
         genForest(W, p, &trails);
         px = 15.f; py = 10.f; pz = 6.f;

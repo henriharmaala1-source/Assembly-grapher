@@ -28,14 +28,25 @@ at — a painted wall or a poster is fine.
   **If it has a USB-A end: count the contacts.** This is definitive, free and
   instant. Look into the rectangular plug at the gold contacts on the tongue:
 
-  | contacts | verdict |
-  |---|---|
-  | 4, in a row at the front edge | **USB 2.0.** Will not do |
-  | 9 — the same 4, plus 5 more set further back | **USB 3.** Good |
+  Do not try to count nine. In practice you look for **contacts set BACK from
+  the front row**:
 
-  The extra five are the SuperSpeed pairs; a USB 2 cable physically does not
-  have the wires. The tongue is usually blue as well, but count rather than
-  trust the colour.
+  | what you see | verdict |
+  |---|---|
+  | one row of 4, all at the front edge, nothing behind | **USB 2.0.** Will not do |
+  | a set of **5** deeper in, behind the front row | **USB 3.** Good |
+
+  Those five are the SuperSpeed contacts, and they are the ones that catch your
+  eye — the other four sit flat at the very front and are easy to miss, which is
+  why "count 9" is bad advice and "is there a second group further in" is good
+  advice. **Five is not a valid count for anything else:** Standard-A is defined
+  with 4 contacts or with 9, never 5, so seeing a group of five settles it. A
+  USB 2 cable physically lacks those wires. A blue tongue corroborates but is
+  only a convention — the contacts are the proof.
+
+  Caveat worth keeping in proportion: a 9-pin A end proves the cable was BUILT
+  as USB 3, not that every conductor survives to the C end. Treat `3.2` in the
+  Viewer as the expectation and `2.1` as the surprise.
 
   **If it is C-to-C there is no visual test** — both ends look identical either
   way. You need either a printed marking (`SS`, the SuperSpeed trident, "5Gbps",

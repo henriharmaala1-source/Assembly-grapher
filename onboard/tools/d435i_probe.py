@@ -7,6 +7,10 @@ airframe.
     python3 d435i_probe.py --selftest       # NO CAMERA NEEDED. Do this first.
     python3 d435i_probe.py                  # full check with the camera
     python3 d435i_probe.py --range 3.0      # you tape-measured 3.0 m to the target
+    python3 d435i_probe.py --record 600 --record-every 6 --emitter off
+                                            # walk the forest with it on a stick
+    python3 d435i_probe.py --replay walk.npz --range 2.5
+                                            # analyse it later, numpy only
 
 WHY THIS EXISTS ALONGSIDE realsense-viewer, RATHER THAN INSTEAD OF IT.
 
@@ -40,6 +44,13 @@ DESIGNED TO BE UNDEBUGGABLE IN THE FIELD, because that is the situation:
     so the naive version crashes precisely when it has something to tell you.
   * It SAVES THE RAW FRAMES to an .npz next to a text log. If a number looks
     wrong, you do not need to diagnose it there; bring the file back.
+  * --record / --replay: the camera does NOT have to be on a flying aircraft to
+    produce any of this. Depth frames from a forest are depth frames from a
+    forest whether the sensor is bolted to a quad or carried on a stick at
+    walking pace. Record a walk, replay it at home. Same numbers, no crash risk.
+    The format is a compressed .npz of uint16 device units plus metadata, so it
+    reads back with numpy ALONE -- deliberately not librealsense's .bag, whose
+    API is version-dependent and could not be tested here.
 
 WHAT TO DO WITH THE OUTPUT: paste the log into NOTES.md. These numbers replace
 assumptions that are currently load-bearing.
@@ -48,6 +59,7 @@ assumptions that are currently load-bearing.
 import argparse
 import datetime
 import json
+import os
 import sys
 import traceback
 import warnings
@@ -381,6 +393,89 @@ def load_raw(path):
     return stacks, meta
 
 
+
+# ---------------------------------------------------------------------------
+# RECORD AND REPLAY.
+#
+# THE POINT: the camera does not have to be on a flying aircraft to produce
+# every number this project needs. Depth frames from a forest are depth frames
+# from a forest whether the sensor is bolted to a quad or carried on a stick at
+# walking pace. Recording a walk and replaying it offline gets the sigma_d
+# figure, the valid-return fraction on real bark, and -- once the map is wired
+# to a replay source -- the false-free rate, at zero risk to a 200 EUR camera
+# and zero risk of a crash.
+#
+# NOT librealsense's own .bag. That API is version-dependent (this machine's
+# wheel rejects .bag and wants .db3, and the software_video_frame constructor
+# differs too), and shipping a path I cannot execute here is exactly the mistake
+# that was just called out. This format is a plain compressed .npz of uint16
+# device units plus the metadata needed to interpret them, so it reads back with
+# numpy ALONE -- no pyrealsense2, no librealsense, on any machine.
+#
+# If a Viewer-compatible bag is wanted, realsense-viewer records one itself.
+# That is the supported route and it does not need this code to be right.
+# ---------------------------------------------------------------------------
+def save_record(path, frames_u16, meta, log):
+    """frames_u16: (n, h, w) uint16 in DEVICE units. Stored raw, not converted:
+    the depth scale is metadata, and keeping the integers means the file is half
+    the size and bit-exact with what the sensor reported."""
+    try:
+        arr = np.asarray(frames_u16, dtype=np.uint16)
+        np.savez_compressed(path, depth_u16=arr,
+                            meta_json=np.array(json.dumps(meta, default=str)))
+        mb = os.path.getsize(path) / 1e6
+        log(f"[saved] {arr.shape[0]} full frames {arr.shape[2]}x{arr.shape[1]} "
+            f"-> {path}  ({mb:.1f} MB)")
+        return True
+    except Exception as e:
+        log(f"[warn] could not save recording: {e}")
+        return False
+
+
+def load_record(path):
+    z = np.load(path, allow_pickle=False)
+    return z["depth_u16"], json.loads(str(z["meta_json"]))
+
+
+def centre_roi(frames, roi_frac):
+    n, h, w = frames.shape
+    rh = max(1, int(h * roi_frac / 2))
+    rw = max(1, int(w * roi_frac / 2))
+    return frames[:, h // 2 - rh:h // 2 + rh, w // 2 - rw:w // 2 + rw]
+
+
+def replay(args, log):
+    """Run the same analysis on a recording. numpy only -- no camera, no SDK."""
+    try:
+        frames, meta = load_record(args.replay)
+    except Exception as e:
+        log(f"cannot read {args.replay}: {e}")
+        return 2
+    scale = float(meta.get("depth_scale", 0.001))
+    fx = float(meta.get("fx", 0.0))
+    baseline = float(meta.get("baseline_m", 0.0))
+    log(f"=== replay: {args.replay} ===")
+    log(f"  {frames.shape[0]} frames  {frames.shape[2]}x{frames.shape[1]}   "
+        f"fx {fx:.1f} px   baseline {baseline * 1000:.1f} mm   "
+        f"scale {scale * 1000:.3f} mm")
+    for k in ("recorded", "emitter", "usb_descriptor", "firmware", "serial"):
+        if k in meta:
+            log(f"  {k:18s} {meta[k]}")
+    log("")
+    d = frames.astype(np.float32) * scale
+    roi = centre_roi(d, args.roi)
+    r = analyse(roi, fx, baseline, cell_m=args.cell, tape_m=args.range)
+    r["frames"] = int(d.shape[0])
+    r["frame_valid_mean"] = float(np.count_nonzero(d)) / d.size
+    r["frame_valid_min"] = float(min(np.count_nonzero(f) / f.size for f in d))
+    report_arm(log, f"replay, centre {args.roi * 100:.0f} % ROI", r, args)
+    if not args.range:
+        log("  (no --range given: sigma_d is computed against the camera's own")
+        log("   reported depth, so a calibration bias folds into it. Pass the")
+        log("   tape-measured distance when the target was a fixed object.)")
+    return 0
+
+
 def dryrun(args, log):
     """Run the whole REPORTING path on synthetic frames. No camera, no
     pyrealsense2. This exists because --selftest checks the maths and the
@@ -553,6 +648,49 @@ def run_device(args, log):
         log(f"  [warn] could not read intrinsics: {e}")
     safe(lambda: pipe.stop())
 
+    # --- record mode: capture full frames and stop ---------------------------
+    if args.record > 0:
+        emit = 0 if args.emitter == "off" else 1
+        cfg = rs.config()
+        cfg.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)
+        pipe = rs.pipeline()
+        frames = []
+        try:
+            prof2 = pipe.start(cfg)
+            ds = safe(lambda: prof2.get_device().first_depth_sensor())
+            if ds is not None and safe(lambda: ds.supports(rs.option.emitter_enabled), False):
+                safe(lambda: ds.set_option(rs.option.emitter_enabled, float(emit)))
+            for _ in range(fps):
+                safe(lambda: pipe.wait_for_frames(5000))     # let AE settle
+            log(f"=== recording {args.record} frames "
+                f"({'emitter ON' if emit else 'emitter OFF'}) ===")
+            for i in range(args.record):
+                fs = safe(lambda: pipe.wait_for_frames(5000))
+                if fs is None:
+                    log(f"  [warn] timeout after {len(frames)} frames; stopping")
+                    break
+                f = fs.get_depth_frame()
+                if f and (i % max(1, args.record_every) == 0):
+                    frames.append(np.asanyarray(f.get_data()).copy())
+                if args.record >= 20 and (i + 1) % max(1, args.record // 10) == 0:
+                    log(f"  {i + 1}/{args.record}")
+        except Exception as e:
+            log(f"  [warn] recording stopped: {str(e)[:80]}")
+        finally:
+            safe(lambda: pipe.stop())
+        if len(frames) >= 2:
+            meta = dict(result)
+            meta.update(dict(recorded=datetime.datetime.now().isoformat(timespec="seconds"),
+                             emitter="on" if emit else "off",
+                             fx=fx, baseline_m=baseline, depth_scale=depth_scale,
+                             width=w, height=h, fps=fps))
+            save_record(args.npz, np.stack(frames), meta, log)
+            log(f"  analyse it with:  python3 d435i_probe.py --replay {args.npz} "
+                f"--range <tape distance>")
+        else:
+            log(f"  !! only {len(frames)} frames captured, nothing saved")
+        return result
+
     # --- emitter arms --------------------------------------------------------
     wanted = {"on": [1], "off": [0], "both": [1, 0]}[args.emitter]
     saved = {}
@@ -632,6 +770,16 @@ def main():
                     help="run the analysis on synthetic data; no camera needed")
     ap.add_argument("--dryrun", action="store_true",
                     help="run the whole REPORT on synthetic data; no camera needed")
+    ap.add_argument("--record", type=int, default=0, metavar="N",
+                    help="capture N full depth frames to an .npz and stop. "
+                         "This is the walk-in-the-forest mode: no aircraft needed.")
+    ap.add_argument("--record-every", type=int, default=1, metavar="K",
+                    help="keep every Kth frame while recording. A walk at 30 fps "
+                         "is ~0.5 MB/frame compressed; K=6 gives 5 Hz, which is "
+                         "plenty for range statistics and a tenth of the disk.")
+    ap.add_argument("--replay", default=None, metavar="FILE",
+                    help="analyse a recording made with --record. numpy only, "
+                         "no camera and no SDK needed.")
     ap.add_argument("--width", type=int, default=848)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--fps", type=int, default=30)
@@ -662,6 +810,11 @@ def main():
 
     if args.dryrun:
         rc = dryrun(args, log)
+        log.save()
+        return rc
+
+    if args.replay:
+        rc = replay(args, log)
         log.save()
         return rc
 

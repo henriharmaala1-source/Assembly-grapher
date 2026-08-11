@@ -53,6 +53,22 @@
 //                     typically on repetitive texture. These are worse than
 //                     holes: a hole is safe, a confident wrong depth is not.
 //
+//   IR PROJECTOR      the D435i throws a ~1 W speckle pattern, and whether that
+//                     matters is a function of AMBIENT IR and RANGE rather than
+//                     a constant. In bright open daylight at 5 m it is drowned
+//                     and contributes nothing. Under closed canopy at dusk, or
+//                     indoors, it is what carries the depth at all -- because
+//                     the thing that drowns it is sunlight, and there is little
+//                     of it there. A boreal stand in October is not an edge
+//                     case for this project, it is the operating envelope.
+//
+//                     Modelled as ADDED TEXTURE on surfaces the pattern still
+//                     reaches: the projector's entire job is to put features on
+//                     a surface that has none, which is exactly what texThresh
+//                     gates on. Off by default, so every number measured before
+//                     it existed still stands as "passive stereo in adequate
+//                     light" -- which is what they always silently were.
+//
 // Not modelled, deliberately, and worth knowing: lens flare, rolling shutter
 // (the recommendation is global shutter), rain on the lens, and calibration
 // drift. Drift in particular is better tested by perturbing the extrinsics
@@ -103,6 +119,22 @@ struct CamParams {
     // Stereo shadow beside foreground objects (see OCCLUSION SHADOW above).
     // Off restores the old behaviour exactly, for comparing against numbers
     // measured before it existed.
+    // IR PROJECTOR (see above). emitterOn=false is the old behaviour exactly.
+    //
+    // ambientIR is the thing the pattern competes with: 1.0 = bright open
+    // daylight and the projector is useless, 0.0 = darkness and it is the only
+    // source of texture there is. Canopy shade is perhaps 0.3-0.5 and dusk
+    // lower still -- but those are GUESSES until measured with the real camera,
+    // which is now possible and is the point of exposing the knob rather than
+    // burying an assumption.
+    //
+    // Falloff is 1/(1 + (r/emitterRangeM)^2): irradiance drops as 1/r^2, so the
+    // pattern's contrast against a fixed ambient does too. emitterRangeM is
+    // therefore the HALF-STRENGTH range, not a hard cutoff.
+    bool  emitterOn      = false;
+    float emitterRangeM  = 3.0f;
+    float emitterTex     = 0.9f;   // texture it imposes at point-blank in the dark
+    float ambientIR      = 1.0f;   // 1 = bright daylight, 0 = dark
     bool  modelOcclusion = true;
     bool  filterSpeckle = true;
     int   speckleWin = 2;        // half-window for the validity majority test

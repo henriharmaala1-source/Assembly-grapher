@@ -131,6 +131,11 @@ int main(int argc, char** argv) {
     // visible do trunks have to be for this to work" -- which is a spec that
     // can be checked with a real camera.
     float trunkTex = -1.f;    // <0 = use the world default range
+    // IR projector. Every result in this tree was measured with it off, i.e.
+    // "passive stereo in adequate light" -- which is right for open daylight
+    // and wrong for closed canopy at dusk, a large part of the real envelope.
+    bool  emitterOn = false;
+    float ambientIR = 1.0f;   // 1 = bright daylight, 0 = dark
     // The two knobs the safety fixes introduced, exposed so they can be swept
     // rather than asserted. Both were picked by reasoning and neither has been
     // measured against the progress they cost.
@@ -202,6 +207,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--cone")) coneDeg = float(std::atof(next("75")));
         else if (!std::strcmp(argv[i], "--traj")) useTraj = true;
         else if (!std::strcmp(argv[i], "--trunktex")) trunkTex = float(std::atof(next("0.5")));
+        else if (!std::strcmp(argv[i], "--emitter")) emitterOn = true;
+        else if (!std::strcmp(argv[i], "--ambient")) { emitterOn = true; ambientIR = float(std::atof(next("0.3"))); }
         else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
         else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
@@ -335,6 +342,10 @@ int main(int argc, char** argv) {
 
     CamParams cp;
     cp.width = camW; cp.height = camH; cp.hfovDeg = hfov; cp.baselineM = baseline;
+    cp.emitterOn = emitterOn; cp.ambientIR = ambientIR;
+    if (emitterOn)
+        std::printf("[cam] IR projector ON, ambient %.2f "
+                    "(1 = bright daylight, 0 = dark)\n", ambientIR);
     DepthCamera cam(cp);
     VoxelMapParams mp; mp.cell = cell;
     // Z_max = sqrt(cell * f * B / sigma_d), derated 25 % -- the measured

@@ -159,6 +159,18 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
             if (!(t > 0)) continue;
             float tex = texM.at<float>(v, u);
 
+            // IR PROJECTOR. It puts features on surfaces that have none, which
+            // is the same quantity texThresh gates on -- so it enters as a
+            // FLOOR under the scene's own texture, not as a multiplier. A
+            // richly textured trunk gains nothing from it; a smooth shadowed
+            // one gains everything, which is the actual asymmetry.
+            if (p_.emitterOn) {
+                const float amb = std::max(0.f, std::min(1.f, p_.ambientIR));
+                const float rr = t / std::max(0.01f, p_.emitterRangeM);
+                const float proj = p_.emitterTex * (1.f - amb) / (1.f + rr * rr);
+                tex = std::max(tex, proj);
+            }
+
             // TEXTURE. The whole point. A featureless surface yields no match,
             // and the map must treat that as UNKNOWN, never as free.
             if (tex < p_.texThresh) continue;

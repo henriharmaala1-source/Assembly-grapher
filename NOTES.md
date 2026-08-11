@@ -87,6 +87,51 @@ papers **contradict each other** on this (DeFoP on, Karjalainen off because the
 projected dots move with the camera and corrupt VIO). If we ever want active
 stereo we cannot use one imager for both depth and VO without resolving it.
 
+**Correction, 2026-08-11: "the emitter barely matters" was too strong**, and it
+was repeated several times on the strength of one true condition — bright open
+daylight. The projector's value is a function of AMBIENT IR and RANGE, not a
+constant:
+
+* bright open daylight, 5 m+ — negligible, as claimed
+* **closed canopy, dusk, autumn, indoors — potentially decisive.** Sunlight is
+  what drowns a ~1 W pattern; a boreal stand under closed canopy in October has
+  little of it. That is not an edge case for us, it is a large part of the
+  intended operating envelope.
+
+So the emitter is a real operating-point decision with a real conflict attached
+(it fights VIO on the same imagers), not a footnote. And `depth_camera.cpp`
+modelled neither ambient light nor the projector: `texThresh` was a fixed gate,
+so every number in this tree was implicitly "passive stereo in adequate light".
+
+**Now modelled** (`emitterOn`, `ambientIR`, `emitterRangeM`, `emitterTex`; off
+by default so prior numbers stand). The projector enters as a FLOOR under the
+scene's own texture, because putting features on a featureless surface is
+exactly what `texThresh` gates on — a richly textured trunk gains nothing, a
+smooth shadowed one gains everything, and that asymmetry is the real behaviour.
+Falloff is `1/(1 + (r/emitterRangeM)^2)`, so `emitterRangeM` is a half-strength
+range rather than a cutoff. `--emitter` / `--ambient` on `voxel_sim`.
+
+**First measurement, and it does NOT settle anything.** Low-texture forest
+(trunkTex 0.20), whole-frame valid fraction:
+
+    passive                    50.6 %
+    emitter, ambient 1.0       50.6 %
+    emitter, ambient 0.2       50.6 %
+    emitter, ambient 0.0       51.3 %
+
+Nearly flat — but the metric is wrong, not the projector. Whole-frame valid
+fraction is dominated by ground and canopy, which already clear the texture gate
+with or without help. The projector only changes MARGINAL surfaces within a few
+metres, which is a small pixel count and the entire safety-relevant one: those
+are the trunks about to be hit. A frame-wide average is exactly the statistic
+that cannot see it.
+
+**The measurement that would settle it is a collision sweep** at low trunkTex
+with the emitter on and off — the same shape as the trunkTex tolerance curve in
+`voxel_traj.hpp`, which found 4/4 collisions at 0.15 and 0/4 at 0.25. If the
+projector moves that threshold, it is load-bearing for dim conditions. Not yet
+run.
+
 ---
 
 ## Lean-out — "new kestrel OS"
@@ -1123,13 +1168,17 @@ Seller meet, RealSense Viewer only.
   at all requires both IR imagers to be functional enough to match, so a
   totally dead imager is ruled out. A *degraded* one is not.
 * **Motion Module present.** It is a genuine D435i, not a D435. That was the
-  only walk-away item that could not be worked around later, and it is closed.
-* **Still unchecked:** the two IR streams individually, the emitter, the
-  connector flex. All fixable or price arguments; none decide anything.
+  only walk-away item that could not be worked around later.
+* **The camera passes on every axis checked.** Nothing outstanding on the
+  hardware.
 
-**And the stack has now seen real photons.** `voxel_live --live` runs: real
-depth into the real `VoxelMap` and the real `TrajectoryPlanner`. Every number in
-this project up to this point came from the raycaster.
+**`voxel_live --live` BUILDS AND LAUNCHES. IT HAS NOT BEEN TESTED.** An earlier
+version of this entry claimed the real map and planner had been fed real depth.
+They have not. What was confirmed is that CMake now finds the SDK and the LIVE
+button is enabled — the pipeline itself is unexercised on real frames and no
+number has come out of it. Correcting rather than deleting, because "we tested
+this" written into project memory is exactly the sort of thing that quietly
+justifies a decision six weeks later.
 
 The `--live` button had been reporting "this build has no RealSense SDK" on a
 machine where the SDK was installed and the Viewer worked. Not a missing SDK —

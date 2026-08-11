@@ -323,8 +323,9 @@ int main(int argc, char** argv) {
     // over-estimate. Derived from the CAMERA rather than left at the default, so
     // swapping in a different sensor moves the carve limit with it instead of
     // silently keeping the old one.
+    const float fpx = (camW * 0.5f) / std::tan(hfov * 0.5f * sim::PI_F / 180.f);
     {
-        const float f = (camW * 0.5f) / std::tan(hfov * 0.5f * sim::PI_F / 180.f);
+        const float f = fpx;
         mp.maxIntegM = std::sqrt(cell * f * baseline / cp.subpixelPx) * 0.75f;
         if (maxIntegOverride > 0.f) mp.maxIntegM = maxIntegOverride;
         std::printf("[cam] %dx%d hfov %.0f deg baseline %.0f mm -> f %.0f px, "
@@ -364,6 +365,27 @@ int main(int argc, char** argv) {
     fp2.carveWinPx = 0;            // the min-filter is a fine-scale guard
     VoxelMap Mfar;
     if (useFar) Mfar.init(fp2, px, py, pz);
+
+    // MID LEVEL. 0.25 m straight to 2.0 m is an 8x jump in one step, and
+    // everything between the fine map's honest 3.5 m and the far map's 14 m was
+    // being answered at 2 m resolution -- cells three times the robot. A 1 m rung
+    // covers that band at its own honest range, so resolution degrades with
+    // distance rather than collapsing at the first handover.
+    std::vector<TrajectoryPlanner::CoarseLevel> coarseLadder;
+    VoxelMapParams midp;
+    midp.cell = 1.0f; midp.nx = 128; midp.ny = 128; midp.nz = 40;   // 128 x 128 x 40 m
+    midp.maxIntegM = std::sqrt(midp.cell * fpx * baseline / 0.25f) * 0.75f;
+    midp.maxCarveM = 25.f;
+    midp.integrateStride = 2;      // a quarter of the rays
+    midp.depthSigCoef = mp.depthSigCoef;
+    midp.carveWinPx = 0;
+    VoxelMap Mmid;
+    if (useFar) Mmid.init(midp, px, py, pz);
+    if (useFar) { coarseLadder.push_back({&Mmid, midp.maxIntegM});
+                  coarseLadder.push_back({&Mfar, fp2.maxIntegM}); }
+    if (useFar)
+        std::printf("[map] fine %.2f m -> %.1f m | mid %.2f m -> %.1f m | far %.2f m -> %.1f m\n",
+                    mp.cell, mp.maxIntegM, midp.cell, midp.maxIntegM, fp2.cell, fp2.maxIntegM);
     // Takeoff bootstrap -- see VoxelMap::seedFree. The spawn was validated
     // against truth above, so this asserts something already checked.
     M.seedFree(px, py, pz, 1.5f);
@@ -444,7 +466,8 @@ int main(int argc, char** argv) {
         cv::Mat d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
         int64 tm = cv::getTickCount();
         M.integrate(d, cam, mpose);   // believed pose, not true pose
-        if (useFar) { Mfar.integrate(d, cam, mpose); Mfar.recentre(px + dE, py + dN, pz + dU); }
+        if (useFar) { Mfar.integrate(d, cam, mpose); Mfar.recentre(px + dE, py + dN, pz + dU);
+                      Mmid.integrate(d, cam, mpose); Mmid.recentre(px + dE, py + dN, pz + dU); }
         tInteg += double(cv::getTickCount() - tm) / cv::getTickFrequency();
         tSense += double(cv::getTickCount() - t0) / cv::getTickFrequency();
         M.recentre(px + dE, py + dN, pz + dU);
@@ -517,8 +540,7 @@ int main(int argc, char** argv) {
         // --- general plan, every step ----------------------------------------
         int64 tg = cv::getTickCount();
         GeneralResult gr = useTraj
-            ? traj.plan(M, px + dE, py + dN, pz + dU, yaw, gAz, gEl,
-                        useFar ? &Mfar : nullptr)
+            ? traj.plan(M, px + dE, py + dN, pz + dU, yaw, gAz, gEl, coarseLadder)
             : gen.plan(M, px + dE, py + dN, pz + dU, gAz, gEl);
         tGen += double(cv::getTickCount() - tg) / cv::getTickFrequency();
         tPlan += double(cv::getTickCount() - t1) / cv::getTickFrequency();

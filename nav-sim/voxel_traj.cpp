@@ -103,7 +103,7 @@ TrajectoryPlanner::TrajectoryPlanner(const TrajParams& p) : p_(p) {
 
 GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, float pz,
                                       float curYawDeg, float goalAzDeg, float goalElDeg,
-                                      const VoxelMap* far) {
+                                      const std::vector<CoarseLevel>& coarse) {
     GeneralResult r;
     chosen_.clear();
     cands_.clear();
@@ -155,16 +155,22 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         // Coarse-map openness along the bearing this primitive ends on. Reward
         // only -- it cannot veto, and it cannot raise the speed budget.
         float farOpen = 0.f;
-        if (far && p_.farWeight > 0.f) {
-            const float st = std::max(0.5f, far->params().cell * 0.5f);
+        if (!coarse.empty() && p_.farWeight > 0.f) {
             const float dx = std::sin(deg2rad(endAz)) * std::cos(deg2rad(endEl));
             const float dy = std::cos(deg2rad(endAz)) * std::cos(deg2rad(endEl));
             const float dz = std::sin(deg2rad(endEl));
-            float reach = 0.f;
-            for (float t = st; t <= p_.farRangeM; t += st) {
-                if (far->stateAt(ex + dx * t, ey + dy * t, ez + dz * t)
-                        == VoxelMap::OCCUPIED) break;
+            // Step with the FINEST level in play, so resolution degrades with
+            // distance instead of falling off a cliff at the first handover.
+            float reach = 0.f, t = std::max(0.5f, coarse.front().map->params().cell * 0.5f);
+            while (t <= p_.farRangeM) {
+                const VoxelMap* lv = nullptr;
+                float step = 0.f;
+                for (const CoarseLevel& c : coarse)       // fine first
+                    if (t <= c.rangeM) { lv = c.map; step = std::max(0.5f, c.map->params().cell * 0.5f); break; }
+                if (!lv) break;                            // past every level's honest range
+                if (lv->stateAt(ex + dx * t, ey + dy * t, ez + dz * t) == VoxelMap::OCCUPIED) break;
                 reach = t;
+                t += step;
             }
             farOpen = reach / p_.farRangeM;
         }

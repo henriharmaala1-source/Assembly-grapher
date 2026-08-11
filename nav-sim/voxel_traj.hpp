@@ -143,7 +143,7 @@ struct TrajParams {
     // this term a no-op. Unknown therefore scores like open, which is safe here
     // precisely because it grants no speed.
     float farWeight  = 0.5f;
-    float farRangeM  = 20.f;
+    float farRangeM  = 30.f;
 };
 
 class TrajectoryPlanner {
@@ -155,11 +155,20 @@ public:
     // can be swapped behind one flag and compared on identical worlds. The
     // extra argument is the vehicle's current heading, which a body-frame
     // library needs and a world-frame histogram did not.
-    // `far` is the OPTIONAL coarse map. It influences scoring only; every
-    // safety test in plan() reads `m`. Pass nullptr to disable.
+    // One rung of the coarse ladder: a map and the range out to which its cells
+    // are honest. Ordered FINE FIRST.
+    struct CoarseLevel { const VoxelMap* map; float rangeM; };
+
+    // `coarse` is the OPTIONAL awareness ladder. It influences scoring only;
+    // every safety test in plan() reads `m` alone. Empty disables it.
+    //
+    // Marching queries the FINEST level whose honest range still covers the
+    // current distance, so a 0.25 m fine map does not hand straight over to 2 m
+    // cells -- an 8x jump in one step, which throws away everything a
+    // mid-resolution level could have told you between 3.5 m and 14 m.
     GeneralResult plan(const VoxelMap& m, float px, float py, float pz,
                        float curYawDeg, float goalAzDeg, float goalElDeg,
-                       const VoxelMap* far = nullptr);
+                       const std::vector<CoarseLevel>& coarse = {});
 
     // The winning rollout in WORLD coordinates, for drawing. Empty if blocked.
     const std::vector<std::array<float, 3>>& chosen() const { return chosen_; }

@@ -896,6 +896,24 @@ it reaches the map.
 
 ### Building with live camera support
 
-`find_package(realsense2)` is optional. Without the SDK the target still builds
-and `--replay` works; `--live` then says so rather than silently failing. On
-Windows the RealSense SDK installer provides the CMake package.
+librealsense is optional: without it the target still builds and `--replay`
+works, and LIVE CAMERA is disabled with a reason rather than failing silently.
+
+**If it says "this build has no RealSense SDK" and you HAVE installed the SDK**,
+CMake is simply not looking in the right place. A bare `find_package(realsense2)`
+searches `<prefix>/lib/cmake/realsense2` for prefixes like
+`C:/Program Files (x86)`, while the installer puts the package one directory
+deeper, at `C:/Program Files (x86)/Intel RealSense SDK 2.0/lib/cmake/realsense2`.
+`cmake/find_realsense.cmake` now hints those locations and falls back to finding
+the header and library by hand, so it should just work. If it still does not:
+
+```powershell
+cmake -B build -Drealsense2_DIR="C:/Program Files (x86)/Intel RealSense SDK 2.0/lib/cmake/realsense2"
+# or
+$env:REALSENSE2_DIR = "C:/Program Files (x86)/Intel RealSense SDK 2.0"
+```
+
+Watch the configure output — it prints either `librealsense found` or a warning
+with the exact flag to pass. On Windows the build also copies `realsense2.dll`
+beside the exe, because otherwise the link succeeds and the program then refuses
+to start.

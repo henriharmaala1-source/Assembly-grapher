@@ -180,7 +180,8 @@ endif()
 # Optional librealsense. Without it the target still builds and --replay works
 # on recordings, which is the mode that needs no camera at all; --live then
 # reports that this build has no SDK rather than silently doing nothing.
-find_package(realsense2 QUIET)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/find_realsense.cmake)
+
 add_executable(voxel_live
   voxel_live.cpp
   frame_source.cpp
@@ -200,8 +201,36 @@ if(realsense2_FOUND)
   target_link_libraries(voxel_live PRIVATE realsense2::realsense2)
   message(STATUS "nav_sim: librealsense found -- voxel_live --live enabled")
 else()
-  message(STATUS "nav_sim: no librealsense -- voxel_live --replay only "
-                 "(install the RealSense SDK to enable --live)")
+  # Loud and actionable. The old message said only that the SDK was missing,
+  # which is exactly wrong on the common case where it is installed and merely
+  # not on CMake's search path.
+  message(WARNING
+    "nav_sim: librealsense NOT found -- voxel_live will build with --replay only "
+    "and the LIVE CAMERA button will be disabled.\n"
+    "  If the RealSense SDK IS installed, CMake is simply not looking in the "
+    "right place. Point it there:\n"
+    "    cmake -B build -Drealsense2_DIR=\"C:/Program Files (x86)/Intel RealSense "
+    "SDK 2.0/lib/cmake/realsense2\"\n"
+    "  or set the REALSENSE2_DIR environment variable to the SDK root.\n"
+    "  If it is NOT installed: https://github.com/realsenseai/librealsense/releases/latest "
+    "-> RealSense.SDK.exe")
+endif()
+
+# THE DLL. On Windows the link succeeds and the program then fails to start,
+# because realsense2.dll is not beside the exe. Copy it there. This is the
+# classic "it built, why will it not run" and it is one line to prevent.
+if(realsense2_FOUND AND WIN32)
+  find_file(RS2_DLL realsense2.dll
+            HINTS ${_rs_hints} PATH_SUFFIXES bin bin/x64)
+  if(RS2_DLL)
+    add_custom_command(TARGET voxel_live POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${RS2_DLL}" "$<TARGET_FILE_DIR:voxel_live>")
+    message(STATUS "nav_sim: will copy ${RS2_DLL} beside voxel_live.exe")
+  else()
+    message(STATUS "nav_sim: realsense2.dll not located -- if voxel_live.exe "
+                   "fails to start, copy it beside the exe by hand")
+  endif()
 endif()
 
 # .kdr recording format: round trip, truncation, refusals, and that the replay
@@ -239,4 +268,14 @@ target_include_directories(occlusion_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} $
 target_link_libraries(occlusion_check PRIVATE ${OpenCV_LIBS})
 if(BUILD_TESTS)
   add_test(NAME occlusion_check COMMAND occlusion_check)
+endif()
+
+if(BUILD_TESTS)
+  # Search-path test for cmake/find_realsense.cmake. Needs no librealsense: it
+  # builds synthetic SDK trees and asserts the module locates them. The bug it
+  # exists for was an SDK that WAS installed and simply not looked for in the
+  # right place, which only a positive-path test can catch.
+  add_test(NAME find_realsense_check
+           COMMAND ${CMAKE_COMMAND} -P
+                   ${CMAKE_CURRENT_SOURCE_DIR}/test/find_realsense_check.cmake)
 endif()

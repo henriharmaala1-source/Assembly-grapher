@@ -510,6 +510,30 @@ def fps_warning(requested, measured, frames):
     ]
 
 
+PRESETS = ["default", "high_accuracy", "high_density", "medium_density"]
+
+
+def apply_preset(rs, sensor, name, emit):
+    """Set the depth visual preset on an ACTIVE sensor. Returns the name that
+    actually took effect, which is not always the one asked for."""
+    if name == "default":
+        return "default"
+    try:
+        if not sensor.supports(rs.option.visual_preset):
+            emit(f"  [warn] visual_preset unsupported; '{name}' ignored")
+            return "unsupported"
+        val = float(getattr(rs.rs400_visual_preset, name))
+        sensor.set_option(rs.option.visual_preset, val)
+        got = int(sensor.get_option(rs.option.visual_preset))
+        if got != int(val):
+            emit(f"  [warn] preset '{name}' did not take (reads {got})")
+            return f"failed:{got}"
+        return name
+    except Exception as e:
+        emit(f"  [warn] preset '{name}': {str(e)[:60]}")
+        return "error"
+
+
 def host_report(emit):
     """What machine is this, and is it one of the known-bad ones."""
     import platform
@@ -1069,6 +1093,9 @@ def run_device(args, log):
             ds = safe(lambda: prof2.get_device().first_depth_sensor())
             if ds is not None and safe(lambda: ds.supports(rs.option.emitter_enabled), False):
                 safe(lambda: ds.set_option(rs.option.emitter_enabled, float(emit)))
+            if ds is not None:
+                pname = "default" if args.preset == "sweep" else args.preset
+                log(f"  preset: {apply_preset(rs, ds, pname, log)}")
             for _ in range(fps):
                 safe(lambda: pipe.wait_for_frames(5000))     # let AE settle
             log(f"=== recording {args.record} frames "
@@ -1105,10 +1132,12 @@ def run_device(args, log):
             log(f"  !! only {len(frames)} frames captured, nothing saved")
         return result
 
-    # --- emitter arms --------------------------------------------------------
+    # --- emitter x preset arms ----------------------------------------------
     wanted = {"on": [1], "off": [0], "both": [1, 0]}[args.emitter]
+    presets = ["default", "high_accuracy", "high_density"] \
+        if args.preset == "sweep" else [args.preset]
     saved = {}
-    for emit in wanted:
+    for args._preset_now, emit in [(p_, e_) for p_ in presets for e_ in wanted]:
         label = "emitter ON" if emit else "emitter OFF"
         cfg = rs.config()
         cfg.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)
@@ -1131,6 +1160,9 @@ def run_device(args, log):
                     log(f"  [warn] {label}: emitter would not change (reads {got})")
             else:
                 log(f"  [warn] {label}: emitter_enabled not supported; arms are identical")
+            if ds is not None:
+                got_preset = apply_preset(rs, ds, args._preset_now, log)
+                label = f"{label}, preset {got_preset}"
 
             valid, roi = [], []
             t_start = time.monotonic()
@@ -1167,13 +1199,39 @@ def run_device(args, log):
         r["frames"] = len(roi)
         r["fps_measured"] = len(roi) / elapsed
         r["fps_requested"] = fps
+        r["_base"] = "emitter ON" if emit else "emitter OFF"
+        r["_preset"] = args._preset_now
         saved[label] = (stack, r)
         result[label.replace(" ", "_")] = r
 
         report_arm(log, label, r, args)
 
-    if "emitter ON" in saved and "emitter OFF" in saved:
-        emitter_verdict(log, saved["emitter ON"][1], saved["emitter OFF"][1])
+    # Pair the emitter arms WITHIN each preset. The labels now carry the preset,
+    # so matching on the exact string would silently never fire -- the sort of
+    # no-op that looks like "the comparison just did not apply".
+    for p_ in {r["_preset"] for _, r in saved.values() if "_preset" in r}:
+        on = next((r for _, r in saved.values()
+                   if r.get("_preset") == p_ and r.get("_base") == "emitter ON"), None)
+        off = next((r for _, r in saved.values()
+                    if r.get("_preset") == p_ and r.get("_base") == "emitter OFF"), None)
+        if on and off:
+            log(f"--- preset {p_} ---")
+            emitter_verdict(log, on, off)
+
+    # And the preset comparison, which is the trade that decides our config.
+    presets_seen = [(r["_preset"], r) for _, r in saved.values()
+                    if r.get("_base") == "emitter OFF" and "sigma_d_px" in r]
+    if len(presets_seen) > 1:
+        log("=== preset verdict (emitter OFF -- the outdoor case) ===")
+        log(f"  {'preset':16s} {'valid':>7s} {'sigma_d':>9s} {'Z_max derated':>15s}")
+        for name, r in sorted(presets_seen):
+            log(f"  {name:16s} {r['frame_valid_mean'] * 100:6.1f} % "
+                f"{r['sigma_d_px']:8.3f} px {r['z_max_derated_m']:12.2f} m")
+        log("  high_accuracy returns FEWER pixels and cleaner ones; high_density the")
+        log("  reverse. Our map is three-state -- a missing return costs nothing but")
+        log("  speed, while a WRONG one carves free space through an obstacle. So the")
+        log("  arm to prefer is the one with the lowest sigma_d, not the fullest image.")
+        log("")
 
     # RAW FRAMES TO DISK. The point of this file is that nothing has to be
     # diagnosed on site: if a number looks wrong, the data comes home.
@@ -1209,6 +1267,13 @@ def main():
     ap.add_argument("--cell", type=float, default=0.25,
                     help="voxel size for the Z_max figure")
     ap.add_argument("--emitter", choices=["on", "off", "both"], default="both")
+    ap.add_argument("--preset", default="default",
+                    choices=["default", "high_accuracy", "high_density",
+                             "medium_density", "sweep"],
+                    help="depth visual preset. 'sweep' measures all three, which "
+                         "is the trade that actually matters: high_accuracy "
+                         "returns FEWER but cleaner pixels, high_density the "
+                         "reverse. A three-state map wants the former.")
     ap.add_argument("--out", default=None, help="text log path")
     ap.add_argument("--npz", default=None, help="raw frame archive path")
     ap.add_argument("--no-save", action="store_true")

@@ -3,7 +3,7 @@
 D435i acceptance probe -- run this on a laptop before the camera goes near the
 airframe.
 
-    pip install pyrealsense2 numpy
+    python3 -m pip install pyrealsense2 numpy      # -m python3, NOT bare pip
     python3 d435i_probe.py --selftest       # NO CAMERA NEEDED. Do this first.
     python3 d435i_probe.py                  # full check with the camera
     python3 d435i_probe.py --range 3.0      # you tape-measured 3.0 m to the target
@@ -35,7 +35,10 @@ DESIGNED TO BE UNDEBUGGABLE IN THE FIELD, because that is the situation:
 
   * --selftest runs the ENTIRE analysis on synthetic data with a KNOWN sigma_d
     and asserts it is recovered. No camera, no laptop-specific anything. If that
-    passes, the maths is not what is wrong.
+    passes, the maths is not what is wrong. It reports the SDK SEPARATELY and
+    diagnoses it: "installed but will not load" and "not installed for this
+    interpreter" are the two common failures and they have opposite fixes.
+    Exit 0 = all good, 1 = the analysis is wrong, 3 = analysis fine, SDK unusable.
   * Nothing raises. Every device call is guarded; a failure prints what failed
     and the run continues with whatever else it can measure. A probe that dies
     on the one machine you cannot debug on is worse than no probe.
@@ -261,44 +264,194 @@ def selftest():
             ok, r = False, str(e)
         check(ok, f"degenerate input ({name}) returns an error, does not raise")
 
-    # 7. THE API SURFACE. Every pyrealsense2 name this script touches, checked
-    #    for existence on THIS install.
-    #
-    #    This is the failure that would actually strand you: a wheel built for a
-    #    different librealsense, a missing libusb, a renamed enum. Any of those
-    #    produces an AttributeError several minutes into a run, in a field, on a
-    #    machine you cannot debug. Checking the names up front turns that into a
-    #    one-line message before you leave the house.
-    try:
-        import pyrealsense2 as rs
-        missing = []
-        for path in ["context", "config", "pipeline", "software_device",
-                     "stream.depth", "stream.infrared", "stream.accel", "stream.gyro",
-                     "format.z16", "option.emitter_enabled",
-                     "camera_info.name", "camera_info.serial_number",
-                     "camera_info.firmware_version",
-                     "camera_info.recommended_firmware_version",
-                     "camera_info.usb_type_descriptor"]:
-            obj = rs
-            for part in path.split("."):
-                if not hasattr(obj, part):
-                    missing.append(path)
-                    break
-                obj = getattr(obj, part)
-        check(not missing, "pyrealsense2 API surface present",
-              ("missing: " + ", ".join(missing)) if missing else "")
-        # And that the objects the streaming path builds actually construct.
-        rs.context(); rs.config(); rs.pipeline()
-        check(True, "context/config/pipeline construct")
-    except ImportError as e:
-        check(False, "pyrealsense2 importable", str(e)[:70])
-        print("     -> pip install pyrealsense2; on Linux you may also need libusb-1.0-0")
-    except Exception as e:
-        check(False, "pyrealsense2 API surface present", str(e)[:70])
+    # 7. THE SDK DIAGNOSIS ITSELF, checked against synthetic failures. The
+    #    classifier is what turns "it still complains" into a fix, so it does
+    #    not get to be the one untested thing.
+    st, _ = classify_sdk(False, None)
+    check(st == "missing", "not-installed is classified as a pip/python mismatch")
+    st, lines = classify_sdk(True, ImportError(
+        "libusb-1.0.so.0: cannot open shared object file: No such file or directory"))
+    check(st == "broken" and any("libusb-1.0-0" in l for l in lines),
+          "installed-but-libusb-missing names the actual package")
+    st, lines = classify_sdk(True, ImportError("libudev.so.1: cannot open shared object file"))
+    check(st == "broken" and any("shared library" in l for l in lines),
+          "a different missing .so is classified as a link problem")
+    st, lines = classify_sdk(True, ImportError("undefined symbol: _ZN2rs7contextC1Ev"))
+    check(st == "broken" and any("2.54" in l for l in lines),
+          "a symbol mismatch suggests pinning a version")
+    st, lines = classify_sdk(False, None, plat="darwin")
+    check(any("macOS" in l for l in lines), "macOS gets told wheels are not published")
+    st, lines = classify_sdk(False, None, pyver=(3, 14))
+    check(any("3.14" in l for l in lines), "a too-new Python is called out")
+    check(classify_sdk(True, None)[0] == "ok", "a working SDK classifies as ok")
 
-    print(f"\n  {'SELFTEST FAILED' if fails else 'selftest passed'} "
+    # 8. THE SDK, reported SEPARATELY from the maths above.
+    #
+    #    Everything before this point is numpy only. If those passed, the
+    #    analysis is sound whatever the SDK is doing, and conflating the two
+    #    would say "SELFTEST FAILED" when the only problem is a pip that
+    #    installed into a different Python. So the SDK gets its own section, its
+    #    own exit code (3), and a real diagnosis rather than a shrug.
+    sdk_ok = sdk_report(print)
+
+    print(f"\n  {'ANALYSIS FAILED' if fails else 'analysis checks passed'} "
           f"({fails} failure{'' if fails == 1 else 's'})")
-    return 1 if fails else 0
+    if fails:
+        return 1
+    if not sdk_ok:
+        print("  -> the maths is fine; you cannot talk to a camera until the SDK is.")
+        return 3
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# SDK DIAGNOSIS.
+#
+# "I did pip install pyrealsense2 but it still complains" has exactly two
+# common causes and they have OPPOSITE fixes, so the first job is to tell them
+# apart:
+#
+#   NOT FOUND for this interpreter -- pip installed into a different Python.
+#     Overwhelmingly the most common. `pip` on PATH is often not the `python3`
+#     you then run, especially with a venv, pyenv, Homebrew, or the Windows
+#     Store Python. Fix: install with the interpreter itself, never bare pip.
+#
+#   FOUND but fails to load -- the wheel is there and its shared library is
+#     not. On Linux that is almost always libusb. Reinstalling pyrealsense2
+#     cannot fix it and will look like it did nothing.
+#
+# find_spec() separates them cleanly: it locates the module without executing
+# it, so a module that is found but raises on import is unambiguously a link
+# problem rather than a missing package.
+# ---------------------------------------------------------------------------
+def classify_sdk(spec_found, exc, plat=None, pyver=None):
+    """Pure classifier -- no imports, no side effects, so --selftest can check
+    it against synthetic failures instead of hoping."""
+    plat = plat or sys.platform
+    pyver = pyver or sys.version_info[:2]
+    if spec_found and exc is None:
+        return "ok", []
+    if not spec_found:
+        lines = [
+            "pyrealsense2 is NOT INSTALLED FOR THIS INTERPRETER.",
+            "",
+            "  This is almost always a pip/python mismatch: the `pip` on your PATH",
+            "  belongs to a different Python than the `python3` you just ran.",
+            "",
+            "  Fix -- install with the interpreter itself, never bare pip:",
+            f"      {sys.executable} -m pip install pyrealsense2 numpy",
+            "",
+            f"  This interpreter: {sys.executable}",
+            f"  Version:          {sys.version.split()[0]} on {plat}",
+        ]
+        if plat == "darwin":
+            lines += [
+                "",
+                "  AND NOTE: you are on macOS, where Intel does not publish",
+                "  pyrealsense2 wheels. `pip install pyrealsense2` cannot succeed",
+                "  here in general; librealsense has to be built from source, and",
+                "  even then macOS support is poor and Apple Silicon worse.",
+                "  Use a Windows or Linux machine for the camera work. A VM will",
+                "  not do -- USB passthrough for RealSense is unreliable.",
+            ]
+        if pyver >= (3, 13):
+            lines += [
+                "",
+                f"  AND NOTE: you are on Python {pyver[0]}.{pyver[1]}. Wheels lag new",
+                "  Python releases by a long way. If pip reports 'no matching",
+                "  distribution', install a 3.11 or 3.12 alongside and use that.",
+            ]
+        return "missing", lines
+    # Found, but import raised.
+    msg = str(exc)
+    lines = ["pyrealsense2 IS INSTALLED but will not load.",
+             "", f"  {type(exc).__name__}: {msg}", ""]
+    low = msg.lower()
+    if "libusb" in low:
+        lines += [
+            "  That is the USB library, not the wheel. Reinstalling pyrealsense2",
+            "  will not help and will look like it did nothing.",
+            "",
+            "  Debian/Ubuntu:  sudo apt-get install libusb-1.0-0",
+            "  Fedora:         sudo dnf install libusb1",
+            "  Arch:           sudo pacman -S libusb",
+        ]
+    elif ".so" in low or "shared object" in low or "dll" in low:
+        lines += [
+            "  A shared library the wheel depends on is missing. Install the name",
+            "  in the message above from your package manager; on Linux the usual",
+            "  culprits are libusb-1.0-0 and libudev.",
+        ]
+    elif "symbol" in low or "version" in low:
+        lines += [
+            "  A version mismatch between the wheel and a system library. Try a",
+            "  different pyrealsense2 release:",
+            "      pip install 'pyrealsense2==2.54.*'",
+        ]
+    else:
+        lines += ["  Unrecognised load failure; the message above is the lead."]
+    return "broken", lines
+
+
+def sdk_report(emit):
+    """Import pyrealsense2, check the API surface this script uses, and explain
+    any failure properly. Returns True if the SDK is usable."""
+    import importlib.util
+    emit("")
+    emit("=== SDK (pyrealsense2) ===")
+    spec = None
+    try:
+        spec = importlib.util.find_spec("pyrealsense2")
+    except Exception:
+        spec = None
+    exc = None
+    rs = None
+    if spec is not None:
+        try:
+            import pyrealsense2 as rs   # noqa: F401
+        except Exception as e:
+            exc = e
+    status, lines = classify_sdk(spec is not None, exc)
+    if status != "ok":
+        for ln in lines:
+            emit("  " + ln if ln else "")
+        return False
+
+    # Installed and loading. Now the names this script actually touches -- a
+    # wheel built against a different librealsense would otherwise fail with an
+    # AttributeError several minutes into a run, in a field.
+    missing = []
+    for path in ["context", "config", "pipeline",
+                 "stream.depth", "stream.infrared", "stream.accel", "stream.gyro",
+                 "format.z16", "option.emitter_enabled",
+                 "camera_info.name", "camera_info.serial_number",
+                 "camera_info.firmware_version",
+                 "camera_info.recommended_firmware_version",
+                 "camera_info.usb_type_descriptor"]:
+        obj = rs
+        for part in path.split("."):
+            if not hasattr(obj, part):
+                missing.append(path)
+                break
+            obj = getattr(obj, part)
+    ver = getattr(rs, "__version__", "?")
+    emit(f"  import ok, version {ver}")
+    emit(f"  interpreter {sys.executable}")
+    if missing:
+        emit(f"  !! MISSING API NAMES: {', '.join(missing)}")
+        emit("     This wheel does not match what the script expects. Try:")
+        emit("         pip install -U pyrealsense2")
+        return False
+    try:
+        rs.context(); rs.config(); rs.pipeline()
+    except Exception as e:
+        emit(f"  !! context/config/pipeline would not construct: {e}")
+        return False
+    emit("  API surface present; context/config/pipeline construct")
+    return True
+
+
+
 
 
 # ---------------------------------------------------------------------------

@@ -910,10 +910,103 @@ It also composes with the tripod/bark experiment above — same rig, same trip.
 
 ---
 
+## 2026-08-11 — the last two ideas from the papers, measured
+
+Implemented items (2) and (3) of the three remaining borrowings. Item (1), the
+geometric depth-image supervisor, is planned in
+`nav-sim/docs/DEPTH_SUPERVISOR_PLAN.md` and deliberately not built.
+
+**Protocol, recorded properly this time** — the previous sweeps did not write
+down their command lines, and the baseline has since moved (0.794 here against
+0.761 recorded for the same nominal arm), which I cannot now account for. Every
+comparison below is therefore *within one batch*, and the absolute numbers are
+not comparable to the earlier tables.
+
+```
+voxel_sim --world forest [--lanes] --camw 848 --camh 480 --hfov 87 \
+          --baseline 0.05 --vmax 1.5 --steps 400 --cell 0.25 --seed N
+efficiency = (startDist - endDist) / (steps * 0.1 s) / vMax
+```
+
+### Sideslip (item 3): positive in sign, not yet significant
+
+Lanes world, 8 paired seeds:
+
+    arm       mean    vs base                          minclear
+    base      0.794   --                               0.43
+    slip 20   0.815   +0.021 SE .015 t=+1.43  6/8      0.50
+    slip 35   0.818   +0.024 SE .020 t=+1.19  5/8      0.37
+
+No collisions in any arm. The gain is **concentrated where the baseline did
+worst** — seed 4, base 0.642, gains +0.112 at 20° and +0.148 at 35°; on the
+seeds where base already ran at 0.82 the effect is ±0.01. That is the shape you
+would expect from a mechanism that only matters when a turn is forced, and it is
+a better argument than the mean is.
+
+**20° is the setting, not 35°.** Same mean within noise, but minimum true
+clearance goes the wrong way at 35° (0.37 m against base 0.43, with the
+collision threshold at 0.30 m) while 20° improves it to 0.50 m. Buying a
+statistically invisible mean with 6 cm of real clearance is a bad trade.
+
+### Depth improver (item 2): NEGATIVE, and the sim cannot show its upside
+
+Two batches, both against the same base:
+
+    world                    arm     mean    vs base                   fill
+    lanes                    imp     0.787   -0.007 SE .007 t=-1.05 1/8   0.1%/frame
+    plain forest             imp3    0.506   -0.114 SE .070 t=-1.63 2/8   3.7%/frame
+
+The lanes result is near-null because the improver **barely fires there**: probed
+across thresholds, essentially nothing gets within 4 m of the camera in that
+world at 1.5 m/s (near-return fraction 0.0 % at 2, 3 and 4 m; 2.4 % at 6 m). The
+lanes world was built so the aircraft can keep its distance, which makes it the
+wrong instrument for a near-field component.
+
+The plain forest is where it fires, and there it **costs 11 % of holes filled and
+0.114 of efficiency**, losing 6 of 8 seeds with two catastrophic ones (−0.52,
+−0.30). No collisions either way, and minimum clearance slightly *worse*
+(0.38 against 0.43) — so it did not even buy safety with the speed.
+
+The mechanism of the harm is not mysterious and is the same one that was
+supposed to be the benefit: a filled pixel becomes an OCCUPIED cell, and
+`sphereClear()` hard-rejects OCCUPIED anywhere in the robot ball. Every
+fabricated cell removes primitives from the library. In a world where the real
+obstacles are already mapped, that is pure cost.
+
+**And the sim cannot currently show the other side of the ledger.** The
+improver's target is thin obstacles — a 3 cm branch that returns only its
+silhouette — and `voxel_world.cpp` has no branches in it. Trunks are 0.2–0.4 m
+and either resolve or do not. So this measurement says the improver is a net
+loss *on obstacles that are already visible*, which is a real and useful
+finding, but it is not a test of the claim.
+
+Left in the tree, off by default, with the numbers attached. Two things would
+have to change before revisiting it: thin branches in the world model, and the
+depth supervisor, which is a cheaper way to get conservatism near obstacles
+without fabricating map cells to get it.
+
+**Cost, measured:** 848×480, r = 2/4/8 → 15.7 / 15.1 / 15.1 ms per frame on the
+dev host including a clone. Flat in radius, as designed. The first version was
+9–10 ms with a gather/scatter column pass on a *quiet* machine; the row-major
+rewrite is the version benchmarked here under load. Either way this is not the
+sub-millisecond component the supervisor will be — a Pi would spend a large
+fraction of its cycle here, which is a further argument against it.
+
+---
+
 ## Open / unresolved
 
 * SMF-VO unread. Re-check when arXiv is reachable; if it holds, it becomes the
   state-estimation plan.
+* **No thin obstacles in `voxel_world.cpp`.** Trunks only. This is now blocking:
+  it is the reason the depth improver cannot be evaluated on the case it exists
+  for, and it flatters every other result too, since branches are what a forest
+  actually hits you with.
+* Sideslip at 20° is +0.021 at t=1.43 — the right sign on 6/8 seeds but not
+  significant at n=8. Needs fresh seeds before it goes on by default.
+* Earlier sweep command lines were never recorded and the baseline has drifted
+  (0.794 vs 0.761 for the same nominal arm). Record the full command line with
+  every table from now on.
 * `nav-sim/` and `onboard/` share **zero** code (`grep VoxelMap onboard/` → nothing).
   The stack we measure is not the stack that would fly. Resolve during the lean-out.
 * Stereo camera: Waveshare IMX296 M12 mono is the candidate (see above).

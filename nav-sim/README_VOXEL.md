@@ -848,10 +848,24 @@ Everything else in this directory runs on synthetic depth. `voxel_live` runs the
 **same `VoxelMap` and the same `TrajectoryPlanner`** over frames from an actual
 D435i, or from a recording of one.
 
+**Double-click `voxel_live.exe`.** No arguments, no terminal. A menu opens:
+pick **LIVE CAMERA**, **REPLAY A RECORDING** or **SIMULATED FOREST**, click a
+recording, cycle the voxel size / speed cap / emitter / spin rate, then
+**START**. `m` returns to the menu, `q` quits.
+
+Recordings are found beside the exe and in the working directory, and each one
+is **opened before it is listed** — the row shows its frame count, resolution
+and emitter state, and a file that will not parse is greyed out with the reason
+rather than failing after you click START.
+
+Passing any argument takes the command-line path instead, which is what the
+tests and sweep scripts use:
+
 ```
 voxel_live --replay walk.kdr     a recording — NO CAMERA NEEDED
 voxel_live --live                a connected D435i (needs the RealSense SDK)
 voxel_live --sim                 the raycaster, as a control
+voxel_live --menu-preview m.png  dump the menu layout to a PNG (no window)
 ```
 
 Three panes: **DEPTH** (grey = no return, not far), **MAP SLICE** (grey =

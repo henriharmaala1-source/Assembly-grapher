@@ -1172,7 +1172,19 @@ Seller meet, RealSense Viewer only.
 * **The camera passes on every axis checked.** Nothing outstanding on the
   hardware.
 
-**`voxel_live --live` COMPILES AND LAUNCHES. IT HAS NEVER RUN AGAINST A CAMERA.**
+**`voxel_live --live` COMPILES, LINKS, RUNS, AND HAS NEVER SEEN A CAMERA.**
+
+Verified without hardware and without the SDK, and the method is worth keeping:
+pyrealsense2's wheel exports the entire `rs2_*` C API (456 symbols), and
+librealsense's C++ interface is a header-only inline wrapper over exactly that.
+Headers from git plus the wheel's `.so` gives a real link.
+`test/build_with_realsense.sh` does it in one command. Confirmed: the branch
+compiles, the LIVE button enables, `--live` executes and reports
+`No device connected` cleanly.
+
+**Still untested: everything after a device is found** — stream negotiation,
+intrinsics readback, depth scale, whether the baseline comes from the
+extrinsics or falls through to the nominal 50 mm, and the uint16→metres loop.
 
 And the `--live` branch had **never been compiled anywhere** until the
 librealsense headers were fetched by hand — it sits behind `#ifdef

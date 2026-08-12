@@ -1546,6 +1546,29 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — the settings belong in the viewer, not on the command line
+
+Fair complaint: every knob added today was a CLI flag, which means killing the
+session and losing the accumulated map to answer "what does the next value look
+like". That is a bad loop, and it is the one being used most.
+
+Live keys in the four-pane view now, listed along the bottom of the map slice:
+
+| key | does |
+|---|---|
+| `f` | far layer: off / 1 / 2 / 4 / 8 m cells -> 0 / 7.1 / 10 / 14.2 / 20.1 m |
+| `t` | ray stride 1 / 2 / 4 |
+| `[` `]` | depth colour range down / up, `\` back to automatic |
+| `r` | start / stop .kdr recording |
+| `v` `a` `space` `s` `m` `q` | view, arrow, pause, save PNG, menu, quit |
+
+`f` rebuilds only the coarse grid and its `CoarseLevel` entry, recentred on the
+current pose, so the fine and medium maps survive the change. `t` just moves the
+stride on all three layers. Neither restarts the session or drops the camera.
+
+The startup flags all still work and are still what a scripted run uses; this is
+about the interactive loop being interactive.
+
 ## 2026-08-12 — toggles for fixes: mostly no, and what to do instead
 
 Asked whether today's fixes should be runtime toggles so they can be A/B'd. The

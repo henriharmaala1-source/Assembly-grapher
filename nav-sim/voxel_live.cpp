@@ -931,6 +931,8 @@ static int runSession(Config C) {
                          std::min(2 * half, sliceFull.cols), std::min(2 * half, sliceFull.rows));
             roi &= cv::Rect(0, 0, sliceFull.cols, sliceFull.rows);
             sPane = fit(sliceFull(roi).clone(), PW, PH);
+            banner(sPane, "f far range   t stride   [ ] depth range   r record   v view",
+                   PH - 12);
             // Range rings on the slice too, so "how far does the map reach" is
             // answerable by eye rather than by trusting the caption.
             const float pxPerM = PW / (2.f * halfM);
@@ -1373,6 +1375,55 @@ static int runSession(Config C) {
             if (k == ' ') paused = !paused;
             if (k == 's') { cv::imwrite(out + "_frame.png", full);
                             std::printf("wrote %s_frame.png\n", out.c_str()); }
+            // --- live settings, so a sweep does not need a restart ----------
+            // Everything below used to be a command-line flag, which meant
+            // killing the session and losing the map to answer "what does the
+            // next value look like". These rebuild only what has to be rebuilt.
+            if (k == 'f') {                                   // far layer range
+                static const float FAR[] = {0.f, 1.f, 2.f, 4.f, 8.f};
+                int i = 0;
+                for (int j = 0; j < 5; ++j)
+                    if (std::fabs(FAR[j] - C.farCell) < 1e-3f) i = j;
+                C.farCell = FAR[(i + 1) % 5];
+                coarse.clear();
+                if (C.farCell > 0.f) {
+                    fp = VoxelMapParams();
+                    fp.cell = C.farCell;
+                    const int fn = std::max(48, int(256.f / C.farCell));
+                    fp.nx = fn; fp.ny = fn; fp.nz = std::max(16, fn / 3);
+                    fp.maxIntegM = std::sqrt(fp.cell * cam.fpx() * cp.baselineM / 0.25f) * 0.75f;
+                    fp.maxCarveM = 40.f;
+                    fp.integrateStride = std::max(4, C.stride * 2);
+                    fp.depthSigCoef = mp.depthSigCoef;
+                    fp.carveWinPx = 0;
+                    fp.minIntegM = mp.minIntegM;
+                    Mfar.init(fp, pose.e, pose.n, pose.u);
+                    coarse.push_back({&Mfar, fp.maxIntegM});
+                    std::printf("[far] %.0f m cells -> marks to %.1f m\n",
+                                fp.cell, fp.maxIntegM);
+                } else {
+                    std::printf("[far] off\n");
+                }
+            }
+            if (k == 't') {                                   // ray stride
+                C.stride = (C.stride >= 4) ? 1 : C.stride * 2;
+                mp.integrateStride = C.stride;
+                if (haveNear) np.integrateStride = C.stride * 2;
+                if (C.farCell > 0.f) fp.integrateStride = std::max(4, C.stride * 2);
+                std::printf("[map] ray stride %d\n", C.stride);
+            }
+            if (k == '[' || k == ']') {                       // depth colour range
+                float d = C.depthMaxM > 0.f ? C.depthMaxM : dMax;
+                d = (k == ']') ? d * 1.25f : d / 1.25f;
+                C.depthMaxM = std::max(2.f, std::min(40.f, d));
+            }
+            if (k == '\\') C.depthMaxM = 0.f;                 // back to automatic
+            if (k == 'r') {                                   // record on/off
+                if (recOpen) { rec.close(); recOpen = false;
+                               std::printf("[rec] stopped\n"); }
+                else { recFailed = false;
+                       if (C.recordPath.empty()) C.recordPath = out + ".kdr"; }
+            }
         }
 #endif
         // Save the FIRST and the LAST frame. Frame 1 is the map with nothing in

@@ -1473,6 +1473,51 @@ almost invisible past 4 m.
 Kept because it is correct, not because it changed anything. It would matter on
 a wider baseline (a D455's 95 mm doubles it) or flying in close quarters.
 
+## 2026-08-12 — appearance and blobs: planned, and the polarity is a trap
+
+Question raised: feed pixel intensity into contested cells, bright meaning
+"probably free", especially in the far field — or, on second thought, blob
+detection. Written up as `nav-sim/docs/APPEARANCE_AND_BLOBS_PLAN.md`. The short
+version, because the first half is the kind of idea that looks obviously good:
+
+**The polarity runs backwards.** Under active illumination intensity goes as
+albedo/Z². A *bright* pixel with no depth return means something close and
+textureless bounced the projector back — a blank wall, a smooth trunk. That is
+the opposite of free, and it is the most alarming thing in a depth image. Only a
+*dark* return-less pixel is ambiguous.
+
+**And the ambiguity is worst where it kills us.** NIR albedos are perverse for
+flying through woods: foliage has a very high NIR plateau (~50 % at 850 nm) while
+bark is dark — which is why the sim already models `trunkTex` 0.30–0.75 and why
+`bark_contrast` exists. So "dark ⇒ probably free" fails hardest on dark thin
+branches at range, which is the documented dominant failure mode in both papers.
+A rule whose error mode is aligned with the system's failure mode is not weak,
+it is negative-value.
+
+Intensity survives only as a **veto** — bright + no return ⇒ refuse to carve —
+and honestly it buys little, because a return-less pixel already carves nothing
+(`if (!(r > 0.f)) continue;`) and `carveWinPx` covers much of the neighbour case.
+
+**Blobs are the real idea**, in two forms. (a) Connected components on the
+INVALID mask, then explain each blob with the occlusion shadow we already model
+and already test — read the occluder off its right edge, predict
+`f·B·(1/Z_near − 1/Z_far)`, and if it matches, the blob's content is bounded
+below by the occluder and can be carved. That turns "a dead strip beside EVERY
+trunk" into a bounded claim using code that exists. (b) Thin structures: a 3 cm
+branch is 3.4 px at 4 m and can never cross `occThresh` in a 0.25 m cell, but a
+3-px-wide, 200-px-long component that is consistently nearer than its background
+is overwhelming evidence. Mark by blob, not by pixel. That is the mechanism that
+could change a flight outcome.
+
+Blocked on two things already open: **σ_d is still assumed** (every threshold in
+the thin-structure test is in units of it) and **`voxel_world.cpp` has no thin
+branches**, so there is nothing to test (b) against.
+
+Worth noting the earlier occlusion conclusion still stands and is not
+contradicted: the shadow is negligible *as a hazard* on a 50 mm baseline past
+4 m. (a) does not dispute that — it exploits the shadow as a *predictable
+signal* in the near field, which is a different use of the same measurement.
+
 ## Open / unresolved
 
 * SMF-VO unread. Re-check when arXiv is reachable; if it holds, it becomes the

@@ -9,6 +9,11 @@ This is item (1) of the three things still worth taking from the two reference
 papers. Items (2) and (3) — the depth improver and yaw-coupled lateral velocity
 — are implemented; see `depth_improve.hpp` and `TrajParams::latSlipDeg`.
 
+See also `APPEARANCE_AND_BLOBS_PLAN.md`, which is about extracting more from the
+*existing* path from photons to map, where this document is about adding a second
+independent one. The two share the rule in §3 — a mechanism that can only
+withhold is a mechanism that cannot introduce a new way to die.
+
 ---
 
 ## 1. What it is, and why it is not the map

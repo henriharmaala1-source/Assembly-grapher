@@ -1546,6 +1546,49 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — what the D435i can actually be tuned for, from Intel's own docs
+
+Searched for range-maximising settings. The short version: **there are almost
+none, because range is baseline-limited and no setting changes the baseline.**
+Two things did come out of it that are worth having.
+
+**MinZ is a formula, not a guess.** Intel's:
+
+    MinZ(mm) = focal length(px) * baseline(mm) / 126
+
+which at 848x480 on a D435 gives ~16.8 cm and matches their published figure.
+`minIntegM` now derives from it (`f*B/126 * 1.2` = 0.21 m here) instead of the
+0.25 m I picked this afternoon, which was a sensible guess and nothing more.
+
+**Disparity shift is the wrong lever and moves the wrong way.** Raising it lowers
+MinZ *and lowers MaxZ*; shift 0 is the setting that preserves maximum range, and
+that is already the default. Nothing to gain.
+
+**848x480 is already the optimum.** The whitepapers say depth is computed at that
+resolution and anything higher is extrapolated after rectification, so 1280x720
+gives similar or slightly worse depth. We are on the right setting by luck.
+
+**High Accuracy is the preset our doctrine asks for**, in Intel's own words:
+stricter criteria, only high-confidence depth, "very good for autonomous robots
+where false depth is a concern" -- against High Density, which fills holes at the
+cost of confidence. That is exactly "a hole is safe, a confident wrong depth is
+not". `Preset: Custom` on the bench means nobody has ever chosen.
+
+**The only real range lever is sigma_d, and it is the one we have never
+measured.** Z_max = sqrt(cell*f*B/sigma_d), so range scales as 1/sqrt(sigma_d):
+taking sigma_d from the assumed 0.25 px to 0.15 px would buy **29 % more range at
+every cell size, for free.** Temporal filtering and the High Accuracy preset both
+attack sigma_d directly. That makes the sigma_d measurement, already outstanding,
+the highest-leverage item on the sensor side rather than a loose end.
+
+One claim from the forums I am NOT repeating as fact: a garbled line about laser
+power and subpixel error, ~30 % in some direction. Directionally unclear and
+easily measured here with the emitter A/B, so it belongs in the measurement queue
+rather than in the notes as a number.
+
+Sources: dev.intelrealsense.com tuning guide and D400 visual presets pages,
+librealsense issues #8104 / #11180 / #6207, and the BKM tuning whitepaper.
+
 ## 2026-08-12 — --farcell 8 made the ladder bug FAR worse, and hid it as "no range"
 
 Reported: "even on farcell 8 the voxels don't appear far at all. Also, now they

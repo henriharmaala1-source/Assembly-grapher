@@ -459,10 +459,12 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
 
     std::snprintf(b, sizeof(b), "spin  %.0f deg/s", C.yawRateDps);
     btns.push_back(Button{{20, yset + 112, 210, 40}, b, "", 13, true, C.yawRateDps != 0.f});
-    label(img, "only at a rate you KNOW",
-          240, yset + 138, 0.42, {140, 140, 140});
+    label(img, "spin: only at a rate you KNOW", 20, yset + 196, 0.42,
+          {140, 140, 140});
     label(img, "ray stride 1 cannot keep up at 30 fps;  no goal on a bench, so do not steer toward one",
           20, yset + 176, 0.42, {140, 140, 140});
+    label(img, "far layer is AWARENESS ONLY -- it never grants permission to fly",
+          300, yset + 196, 0.42, {140, 140, 140});
 
     btns.push_back(Button{{20, H - 78, 250, 56}, "START", "", 20,
                           C.mode != "replay" || !C.path.empty()});
@@ -477,6 +479,15 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
     btns.push_back(Button{{520, yset + 62, 310, 40},
                           C.turnHud ? "command arrow: ON" : "command arrow: off", "", 17,
                           true, C.turnHud});
+
+    // The coarse layer's cell size, with the range it buys printed on the
+    // button -- the number people actually want is the metres, not the cell.
+    if (C.farCell > 0.f)
+        std::snprintf(b, sizeof(b), "far  %.0f m -> %.0f m",
+                      C.farCell, std::sqrt(C.farCell * 447.f * 0.05f / 0.25f) * 0.75f);
+    else
+        std::snprintf(b, sizeof(b), "far layer: OFF");
+    btns.push_back(Button{{240, yset + 112, 260, 40}, b, "", 18, true, C.farCell > 0.f});
 
     label(img, "In the view:  space  v view  a arrow  s save PNG  m menu  q quit",
           446, H - 62, 0.46, {110, 110, 110});
@@ -656,6 +667,13 @@ static int runSession(Config C) {
     mp.maxIntegM = std::sqrt(cell * cam.fpx() * cp.baselineM / 0.25f) * 0.75f;
     if (maxIntegOverride > 0.f) mp.maxIntegM = maxIntegOverride;
     mp.integrateStride = C.stride;
+    // MINIMUM RANGE IS A FORMULA, NOT A GUESS. Intel's own:
+    //     MinZ(mm) = focal length(px) * baseline(mm) / 126
+    // which at 848x480 on a D435 gives ~16.8 cm and matches their published
+    // figure. 1.2x margin, because the number is where depth *starts* being
+    // possible rather than where it starts being trustworthy. Beats the 0.25 m
+    // that was there, which was a sensible guess and nothing more.
+    mp.minIntegM = cam.fpx() * cp.baselineM / 126.f * 1.2f;
 
     // The camera sits at the middle of the grid looking +y (North), so the map
     // has room behind it as well -- a mapper that can only grow forwards would
@@ -676,6 +694,7 @@ static int runSession(Config C) {
         np.nx = n; np.ny = n; np.nz = std::max(16, n / 2);
         np.maxCarveM = np.maxIntegM * 2.f;
         np.depthSigCoef = mp.depthSigCoef;
+        np.minIntegM = mp.minIntegM;
         // A FINER layer wants FEWER rays, not more, and that is not a typo.
         // Stride controls angular sampling density; a near object is
         // angularly LARGE, so it needs less of it. At f = 425 a 10 cm object
@@ -709,12 +728,15 @@ static int runSession(Config C) {
         fp.maxCarveM = 40.f;
         fp.integrateStride = std::max(4, C.stride * 2);   // a sixteenth of the rays
         fp.depthSigCoef = mp.depthSigCoef;
+        fp.minIntegM = mp.minIntegM;
         fp.carveWinPx = 0;                                // the min-filter is fine-scale
         Mfar.init(fp, px, py, pz);
         std::printf("[far] cell %.2f m -> marks to %.1f m  (the fine map stops at %.1f m)\n",
                     fp.cell, fp.maxIntegM, mp.maxIntegM);
     }
 
+    std::printf("[map] min trusted range %.2f m (f*B/126, Intel's MinZ)\n",
+                mp.minIntegM);
     std::printf("[map] cell %.2f m -> honest carve range %.2f m "
                 "(f %.0f px, B %.0f mm), ray stride %d -> %d rays/frame\n",
                 mp.cell, mp.maxIntegM, cam.fpx(), cp.baselineM * 1000.f,
@@ -1386,7 +1408,11 @@ int main(int argc, char** argv) {
     static const float CELLS[] = {0.15f, 0.20f, 0.25f, 0.35f, 0.50f};
     static const float VMAXS[] = {0.5f, 1.0f, 1.5f, 2.0f, 3.0f};
     static const float SPINS[] = {0.f, 5.f, 10.f, 20.f, 45.f};
-    int iCell = 2, iVmax = 2, iSpin = 0;
+    // Coarse layer, and the honest range it buys: Z_max = sqrt(cell*f*B/sigma)
+    // *0.75, so on the D435i's 50 mm baseline these are roughly
+    // off / 7.1 / 10.0 / 14.2 / 20.1 m. 0 disables the layer.
+    static const float FARS[] = {0.f, 1.f, 2.f, 4.f, 8.f};
+    int iCell = 2, iVmax = 2, iSpin = 0, iFar = 2;
     std::string note;
 
     for (;;) {
@@ -1419,6 +1445,7 @@ int main(int argc, char** argv) {
         else if (id == 15) { C.dirMode = 1 - C.dirMode; }
         else if (id == 16) { C.viewMode = (C.viewMode + 1) % 3; }
         else if (id == 17) { C.turnHud = !C.turnHud; }
+        else if (id == 18) { iFar = (iFar + 1) % 5; C.farCell = FARS[iFar]; }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

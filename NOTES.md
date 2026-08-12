@@ -1546,6 +1546,41 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — the far layer was ERASING thin structure, not missing it
+
+A street scene, 76 % valid, a lamppost plainly visible at ~10 m in the depth
+image, and **not one occupied cell anywhere in the map.** Not a coarse
+approximation of the lamppost -- nothing.
+
+`fp.carveWinPx = 0`, with the comment "the min-filter is fine-scale". **That had
+it exactly backwards.** The local-nearest-return clamp matters MORE on a coarse
+layer, not less: an 8 m cell is far more likely to contain a thin object
+surrounded by rays that miss it, and the log-odds arithmetic is merciless --
+one hit at +0.85 against a hundred carves at -0.40 clamps the cell to -4, FREE.
+
+Which is the failure `voxel_map.hpp` already documents, in its own words:
+
+> "The map is not failing to see the trunk; it is actively claiming the trunk's
+> cells are empty, because the pixels either side of it returned the background
+> and the DDA carved right through."
+
+The guard against exactly that was switched off on the one layer responsible for
+everything past 3 m. Now `max(5, integrateStride*2 + 1)`, scaled by the layer's
+own stride -- a 5 px window on a grid sampled every 4th pixel spans barely one
+sample, so the default would have been nearly inert here too.
+
+**Two other things the same frame shows, both by design and worth stating:**
+
+* Anything past the far layer's `maxIntegM` (19.5 m at 8 m cells) can only ever
+  be CARVED, never marked. A street's far end at 30-50 m will always read free.
+  That is correct -- delta-Z at 30 m is about 10 m -- but it means a street scene
+  is mostly free space by construction, not by fault.
+* The ladder had a hole: `0.10 / 0.15 / 8.0` gives honest ranges 2.2 / 2.7 /
+  19.5, so the middle rung covers **half a metre** and everything from 2.7 m out
+  is 8 m blocks. Sweeping the two knobs independently pushed the rungs apart
+  until the middle of the sensor's range was unserved. Sane default remains
+  0.10 / 0.25 / 2.0.
+
 ## 2026-08-12 — the settings belong in the viewer, not on the command line
 
 **Keys chosen for the keyboard they will be pressed on.** `[` and `]` were the

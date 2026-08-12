@@ -742,7 +742,20 @@ static int runSession(Config C) {
         fp.integrateStride = std::max(4, C.stride * 2);   // a sixteenth of the rays
         fp.depthSigCoef = mp.depthSigCoef;
         fp.minIntegM = mp.minIntegM;
-        fp.carveWinPx = 0;                                // the min-filter is fine-scale
+        // CARVE GUARD ON, and the old comment here ("the min-filter is
+        // fine-scale") had it exactly backwards. The local-nearest-return clamp
+        // matters MORE on a coarse layer, not less: an 8 m cell is far more
+        // likely to contain a thin object surrounded by rays that miss it, and
+        // one hit at +0.85 cannot survive a hundred carves at -0.40.
+        //
+        // Observed: a street with a lamppost clearly visible at ~10 m in the
+        // depth image, and not one occupied cell anywhere in the map. The far
+        // layer was not failing to see it -- it was erasing it, which is the
+        // exact failure voxel_map.hpp already documents for trunks.
+        //
+        // Scaled by the layer's own stride, since a 5 px window on a grid
+        // sampled every 4th pixel spans barely one sample.
+        fp.carveWinPx = std::max(5, fp.integrateStride * 2 + 1);
         Mfar.init(fp, px, py, pz);
         std::printf("[far] cell %.2f m -> marks to %.1f m  (the fine map stops at %.1f m)\n",
                     fp.cell, fp.maxIntegM, mp.maxIntegM);
@@ -1395,7 +1408,7 @@ static int runSession(Config C) {
                     fp.maxCarveM = 40.f;
                     fp.integrateStride = std::max(4, C.stride * 2);
                     fp.depthSigCoef = mp.depthSigCoef;
-                    fp.carveWinPx = 0;
+                    fp.carveWinPx = std::max(5, fp.integrateStride * 2 + 1);
                     fp.minIntegM = mp.minIntegM;
                     Mfar.init(fp, pose.e, pose.n, pose.u);
                     coarse.push_back({&Mfar, fp.maxIntegM});

@@ -184,6 +184,17 @@ struct Config {
     // field has data at all. Deriving it from the map means the display grows
     // when --farcell does, instead of needing to be remembered.
     float depthMaxM = 0.f;
+    // RECORD every frame to a .kdr. Empty = off.
+    //
+    // This is the mechanism that makes a change ARGUABLE. A runtime toggle on a
+    // live camera is not a controlled comparison -- you move, the scene moves,
+    // and you are comparing two different inputs while believing you are
+    // comparing two code paths. Record once, replay the same file through two
+    // builds, and the input is identical by construction.
+    //
+    // It is also a THESIS.md §4 deliverable: "the raw .kdr recording of each
+    // run, so the claim is re-checkable offline".
+    std::string recordPath;
     // COARSE FAR MAP. voxel_sim has had one for a long time; voxel_live did
     // not, which is why the live view showed nothing but the fine map's 3.5 m
     // and no larger voxels anywhere. That was a missing feature, not a camera
@@ -542,6 +553,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
         else if (!std::strcmp(argv[i], "--chase")) viewMode = 2;
         else if (!std::strcmp(argv[i], "--noarrow")) C.turnHud = false;
+        else if (!std::strcmp(argv[i], "--record")) C.recordPath = next("run.kdr");
         else if (!std::strcmp(argv[i], "--depthmax"))
             C.depthMaxM = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--ui"))
@@ -595,6 +607,7 @@ int mainCli(int argc, char** argv) {
                 "  --forward           score toward wherever the camera points\n"
                 "  --noarrow           no command arrow on the first-person pane\n"
                 "  --depthmax 0        depth colour range, m; 0 = the map's own\n"
+                "  --record FILE.kdr   save every frame, for replay and A/B\n"
                 "  --ui 0.75           window scale; 1 is the old (large) size\n"
                 "  --frames N          stop after N frames\n"
                 "  --headless          no window; write PNGs to --out\n",
@@ -774,6 +787,10 @@ static int runSession(Config C) {
     int n = 0;
     long integUs = 0, planUs = 0, drawUs = 0;
 
+    // Opened lazily on the first frame, when the depth size is known for sure.
+    DepthRecordWriter rec;
+    bool recOpen = false, recFailed = false;
+
     for (;;) {
         if (steps > 0 && n >= steps) break;
 
@@ -802,6 +819,36 @@ static int runSession(Config C) {
         planUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
 
         ++n;
+
+        if (!C.recordPath.empty() && !recOpen && !recFailed) {
+            DepthRecordHeader h;
+            h.width = uint32_t(depth.cols); h.height = uint32_t(depth.rows);
+            h.depthScale = 0.001f;                 // millimetres, as the D435i gives
+            h.fx = cam.fpx(); h.fy = cam.fy();
+            h.ppx = cam.ppx(); h.ppy = cam.ppy();
+            h.baselineM = cp.baselineM;
+            if (emitter) h.flags |= DepthRecordHeader::FLAG_EMITTER_ON;
+            std::string err;
+            if (rec.open(C.recordPath, h, &err)) {
+                recOpen = true;
+                std::printf("[rec] %s  %dx%d\n", C.recordPath.c_str(), depth.cols, depth.rows);
+            } else {
+                recFailed = true;
+                std::fprintf(stderr, "[rec] could not open %s: %s\n",
+                             C.recordPath.c_str(), err.c_str());
+            }
+        }
+        if (recOpen) {
+            static std::vector<uint16_t> mm;
+            mm.resize(size_t(depth.cols) * depth.rows);
+            for (int y = 0; y < depth.rows; ++y) {
+                const float* r = depth.ptr<float>(y);
+                uint16_t* o = &mm[size_t(y) * depth.cols];
+                for (int x = 0; x < depth.cols; ++x)
+                    o[x] = (r[x] > 0.f) ? uint16_t(std::min(65535.f, r[x] * 1000.f)) : 0;
+            }
+            rec.writeFrame(mm.data());
+        }
 
         // --- panes ---------------------------------------------------------
         const int PW = 420, PH = 320;
@@ -1341,6 +1388,9 @@ static int runSession(Config C) {
         }
         if (total > 0 && n >= total && mode == "replay") break;
     }
+
+    if (recOpen) { rec.close(); std::printf("[rec] wrote %d frames to %s\n",
+                                            n, C.recordPath.c_str()); }
 
     std::printf("\n--- %d frames from %s ---\n", n, src->name());
     if (n) {

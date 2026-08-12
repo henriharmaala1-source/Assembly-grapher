@@ -1546,6 +1546,42 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — toggles for fixes: mostly no, and what to do instead
+
+Asked whether today's fixes should be runtime toggles so they can be A/B'd. The
+honest split is by KIND, not by convenience:
+
+* **A trade gets a toggle.** Depth improver, sideslip, emitter, stride, farcell,
+  preset, decay-when-it-comes. All genuine choices with a cost on both sides, and
+  the project's convention -- off by default, with the measurement attached -- is
+  already right.
+* **A bug fix gets a TEST, not a toggle.** Shipping a known-broken code path
+  behind a flag doubles the test surface and eventually someone flies with the
+  flag in the wrong position. `overlay_align_check` already carries the before
+  and after numbers permanently (896 -> 896 against 3605 for the ladder, 5 -> 0
+  samples for minIntegM), which is better evidence than a runtime switch because
+  it runs automatically and cannot rot.
+* **A derived value gets a parameter with a documented disabling value.**
+  `minIntegM = 0` restores the old behaviour exactly and the test exercises both
+  paths; `depthMaxM = 0` means "follow the map". That IS the toggle, done the way
+  that does not fork the code.
+
+Banding is the one with no sensible toggle: there is no useful amount of
+"nearest-hit". It is an arbitration rule, and the wrong one collapses the ladder.
+
+**And the mechanism that actually serves the want: `--record FILE.kdr`.**
+
+A runtime toggle on a live camera is **not a controlled comparison** -- you move,
+the scene moves, and you compare two different inputs while believing you are
+comparing two code paths. Record once, replay the same file through two builds,
+and the input is identical by construction. `DepthRecordWriter` already existed
+and was tested; `voxel_live` simply could not reach it. Now it can, and it is
+also the `THESIS.md` section 4 deliverable "the raw .kdr recording of each run,
+so the claim is re-checkable offline".
+
+Round trip verified: 12 frames written at 848x480, reopened by `--replay` with
+fx 446.8, ppx 423.5, baseline 50.0 mm intact.
+
 ## 2026-08-12 — what the D435i can actually be tuned for, from Intel's own docs
 
 Searched for range-maximising settings. The short version: **there are almost

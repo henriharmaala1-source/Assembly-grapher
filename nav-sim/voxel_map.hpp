@@ -403,9 +403,13 @@ public:
     // this took the NEAREST hit across all levels, on the argument that "where
     // two levels both know about a surface the finer one is in front of the
     // coarser one's blocky approximation and wins on its own merits". **That is
-    // false.** A 2 m cell containing a surface at 3 m has its near FACE at up to
-    // 2 m — nearer than the fine level's accurate 3 m hit — so the coarse level
-    // systematically wins in the near field and draws the surface far too close.
+    // false, and systematically so.** A cell of size c containing a surface at
+    // distance d has its near FACE in [d - c, d], so a coarse level's hit
+    // arrives on average HALF ITS CELL SIZE early. Against a 0.25 m level an
+    // 8 m level wins by ~4 m — which is to say it wins always, wherever it has
+    // data. Nearest-hit therefore does not blend the levels, it collapses the
+    // ladder to its coarsest rung: three levels integrated, one ever drawn.
+    // The tell from the field was "the voxels all look the same size".
     // Indoors, where everything is within a few metres, single 2 m cubes then
     // subtend 50 deg or more and the pane goes solid. Observed on a real camera
     // in a room, with a clean 97 % valid depth image going in.

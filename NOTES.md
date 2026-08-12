@@ -1633,10 +1633,15 @@ nearest hit across all levels, on the argument that "where two levels both know
 about a surface the finer one is in front of the coarser one's blocky
 approximation and wins on its own merits."
 
-**That argument is false.** A 2 m cell containing a surface at 3 m has its near
-FACE at up to 2 m — *nearer* than the fine level's accurate 3 m hit. So the
-coarse level systematically wins in the near field and draws every surface far
-too close. Indoors, where everything is within a few metres, a single 2 m cube
+**That argument is false, and the failure is systematic rather than occasional.**
+A cell of size `c` containing a surface at distance `d` has its near FACE
+somewhere in `[d - c, d]`, so a coarse level's hit arrives on average **half its
+cell size early**. Against a 0.25 m level, an 8 m level wins by ~4 m — which is
+to say it wins *always*, wherever it has any data at all.
+
+So nearest-hit does not blend the levels, it **collapses the ladder to its
+coarsest rung**. The tell, reported independently: "the voxels all look the same
+size." They did. Three levels were being integrated and one was ever drawn. Indoors, where everything is within a few metres, a single 2 m cube
 subtends 50 deg or more and a handful of them fill the pane. Exactly the reported
 symptom: "it's like there's a voxel in the way."
 

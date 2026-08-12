@@ -1513,6 +1513,39 @@ path and the map it was planned in. Under a pixel, and invisible in the picture,
 which is the same reason the unsequenced `check(centroid(...))` argument was
 worth fixing. Moved to after everything that draws.
 
+## 2026-08-12 — a turn arrow on the first-person pane, and a wrap bug it found
+
+Asked for a toggleable arrow saying which way to turn. Bearing tape plus caret
+on the FPV pane, `a` to toggle. Justification is the same finding that produced
+the chase view: the first-person pane cannot show a forward path, so it should
+show the COMMAND instead.
+
+Three states, and the middle one had been invisible. `--robot 2.0` gave
+"64 admissible, free 0.63 m, cmd 0.00 m/s" — a direction exists, there is simply
+no confirmed-free room to accelerate into. That is NOT the same as BLOCKED, and
+rendering it as `AHEAD 0.0 m/s` looks like a display fault rather than the speed
+budget doing exactly its job. Now `STOPPED  0.6 m free`, with `HOLD` reserved
+for nothing-flyable (verified with `--robot 6.0`).
+
+**The bug the test found, which is the real content of this entry.** The HUD
+needs a signed relative bearing, so I hoisted the planner's file-static
+`angDiff` into the header as `angDiffDeg` rather than write a second copy of a
+convention that inverts silently. Then asserted its range over ±4000° — and it
+failed, returning 360.
+
+`fmod(a - b + 540, 360) - 180` is only correct while `a - b` stays inside ±540,
+because fmod keeps the sign of its argument. Safe in the planner, where both
+arguments come out of atan2 and are bounded. **Not** safe for the HUD, whose
+second argument is `yaw`, which `voxel_live` accumulated without ever wrapping:
+at 25 °/s for two minutes yaw is 3000°, and the function returns −480 — the
+aircraft told to turn the wrong way, on a picture that would have looked
+entirely plausible. Fixed both ends: fmod first then one correction, and yaw
+wrapped to [0, 360).
+
+Nothing about the rendered arrow would ever have revealed this. It was found by
+asserting a range, which is the argument for testing conventions rather than
+appearances.
+
 ## 2026-08-12 — appearance and blobs: planned, and the polarity is a trap
 
 Question raised: feed pixel intensity into contested cells, bright meaning

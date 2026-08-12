@@ -35,6 +35,8 @@
 // can never move. Both planners therefore price it: traversable, expensive.
 // ---------------------------------------------------------------------------
 
+#include <cmath>
+
 namespace sim {
 
 // --- general (reactive direction) planner -----------------------------------
@@ -166,6 +168,29 @@ struct GeneralParams {
     float reactS      = 0.25f;   // sense+plan+actuate latency before decel starts
     float minFreeM    = 0.4f;    // below this confirmed-free range, hold
 };
+
+// Smallest signed difference between two bearings, degrees, in (-180, 180].
+// Positive means `a` is CLOCKWISE of `b` -- to the RIGHT, since every bearing
+// in this tree is clockwise from North.
+//
+// In the header rather than a file-static because three places now need it and
+// two of them are not this file: the planner's own heading-hysteresis, and the
+// first-person turn HUD, which would otherwise carry a second copy of a
+// convention that inverts silently. `chase_turn_check` pins the wrap.
+// fmod FIRST, then one correction. The obvious one-liner --
+// `fmod(a - b + 540, 360) - 180` -- is only right while `a - b` stays inside
+// +-540, because fmod keeps the sign of its argument. It was the planner's
+// internal form and safe there, since both arguments come out of atan2 and are
+// bounded. It is NOT safe for the turn HUD, whose second argument is a heading
+// that accumulates: at yaw 3000 deg it returns -480 and the aircraft is told to
+// turn the wrong way. Found by asserting the range over +-720 rather than by
+// noticing it in a picture, which is the only way it was ever going to be found.
+inline float angDiffDeg(float a, float b) {
+    float d = std::fmod(a - b, 360.f);          // (-360, 360)
+    if (d > 180.f) d -= 360.f;
+    else if (d <= -180.f) d += 360.f;
+    return d;                                    // (-180, 180]
+}
 
 struct GeneralResult {
     float azDeg = 0, elDeg = 0;  // chosen direction

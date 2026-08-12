@@ -917,6 +917,33 @@ code:
   behind it, that unknown is a property of where the eye was put, and at
   first-person strength it saturates immediately and whites out the pane.
 
+### The turn arrow
+
+The first-person pane carries a bearing tape and a caret saying **which way to
+turn**, toggled with `a` (or the menu button, or `--noarrow`). It is there
+because the first-person view *cannot* show a forward path — forward rollouts
+run along the optical axis and project to a dot at the vanishing point, which is
+the finding that produced the chase view. So the pane that looks most like flying
+is the one that tells you least about where the plan goes, and the fix is the one
+aviation reached for: stop drawing the path, draw the **command**.
+
+- The caret sits at `angDiffDeg(commanded, heading)`; ticks every 15°, tallest
+  at the nose. It goes **hollow** past ±60° — pinned to the end of the tape, so
+  its position is a floor rather than a reading — and an edge chevron appears
+  once the turn exceeds 12°.
+- Two **amber marks** are the camera's FOV edges. A command outside them is a
+  turn toward space the map knows only from memory, and with no odometry that
+  memory is the least trustworthy thing here.
+- **Three** states, not two. `HOLD` (a red cross, no bearing drawn at all —
+  nothing in the library is flyable) is not the same as `STOPPED` (a direction
+  exists, but the confirmed-free distance buys no speed). The second used to read
+  `AHEAD 0.0 m/s`, which looks like a display fault rather than the speed budget
+  working, so it now says so and prints the free distance that caused it.
+
+Deliberately not drawn on the overlay pane, whose job is pixel-for-pixel
+comparison of map against depth — painting a HUD over the thing being compared
+works against the only question that pane answers.
+
 The chase pane **turns with the aircraft**; the top-down PLAN pane does **not**
 — it is drawn in world axes, North up. At any heading other than North the same
 path therefore appears at two different angles in the two panes, both correct.

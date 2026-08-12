@@ -30,6 +30,7 @@
 
 #include "depth_camera.hpp"
 #include "voxel_map.hpp"
+#include "voxel_planner.hpp"
 #include "voxel_traj.hpp"
 #include "voxel_world.hpp"
 
@@ -228,6 +229,54 @@ int main() {
                   "yaw " + std::to_string(int(yaw)) + ": fwd " +
                   std::to_string(fwd) + " m, lat " + std::to_string(lat) + " m");
             (void)gr;
+        }
+    }
+
+    // --- 4. the turn HUD's bearing convention -------------------------------
+    // The first-person pane cannot show a forward path, so it shows the COMMAND
+    // instead: a caret offset by angDiffDeg(commanded, heading). That sign is
+    // the entire content of "which way to turn" and it inverts silently — a
+    // mirrored HUD looks exactly as convincing as a correct one. The wrap is
+    // the other half: a command 20 deg right of a heading of 350 must read +20,
+    // not -340, and the aircraft must not be told to turn most of the way round
+    // to reach a bearing it is nearly pointing at.
+    {
+        check(angDiffDeg(30.f, 0.f) > 0.f, "a bearing clockwise of the nose reads RIGHT",
+              std::to_string(angDiffDeg(30.f, 0.f)));
+        check(angDiffDeg(330.f, 0.f) < 0.f, "and anticlockwise reads LEFT",
+              std::to_string(angDiffDeg(330.f, 0.f)));
+        check(std::fabs(angDiffDeg(10.f, 350.f) - 20.f) < 1e-3f,
+              "the wrap is short-way-round across North",
+              std::to_string(angDiffDeg(10.f, 350.f)));
+        check(std::fabs(angDiffDeg(350.f, 10.f) + 20.f) < 1e-3f,
+              "and in the other direction");
+        // Over a range far wider than any bearing, because the HUD's second
+        // argument is an ACCUMULATING heading, not an atan2 output. The
+        // one-line form of this function silently returned -480 out here.
+        float worst = 0.f, worstErr = 0.f;
+        for (int a = -4000; a <= 4000; a += 7) {
+            worst = std::max(worst, std::fabs(angDiffDeg(float(a), 0.f)));
+            // and it must still be the right answer, not merely in range
+            worstErr = std::max(worstErr,
+                                std::fabs(angDiffDeg(float(a) + 3000.f, 3000.f)
+                                          - angDiffDeg(float(a), 0.f)));
+        }
+        check(worst <= 180.f, "never exceeds 180 deg, over +-4000 deg of input",
+              std::to_string(worst));
+        check(worstErr < 0.01f, "and a 3000 deg heading gives the same answer as 0",
+              std::to_string(worstErr));
+
+        // Tied to the same rotation the rest of this file uses: a path curving
+        // LEFT in the body frame must produce a NEGATIVE relative bearing, or
+        // the caret and the picture disagree.
+        for (float yaw : {0.f, 90.f, 200.f, 355.f}) {
+            float wx, wy, wz;
+            bodyToWorld(pe, pn, pu, yaw, leftCurve.back(), wx, wy, wz);
+            const float az = std::atan2(wx - pe, wy - pn) * 180.f / PI_F;
+            check(angDiffDeg(az, yaw) < -5.f,
+                  "a left-curving path commands a LEFT turn at every heading",
+                  "yaw " + std::to_string(int(yaw)) + ": " +
+                  std::to_string(angDiffDeg(az, yaw)) + " deg");
         }
     }
 

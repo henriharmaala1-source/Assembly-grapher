@@ -52,12 +52,6 @@ static inline bool sphereClear(const VoxelMap& m, float x, float y, float z, flo
     return true;
 }
 
-// Smallest signed angular difference, degrees.
-static inline float angDiff(float a, float b) {
-    float d = std::fmod(a - b + 540.f, 360.f) - 180.f;
-    return d;
-}
-
 // --- general planner --------------------------------------------------------
 
 // Probe one (azimuth, elevation) direction: how far it REACHES with unknown
@@ -209,12 +203,12 @@ GeneralResult GeneralPlanner::plan(const VoxelMap& m, float px, float py, float 
             // measurement: a direction that has just become blocked must be
             // rejected this frame even if its average still looks generous.
             if (field_[k] < p_.robotR * 2.f) continue;
-            float dAz = std::fabs(angDiff(az, goalAzDeg));
+            float dAz = std::fabs(angDiffDeg(az, goalAzDeg));
             float gd = dAz / 180.f + std::fabs(el - goalElDeg) / 90.f * 0.5f;
             float rev = std::max(0.f, dAz - 90.f) / 90.f;   // 0 ahead, 1 behind
             float hd = 0.f;
             if (haveLast_)
-                hd = std::fabs(angDiff(az, lastAz_)) / 180.f
+                hd = std::fabs(angDiffDeg(az, lastAz_)) / 180.f
                    + std::fabs(el - lastEl_) / 90.f * 0.5f;
             float score = open + p_.freeWeight * fr
                         - p_.goalWeight * gd - p_.hystWeight * hd
@@ -226,7 +220,7 @@ GeneralResult GeneralPlanner::plan(const VoxelMap& m, float px, float py, float 
             }
             // Is this the heading we are already flying? Scored identically, so
             // the margin below compares like with like.
-            if (haveLast_ && std::fabs(angDiff(az, lastAz_)) < 180.f / p_.nAz
+            if (haveLast_ && std::fabs(angDiffDeg(az, lastAz_)) < 180.f / p_.nAz
                           && std::fabs(el - lastEl_) < 1e-3f)
                 incumbent = score;
         }

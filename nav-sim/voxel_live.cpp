@@ -159,6 +159,20 @@ struct Config {
     // mirrored, one of those three is wrong -- and every other view in this
     // program would show both halves looking individually plausible.
     int   viewMode = 0;
+    // TURN HUD, first-person pane only. A bearing tape and a caret saying which
+    // way the planner wants to go, relative to where the nose points.
+    //
+    // This exists because the first-person view CANNOT show a forward path.
+    // Forward rollouts run along the optical axis and project to a dot at the
+    // vanishing point -- the finding that produced the chase view in the first
+    // place. So the pane that looks most like flying is the one that tells you
+    // least about where the plan goes, and the fix is the same one aviation
+    // reached for: stop drawing the path and draw the COMMAND.
+    //
+    // Deliberately NOT drawn on the overlay pane. That pane's whole job is
+    // pixel-for-pixel comparison of map against depth, and painting a HUD over
+    // the thing being compared works against the one question it answers.
+    bool  turnHud = true;
     // COARSE FAR MAP. voxel_sim has had one for a long time; voxel_live did
     // not, which is why the live view showed nothing but the fine map's 3.5 m
     // and no larger voxels anywhere. That was a missing feature, not a camera
@@ -423,8 +437,11 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                                           : C.viewMode == 1 ? "view: OVERLAY on depth"
                                                             : "view: CHASE (3D plan)",
                           "", 16, true, C.viewMode == 1});
+    btns.push_back(Button{{530, yset + 62, 300, 40},
+                          C.turnHud ? "turn arrow: ON" : "turn arrow: off", "", 17,
+                          true, C.turnHud});
 
-    label(img, "In the view:  space pause   v overlay   s save PNG   m menu   q quit",
+    label(img, "In the view:  space pause   v view   a arrow   s save PNG   m menu   q quit",
           446, H - 62, 0.46, {110, 110, 110});
     label(img, "Camera pose is assumed FIXED. Move it and the map",
           446, H - 42, 0.42, {150, 110, 60});
@@ -476,6 +493,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
         else if (!std::strcmp(argv[i], "--chase")) viewMode = 2;
+        else if (!std::strcmp(argv[i], "--noarrow")) C.turnHud = false;
         else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--nofar")) farCell = 0.f;
         else if (!std::strcmp(argv[i], "--nearcell")) nearCell = float(std::atof(next("0.10")));
@@ -523,6 +541,7 @@ int mainCli(int argc, char** argv) {
                 "  --farcell 2.0       coarse far layer, 0 = off. Honest to 10 m\n"
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"
+                "  --noarrow           no turn arrow on the first-person pane\n"
                 "  --frames N          stop after N frames\n"
                 "  --headless          no window; write PNGs to --out\n",
                 haveLiveSupport() ? "" : "  [NOT in this build -- no librealsense]");
@@ -926,6 +945,109 @@ static int runSession(Config C) {
                     cv::circle(img, a, 6, {40, 190, 40}, 2, cv::LINE_AA);
             }
         };
+        // WHICH WAY TO TURN. See Config::turnHud for why the first-person pane
+        // needs this and the chase pane does not.
+        //
+        // Drawn AFTER the pane has been resized to 420x320, in pane pixels, so
+        // the tape and the caret are not stretched by the 4:3 fit the way the
+        // square render is. The one thing that must survive the stretch is the
+        // caret's horizontal POSITION, and that is an angle mapped onto the
+        // tape, not a projected point -- so it does not care about the render's
+        // geometry at all. A HUD that had to agree with the projection would be
+        // a fourth place for a yaw convention to disagree.
+        auto drawTurnHud = [&](cv::Mat& pane) {
+            // Signed relative bearing, degrees. Positive = the planner wants to
+            // go RIGHT of where the nose points.
+            const float rel = angDiffDeg(gr.azDeg, yaw);
+            const float relEl = gr.elDeg - pitchDeg;
+
+            const float SPAN = 60.f;                 // half-width of the tape
+            const int   y0   = pane.rows - 30;    // inside the pale bottom band
+            const int   xC   = pane.cols / 2;
+            const float pxPerDeg = (pane.cols * 0.42f) / SPAN;
+            auto xFor = [&](float deg) {
+                return int(xC + std::max(-SPAN, std::min(SPAN, deg)) * pxPerDeg);
+            };
+
+            // The tape. Ticks every 15 deg, taller at the nose, so the caret's
+            // offset reads as an ANGLE rather than as a distance along a bar.
+            cv::line(pane, {xFor(-SPAN), y0}, {xFor(SPAN), y0}, {60, 60, 60}, 3, cv::LINE_AA);
+            cv::line(pane, {xFor(-SPAN), y0}, {xFor(SPAN), y0}, {235, 235, 235}, 1, cv::LINE_AA);
+            for (int d = -60; d <= 60; d += 15) {
+                const int h = (d == 0) ? 9 : 5;
+                const cv::Point a(xFor(float(d)), y0 - h), b(xFor(float(d)), y0 + h);
+                cv::line(pane, a, b, {60, 60, 60}, 3, cv::LINE_AA);
+                cv::line(pane, a, b, {235, 235, 235}, 1, cv::LINE_AA);
+            }
+
+            // Where the camera stops seeing. A command outside this is a turn
+            // toward space the map can only know from memory, and on a rig with
+            // no odometry that memory is exactly what is not trustworthy. Amber
+            // because it is a caveat, not a fault.
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+                const int xf = xFor(sgn * cp.hfovDeg * 0.5f);
+                cv::line(pane, {xf, y0 - 13}, {xf, y0 + 13}, {40, 130, 210}, 2, cv::LINE_AA);
+            }
+
+            // BLOCKED has no bearing worth pointing at, and drawing one anyway
+            // would be the most misleading thing this pane could do -- it would
+            // say "go this way" at the exact moment the answer is "do not go".
+            if (gr.blocked || gr.src == GeneralResult::BLOCKED) {
+                const cv::Scalar red(60, 60, 220);
+                cv::line(pane, {xC - 16, y0 - 16}, {xC + 16, y0 + 16}, red, 4, cv::LINE_AA);
+                cv::line(pane, {xC - 16, y0 + 16}, {xC + 16, y0 - 16}, red, 4, cv::LINE_AA);
+                banner(pane, "HOLD  nothing in the library is flyable", y0 - 18);
+                return;
+            }
+
+            // The caret. HOLLOW when the command is off the end of the tape --
+            // the position is then a floor, not a reading, and a filled marker
+            // sitting at the end would claim a precision it does not have.
+            const bool pinned = std::fabs(rel) > SPAN;
+            const int xt = xFor(rel);
+            const cv::Point tri[3] = {{xt, y0 - 2}, {xt - 9, y0 + 14}, {xt + 9, y0 + 14}};
+            const cv::Scalar green(40, 190, 40);
+            if (pinned) {
+                const cv::Point* pts = tri; const int npt = 3;
+                cv::polylines(pane, &pts, &npt, 1, true, green, 2, cv::LINE_AA);
+            } else {
+                cv::fillConvexPoly(pane, tri, 3, green, cv::LINE_AA);
+            }
+
+            // A chevron out at the edge as well, once the turn is big enough
+            // that the caret alone is easy to miss on a moving picture.
+            if (std::fabs(rel) > 12.f) {
+                const int s = (rel > 0.f) ? 1 : -1;
+                const int xe = (rel > 0.f) ? pane.cols - 26 : 26;
+                const int ye = y0 - 48;
+                for (int k = 0; k < 2; ++k) {
+                    const int off = k * 13;
+                    cv::line(pane, {xe - s * 10 + s * off, ye - 13},
+                             {xe + s * off, ye}, green, 3, cv::LINE_AA);
+                    cv::line(pane, {xe + s * off, ye},
+                             {xe - s * 10 + s * off, ye + 13}, green, 3, cv::LINE_AA);
+                }
+            }
+
+            // THREE states, not two, and the middle one is the interesting one.
+            // "no direction at all" (HOLD, above) is not the same as "a
+            // direction, but nowhere near enough confirmed-free room to move".
+            // The second reads AHEAD 0.0 m/s, which looks like a display fault
+            // rather than the speed budget doing its job -- so it says STOPPED
+            // and prints the free distance that produced it.
+            char t[112];
+            char spd[40];
+            if (gr.speed < 0.05f) std::snprintf(spd, sizeof(spd), "STOPPED  %.1f m free", gr.freeM);
+            else                  std::snprintf(spd, sizeof(spd), "%.1f m/s", gr.speed);
+            const char* climb = relEl > 5.f ? "  CLIMB" : (relEl < -5.f ? "  DESCEND" : "");
+            if (std::fabs(rel) < 3.f)
+                std::snprintf(t, sizeof(t), "AHEAD   %s%s", spd, climb);
+            else
+                std::snprintf(t, sizeof(t), "%s %.0f deg   %s%s",
+                              rel > 0.f ? "RIGHT" : "LEFT", std::fabs(rel), spd, climb);
+            banner(pane, t, y0 - 18);
+        };
+
         // EVERY view draws the whole ladder, not one rung of it.
         //
         // This was the single biggest thing wrong with these panes. They each
@@ -1081,6 +1203,7 @@ static int runSession(Config C) {
                           C.farCell > 0.f ? fp.cell : mp.cell,
                           C.farCell > 0.f ? fp.maxIntegM : mp.maxIntegM);
             banner(fPane, nb, 44);
+            if (C.turnHud) drawTurnHud(fPane);
         }
 
         drawUs += (cv::getTickCount() - tDraw) * 1000000 / cv::getTickFrequency();
@@ -1092,6 +1215,10 @@ static int runSession(Config C) {
         // Under a pixel here, and wrong for the same reason the test's own
         // unsequenced argument was wrong: nothing about the picture reveals it.
         yaw += yawRateDps * (1.f / std::max(1, fps));
+        // Kept in [0, 360). Unbounded it is arithmetically harmless to sin/cos
+        // but loses float precision without limit, and it is the argument that
+        // broke angDiffDeg above.
+        yaw = std::fmod(yaw, 360.f); if (yaw < 0.f) yaw += 360.f;
 
         cv::Mat full(PH * 2, PW * 2, CV_8UC3);
         dPane.copyTo(full(cv::Rect(0, 0, PW, PH)));
@@ -1106,6 +1233,7 @@ static int runSession(Config C) {
             if (k == 'q' || k == 27) break;
             if (k == 'm') { backToMenu = true; break; }
             if (k == 'v') C.viewMode = (C.viewMode + 1) % 3;  // fpv / overlay / chase
+            if (k == 'a') C.turnHud = !C.turnHud;             // the turn arrow
             if (k == ' ') paused = !paused;
             if (k == 's') { cv::imwrite(out + "_frame.png", full);
                             std::printf("wrote %s_frame.png\n", out.c_str()); }
@@ -1223,6 +1351,7 @@ int main(int argc, char** argv) {
         else if (id == 14) { C.stride = (C.stride >= 4) ? 1 : C.stride * 2; }
         else if (id == 15) { C.dirMode = 1 - C.dirMode; }
         else if (id == 16) { C.viewMode = (C.viewMode + 1) % 3; }
+        else if (id == 17) { C.turnHud = !C.turnHud; }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

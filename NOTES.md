@@ -1546,6 +1546,37 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — --farcell 8 made the ladder bug FAR worse, and hid it as "no range"
+
+Reported: "even on farcell 8 the voxels don't appear far at all. Also, now they
+don't appear close either!" Both halves are the same fault, and raising farcell
+amplified it.
+
+The first-person pane in those frames is not distant structure. It is **two or
+three 8 m cells seen from inside one of them.** Under the old nearest-hit rule a
+coarse cell's near FACE wins against every finer level, and an 8 m cell's face
+can sit a metre away, so the pane fills with a handful of enormous slabs at
+fixed distance -- looking neither near nor far, because it is a single cell
+boundary rather than a scene. At `--farcell 2` some fine detail still showed
+through; at 8 it is buried completely. **Turning the range up made the picture
+worse, which is exactly backwards and is why it read as "no range".**
+
+Fixed by the banding change (fca8cca), which was pushed before these frames were
+taken and is not in that build.
+
+**And a second instrument scaled for an older configuration**, in the same day as
+the 8 m depth ramp: the MAP SLICE crop was hard-coded to +-12 m, chosen when the
+far layer reached 10 m. At `--farcell 8` the map is honest to 19.5 m, so the one
+pane that shows EXTENT was cropping off everything past 12 m. Now derived from
+the coarsest honest range (0.65x, so the wedge fills the pane), with the range
+rings spacing themselves 1/2/5 m so a 20 m pane does not get ten of them.
+
+Worth naming the pattern, because it has now happened twice in one session:
+**every hard-coded display constant is a lie waiting for the configuration to
+move.** The depth ramp, the slice crop. Both were correct when written, both
+silently became wrong when `--farcell` grew, and both made the map look worse
+than it was.
+
 ## 2026-08-12 — first outdoor forest frames, and an instrument fault they exposed
 
 Real trees, handheld, `--farcell 8` (honest to 19.5 m). The stack works: the

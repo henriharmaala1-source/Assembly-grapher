@@ -846,8 +846,17 @@ static int runSession(Config C) {
 
         cv::Mat sPane;
         {
-            const float halfM = 12.f;
+            // Crop follows the COARSEST layer's honest range, like the depth
+            // ramp. It was a hard-coded 12 m, chosen when the far layer reached
+            // 10 m -- at --farcell 8 the map is honest to 19.5 m and this pane
+            // was cropping off everything past 12, so the far field could not be
+            // judged from the one view that shows extent. Second instrument in a
+            // day scaled for an older configuration.
+            const float halfM = std::max(6.f,
+                (C.depthMaxM > 0.f ? C.depthMaxM
+                 : std::max(8.f, C.farCell > 0.f ? fp.maxIntegM : mp.maxIntegM)) * 0.65f);
             const int half = int(halfM / mp.cell);
+            (void)half;
             const int cx = sliceFull.cols / 2, cy = sliceFull.rows / 2;
             cv::Rect roi(std::max(0, cx - half), std::max(0, cy - half),
                          std::min(2 * half, sliceFull.cols), std::min(2 * half, sliceFull.rows));
@@ -857,7 +866,8 @@ static int runSession(Config C) {
             // answerable by eye rather than by trusting the caption.
             const float pxPerM = PW / (2.f * halfM);
             const cv::Point c(PW / 2, PH / 2);
-            for (float r = 2.f; r <= halfM; r += 2.f)
+            const float ringStep = halfM > 15.f ? 5.f : (halfM > 8.f ? 2.f : 1.f);
+            for (float r = ringStep; r <= halfM; r += ringStep)
                 cv::circle(sPane, c, int(r * pxPerM), {180, 180, 180}, 1);
             cv::circle(sPane, c, int(mp.maxIntegM * pxPerM), {60, 160, 60}, 2, cv::LINE_AA);
             if (mp.maxCarveM < halfM)

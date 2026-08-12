@@ -31,8 +31,12 @@ consisted of.
 
 ## 2. Claimable
 
-* **Thesis, scope and the constraint framing.** Cheap CPU-only autonomy where the
-  constraint is the claim rather than a budget accident. See `THESIS.md` §1.
+* **Thesis, scope and the constraint framing.** Autonomy in a GNSS-denied and
+  video-denied zone, on cheap CPU-only compute — three chosen constraints, two of
+  them from a single operational scenario, and none of them budget accidents. See
+  `THESIS.md` §1.0. The GNSS-denial choice is the one that makes the architecture
+  coherent rather than a set of workarounds, and it is also the capability the
+  market actually wants.
 * **The vehicle.** Part selection, airframe build, and the integration that makes
   it one system — including LiPo → Pi 5 over USB-C PD, which is not a lesser
   layer: the Pi 5 will not grant full performance without a source that actually
@@ -116,7 +120,10 @@ So the demo has to show the *constraint*, not just the flight.
 
 - [ ] **Four-pane overlay as picture-in-picture** beside the flight footage:
       depth, voxel ladder, chase view with the rollout fan, command arrow. With
-      `Raspberry Pi 5 · N ms/frame · no GPU` burned into the corner. The
+      **`Raspberry Pi 5 · N ms/frame · no GPU · GPS: no fix`** burned into the
+      corner — both chosen constraints, both invisible in footage unless you put
+      them there, and the second is the operationally interesting one. For a v2
+      fly-through-blind run, add the video-link state. The
       visualisation work was built for debugging and it is the demo asset —
       nobody else's video has it, because nobody else's constraint is interesting.
 - [ ] **Onboard telemetry doubles as overlay data.** `THESIS.md` §4 already

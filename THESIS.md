@@ -16,11 +16,61 @@ margin, interface control, V&V matrix, the hardware record, and the demo overlay
 
 ## 1. The thesis
 
-**Autonomous obstacle-avoiding flight for a cheap FPV airframe, on cheap
-CPU-only compute.**
+**Autonomous obstacle-avoiding flight for a cheap FPV airframe, in a GNSS-denied
+and video-denied zone, on cheap CPU-only compute.**
 
 A Raspberry Pi 5. A used D435i. A 7" 6S quad that already exists. No GPU, no
-lidar, no Jetson, no cloud, no training cluster.
+lidar, no Jetson, no cloud, no training cluster. **And no satellite fix, and no
+operator in the loop.**
+
+### 1.0 The operational scenario every constraint comes from
+
+The constraints are not independent. They are one scenario seen from two sides.
+
+**The contested zone.** GNSS is jammed and the analog video downlink is jammed,
+in the same place at the same time, because the same emitters do both. And
+jamming is **spatial, not continuous**: you fly into a zone, lose both, and
+expect to regain them on the far side.
+
+That single scenario generates everything:
+
+* **No GNSS → no absolute position reference.** This is the driver behind the
+  whole of `nav-sim/docs/POSE_AND_OPENNESS_PLAN.md`. Bounded memory, attitude-only
+  far-field accumulation, local SLAM with no loop closure, refusing to claim a
+  pose in an unobservable direction — none of those are workarounds for missing
+  odometry. They are the correct answers when no global fix exists by design.
+* **No video → no operator, for a bounded period, in the worst possible place.**
+* **The standard failsafe is unavailable, and this is the crux.** ArduPilot's RTL
+  needs a position estimate and there isn't one. So link loss inside a GNSS-denied
+  zone leaves three options: land where you are, continue blind on the last
+  heading, or navigate onboard. The first two lose the aircraft. **Vision-based
+  onboard autonomy is not an enhancement here — it is the only available answer.**
+* **Zoned, not continuous, sets the required behaviour: maintain intent and
+  continue through.** Not turn back. An aircraft that returns home at the jamming
+  boundary never completes the task, and returning home is what it would do by
+  default — if it could, which it can't.
+
+Cheap CPU-only compute is the third constraint. It is an engineering-credibility
+claim rather than an operational one, and it is argued separately in §1.1.
+
+### 1.0.1 Link states — the seed of the failure-mode matrix
+
+Video and control are on **different bands** (5.8 GHz vs 900 MHz / 2.4 GHz ELRS)
+and therefore fail independently. Four states, not two:
+
+| video | control | who flies |
+|---|---|---|
+| ok | ok | pilot; autonomy holds a veto only |
+| **lost** | ok | autonomy navigates; operator still commands high-level intent, blind |
+| ok | **lost** | autonomy navigates; operator watches |
+| **lost** | **lost** | full autonomy: maintain intent, continue through, expect reacquisition |
+
+This is **handover, not blended shared control** — a discrete state machine
+driven by link state, which is a far smaller problem than continuous authority
+arbitration. It is also the first concrete piece of the failure-mode matrix that
+`PROJECT_CV.md` §4 records as missing.
+
+### 1.1 Cheap compute — the constraint is the claim
 
 **The constraint is the claim, not an accident of budget.** This problem is
 solved at the €2000 tier — Skydio ships it, and the research quadrotors that fly
@@ -29,7 +79,7 @@ demonstrates you had €2000. Doing it inside a hobby budget demonstrates
 engineering. That is the whole point of the exercise, and it is why "just use a
 Jetson" is out of scope rather than overlooked.
 
-### 1.1 The second claim, which is stronger and less often stated
+### 1.2 The second claim, which is stronger and less often stated
 
 The method. Every number in this project is measured or explicitly marked as an
 assumption. Negative and inconclusive results are kept with their numbers
@@ -42,7 +92,7 @@ Cheap CPU-only avoidance projects exist and someone will always find a cheaper
 board. That discipline, sustained, is rarer — in hobby robotics and in published
 work — and it is the more defensible differentiator of the two.
 
-### 1.2 Motivation, stated plainly
+### 1.3 Motivation, stated plainly
 
 Career and credibility. A working, honest demonstration of autonomy on this
 budget is a portfolio piece and a plausible route to funding, in the way that an
@@ -125,7 +175,7 @@ actually apply, and they are deliberately not the standards of a funded group.
   not because slow code is shameful.
 * **Slack is allowed. Unmeasured claims are not.** Rough edges, unoptimised
   paths, missing features and deferred plans are all fine. Asserting a number
-  nobody measured is the one thing that isn't, because the second claim (§1.1) is
+  nobody measured is the one thing that isn't, because the second claim (§1.2) is
   the one that would not survive it.
 * **Negative results are assets.** They are the evidence that the method is real.
   Keep them.
@@ -156,6 +206,12 @@ Supporting evidence that makes it a demonstration rather than an anecdote:
 
 Explicitly **not** in v1: goal-directed navigation, returning home, global
 mapping, loop closure, dynamic obstacles, speeds above 3 m/s, night flight.
+
+**v2, sketched now because §1.0 defines it cleanly:** fly-through-blind. Enter a
+zone with video deliberately cut and no GNSS fix, hold the commanded intent,
+navigate on vision alone, and come out the far side. That is the scenario the
+whole architecture is for, and it is a demonstration nobody can mistake for a DJI
+feature.
 
 ## 5. Order of work
 

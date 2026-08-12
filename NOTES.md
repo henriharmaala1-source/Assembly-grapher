@@ -1673,6 +1673,13 @@ signal* in the near field, which is a different use of the same measurement.
   hardest integration work in this project and currently invisible in the
   record — and the demo overlay, since the constraint that makes this
   interesting does not appear in flight footage.
+* **GNSS denial and video denial are CHOSEN constraints, not omissions** -- see
+  `THESIS.md` §1.0. One scenario, the contested zone, generates both: the same
+  emitters jam satellite and 5.8 GHz video, spatially rather than
+  continuously. The crux is that RTL needs a position estimate and there is
+  none, so onboard vision autonomy is the only remaining option rather than an
+  enhancement; and because jamming is zoned, the required behaviour is
+  *continue through*, not turn back.
 * **`THESIS.md` is the direction document; this file is the lab notebook.** The
   thesis is autonomy on cheap CPU-only compute, where the *constraint is the
   claim* rather than a budget accident. Five pivots follow from it, and they

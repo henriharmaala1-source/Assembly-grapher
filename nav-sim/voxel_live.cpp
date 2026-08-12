@@ -69,6 +69,48 @@ namespace {
 // Depth -> colour. Near red, far blue, INVALID mid-grey and not black, because
 // black reads as "far" to the eye and the entire point of the three-state map
 // is that missing data is not distance.
+// Histogram-equalised variant. A LINEAR ramp cannot show near and far structure
+// at the same time: set it to 10 m and everything past 10 m is one blue; set it
+// to 20 m and the near field collapses into a few shades of red. Equalisation
+// allocates colour where the DATA is, which is why the RealSense Viewer's own
+// display looks so much more informative than ours did.
+//
+// Found by noticing a lamppost was only visible at the longest scale setting --
+// in the DEPTH image, not the map. The sensor had measured it the whole time;
+// the ramp could not show it.
+cv::Mat colourDepthEq(const cv::Mat& d, float maxM) {
+    int hist[256] = {0};
+    long n = 0;
+    for (int y = 0; y < d.rows; ++y) {
+        const float* r = d.ptr<float>(y);
+        for (int x = 0; x < d.cols; ++x) {
+            if (!(r[x] > 0.f)) continue;
+            int b = int(std::min(1.f, r[x] / std::max(0.1f, maxM)) * 255.f);
+            ++hist[b]; ++n;
+        }
+    }
+    float cdf[256];
+    long acc = 0;
+    for (int i = 0; i < 256; ++i) { acc += hist[i]; cdf[i] = n ? float(acc) / n : 0.f; }
+
+    cv::Mat out(d.rows, d.cols, CV_8UC3, cv::Scalar(90, 90, 90));
+    for (int y = 0; y < d.rows; ++y) {
+        const float* r = d.ptr<float>(y);
+        for (int x = 0; x < d.cols; ++x) {
+            if (!(r[x] > 0.f)) continue;
+            int b = int(std::min(1.f, r[x] / std::max(0.1f, maxM)) * 255.f);
+            out.at<cv::Vec3b>(y, x) = cv::Vec3b(uchar(cdf[b] * 120.f), 200, 230);
+        }
+    }
+    cv::Mat bgr; cv::cvtColor(out, bgr, cv::COLOR_HSV2BGR);
+    for (int y = 0; y < d.rows; ++y) {
+        const float* r = d.ptr<float>(y);
+        for (int x = 0; x < d.cols; ++x)
+            if (!(r[x] > 0.f)) bgr.at<cv::Vec3b>(y, x) = cv::Vec3b(90, 90, 90);
+    }
+    return bgr;
+}
+
 cv::Mat colourDepth(const cv::Mat& d, float maxM) {
     cv::Mat out(d.rows, d.cols, CV_8UC3, cv::Scalar(90, 90, 90));
     for (int y = 0; y < d.rows; ++y) {
@@ -184,6 +226,7 @@ struct Config {
     // field has data at all. Deriving it from the map means the display grows
     // when --farcell does, instead of needing to be remembered.
     float depthMaxM = 0.f;
+    bool  depthEq = false;      // histogram-equalised depth colouring, 'h'
     // RECORD every frame to a .kdr. Empty = off.
     //
     // This is the mechanism that makes a change ARGUABLE. A runtime toggle on a
@@ -868,11 +911,16 @@ static int runSession(Config C) {
         // Follows the coarsest layer unless overridden -- see Config::depthMaxM.
         const float dMax = C.depthMaxM > 0.f ? C.depthMaxM
                          : std::max(8.f, C.farCell > 0.f ? fp.maxIntegM : mp.maxIntegM);
-        cv::Mat dPane = fit(colourDepth(depth, dMax), PW, PH);
+        cv::Mat dPane = fit(C.depthEq ? colourDepthEq(depth, dMax)
+                                      : colourDepth(depth, dMax), PW, PH);
         {
             char db[80];
-            std::snprintf(db, sizeof(db), "DEPTH  grey = NO RETURN, not far   "
-                          "red 0 -> blue %.0f m", dMax);
+            std::snprintf(db, sizeof(db), "DEPTH  grey = NO RETURN, not far   %s",
+                          C.depthEq ? "colour spread by DATA (h)"
+                                    : (std::snprintf(nullptr, 0, "") , "linear"));
+            if (!C.depthEq)
+                std::snprintf(db, sizeof(db), "DEPTH  grey = NO RETURN, not far   "
+                              "red 0 -> blue %.0f m", dMax);
             banner(dPane, db);
         }
         {
@@ -944,8 +992,8 @@ static int runSession(Config C) {
                          std::min(2 * half, sliceFull.cols), std::min(2 * half, sliceFull.rows));
             roi &= cv::Rect(0, 0, sliceFull.cols, sliceFull.rows);
             sPane = fit(sliceFull(roi).clone(), PW, PH);
-            banner(sPane, "f far range   t stride   - + depth scale (0 auto)   "
-                          "r record   v view", PH - 12);
+            banner(sPane, "f range  t stride  - + scale (0 auto)  h equalise  "
+                          "r rec  v view", PH - 12);
             // Range rings on the slice too, so "how far does the map reach" is
             // answerable by eye rather than by trusting the caption.
             const float pxPerM = PW / (2.f * halfM);
@@ -1244,7 +1292,8 @@ static int runSession(Config C) {
                                                  pose.u, yaw, pitchDeg,
                                                  depth.cols, depth.rows,
                                                  cp.hfovDeg, FpvStyle(), &mask);
-            cv::Mat base = colourDepth(depth, dMax);
+            cv::Mat base = C.depthEq ? colourDepthEq(depth, dMax)
+                                     : colourDepth(depth, dMax);
             // Darken the camera image and lay the voxels over it only where
             // something was actually HIT. Blending the fog too would wash the
             // whole frame and hide the one thing being compared.
@@ -1392,7 +1441,16 @@ static int runSession(Config C) {
             // Everything below used to be a command-line flag, which meant
             // killing the session and losing the map to answer "what does the
             // next value look like". These rebuild only what has to be rebuilt.
+            if (k == 'h') { C.depthEq = !C.depthEq;
+                            std::printf("[view] depth colour %s\n",
+                                        C.depthEq ? "equalised" : "linear"); }
             if (k == 'f') {                                   // far layer range
+                // LATCH the display scale first. dMax follows the coarsest
+                // layer when depthMaxM is 0, so pressing 'f' used to move the
+                // map range AND the picture's colour scale together -- two
+                // variables on one key, which makes the comparison you are
+                // pressing it to make impossible. '0' returns to automatic.
+                if (C.depthMaxM <= 0.f) C.depthMaxM = dMax;
                 static const float FAR[] = {0.f, 1.f, 2.f, 4.f, 8.f};
                 int i = 0;
                 for (int j = 0; j < 5; ++j)

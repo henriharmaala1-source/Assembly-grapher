@@ -1546,6 +1546,40 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — a LINEAR depth ramp cannot show near and far at once
+
+Reported from the street scene: "the lamppost is only visible at the furthest
+scale setting -- **even in the depth vision**". That is the sharpest instrument
+finding of the day, because it is about the DISPLAY, not the map: the sensor had
+measured the lamppost the whole time and the ramp could not show it.
+
+The arithmetic is unavoidable. At a 10 m ramp everything past 10 m saturates to
+one blue, so a pole at 12 m and a wall at 30 m are the same pixel value. At a
+20 m ramp the near field collapses into a few shades of red instead. **One
+linear ramp cannot serve both ends**, and no choice of maximum fixes it.
+
+Equalisation does: build a 256-bin histogram of the valid depths, map through the
+CDF, and colour is allocated where the DATA is rather than uniformly over a range
+that is mostly empty. That is exactly why the RealSense Viewer's own display
+looked so much more informative than ours -- it defaults to equalised, which I
+noted earlier as "not real detail, just display". Half right: it is not extra
+data, but it IS extra visible information, and dismissing it was wrong. `h`
+toggles it.
+
+**And a bug I introduced yesterday, caught the same way.** Because `dMax` follows
+the coarsest layer when `depthMaxM` is 0, pressing `f` moved the map range AND
+the picture's colour scale together -- **two variables on one key**, which makes
+the very comparison you press it to make impossible. `f` now latches the display
+scale first; `0` returns it to automatic.
+
+That is the third time today an instrument has been the fault rather than the
+system, after the 8 m ramp and the 12 m slice crop. The pattern is worth naming
+properly: **a display that derives from a parameter you are sweeping is not an
+instrument, it is a second experiment running at the same time.**
+
+Confirmed in the same session: `--cell 0.25 --farcell 2` made the roof appear,
+which pins the earlier ladder-gap diagnosis.
+
 ## 2026-08-12 — the far layer was ERASING thin structure, not missing it
 
 A street scene, 76 % valid, a lamppost plainly visible at ~10 m in the depth

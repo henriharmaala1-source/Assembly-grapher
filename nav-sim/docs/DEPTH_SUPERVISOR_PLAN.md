@@ -5,6 +5,8 @@ tree yet. It is written now so that the design is fixed before the first line,
 because the whole value of this component is that it is *simple enough to
 trust*, and components like that are the easiest to accidentally complicate.
 
+Deferred behind the v1 flight milestone by `../../THESIS.md` P4.
+
 This is item (1) of the three things still worth taking from the two reference
 papers. Items (2) and (3) — the depth improver and yaw-coupled lateral velocity
 — are implemented; see `depth_improve.hpp` and `TrajParams::latSlipDeg`.

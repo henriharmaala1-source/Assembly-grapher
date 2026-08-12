@@ -5,6 +5,9 @@ rather than from code, so every number below is either measured elsewhere in thi
 tree (marked) or an estimate (marked). Companion to `DEPTH_SUPERVISOR_PLAN.md`
 and `APPEARANCE_AND_BLOBS_PLAN.md`.
 
+Deferred behind the v1 flight milestone by `../../THESIS.md` P4. Good ideas,
+wrong order: nothing here runs until something flies on the Pi.
+
 ---
 
 ## 0. The one claim everything here follows from

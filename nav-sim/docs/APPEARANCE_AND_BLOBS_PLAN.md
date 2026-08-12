@@ -8,6 +8,9 @@ build, and would be wrong in a way that kills the aircraft — and the second ha
 effort. Writing the argument down is how the ordering survives contact with a
 free afternoon.
 
+Deferred behind the v1 flight milestone by `../../THESIS.md` P4. Good ideas,
+wrong order: nothing here runs until something flies on the Pi.
+
 Companion to `DEPTH_SUPERVISOR_PLAN.md`. Where the supervisor is a *second
 independent path* to a veto, everything here is about extracting more from the
 path we already have.

@@ -1666,6 +1666,17 @@ signal* in the near field, which is a different use of the same measurement.
 
 ## Open / unresolved
 
+* **`THESIS.md` is the direction document; this file is the lab notebook.** The
+  thesis is autonomy on cheap CPU-only compute, where the *constraint is the
+  claim* rather than a budget accident. Five pivots follow from it, and they
+  reorder everything below: the Pi 5 benchmark is the headline experiment and
+  not housekeeping (the central claim is currently unmeasured); algorithmic
+  efficiency is the product, which promotes projective integration, an ESDF and
+  the SDK's own filters from nice-to-have to the argument itself;
+  `nav-sim`/`onboard` convergence is a blocker because the deliverable is a
+  flight; everything specced on 2026-08-12 is deferred behind that flight; and
+  ~2-3 m/s is a stated operating point derived from the sensor, not a flaw.
+  `THESIS.md` §4 also sets the first definition of done this project has had.
 * **`nav-sim/docs/POSE_AND_OPENNESS_PLAN.md`** — the state-estimation and
   bearing-space thread, planned and deliberately not built. Angular far-field
   openness map (32 kB, replaces `Mfar` and the `farOpen` march, accumulates on

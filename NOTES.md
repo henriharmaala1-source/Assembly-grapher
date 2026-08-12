@@ -1546,12 +1546,55 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — CORRECTION: the blocked pane was my ladder, not the odometry
+
+I blamed the missing odometry. Wrong, and the evidence was in the same
+screenshot: the MAP SLICE shows the cells around the camera **white — free**.
+There was no accumulated shell. The depth image was clean at 97 % valid. It was
+a bug I introduced this morning.
+
+**Cause: nearest-hit arbitration across the ladder.** `renderLadder` took the
+nearest hit across all levels, on the argument that "where two levels both know
+about a surface the finer one is in front of the coarser one's blocky
+approximation and wins on its own merits."
+
+**That argument is false.** A 2 m cell containing a surface at 3 m has its near
+FACE at up to 2 m — *nearer* than the fine level's accurate 3 m hit. So the
+coarse level systematically wins in the near field and draws every surface far
+too close. Indoors, where everything is within a few metres, a single 2 m cube
+subtends 50 deg or more and a handful of them fill the pane. Exactly the reported
+symptom: "it's like there's a voxel in the way."
+
+And the second report — *move very close and you see voxels behind* — is the
+same mechanism, not carving as I first said: getting inside the coarse cell's
+near face lets the fine level's hit finally win.
+
+**Fix: band each level by its own honest range, finest first.** Fine owns
+0–2.2 m, medium 2.2–3.5 m, coarse 3.5–9.8 m. A coarse level is never consulted
+inside a finer one's range. **The planner already had this rule** —
+`voxel_traj.cpp` marches "fine first ... if (t <= c.rangeM)" — so the renderer
+was the odd one out, and I wrote the wrong rule while the right one was three
+files away.
+
+Pinned: the coarse level cannot intrude on the fine level's range (896 -> 896 px
+unchanged), the ladder still gains what fine cannot reach (896 -> 1223), and it
+does **not** inherit the coarse near field (1223 vs 3605 coarse-alone). Note the
+ladder is deliberately no longer the union — the old test asserted that it was,
+and it caught this change, which is the test doing its job.
+
+The lesson is the one this project keeps relearning: **a rule that sounds right
+in a comment is not a measurement.** I wrote that justification into the header
+this morning and never rendered a scene close enough to falsify it.
+
 ## 2026-08-12 — real camera: voxels appear AT THE EYE, and why
 
 Two things at once on live frames, and only one of them is a bug.
 
-**The blocked view is the missing odometry, observed.** `voxel_live` assumes the
-pose is FIXED. Over 900 handheld frames every surface ever pointed at gets
+**[SUPERSEDED — see the correction above. The blocked view was the ladder's
+nearest-hit rule, not this. Kept because the reasoning below is still true of a
+moving handheld camera, just not the cause of what was observed.]**
+
+`voxel_live` assumes the pose is FIXED. Over 900 handheld frames every surface ever pointed at gets
 painted at its measured range from that one assumed origin, so a shell of
 occupied cells accumulates around the camera at every radius ever measured. The
 first-person raycast then terminates at t ~ 0 in every direction: a solid red

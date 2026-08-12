@@ -1093,17 +1093,27 @@ static int runSession(Config C) {
         // not sit on it. Each level's cast range is its own honest range plus
         // that, or the level would run out exactly where the aircraft is.
         auto ladder = [&](float extraBack) {
+            // FINEST FIRST, each level banded by its own honest range. A coarse
+            // level must never be consulted inside a finer level's range: a 2 m
+            // cell's near face can sit 2 m in front of the surface it contains,
+            // so it would draw a wall far too close and, in a room, fill the
+            // pane. See VoxelMap::Layer.
             std::vector<VoxelMap::Layer> ls;
-            if (C.farCell > 0.f) ls.push_back({&Mfar, fp.maxIntegM * 1.15f + extraBack});
-            ls.push_back({&M, mp.maxIntegM * 1.6f + extraBack});
+            float band = 0.f;
             // The fine layer only when the eye is ON the aircraft. Its grid is
             // +-2.6 m and the chase eye sits 1.65 m behind, so from there it
             // contributes a sliver -- and it is the most expensive layer to
             // cast, because DDA steps scale as 1/cell. Measured, chase pane,
             // 30 frames: 47.5 ms/frame with it, 22.9 ms without. Half the
             // render budget for a sliver.
-            if (haveNear && extraBack <= 0.f)
-                ls.push_back({&Mnear, np.maxIntegM * 1.6f});
+            if (haveNear && extraBack <= 0.f) {
+                ls.push_back({&Mnear, 0.f, np.maxIntegM * 1.15f});
+                band = np.maxIntegM * 1.15f;
+            }
+            ls.push_back({&M, band, mp.maxIntegM * 1.15f + extraBack});
+            band = mp.maxIntegM * 1.15f + extraBack;
+            if (C.farCell > 0.f)
+                ls.push_back({&Mfar, band, fp.maxIntegM * 1.15f + extraBack});
             return ls;
         };
 

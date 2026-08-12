@@ -382,7 +382,8 @@ public:
                        const FpvStyle& style = FpvStyle(),
                        cv::Mat* hitT = nullptr) const;
 
-    // Render several maps from one eye and keep, per pixel, the NEAREST hit.
+    // Render several maps from one eye, FINEST FIRST, taking the first level
+    // that has an opinion inside its own band.
     //
     // This exists because the ladder is otherwise invisible. Every view here
     // used to draw ONE level, and the level it picked was the finest -- whose
@@ -392,13 +393,29 @@ public:
     // rather than a correctly-scoped one. The coarse level DOES mark that trunk
     // -- 2 m cells reach 10 m -- it simply had nowhere to appear.
     //
-    // Nearest-hit rather than a priority order: where two levels both know
-    // about a surface the finer one is in front of the coarser one's blocky
-    // approximation and wins on its own merits, and where only the coarse one
-    // knows anything it is all there is. No arbitration needed.
+    // Order matters: pass the levels finest first. The first one whose hit
+    // falls inside its own band wins, so fine detail is used wherever it exists
+    // and the coarse level carries only the range beyond it.
+    // A level is consulted ONLY inside its own honest BAND. Both ends matter,
+    // and the far end was the obvious one.
+    //
+    // The near end is the one that produced a real fault. The first version of
+    // this took the NEAREST hit across all levels, on the argument that "where
+    // two levels both know about a surface the finer one is in front of the
+    // coarser one's blocky approximation and wins on its own merits". **That is
+    // false.** A 2 m cell containing a surface at 3 m has its near FACE at up to
+    // 2 m — nearer than the fine level's accurate 3 m hit — so the coarse level
+    // systematically wins in the near field and draws the surface far too close.
+    // Indoors, where everything is within a few metres, single 2 m cubes then
+    // subtend 50 deg or more and the pane goes solid. Observed on a real camera
+    // in a room, with a clean 97 % valid depth image going in.
+    //
+    // The planner already had the right rule: `voxel_traj.cpp` marches "fine
+    // first ... if (t <= c.rangeM)". This is that rule, in the renderer.
     struct Layer {
         const VoxelMap* map = nullptr;
-        float range = 0.f;              // how far to cast in THIS level
+        float minRange = 0.f;           // start of this level's band
+        float range = 0.f;              // end of it — its honest range
     };
     static cv::Mat renderLadder(const std::vector<Layer>& layers,
                                 float px, float py, float pz,

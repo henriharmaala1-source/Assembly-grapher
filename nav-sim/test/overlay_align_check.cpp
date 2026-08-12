@@ -212,12 +212,13 @@ int main() {
         };
         const int RW = 200, RH = 200;
         cv::Mat mf, mc, ml;
-        VoxelMap::renderLadder({{fine, 9.f}}, camE, camN, camU, yaw, pitch,
+        VoxelMap::renderLadder({{fine, 0.f, 9.f}}, camE, camN, camU, yaw, pitch,
                                RW, RH, 87.f, FpvStyle(), &mf);
-        VoxelMap::renderLadder({{crse, 9.f}}, camE, camN, camU, yaw, pitch,
+        VoxelMap::renderLadder({{crse, 0.f, 9.f}}, camE, camN, camU, yaw, pitch,
                                RW, RH, 87.f, FpvStyle(), &mc);
-        VoxelMap::renderLadder({{crse, 9.f}, {fine, 9.f}}, camE, camN, camU,
-                               yaw, pitch, RW, RH, 87.f, FpvStyle(), &ml);
+        // FINEST FIRST, each banded by its own honest range.
+        VoxelMap::renderLadder({{fine, 0.f, 3.f}, {crse, 3.f, 9.f}}, camE, camN,
+                               camU, yaw, pitch, RW, RH, 87.f, FpvStyle(), &ml);
         const int qf = quad(mf), qc = quad(mc), qm = quad(ml);
         check(qf < 5, "the FINE map alone cannot see a post past its own range",
               std::to_string(qf) + " px");
@@ -232,9 +233,37 @@ int main() {
                 tc += mc.at<uchar>(y, x) ? 1 : 0;
                 tm += ml.at<uchar>(y, x) ? 1 : 0;
             }
-        check(tm >= tf && tm >= tc, "the ladder is the union of what each level sees",
-              std::to_string(tf) + " / " + std::to_string(tc) + " -> " +
-              std::to_string(tm) + " px");
+        // The near post sits at 2 m, inside the fine level's band. A coarse cell
+        // containing it would have its near face up to 0.5 m in FRONT of it, so
+        // a nearest-hit ladder draws it too close -- the fault that filled a
+        // real first-person pane in a room. Banding means the fine level owns
+        // that range outright.
+        {
+            cv::Mat mNearOnly, mBanded;
+            VoxelMap::renderLadder({{fine, 0.f, 3.f}}, camE, camN, camU, yaw,
+                                   pitch, RW, RH, 87.f, FpvStyle(), &mNearOnly);
+            VoxelMap::renderLadder({{fine, 0.f, 3.f}, {crse, 3.f, 9.f}}, camE,
+                                   camN, camU, yaw, pitch, RW, RH, 87.f,
+                                   FpvStyle(), &mBanded);
+            int upperFine = 0, upperBand = 0;      // where only the near post is
+            for (int y = 0; y < RH / 2; ++y)
+                for (int x = RW / 2; x < RW; ++x) {
+                    upperFine += mNearOnly.at<uchar>(y, x) ? 1 : 0;
+                    upperBand += mBanded.at<uchar>(y, x) ? 1 : 0;
+                }
+            check(upperFine > 20 && upperBand == upperFine,
+                  "the coarse level cannot intrude on the fine level's range",
+                  std::to_string(upperFine) + " -> " + std::to_string(upperBand) + " px");
+        }
+
+        // Banding means the ladder is deliberately NOT the union. It must gain
+        // the far region the fine level cannot reach, and must NOT inherit the
+        // coarse level's near-field claims -- those are 2 m cells whose near
+        // faces sit in front of the surfaces they contain.
+        check(tm > tf, "the ladder gains what the fine level cannot reach",
+              std::to_string(tf) + " -> " + std::to_string(tm) + " px");
+        check(tm < tc, "and does NOT inherit the coarse level's near field",
+              std::to_string(tm) + " vs " + std::to_string(tc) + " px coarse-alone");
         delete fine; delete crse;
     }
 

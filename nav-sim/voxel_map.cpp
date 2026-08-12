@@ -262,7 +262,7 @@ cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
     cv::Mat any(outH, outW, CV_8U, cv::Scalar(0));
     cv::Mat best(outH, outW, CV_32F, cv::Scalar(0.f));             // 0 = no hit
 
-    for (const Layer& L : layers) {
+    for (const Layer& L : layers) {                   // finest first
         if (!L.map || L.range <= 0.f) continue;
         cv::Mat m, t;
         cv::Mat img = L.map->fpvImageWH(px, py, pz, yawDeg, pitchDeg,
@@ -276,8 +276,9 @@ cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
             uchar* ar = any.ptr<uchar>(v);
             float* br = best.ptr<float>(v);
             for (int u = 0; u < outW; ++u) {
+                if (ar[u]) continue;                     // a finer level already spoke
                 if (!mr[u]) continue;
-                if (ar[u] && br[u] <= tr[u]) continue;   // something nearer already
+                if (tr[u] < L.minRange) continue;        // too near for THIS level to judge
                 orow[u] = ir[u]; ar[u] = 255; br[u] = tr[u];
             }
         }

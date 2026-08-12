@@ -66,9 +66,71 @@ plumbing job. `SimFrameSource` can synthesise it from the world's existing
 `trunkTexMin/Max` (0.30–0.75) the same way it synthesises depth, and
 `.kdr` would need a second plane per frame or a sibling file.
 
-## 3. Why brightness cannot argue for FREE
+## 3. Brightness: two different questions, and only one of them is what was asked
 
-### 3.1 The polarity is backwards
+**Correction, and it matters.** Sections 3.1-3.4 below were written against the
+*active illumination* reading of the proposal -- the D435i's IR projector, near
+field, per-pixel. The question actually asked was about **passive RGB in the FAR
+field**: find open areas at a distance. That is a different physical problem and
+most of the argument below does not apply to it. Section 3.0 is the answer to
+the question that was asked; 3.1-3.4 remain correct for the active case and are
+kept because the active case is also worth knowing about.
+
+### 3.0 Passive far-field openness -- and why the objection in 3.1 does not apply
+
+For an extended surface under fixed ambient light, **image brightness is
+independent of distance.** The inverse-square falloff of received power is
+exactly cancelled by the pixel footprint growing as Z^2; radiance is
+distance-invariant. The 1/Z^2 term in 3.1 exists only because the illumination
+rides on the camera, so the surface's own irradiance falls off. Passive imaging
+has no such term.
+
+(The exception is a source *smaller than one pixel*. A thin branch at range does
+dim, because it fills less of the footprint -- so it appears as a dark thread
+against a bright gap, which helps rather than hurts.)
+
+**Bright far-field regions in a wood are sky, and sky is open.** This is not an
+analogy: foresters measure *canopy gap fraction* by thresholding upward
+hemispherical photographs, and it is a standard instrument. Sky segmentation is
+long established in outdoor robotics for horizon and attitude work.
+
+**The alignment objection in section 2 is also weakest here.** RGB is a separate
+imager needing an `rs2::align` pass whose parallax opens holes beside near
+objects -- but parallax goes to zero with distance. At 20 m a ~15 mm extrinsic
+offset subtends essentially nothing. The cost of using RGB is worst in the near
+field and negligible in the far field, which is exactly where this would be used.
+
+**The architectural fit is the strongest argument.** The far field is where the
+map is worst: past `maxIntegM` (3.5 m at 0.25 m cells) we carve but never mark,
+and past ~10 m even the coarse layer stops. The planner's `farWeight` openness
+term currently picks a bearing from the coarse map's occupancy density at ranges
+where stereo has almost nothing to say. A sky/gap signal is an **independent
+estimate of the same quantity, strongest precisely where the geometry is
+weakest** -- the reverse of the usual situation.
+
+And the slot already exists with the right safety semantics. The far map is
+documented *AWARENESS ONLY, NEVER PERMISSION*: it says which bearing looks open
+beyond the honest range and never grants leave to fly there. A brightness
+openness term drops into that contract unchanged.
+
+What still holds from the sections below:
+
+* **One-sided, but with the OPPOSITE polarity to 3.3.** Bright is strong
+  evidence of open; dark is evidence of nothing, because a shaded corridor
+  between trunks is both open and dark. It contributes to *choosing a bearing*
+  and never to carving a cell.
+* **Auto-exposure makes absolute brightness meaningless between frames.** Use
+  relative brightness within a frame, or lock the exposure. This is the first
+  thing to get wrong.
+* **It dies at dusk under closed canopy**, which is a real part of the envelope.
+  Unlike the IR path, this one has no fallback -- there is no visible-light
+  projector.
+
+Validation is the far-field openness A/B that already exists: does the chosen
+bearing agree better with truth openness at 10-25 m with the term on than off,
+over the standard 8 seeds? That is measurable in sim today with a synthetic sky.
+
+### 3.1 The polarity is backwards -- UNDER ACTIVE ILLUMINATION
 
 Under active illumination, received intensity goes as **albedo / Z²**. So for a
 pixel with *no depth return*:

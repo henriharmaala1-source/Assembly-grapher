@@ -1583,6 +1583,42 @@ x = 530 were being painted over by the buttons beside them. Legible only because
 nothing had been put in the right-hand column yet, and the new toggle put
 something there.
 
+## 2026-08-12 — correction: the brightness argument was for the wrong question
+
+I argued that brightness cannot indicate free space because intensity goes as
+albedo/Z^2. That is right for the IR projector and **wrong for passive RGB**,
+which is what was actually being proposed -- along with far field rather than
+near, which I also missed.
+
+For an extended surface under fixed ambient light, image brightness is
+**independent of distance**: the inverse-square falloff of received power is
+exactly cancelled by the pixel footprint growing as Z^2. The 1/Z^2 term exists
+only when the illumination rides on the camera. (Sources smaller than a pixel do
+dim -- so a thin branch appears as a dark thread against a bright gap, which
+helps.)
+
+And the idea is a real instrument. Foresters measure *canopy gap fraction* by
+thresholding upward hemispherical photographs; sky segmentation is long
+established in outdoor robotics. My alignment objection to RGB is also weakest
+exactly where it would be used: parallax goes to zero with distance, so a 15 mm
+depth-RGB offset subtends nothing at 20 m.
+
+The fit I missed entirely: **the far field is where the map is worst.** Past
+3.5 m we carve but never mark; past 10 m even the coarse layer stops. `farWeight`
+currently picks a bearing from coarse occupancy density at ranges where stereo
+has almost nothing to say. A sky/gap signal estimates the same quantity
+independently and is strongest where the geometry is weakest -- the reverse of
+the usual situation. And the far map's existing contract, *AWARENESS ONLY, NEVER
+PERMISSION*, is already the right safety semantics for it, unchanged.
+
+Survives: still one-sided but with the opposite polarity (bright means open;
+dark means nothing, since a shaded corridor is both open and dark); exposure
+must be locked or used relatively within a frame; and it dies at dusk under
+canopy with no fallback, there being no visible-light projector.
+
+`APPEARANCE_AND_BLOBS_PLAN.md` gains section 3.0 and the old argument is kept,
+scoped to the active case where it is correct.
+
 ## 2026-08-12 — appearance and blobs: planned, and the polarity is a trap
 
 Question raised: feed pixel intensity into contested cells, bright meaning

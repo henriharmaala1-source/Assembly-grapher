@@ -1546,6 +1546,39 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — a round blind spot, and why the SHAPE named the bug
+
+Reported: a circular hole in the middle of the first-person pane, absent from
+the depth image. The shape is the diagnosis.
+
+**Range along a ray grows radially.** A surface at distance D straight ahead is
+at range D on-axis and `D/cos(theta)` at angle theta. So **any range threshold in
+the renderer draws a circle centred on the optical axis.** If you see a round
+artefact in a perspective render and the depth is clean, look for a distance
+comparison, not for optics.
+
+I had put one there. The ladder band ends were `maxIntegM * 1.15`, but a layer
+can only MARK to `maxIntegM` -- so the outer 15 % of each band was territory the
+layer owned with no data in it, while the next layer was banded out. On the mid
+layer that is a dead shell from 3.54 to 4.07 m. A wall at 3.8 m is dropped
+on-axis and drawn beyond `acos(3.8/4.07) = 21 deg`, which in a 90 deg pane is a
+hole of roughly half the half-width.
+
+The 1.15 inflation was right in itself -- it covers cells marked slightly beyond
+`maxIntegM` before the aircraft moved -- but it belongs only on the OUTERMOST
+edge. Internal handovers now happen at the exact marking range, so band N ends
+where band N+1 begins and no layer owns range it cannot fill.
+
+Pinned both ways in `overlay_align_check`, with a frontal wall at 3.4 m past a
+3.0 m fine layer: inflated handover gives **0/400** centre pixels, exact handover
+gives **400/400**.
+
+Third bug in a row where the symptom's geometry named the cause -- the pale line
+was the horizon because level paths are coplanar with the eye, the ladder
+collapse was the coarse level's near face winning by half a cell, and this is a
+range threshold seen in perspective. **Perspective turns thresholds into shapes,
+and the shape is evidence.**
+
 ## 2026-08-12 — THE root cause: every anti-carve guard was written in METRES
 
 "The depth and voxels aren't matching." Traced by arithmetic this time rather

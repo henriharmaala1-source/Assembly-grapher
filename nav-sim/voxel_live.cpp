@@ -1269,14 +1269,29 @@ static int runSession(Config C) {
             // cast, because DDA steps scale as 1/cell. Measured, chase pane,
             // 30 frames: 47.5 ms/frame with it, 22.9 ms without. Half the
             // render budget for a sliver.
+            //
+            // HANDOVERS AT THE EXACT MARKING RANGE. The 1.15 inflation belongs
+            // only on the OUTERMOST edge, where it covers cells marked slightly
+            // beyond maxIntegM before the aircraft moved. Applying it to an
+            // internal handover creates a shell a layer OWNS and has no data
+            // for -- 3.54 to 4.07 m on the mid layer -- while banding the next
+            // layer out of it.
+            //
+            // And that shell renders as a CIRCLE, because range along a ray
+            // grows radially: a surface at D is at range D on-axis and D/cos(t)
+            // off it. A wall at 3.8 m is dropped on-axis and drawn beyond
+            // t = acos(3.8/4.07) = 21 deg, which is a round blind spot filling
+            // half the pane. Reported from the field as exactly that.
             if (haveNear && extraBack <= 0.f) {
-                ls.push_back({&Mnear, 0.f, np.maxIntegM * 1.15f});
-                band = np.maxIntegM * 1.15f;
+                ls.push_back({&Mnear, 0.f, np.maxIntegM});
+                band = np.maxIntegM;
             }
-            ls.push_back({&M, band, mp.maxIntegM * 1.15f + extraBack});
-            band = mp.maxIntegM * 1.15f + extraBack;
+            ls.push_back({&M, band, mp.maxIntegM + extraBack});
+            band = mp.maxIntegM + extraBack;
             if (C.farCell > 0.f)
                 ls.push_back({&Mfar, band, fp.maxIntegM * 1.15f + extraBack});
+            else if (!ls.empty())
+                ls.back().range = mp.maxIntegM * 1.15f + extraBack;
             return ls;
         };
 

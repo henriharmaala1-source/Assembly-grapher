@@ -303,6 +303,40 @@ int main() {
               std::to_string(freeOn) + " samples");
     }
 
+    // --- no range gap between ladder bands -----------------------------
+    // A band end past the layer's own marking range is territory it owns and
+    // has no data for, and the next layer is banded out of it. Because range
+    // along a ray grows as D/cos(theta), that shell renders as a CIRCLE on the
+    // optical axis -- reported from the field as a round blind spot.
+    {
+        VoxelMapParams qf; qf.cell = 0.10f; qf.maxIntegM = 3.0f;
+        qf.maxCarveM = 8.f; qf.depthSigCoef = 0.f; qf.minIntegM = 0.f;
+        VoxelMapParams qc = qf; qc.cell = 1.0f; qc.maxIntegM = 12.f;
+        VoxelMap Mf, Mc; Mf.init(qf, camE, camN, camU); Mc.init(qc, camE, camN, camU);
+        // A frontal wall at 3.4 m -- past the fine layer's 3.0 m marking range,
+        // so only the coarse layer can hold it.
+        cv::Mat d4(d.rows, d.cols, CV_32F, cv::Scalar(3.4f));
+        for (int i = 0; i < 6; ++i) { Mf.integrate(d4, cam, pose); Mc.integrate(d4, cam, pose); }
+
+        auto centreHits = [&](float fineBandEnd) {
+            cv::Mat m;
+            VoxelMap::renderLadder({{&Mf, 0.f, fineBandEnd},
+                                    {&Mc, fineBandEnd, 14.f}},
+                                   camE, camN, camU, yaw, pitch, 120, 120, 87.f,
+                                   FpvStyle(), &m);
+            int c = 0;                                   // centre 20x20 block
+            for (int y = 50; y < 70; ++y)
+                for (int x = 50; x < 70; ++x) c += m.at<uchar>(y, x) ? 1 : 0;
+            return c;
+        };
+        check(centreHits(3.0f * 1.15f) < 100,
+              "an inflated internal handover blanks the centre of the pane",
+              std::to_string(centreHits(3.0f * 1.15f)) + "/400 px");
+        check(centreHits(3.0f) == 400,
+              "and handing over at the exact marking range fills it",
+              std::to_string(centreHits(3.0f)) + "/400 px");
+    }
+
     // --- the carve clamp must scale with the CELL, not be a fixed metre ----
     // A porous obstacle (hedge, foliage, a pole) is hit by some rays and passed
     // by many. The clamp exists so the passing rays cannot carve the cell the

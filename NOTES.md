@@ -1546,6 +1546,50 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — first outdoor forest frames, and an instrument fault they exposed
+
+Real trees, handheld, `--farcell 8` (honest to 19.5 m). The stack works: the
+command arrow tracks, the three states all fire, and one frame reads
+`RIGHT 90 deg  STOPPED  0.3 m free  CLIMB` with the arrow clamped at 80 deg and
+the pinned-tick showing the angle is a floor rather than a reading. That is the
+HUD doing its job on a case the sim never produced.
+
+**Numbers, first outdoor data in the project:**
+
+* valid fraction **74-85 %** outdoors against 97 % indoors. Sky returns nothing
+  and the projector buys little at range. The grey is honest.
+* integrate **21.4-24.4 ms** outdoors against 17.5-18.6 ms indoors. Two variables
+  moved at once so it is not controlled, but the direction is diagnosable:
+  **fewer valid pixels and MORE time means the per-ray cost rose, so the rays got
+  longer.** DDA steps scale as carve-distance / cell -- indoors a 2 m return
+  carves ~1.5 m through 0.25 m cells (six steps), outdoors an 8 m return carves
+  ~6 m (twenty-four). The far layer at 8 m cells is nearly free; the MIDDLE layer
+  got dearer because the scene is deeper.
+* **Consequence for THESIS P1: the Pi benchmark must run on OUTDOOR data.**
+  Benchmarking the indoor recording would have flattered the headline number by
+  about 30 %.
+
+**The instrument fault.** The depth pane's colour ramp was hard-coded to 8 m. The
+RealSense Viewer at a 16 m scale shows plenty of real returns at 10-16 m in a
+wood -- on an 8 m ramp every one of them is the same blue, so **the pane
+saturates below where the question starts** and cannot answer "does the far field
+have data". Now derived from the coarsest layer's honest range, so it grows with
+`--farcell`, with `--depthmax` to override. The banner prints the range it used.
+
+Also confirmed from the Viewer's panel: resolution matches ours exactly
+(848x480, 30 fps, Z16), so the earlier indoor "more detail" was not resolution.
+Two things do differ: the Viewer had **Emitter: Laser ON** while `voxel_live`
+defaults it off, and its **Preset was "Custom"** -- meaning nobody has ever
+deliberately chosen between High Accuracy and High Density, which is precisely
+the holes-versus-lies trade this project's doctrine rests on. `rs2_set_option` is
+already in the runtime loader, so setting it is a flag rather than new API.
+
+And a calibration worth recording: the Viewer's OUTDOOR image is about as holey
+as ours. The indoor case where it looked much better was largely post-processing
+plus histogram equalisation on a scene that was mostly valid anyway. That lowers
+the urgency of the filter-chain work in THESIS P2 relative to what the first
+comparison suggested.
+
 ## 2026-08-12 — CORRECTION: the blocked pane was my ladder, not the odometry
 
 I blamed the missing odometry. Wrong, and the evidence was in the same

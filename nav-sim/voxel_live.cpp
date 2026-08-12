@@ -174,6 +174,16 @@ struct Config {
     // pixel-for-pixel comparison of map against depth, and painting a HUD over
     // the thing being compared works against the one question it answers.
     bool  turnHud = true;
+    // DEPTH COLOUR RANGE, metres. 0 = follow the coarsest layer's honest range.
+    //
+    // It was hard-coded to 8 m, which quietly made the depth pane useless for
+    // the one question it is most often asked. The RealSense Viewer at a 16 m
+    // scale shows plenty of real returns at 10-16 m in a wood; on an 8 m ramp
+    // every one of them is the same shade of blue, so the pane saturates below
+    // where the interesting question starts and you cannot tell whether the far
+    // field has data at all. Deriving it from the map means the display grows
+    // when --farcell does, instead of needing to be remembered.
+    float depthMaxM = 0.f;
     // COARSE FAR MAP. voxel_sim has had one for a long time; voxel_live did
     // not, which is why the live view showed nothing but the fine map's 3.5 m
     // and no larger voxels anywhere. That was a missing feature, not a camera
@@ -521,6 +531,8 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
         else if (!std::strcmp(argv[i], "--chase")) viewMode = 2;
         else if (!std::strcmp(argv[i], "--noarrow")) C.turnHud = false;
+        else if (!std::strcmp(argv[i], "--depthmax"))
+            C.depthMaxM = float(std::atof(next("0")));
         else if (!std::strcmp(argv[i], "--ui"))
             g_ui = std::max(0.4f, std::min(2.f, float(std::atof(next("0.75")))));
         else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
@@ -571,6 +583,7 @@ int mainCli(int argc, char** argv) {
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"
                 "  --noarrow           no command arrow on the first-person pane\n"
+                "  --depthmax 0        depth colour range, m; 0 = the map's own\n"
                 "  --ui 0.75           window scale; 1 is the old (large) size\n"
                 "  --frames N          stop after N frames\n"
                 "  --headless          no window; write PNGs to --out\n",
@@ -770,8 +783,16 @@ static int runSession(Config C) {
 
         // --- panes ---------------------------------------------------------
         const int PW = 420, PH = 320;
-        cv::Mat dPane = fit(colourDepth(depth, 8.f), PW, PH);
-        banner(dPane, "DEPTH  grey = NO RETURN, not far");
+        // Follows the coarsest layer unless overridden -- see Config::depthMaxM.
+        const float dMax = C.depthMaxM > 0.f ? C.depthMaxM
+                         : std::max(8.f, C.farCell > 0.f ? fp.maxIntegM : mp.maxIntegM);
+        cv::Mat dPane = fit(colourDepth(depth, dMax), PW, PH);
+        {
+            char db[80];
+            std::snprintf(db, sizeof(db), "DEPTH  grey = NO RETURN, not far   "
+                          "red 0 -> blue %.0f m", dMax);
+            banner(dPane, db);
+        }
         {
             int valid = 0;
             for (int y = 0; y < depth.rows; ++y) {
@@ -1129,7 +1150,7 @@ static int runSession(Config C) {
                                                  pose.u, yaw, pitchDeg,
                                                  depth.cols, depth.rows,
                                                  cp.hfovDeg, FpvStyle(), &mask);
-            cv::Mat base = colourDepth(depth, 8.f);
+            cv::Mat base = colourDepth(depth, dMax);
             // Darken the camera image and lay the voxels over it only where
             // something was actually HIT. Blending the fog too would wash the
             // whole frame and hide the one thing being compared.

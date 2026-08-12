@@ -931,8 +931,8 @@ static int runSession(Config C) {
                          std::min(2 * half, sliceFull.cols), std::min(2 * half, sliceFull.rows));
             roi &= cv::Rect(0, 0, sliceFull.cols, sliceFull.rows);
             sPane = fit(sliceFull(roi).clone(), PW, PH);
-            banner(sPane, "f far range   t stride   [ ] depth range   r record   v view",
-                   PH - 12);
+            banner(sPane, "f far range   t stride   - + depth scale (0 auto)   "
+                          "r record   v view", PH - 12);
             // Range rings on the slice too, so "how far does the map reach" is
             // answerable by eye rather than by trusting the caption.
             const float pxPerM = PW / (2.f * halfM);
@@ -1412,12 +1412,24 @@ static int runSession(Config C) {
                 if (C.farCell > 0.f) fp.integrateStride = std::max(4, C.stride * 2);
                 std::printf("[map] ray stride %d\n", C.stride);
             }
-            if (k == '[' || k == ']') {                       // depth colour range
+            // DEPTH COLOUR SCALE -- the metres at which the pane's red->blue
+            // ramp saturates. Nothing to do with the map or the sensor; it is
+            // how the top-left picture is painted, and it was stuck at 8 m,
+            // which is why everything past 8 m was one shade of blue.
+            //
+            // '-' and '+' because this is used on a Finnish keyboard, where
+            // '[' and ']' are AltGr+8 and AltGr+9 and highgui may never see
+            // them. '=' and the brackets stay as aliases for a US layout.
+            if (k == '+' || k == '=' || k == ']' ||
+                k == '-' || k == '_' || k == '[') {
+                const bool up = (k == '+' || k == '=' || k == ']');
                 float d = C.depthMaxM > 0.f ? C.depthMaxM : dMax;
-                d = (k == ']') ? d * 1.25f : d / 1.25f;
+                d = up ? d * 1.25f : d / 1.25f;
                 C.depthMaxM = std::max(2.f, std::min(40.f, d));
+                std::printf("[view] depth colour scale %.1f m\n", C.depthMaxM);
             }
-            if (k == '\\') C.depthMaxM = 0.f;                 // back to automatic
+            if (k == '0') { C.depthMaxM = 0.f;                 // back to automatic
+                            std::printf("[view] depth colour scale: automatic\n"); }
             if (k == 'r') {                                   // record on/off
                 if (recOpen) { rec.close(); recOpen = false;
                                std::printf("[rec] stopped\n"); }

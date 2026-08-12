@@ -1548,6 +1548,13 @@ appearances.
 
 ## 2026-08-12 — the settings belong in the viewer, not on the command line
 
+**Keys chosen for the keyboard they will be pressed on.** `[` and `]` were the
+first choice and are wrong: on a Finnish layout they are AltGr+8 and AltGr+9,
+which highgui may never deliver. `-` and `+` now, with `=` and the brackets kept
+as aliases for a US layout, and `0` for automatic. Obvious in hindsight, and the
+sort of thing that makes a feature quietly unusable rather than visibly broken.
+
+
 Fair complaint: every knob added today was a CLI flag, which means killing the
 session and losing the accumulated map to answer "what does the next value look
 like". That is a bad loop, and it is the one being used most.

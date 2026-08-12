@@ -718,7 +718,6 @@ static int runSession(Config C) {
         planUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
 
         ++n;
-        yaw += yawRateDps * (1.f / std::max(1, fps));
 
         // --- panes ---------------------------------------------------------
         const int PW = 420, PH = 320;
@@ -1085,6 +1084,14 @@ static int runSession(Config C) {
         }
 
         drawUs += (cv::getTickCount() - tDraw) * 1000000 / cv::getTickFrequency();
+
+        // Advance the heading AFTER everything that draws this frame. It used
+        // to sit just after plan(), so the map and the plan were built at one
+        // yaw and the views rendered at the next -- a frame's worth of rotation
+        // (0.8 deg at 25 deg/s) between a path and the map it was planned in.
+        // Under a pixel here, and wrong for the same reason the test's own
+        // unsequenced argument was wrong: nothing about the picture reveals it.
+        yaw += yawRateDps * (1.f / std::max(1, fps));
 
         cv::Mat full(PH * 2, PW * 2, CV_8UC3);
         dPane.copyTo(full(cv::Rect(0, 0, PW, PH)));

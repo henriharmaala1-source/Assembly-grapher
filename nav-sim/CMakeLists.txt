@@ -259,3 +259,21 @@ target_link_libraries(overlay_align_check PRIVATE ${OpenCV_LIBS})
 if(BUILD_TESTS)
   add_test(NAME overlay_align_check COMMAND overlay_align_check)
 endif()
+
+# Chase view: a path with fixed BODY shape must land on the same pixels at every
+# heading. The two panes that show the plan use different references -- the
+# top-down one is world-referenced and does not rotate -- so they cannot be
+# checked against each other by eye, and each of the three yaw conventions in
+# the chain could invert without any single view looking wrong.
+add_executable(chase_turn_check
+  test/chase_turn_check.cpp
+  voxel_map.cpp
+  voxel_traj.cpp
+  voxel_planner.cpp
+  depth_camera.cpp
+  voxel_world.cpp)
+target_include_directories(chase_turn_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(chase_turn_check PRIVATE ${OpenCV_LIBS})
+if(BUILD_TESTS)
+  add_test(NAME chase_turn_check COMMAND chase_turn_check)
+endif()

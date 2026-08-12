@@ -917,6 +917,15 @@ code:
   behind it, that unknown is a property of where the eye was put, and at
   first-person strength it saturates immediately and whites out the pane.
 
+The chase pane **turns with the aircraft**; the top-down PLAN pane does **not**
+— it is drawn in world axes, North up. At any heading other than North the same
+path therefore appears at two different angles in the two panes, both correct.
+Do not try to check one against the other by eye. `chase_turn_check` pins the
+property that matters instead: a path with fixed body-frame shape lands on the
+same pixels at every heading (worst drift 0.0005 px over seven headings), left
+curves draw left, and the planner's own body→world rotation agrees with the
+view's.
+
 Both first-person renders cast at half the pane's resolution and upscale; the
 plan is drawn at full size afterwards. The per-frame render cost is printed
 separately and is **not** counted in `ONBOARD TOTAL` — the aircraft never draws

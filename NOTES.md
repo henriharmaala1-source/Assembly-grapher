@@ -1473,6 +1473,46 @@ almost invisible past 4 m.
 Kept because it is correct, not because it changed anything. It would matter on
 a wider baseline (a D455's 95 mm doubles it) or flying in close quarters.
 
+## 2026-08-12 — does the 3D view turn? Yes, and the two panes cannot check it
+
+Asked whether the chase view actually turns when the plan is not straight ahead.
+It does — `--yawrate 25` puts a sharply left-curving green path in the chase
+pane — but the obvious way to verify that is worthless, and worth writing down
+before someone tries it: **the two panes that show the plan use different
+references.** The top-down PLAN pane is drawn in WORLD axes and does not rotate
+with the aircraft; the chase pane is drawn from an eye that does. At any heading
+other than North the same path appears at two different angles, both correct.
+Comparing them by eye proves nothing, and I spent a minute doing exactly that
+and getting confused before writing the test.
+
+`chase_turn_check` pins the invariant the chase view actually claims: **a path
+with fixed BODY shape must land on the same pixels at every heading.** Rotating
+the world and the eye must cancel exactly. Seven headings including negative and
+non-multiples of 90: worst drift 0.0005 px. Partnered with assertions that would
+catch a view satisfying it vacuously — left curves draw left, right draws right,
+symmetrically, and a hard-left escape leaves the frame rather than being tracked.
+Then a third part ties the drawing chain to the planner's own body→world
+rotation, so the test cannot pass while those two disagree: forward distance
+identical to six decimals at yaw 0, 90 and 200.
+
+Three yaw conventions in that chain (planner rotation, chase eye placement,
+renderer) and any one of them could invert without a single view looking wrong.
+
+**The test's first version failed for a good reason.** I built a 60 m room to
+plan in and every primitive was rejected at its first point. Not a bug — carving
+stops at `r - carveSigK·σ` and `σ = Z²σ_d/(fB)` is **20 m at 30 m** on a 50 mm
+baseline, so a wall that far away is worth nothing and the map correctly carved
+nothing from it. Shrunk the room to 6 m (σ 0.81 m, carve reaches 4.4 m). A
+reminder of how short the honest range really is: a room the size of a car park
+is, to this sensor, entirely unknown.
+
+**One real defect found by reading the chain:** `yaw += yawRateDps·dt` sat
+immediately after `plan()`, so the map and the plan were built at one heading and
+every view rendered at the next — a frame of rotation (0.8° at 25 °/s) between a
+path and the map it was planned in. Under a pixel, and invisible in the picture,
+which is the same reason the unsequenced `check(centroid(...))` argument was
+worth fixing. Moved to after everything that draws.
+
 ## 2026-08-12 — appearance and blobs: planned, and the polarity is a trap
 
 Question raised: feed pixel intensity into contested cells, bright meaning

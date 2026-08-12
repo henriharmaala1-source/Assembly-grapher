@@ -7,6 +7,11 @@ of it is *for*, and what would count as done.
 Written 2026-08-12, after a design review that put the whole architecture on
 trial. It should be edited when the thesis changes, not when the code does.
 
+`PROJECT_CV.md` is the companion: what role was actually played, what is honestly
+claimable, and the missing artifacts — requirements baseline, budgets with
+margin, interface control, V&V matrix, the hardware record, and the demo overlay
+— that turn the claims here into something a reviewer can check.
+
 ---
 
 ## 1. The thesis

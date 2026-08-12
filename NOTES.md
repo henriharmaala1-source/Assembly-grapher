@@ -1666,6 +1666,13 @@ signal* in the near field, which is a different use of the same measurement.
 
 ## Open / unresolved
 
+* **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes
+  them checkable: the four systems-engineering artifacts nobody has written
+  (requirements baseline, budgets with margin, interface control, V&V
+  matrix), a `docs/HARDWARE.md` for the airframe and power chain — the
+  hardest integration work in this project and currently invisible in the
+  record — and the demo overlay, since the constraint that makes this
+  interesting does not appear in flight footage.
 * **`THESIS.md` is the direction document; this file is the lab notebook.** The
   thesis is autonomy on cheap CPU-only compute, where the *constraint is the
   claim* rather than a budget accident. Five pivots follow from it, and they

@@ -1666,6 +1666,24 @@ signal* in the near field, which is a different use of the same measurement.
 
 ## Open / unresolved
 
+* **`nav-sim/docs/POSE_AND_OPENNESS_PLAN.md`** — the state-estimation and
+  bearing-space thread, planned and deliberately not built. Angular far-field
+  openness map (32 kB, replaces `Mfar` and the `farOpen` march, accumulates on
+  ATTITUDE ALONE because rotating an angular map is an index shift); the far
+  field supplying `goalAzDeg` instead of `farWeight`, which removes a tuning
+  weight rather than adding one; decay per metre travelled, bracketed between a
+  2-3 s turn and 5-12 s of drift; an 8^3 tile index that makes the decay pass
+  affordable, since ~1% of the map is ever observed; 3-DOF correlative scan
+  matching (local SLAM, explicitly no loop closure); and IMU attitude, whose
+  scaffolding turned out to be mostly present already.
+* **Two sim measurements decide that whole plan** and need no hardware: sweep
+  decay length against TRUE pose for the memory lower bound, then measure the
+  matcher's drift per metre against truth for the upper bound. If the bracket
+  closes, the answer is a shorter memory, not more estimation.
+* **Nothing in this project has ever been timed on a Pi 5.** 22 ms integrate,
+  1 ms plan, ~2 ms estimated scan match are all dev-box. A Cortex-A76 on
+  memory-bound work is plausibly 2-3x slower, which would put mapping alone at
+  50-60 ms inside a 100 ms cycle. An afternoon, and it reprices everything.
 * SMF-VO unread. Re-check when arXiv is reachable; if it holds, it becomes the
   state-estimation plan.
 * **`depth_camera.hpp` treats `subpixelPx` as a CONSTANT (0.25 px).** It is not.

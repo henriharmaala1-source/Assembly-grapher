@@ -44,7 +44,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -235,32 +234,11 @@ struct Button {
 int g_click = -1;
 std::vector<Button>* g_buttons = nullptr;
 
-// WINDOW SCALE. Everything here is laid out at a fixed size -- the menu at
-// 1000x740, the four-pane session at 840x640 -- and every caption, button and
-// HUD offset is written in those pixels. Rather than thread a scale through all
-// of that and get the text metrics wrong, the finished image is resized once on
-// its way to the screen and clicks are divided back out.
-//
-// 740 px of menu is most of the height of a 1366x768 laptop, which is where
-// this actually runs. Default 0.75; --ui 1 restores the old size.
-float g_ui = 0.75f;
-
 #if SIM_HAVE_HIGHGUI
-// Downscaled with INTER_AREA, not INTER_NEAREST: this is text and UI, and
-// nearest-neighbour on a 0.75 shrink eats whole strokes out of the glyphs.
-void showScaled(const char* win, const cv::Mat& img) {
-    if (g_ui > 0.999f && g_ui < 1.001f) { cv::imshow(win, img); return; }
-    cv::Mat s;
-    cv::resize(img, s, {}, g_ui, g_ui,
-               g_ui < 1.f ? cv::INTER_AREA : cv::INTER_LINEAR);
-    cv::imshow(win, s);
-}
-
 void onMouse(int event, int x, int y, int, void*) {
     if (event != cv::EVENT_LBUTTONDOWN || !g_buttons) return;
-    const cv::Point p(int(x / g_ui), int(y / g_ui));   // back into layout pixels
     for (const Button& b : *g_buttons)
-        if (b.enabled && b.r.contains(p)) { g_click = b.id; return; }
+        if (b.enabled && b.r.contains({x, y})) { g_click = b.id; return; }
 }
 #endif
 
@@ -434,41 +412,36 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                           C.emitter ? "emitter ON" : "emitter OFF", "", 12, true, C.emitter});
     label(img, "off = the outdoor case", 718, yset + 38, 0.42, {140, 140, 140});
 
-    // Three buttons per row and NO inline explanations on the crowded rows.
-    // The labels used to sit at x = 218 and x = 530 on this row and were simply
-    // painted over by the buttons beside them -- legible only because nothing
-    // had been added to the right-hand column yet. The explanations moved below
-    // the block, where they have the width they need.
     std::snprintf(b, sizeof(b), "ray stride  %d", C.stride);
     btns.push_back(Button{{20, yset + 62, 190, 40}, b, "", 14, true, C.stride > 1});
+    label(img, "mapping cost is linear in rays; 1 will not keep up at 30 fps",
+          218, yset + 88, 0.42, {140, 140, 140});
 
-    btns.push_back(Button{{240, yset + 62, 260, 40},
+    btns.push_back(Button{{240, yset + 62, 280, 40},
                           C.dirMode == 0 ? "steer: OPENNESS only"
                                          : "steer: general direction", "", 15,
                           true, C.dirMode == 1});
+    label(img, "no goal on a bench -- do not pretend there is one",
+          530, yset + 88, 0.42, {140, 140, 140});
 
     std::snprintf(b, sizeof(b), "spin  %.0f deg/s", C.yawRateDps);
     btns.push_back(Button{{20, yset + 112, 210, 40}, b, "", 13, true, C.yawRateDps != 0.f});
-    label(img, "only at a rate you KNOW",
+    label(img, "only if you know the real rate -- there is no odometry",
           240, yset + 138, 0.42, {140, 140, 140});
-    label(img, "ray stride 1 cannot keep up at 30 fps;  no goal on a bench, so do not steer toward one",
-          20, yset + 176, 0.42, {140, 140, 140});
 
     btns.push_back(Button{{20, H - 78, 250, 56}, "START", "", 20,
                           C.mode != "replay" || !C.path.empty()});
     btns.push_back(Button{{286, H - 78, 140, 56}, "QUIT", "", 21});
-    label(img, "window feels large?  run with  --ui 1.0  (or 0.6)", 20, H - 12, 0.42,
-          {150, 150, 150});
     btns.push_back(Button{{530, yset + 112, 300, 40},
                           C.viewMode == 0 ? "view: FIRST PERSON"
                                           : C.viewMode == 1 ? "view: OVERLAY on depth"
                                                             : "view: CHASE (3D plan)",
                           "", 16, true, C.viewMode == 1});
-    btns.push_back(Button{{520, yset + 62, 310, 40},
-                          C.turnHud ? "command arrow: ON" : "command arrow: off", "", 17,
+    btns.push_back(Button{{530, yset + 62, 300, 40},
+                          C.turnHud ? "turn arrow: ON" : "turn arrow: off", "", 17,
                           true, C.turnHud});
 
-    label(img, "In the view:  space  v view  a arrow  s save PNG  m menu  q quit",
+    label(img, "In the view:  space pause   v view   a arrow   s save PNG   m menu   q quit",
           446, H - 62, 0.46, {110, 110, 110});
     label(img, "Camera pose is assumed FIXED. Move it and the map",
           446, H - 42, 0.42, {150, 110, 60});
@@ -521,8 +494,6 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
         else if (!std::strcmp(argv[i], "--chase")) viewMode = 2;
         else if (!std::strcmp(argv[i], "--noarrow")) C.turnHud = false;
-        else if (!std::strcmp(argv[i], "--ui"))
-            g_ui = std::max(0.4f, std::min(2.f, float(std::atof(next("0.75")))));
         else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--nofar")) farCell = 0.f;
         else if (!std::strcmp(argv[i], "--nearcell")) nearCell = float(std::atof(next("0.10")));
@@ -570,8 +541,7 @@ int mainCli(int argc, char** argv) {
                 "  --farcell 2.0       coarse far layer, 0 = off. Honest to 10 m\n"
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"
-                "  --noarrow           no command arrow on the first-person pane\n"
-                "  --ui 0.75           window scale; 1 is the old (large) size\n"
+                "  --noarrow           no turn arrow on the first-person pane\n"
                 "  --frames N          stop after N frames\n"
                 "  --headless          no window; write PNGs to --out\n",
                 haveLiveSupport() ? "" : "  [NOT in this build -- no librealsense]");
@@ -963,24 +933,8 @@ static int runSession(Config C) {
                     a = b; have = ok;
                 }
             };
-            // NO ROLLOUTS HERE, and that is geometry rather than taste.
-            //
-            // Every LEVEL rollout lies in the horizontal plane through the eye,
-            // and that plane projects to a single horizontal line. A circular
-            // arc of radius R leaving along the optical axis projects to
-            // u = f*tan(theta/2) at v = cy EXACTLY, for every theta -- the
-            // whole fan collapses onto one row, left turns sweeping one way
-            // along it and right turns the other. What that drew was a pale
-            // blue line straight across the pane, present at all times and
-            // meaning nothing. Not a bug: correct, and useless, which is much
-            // harder to notice than wrong.
-            //
-            // The same finding that produced the chase view, sharpened. From
-            // the aircraft's own eye a forward path is a dot and a turning path
-            // is the horizon. Paths belong in CHASE. What belongs here is the
-            // aim point -- a real point in space, which projects like one --
-            // and the command arrow below.
-            (void)polyline;
+            for (const auto& c : traj.candidates()) polyline(c, {210, 170, 120}, 1);
+            polyline(traj.chosen(), {40, 190, 40}, 3);
             // The aim point: what the controller is actually commanded toward,
             // which is a short way along the winning path and NOT its endpoint.
             if (!traj.chosen().empty()) {
@@ -1002,67 +956,87 @@ static int runSession(Config C) {
         // geometry at all. A HUD that had to agree with the projection would be
         // a fourth place for a yaw convention to disagree.
         auto drawTurnHud = [&](cv::Mat& pane) {
-            // Signed relative bearing. Positive = the planner wants to go RIGHT
-            // of where the nose points. angDiffDeg lives in voxel_planner.hpp
-            // because the planner needs the same convention, and two copies of
-            // a sign convention is one copy too many.
+            // Signed relative bearing, degrees. Positive = the planner wants to
+            // go RIGHT of where the nose points.
             const float rel = angDiffDeg(gr.azDeg, yaw);
             const float relEl = gr.elDeg - pitchDeg;
 
-            const int  cxp = pane.cols / 2;
-            const int  base = pane.rows - 34;         // tail of the arrow
-            const cv::Scalar BLACK(20, 20, 20), HALO(250, 250, 250);
-            auto stroke = [&](cv::Point a, cv::Point b, bool head) {
-                // White underneath, black on top. The pane is voxels over fog
-                // and swings from near-white to dark within one frame, so a
-                // single-colour arrow disappears somewhere on every scene.
-                if (head) {
-                    cv::arrowedLine(pane, a, b, HALO, 9, cv::LINE_AA, 0, 0.34);
-                    cv::arrowedLine(pane, a, b, BLACK, 4, cv::LINE_AA, 0, 0.34);
-                } else {
-                    cv::line(pane, a, b, HALO, 9, cv::LINE_AA);
-                    cv::line(pane, a, b, BLACK, 4, cv::LINE_AA);
-                }
+            const float SPAN = 60.f;                 // half-width of the tape
+            const int   y0   = pane.rows - 30;    // inside the pale bottom band
+            const int   xC   = pane.cols / 2;
+            const float pxPerDeg = (pane.cols * 0.42f) / SPAN;
+            auto xFor = [&](float deg) {
+                return int(xC + std::max(-SPAN, std::min(SPAN, deg)) * pxPerDeg);
             };
 
+            // The tape. Ticks every 15 deg, taller at the nose, so the caret's
+            // offset reads as an ANGLE rather than as a distance along a bar.
+            cv::line(pane, {xFor(-SPAN), y0}, {xFor(SPAN), y0}, {60, 60, 60}, 3, cv::LINE_AA);
+            cv::line(pane, {xFor(-SPAN), y0}, {xFor(SPAN), y0}, {235, 235, 235}, 1, cv::LINE_AA);
+            for (int d = -60; d <= 60; d += 15) {
+                const int h = (d == 0) ? 9 : 5;
+                const cv::Point a(xFor(float(d)), y0 - h), b(xFor(float(d)), y0 + h);
+                cv::line(pane, a, b, {60, 60, 60}, 3, cv::LINE_AA);
+                cv::line(pane, a, b, {235, 235, 235}, 1, cv::LINE_AA);
+            }
+
+            // Where the camera stops seeing. A command outside this is a turn
+            // toward space the map can only know from memory, and on a rig with
+            // no odometry that memory is exactly what is not trustworthy. Amber
+            // because it is a caveat, not a fault.
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+                const int xf = xFor(sgn * cp.hfovDeg * 0.5f);
+                cv::line(pane, {xf, y0 - 13}, {xf, y0 + 13}, {40, 130, 210}, 2, cv::LINE_AA);
+            }
+
             // BLOCKED has no bearing worth pointing at, and drawing one anyway
-            // would be the most misleading thing this pane could do: it would
-            // say "go this way" at the moment the answer is "do not go".
+            // would be the most misleading thing this pane could do -- it would
+            // say "go this way" at the exact moment the answer is "do not go".
             if (gr.blocked || gr.src == GeneralResult::BLOCKED) {
-                const cv::Point c(cxp, base - 18);
-                cv::line(pane, {c.x - 17, c.y - 17}, {c.x + 17, c.y + 17}, HALO, 9, cv::LINE_AA);
-                cv::line(pane, {c.x - 17, c.y + 17}, {c.x + 17, c.y - 17}, HALO, 9, cv::LINE_AA);
-                cv::line(pane, {c.x - 17, c.y - 17}, {c.x + 17, c.y + 17}, {40, 40, 200}, 4, cv::LINE_AA);
-                cv::line(pane, {c.x - 17, c.y + 17}, {c.x + 17, c.y - 17}, {40, 40, 200}, 4, cv::LINE_AA);
-                banner(pane, "HOLD  nothing in the library is flyable", pane.rows - 62);
+                const cv::Scalar red(60, 60, 220);
+                cv::line(pane, {xC - 16, y0 - 16}, {xC + 16, y0 + 16}, red, 4, cv::LINE_AA);
+                cv::line(pane, {xC - 16, y0 + 16}, {xC + 16, y0 - 16}, red, 4, cv::LINE_AA);
+                banner(pane, "HOLD  nothing in the library is flyable", y0 - 18);
                 return;
             }
 
-            // THE COMMAND, as one arrow. Direction is the turn; LENGTH is the
-            // commanded speed, so a stopped aircraft draws a stub rather than a
-            // confident arrow with a 0.0 beside it. Both are motion commands
-            // and this is what the aircraft would actually be told to do.
-            const float th = std::max(-80.f, std::min(80.f, rel)) * PI_F / 180.f;
-            const float frac = std::min(1.f, gr.speed / std::max(0.1f, vmax));
-            const float L = 16.f + 40.f * frac;
-            const cv::Point tip(int(cxp + std::sin(th) * L),
-                                int(base - std::cos(th) * L));
-            stroke({cxp, base}, tip, true);
+            // The caret. HOLLOW when the command is off the end of the tape --
+            // the position is then a floor, not a reading, and a filled marker
+            // sitting at the end would claim a precision it does not have.
+            const bool pinned = std::fabs(rel) > SPAN;
+            const int xt = xFor(rel);
+            const cv::Point tri[3] = {{xt, y0 - 2}, {xt - 9, y0 + 14}, {xt + 9, y0 + 14}};
+            const cv::Scalar green(40, 190, 40);
+            if (pinned) {
+                const cv::Point* pts = tri; const int npt = 3;
+                cv::polylines(pane, &pts, &npt, 1, true, green, 2, cv::LINE_AA);
+            } else {
+                cv::fillConvexPoly(pane, tri, 3, green, cv::LINE_AA);
+            }
 
-            // Clamped is not the same as measured: past 80 deg the arrow angle
-            // is a floor, so it gets a tick rather than pretending to point at
-            // something it cannot.
-            if (std::fabs(rel) > 80.f) {
-                const int s = rel > 0.f ? 1 : -1;
-                stroke({tip.x + s * 6, tip.y - 8}, {tip.x + s * 6, tip.y + 8}, false);
+            // A chevron out at the edge as well, once the turn is big enough
+            // that the caret alone is easy to miss on a moving picture.
+            if (std::fabs(rel) > 12.f) {
+                const int s = (rel > 0.f) ? 1 : -1;
+                const int xe = (rel > 0.f) ? pane.cols - 26 : 26;
+                const int ye = y0 - 48;
+                for (int k = 0; k < 2; ++k) {
+                    const int off = k * 13;
+                    cv::line(pane, {xe - s * 10 + s * off, ye - 13},
+                             {xe + s * off, ye}, green, 3, cv::LINE_AA);
+                    cv::line(pane, {xe + s * off, ye},
+                             {xe - s * 10 + s * off, ye + 13}, green, 3, cv::LINE_AA);
+                }
             }
 
             // THREE states, not two, and the middle one is the interesting one.
-            // "no direction at all" (HOLD, above) is not "a direction, but
-            // nowhere near enough confirmed-free room to move". The second used
-            // to read AHEAD 0.0 m/s, which looks like a display fault rather
-            // than the speed budget doing its job.
-            char t[112], spd[40];
+            // "no direction at all" (HOLD, above) is not the same as "a
+            // direction, but nowhere near enough confirmed-free room to move".
+            // The second reads AHEAD 0.0 m/s, which looks like a display fault
+            // rather than the speed budget doing its job -- so it says STOPPED
+            // and prints the free distance that produced it.
+            char t[112];
+            char spd[40];
             if (gr.speed < 0.05f) std::snprintf(spd, sizeof(spd), "STOPPED  %.1f m free", gr.freeM);
             else                  std::snprintf(spd, sizeof(spd), "%.1f m/s", gr.speed);
             const char* climb = relEl > 5.f ? "  CLIMB" : (relEl < -5.f ? "  DESCEND" : "");
@@ -1071,7 +1045,7 @@ static int runSession(Config C) {
             else
                 std::snprintf(t, sizeof(t), "%s %.0f deg   %s%s",
                               rel > 0.f ? "RIGHT" : "LEFT", std::fabs(rel), spd, climb);
-            banner(pane, t, pane.rows - 62);
+            banner(pane, t, y0 - 18);
         };
 
         // EVERY view draws the whole ladder, not one rung of it.
@@ -1254,7 +1228,7 @@ static int runSession(Config C) {
 
 #if SIM_HAVE_HIGHGUI
         if (!headless) {
-            showScaled(WIN, full);
+            cv::imshow(WIN, full);
             const int k = cv::waitKey(paused ? 0 : 1);
             if (k == 'q' || k == 27) break;
             if (k == 'm') { backToMenu = true; break; }
@@ -1350,7 +1324,7 @@ int main(int argc, char** argv) {
 
     for (;;) {
         cv::Mat menu = renderMenu(C, recs, btns, note);
-        showScaled(WIN, menu);
+        cv::imshow(WIN, menu);
         g_click = -1;
         const int key = cv::waitKey(30);
         if (key == 'q' || key == 27) break;

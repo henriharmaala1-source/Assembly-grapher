@@ -917,32 +917,42 @@ code:
   behind it, that unknown is a property of where the eye was put, and at
   first-person strength it saturates immediately and whites out the pane.
 
-### The turn arrow
+### The command arrow, and why no paths are drawn here
 
-The first-person pane carries a bearing tape and a caret saying **which way to
-turn**, toggled with `a` (or the menu button, or `--noarrow`). It is there
-because the first-person view *cannot* show a forward path — forward rollouts
-run along the optical axis and project to a dot at the vanishing point, which is
-the finding that produced the chase view. So the pane that looks most like flying
-is the one that tells you least about where the plan goes, and the fix is the one
-aviation reached for: stop drawing the path, draw the **command**.
+The first-person pane draws **one black arrow**: direction is the commanded
+turn, length is the commanded speed. Toggled with `a`, the menu button, or
+`--noarrow`.
 
-- The caret sits at `angDiffDeg(commanded, heading)`; ticks every 15°, tallest
-  at the nose. It goes **hollow** past ±60° — pinned to the end of the tape, so
-  its position is a floor rather than a reading — and an edge chevron appears
-  once the turn exceeds 12°.
-- Two **amber marks** are the camera's FOV edges. A command outside them is a
-  turn toward space the map knows only from memory, and with no odometry that
-  memory is the least trustworthy thing here.
-- **Three** states, not two. `HOLD` (a red cross, no bearing drawn at all —
-  nothing in the library is flyable) is not the same as `STOPPED` (a direction
-  exists, but the confirmed-free distance buys no speed). The second used to read
-  `AHEAD 0.0 m/s`, which looks like a display fault rather than the speed budget
-  working, so it now says so and prints the free distance that caused it.
+It replaced the rollout fan, and that is a geometry result rather than a
+preference. **Every level rollout lies in the horizontal plane through the eye,
+and that plane projects to a single line.** A circular arc of radius R leaving
+along the optical axis projects to `u = f·tan(θ/2)` at `v = cy` *exactly*, for
+every θ — the whole fan collapses onto one row, left turns sweeping one way
+along it and right turns the other. What that drew was a pale blue line straight
+across the pane, present at all times, meaning nothing. It was not a bug; it was
+correct and useless, which is much harder to notice than wrong.
+
+So: paths belong in **CHASE**, where the eye is not in the plane they lie in.
+What belongs here is the aim point (a real point in space, which projects like
+one) and the command.
+
+**Three** states, not two. `HOLD` — a red cross, no direction drawn at all —
+means nothing in the library is flyable. `STOPPED` means a direction exists but
+the confirmed-free distance buys no speed; it used to read `AHEAD 0.0 m/s`,
+which looks like a display fault rather than the speed budget doing its job, so
+it now says so and prints the free distance that caused it.
 
 Deliberately not drawn on the overlay pane, whose job is pixel-for-pixel
 comparison of map against depth — painting a HUD over the thing being compared
 works against the only question that pane answers.
+
+### Window size
+
+The menu is laid out at 1000×740 and the session at 840×640, which is most of
+the height of the 1366×768 laptop this actually runs on. Both are scaled once on
+the way to the screen and clicks are divided back out, so every caption and
+button offset stays written in layout pixels. Default `--ui 0.75`; `--ui 1`
+restores the old size, `--ui 0.6` shrinks it further.
 
 The chase pane **turns with the aircraft**; the top-down PLAN pane does **not**
 — it is drawn in world axes, North up. At any heading other than North the same

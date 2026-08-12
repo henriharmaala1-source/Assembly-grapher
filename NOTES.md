@@ -1546,6 +1546,43 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — the pale line across the FPV pane was correct, and useless
+
+Asked what the horizontal line in the first-person pane was and whether the path
+visualisation was broken. Bisected it by switching the two polyline calls off
+behind env vars and re-rendering: the CANDIDATES draw it (`{210,170,120}` is
+BGR, so pale blue), and it survives with the chosen path off.
+
+It is not a bug. **Every level rollout lies in the horizontal plane through the
+eye, and that plane projects to a single line.** A circular arc of radius R
+leaving along the optical axis is at `(R(1-cos t), R sin t)` in (right, forward),
+so `u = f*(1-cos t)/sin t = f*tan(t/2)` and `v = cy` EXACTLY, for every t. The
+whole fan collapses onto one row: left turns sweep u one way, right turns the
+other, and together they paint the full width. Correct, and meaning nothing --
+which is much harder to spot than wrong, and it had been there since the first
+version of this pane.
+
+Same finding as the chase view, in its final form: from the aircraft's own eye a
+forward path is a dot and a turning path is the horizon. **There is no
+first-person drawing of a path that works.** Removed them from the FPV; they
+stay in CHASE, where the eye is not in the plane they lie in. The aim point
+stays, because it is a real point in space and projects like one.
+
+The compass tape went too -- replaced with a single black arrow, direction =
+commanded turn, length = commanded speed, white halo under black because the
+pane swings from near-white fog to dark voxels within one frame. STOPPED draws a
+stub rather than a confident arrow with 0.0 beside it.
+
+Window: menu 1000x740, session 840x640, which is most of a 1366x768 laptop.
+Scaled once at imshow with clicks divided back out, so all the layout maths stays
+in layout pixels -- threading a scale through every caption offset is how text
+metrics go wrong. Default `--ui 0.75`.
+
+Also found while looking: the menu's row-2 explanation labels at x = 218 and
+x = 530 were being painted over by the buttons beside them. Legible only because
+nothing had been put in the right-hand column yet, and the new toggle put
+something there.
+
 ## 2026-08-12 — appearance and blobs: planned, and the polarity is a trap
 
 Question raised: feed pixel intensity into contested cells, bright meaning

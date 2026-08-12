@@ -1673,6 +1673,12 @@ signal* in the near field, which is a different use of the same measurement.
   hardest integration work in this project and currently invisible in the
   record — and the demo overlay, since the constraint that makes this
   interesting does not appear in flight footage.
+* **GNSS is CARRIED, LOGGED and EXCLUDED FROM NAVIGATION** -- not absent. That
+  gives real-world ground truth for the drift-per-metre measurement that
+  `POSE_AND_OPENNESS_PLAN.md` §5 assumed needed a simulator, and a geofence that
+  never touches the planner. The risk: ArduPilot's EKF fuses a present receiver
+  unless `EK3_SRC*` forbids it, and it would fly beautifully while voiding the
+  claim. Verify with a connected-vs-unplugged controlled pair.
 * **GNSS denial and video denial are CHOSEN constraints, not omissions** -- see
   `THESIS.md` §1.0. One scenario, the contested zone, generates both: the same
   emitters jam satellite and 5.8 GHz video, spatially rather than

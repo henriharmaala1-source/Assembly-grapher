@@ -87,6 +87,10 @@ credible; someone who cannot, is not.
 - [ ] **Interface control.** `grep VoxelMap onboard/` returns nothing: `nav-sim`
       and `onboard` share zero code. That is an interface failure, and preventing
       exactly that is the job. It is also `THESIS.md` P3, a flight blocker.
+- [ ] **The GNSS-exclusion verification**, as a standing pre-flight item:
+      `EK3_SRC*` logged per flight, plus the connected-vs-unplugged controlled
+      pair. A silently-fusing EKF voids the central claim while looking like
+      success — see `THESIS.md` §1.0.
 - [ ] **V&V matrix.** Good ad-hoc tests exist (8 ctest targets, paired A/Bs,
       golden-frame MAVLink checks). What is missing is the mapping from each
       requirement to how it will be demonstrated.
@@ -120,9 +124,12 @@ So the demo has to show the *constraint*, not just the flight.
 
 - [ ] **Four-pane overlay as picture-in-picture** beside the flight footage:
       depth, voxel ladder, chase view with the rollout fan, command arrow. With
-      **`Raspberry Pi 5 · N ms/frame · no GPU · GPS: no fix`** burned into the
-      corner — both chosen constraints, both invisible in footage unless you put
-      them there, and the second is the operationally interesting one. For a v2
+      **`Raspberry Pi 5 · N ms/frame · no GPU · GPS: 14 sats, not used for nav`**
+      burned into the corner — both chosen constraints, both invisible in footage
+      unless you put them there, and the second is the operationally interesting
+      one. Note the wording: *having* a fix and declining to use it is a far
+      stronger claim than not having one, which could just mean flying under
+      canopy. For a v2
       fly-through-blind run, add the video-link state. The
       visualisation work was built for debugging and it is the demo asset —
       nobody else's video has it, because nobody else's constraint is interesting.

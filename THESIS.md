@@ -20,8 +20,8 @@ margin, interface control, V&V matrix, the hardware record, and the demo overlay
 and video-denied zone, on cheap CPU-only compute.**
 
 A Raspberry Pi 5. A used D435i. A 7" 6S quad that already exists. No GPU, no
-lidar, no Jetson, no cloud, no training cluster. **And no satellite fix, and no
-operator in the loop.**
+lidar, no Jetson, no cloud, no training cluster. **And no satellite information
+in the navigation solution, and no operator in the loop.**
 
 ### 1.0 The operational scenario every constraint comes from
 
@@ -34,7 +34,27 @@ expect to regain them on the far side.
 
 That single scenario generates everything:
 
-* **No GNSS → no absolute position reference.** This is the driver behind the
+* **GNSS is CARRIED, LOGGED, and EXCLUDED FROM NAVIGATION.** The claim is not
+  "there is no receiver" — it is that **nothing feeding the position estimate,
+  the planner or the controller is satellite-derived.** That is a more precise
+  claim, and it buys two things a bare absence would not:
+  * **Ground truth outdoors, for free.** Every autonomous flight logs a truth
+    trajectory to score the vision-only estimate against. The drift-per-metre
+    measurement in `POSE_AND_OPENNESS_PLAN.md` §5 stops needing a simulator. This
+    is also standard practice — VIO and SLAM work carries GPS/RTK as ground truth
+    for exactly this reason.
+  * **A safety envelope that does not contaminate the claim.** Geofence and a
+    lost-outside-the-test-area failsafe, on a channel that never reaches the
+    planner.
+
+  **The risk, and it is the kind this project exists to catch:** ArduPilot's EKF
+  will fuse a present receiver unless `EK3_SRC*` explicitly forbids it. The danger
+  is not that GNSS helps — it is that it helps *silently*, and the aircraft flies
+  beautifully while the demonstration is void. It would look exactly like success.
+  **Verification is a controlled pair:** the same mission flown twice, once with
+  the receiver connected but not sourced, once with it physically unplugged.
+  Identical behaviour, or the claim does not hold.
+* **No GNSS in the loop → no absolute position reference.** This is the driver behind the
   whole of `nav-sim/docs/POSE_AND_OPENNESS_PLAN.md`. Bounded memory, attitude-only
   far-field accumulation, local SLAM with no loop closure, refusing to claim a
   pose in an unobservable direction — none of those are workarounds for missing
@@ -43,7 +63,8 @@ That single scenario generates everything:
 * **The standard failsafe is unavailable, and this is the crux.** ArduPilot's RTL
   needs a position estimate and there isn't one. So link loss inside a GNSS-denied
   zone leaves three options: land where you are, continue blind on the last
-  heading, or navigate onboard. The first two lose the aircraft. **Vision-based
+  heading, or navigate onboard. (Carrying a receiver does not change this — in a
+  jammed zone it has no fix to give.) The first two lose the aircraft. **Vision-based
   onboard autonomy is not an enhancement here — it is the only available answer.**
 * **Zoned, not continuous, sets the required behaviour: maintain intent and
   continue through.** Not turn back. An aircraft that returns home at the jamming

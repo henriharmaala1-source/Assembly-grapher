@@ -1546,6 +1546,45 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — THE root cause: every anti-carve guard was written in METRES
+
+"The depth and voxels aren't matching." Traced by arithmetic this time rather
+than by another hypothesis, and it explains the lamppost, the hedge, and most of
+the far field going missing.
+
+**Every mechanism that stops a ray carving through an obstacle is expressed in
+metres, tuned against 0.25 m cells.** On the coarse layer the cells are 2-8 m,
+so all of them stop *inside* the cell they are meant to protect:
+
+| guard | value at 8 m | in 0.25 m cells | in 4 m cells |
+|---|---|---|---|
+| `carveSigK * sigma` | 1.43 m | 5.7 cells | **0.36 cells** |
+| `carveSlackM` | 0.50 m | 2 cells | **0.125 cells** |
+
+So the local-minimum clamp -- the guard whose entire job is "do not carve past
+the nearest thing seen nearby" -- carved to `lm + 0.5`, which on a 4 m grid runs
+straight through the middle of the cell the return came from. A porous object
+(hedge, foliage, a pole against sky) is hit by some rays and passed by many; the
+passers erased what the hitters marked, in the same cell, every frame.
+
+Fixed: `carve = min(carve, lm - cell)` -- carve up to, never INTO, the cell
+holding the nearest neighbourhood return. **Cells, not metres.** That supersedes
+`carveSlackM` in this expression; a positive tolerance is exactly what allowed
+the overshoot.
+
+**Two instrument faults on the way, both mine, both worth recording:**
+
+* First attempt kept the slack (`lm + 0.5 - cell`). At 0.25 m that is still
+  `lm + 0.25` -- past `lm`. The new test failed on the FINE grid and caught it.
+* Then the test failed on BOTH grids, and the test was wrong: it probed
+  `camN + 8.0` exactly, and the ray endpoint lands a hair short of the cell
+  boundary and floors into the previous cell. Scanning a cell either side fixed
+  it. **Probing a boundary is not a measurement.**
+
+Pinned in `overlay_align_check`: a surface returning at every 4th column, with
+30 m visible through the gaps, survives on a 0.25 m grid (it always did) and now
+survives on a 4 m grid (it did not).
+
 ## 2026-08-12 — a LINEAR depth ramp cannot show near and far at once
 
 Reported from the street scene: "the lamppost is only visible at the furthest

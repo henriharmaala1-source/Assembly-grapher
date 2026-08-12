@@ -396,7 +396,30 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
             // Never claim free space beyond the nearest thing seen nearby.
             if (!localMin.empty()) {
                 float lm = localMin.at<float>(v, u);
-                if (lm < 1e8f) carve = std::min(carve, lm + p_.carveSlackM);
+                // MINUS ONE CELL, and this is the whole point of the clamp.
+                //
+                // Carving to `lm + slack` stops 0.5 m past the nearest
+                // neighbourhood return. On a 0.25 m map that is two cells past
+                // it, which is the intended tolerance. On a 4 m map it is an
+                // eighth of a cell -- so the carve runs straight through the
+                // middle of the very cell the return came from, and the guard
+                // does nothing at all.
+                //
+                // Every anti-carve-through mechanism in this file was written in
+                // METRES against 0.25 m cells: carveSigK*sigma is 1.43 m at 8 m,
+                // which is 5.7 fine cells and 0.36 coarse ones. On the coarse
+                // layer they all stop inside the obstacle. That is why a hedge
+                // plainly visible at 8 m produced no voxels: the rays passing
+                // through its gaps carved the cell its own twigs had marked.
+                //
+                // So the rule is CELLS, not metres: carve up to, never INTO,
+                // the cell holding the nearest neighbourhood return. That is
+                // `lm - cell`, and it supersedes carveSlackM in this expression
+                // -- a positive tolerance is what let the carve overshoot in the
+                // first place. My first attempt kept the slack (lm + 0.5 - cell)
+                // and the new test failed on the FINE grid too, because
+                // lm + 0.25 is still past lm.
+                if (lm < 1e8f) carve = std::min(carve, lm - p_.cell);
             }
             bool markHit = (r <= p_.maxIntegM);
             if (carve <= 0.f && !markHit) continue;

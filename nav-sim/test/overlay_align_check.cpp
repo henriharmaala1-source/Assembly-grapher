@@ -303,6 +303,40 @@ int main() {
               std::to_string(freeOn) + " samples");
     }
 
+    // --- the carve clamp must scale with the CELL, not be a fixed metre ----
+    // A porous obstacle (hedge, foliage, a pole) is hit by some rays and passed
+    // by many. The clamp exists so the passing rays cannot carve the cell the
+    // hitting rays marked -- but it was `lm + 0.5 m`, which on a 4 m grid is an
+    // eighth of a cell, so the carve ran through the middle of the very cell it
+    // was protecting. Observed as a hedge plainly visible at 8 m with no voxels.
+    {
+        auto porousSurvives = [&](float cellM) {
+            VoxelMapParams q;
+            q.cell = cellM; q.maxIntegM = 20.f; q.maxCarveM = 40.f;
+            q.depthSigCoef = 0.f; q.carveWinPx = 9; q.minIntegM = 0.f;
+            VoxelMap M2; M2.init(q, camE, camN, camU);
+            // A porous surface at 8 m: every 4th column returns 8 m, the rest
+            // see straight through to 30 m. Three hitting rays per twelve.
+            cv::Mat d3(d.rows, d.cols, CV_32F, cv::Scalar(30.f));
+            for (int y = 0; y < d3.rows; ++y)
+                for (int x = 0; x < d3.cols; x += 4) d3.at<float>(y, x) = 8.f;
+            for (int i = 0; i < 8; ++i) M2.integrate(d3, cam, pose);
+            // Scan a cell either side rather than probing 8.0 m exactly. The
+            // ray endpoint lands a hair short of the boundary and floors into
+            // the previous cell, so an exact probe tests the wrong cell -- my
+            // first version of this failed on BOTH grids for that reason, and
+            // the instrument was the fault, not the map.
+            for (float t = 8.f - cellM; t <= 8.f + cellM; t += cellM * 0.25f)
+                if (M2.stateAt(camE, camN + t, camU) == VoxelMap::OCCUPIED) return true;
+            return false;
+        };
+        check(porousSurvives(0.25f),
+              "a porous surface survives on a fine grid (it always did)");
+        check(porousSurvives(4.0f),
+              "and now survives on a COARSE grid, where the clamp used to be "
+              "an eighth of a cell");
+    }
+
     // --- the chase view's unknown fog -------------------------------------
     // Standing BEHIND the aircraft means every ray crosses metres of space
     // nobody ever measured before it reaches the scene. At first-person fog

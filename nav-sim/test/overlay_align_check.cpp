@@ -238,6 +238,42 @@ int main() {
         delete fine; delete crse;
     }
 
+    // --- minimum trusted range: a near return is not a measurement ---------
+    // Held a hand near a real D435i and got flickering voxels at the eye with a
+    // solid first-person pane. Inside the sensor's minimum range the matcher is
+    // past its disparity search, the occlusion band is 18 % of the frame, and
+    // the projector saturates -- what comes back is confidently wrong, not
+    // missing. Marking it puts OCCUPIED cells where the aircraft is.
+    {
+        VoxelMapParams q;
+        q.cell = 0.10f; q.maxIntegM = 6.f; q.maxCarveM = 8.f; q.carveWinPx = 0;
+        q.depthSigCoef = 0.f;
+        // A frame that is entirely one flat surface at 0.12 m -- inside the gate.
+        cv::Mat near12(d.rows, d.cols, CV_32F, cv::Scalar(0.12f));
+
+        auto countStates = [&](float minM, int& occ, int& freeN) {
+            VoxelMapParams qq = q; qq.minIntegM = minM;
+            VoxelMap M2; M2.init(qq, camE, camN, camU);
+            for (int i = 0; i < 6; ++i) M2.integrate(near12, cam, pose);
+            occ = freeN = 0;
+            for (float t = 0.02f; t < 1.0f; t += 0.02f) {
+                const VoxelMap::State st = M2.stateAt(camE, camN + t, camU);
+                if (st == VoxelMap::OCCUPIED) ++occ;
+                else if (st == VoxelMap::FREE) ++freeN;
+            }
+        };
+        int occOff = 0, freeOff = 0, occOn = 0, freeOn = 0;
+        countStates(0.f,    occOff, freeOff);     // old behaviour
+        countStates(0.25f,  occOn,  freeOn);      // gated
+
+        check(occOff > 0, "without the gate, a 0.12 m return marks cells OCCUPIED",
+              std::to_string(occOff) + " samples");
+        check(occOn == 0, "with it, nothing inside the minimum range is marked",
+              std::to_string(occOn) + " samples");
+        check(freeOn == 0, "and nothing is CARVED either -- no mark, no carve",
+              std::to_string(freeOn) + " samples");
+    }
+
     // --- the chase view's unknown fog -------------------------------------
     // Standing BEHIND the aircraft means every ray crosses metres of space
     // nobody ever measured before it reaches the scene. At first-person fog

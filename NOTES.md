@@ -1546,6 +1546,52 @@ Nothing about the rendered arrow would ever have revealed this. It was found by
 asserting a range, which is the argument for testing conventions rather than
 appearances.
 
+## 2026-08-12 — real camera: voxels appear AT THE EYE, and why
+
+Two things at once on live frames, and only one of them is a bug.
+
+**The blocked view is the missing odometry, observed.** `voxel_live` assumes the
+pose is FIXED. Over 900 handheld frames every surface ever pointed at gets
+painted at its measured range from that one assumed origin, so a shell of
+occupied cells accumulates around the camera at every radius ever measured. The
+first-person raycast then terminates at t ~ 0 in every direction: a solid red
+pane, red because the height key says "at your altitude" and the shell is, with
+no distance haze because there is no distance. Faint bands above and below are
+the same shell a little higher and lower.
+
+And the tell that confirms it: **moving the camera very close to something
+reveals what is behind.** That is carving working correctly -- a return at 0.3 m
+carves 0 to 0.3 m along its ray and punches a hole through the accumulated
+shell. Not a fix, but it is the only mechanism that can undo the damage.
+
+**The real bug: there was no minimum trusted range.** Any return was marked
+OCCUPIED if `r <= maxIntegM`, including returns inside the sensor's own minimum
+where it is not measuring anything. Holding a hand near the lens produced
+flickering voxels at the eye, which is exactly the signature.
+
+Inside the minimum range a stereo camera does not fail quietly, it fails
+CONFIDENTLY: the disparity is past the matcher's search range, the occlusion
+band is `f*B/Z` = 149 px at 0.15 m (18 % of an 848-wide frame with no
+counterpart in the right image at all), and a close surface saturates both
+imagers with the projector. That is the speckle class `depth_camera.hpp` already
+warns about -- "a hole is safe, a confident wrong depth is not".
+
+**Why it flickers, quantitatively.** `lHit/lMiss` = 0.85/0.40, so one spurious
+hit cancels two carving passes: a spurious rate above roughly **one frame in
+three** holds a cell OCCUPIED indefinitely. Near-field garbage is far above that,
+so it wins the argument -- in the cells the aircraft occupies, where
+`sphereClear`'s core test then rejects every primitive at its first point. That
+is the BLOCKED-at-start signature, and it would have happened in flight.
+
+Fixed with `VoxelMapParams::minIntegM` (0.25 m; 0 restores the old behaviour).
+Below it a return is treated exactly like an invalid pixel: **no mark AND no
+carve**, because it is not a measurement. Pinned in `overlay_align_check`: a
+0.12 m frame marks 5 sampled cells occupied without the gate and 0 with it, and
+carves nothing either way.
+
+Measured on real depth at 97 % valid with the full three-layer ladder:
+**integrate 17.5-18.6 ms**, better than the sim's ~22 ms. Still a laptop, not a Pi.
+
 ## 2026-08-12 — the pale line across the FPV pane was correct, and useless
 
 Asked what the horizontal line in the first-person pane was and whether the path

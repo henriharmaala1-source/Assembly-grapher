@@ -33,6 +33,29 @@ namespace sim {
 struct VoxelMapParams {
     float cell     = 0.25f;
     int   nx       = 240, ny = 240, nz = 96;   // ~60 x 60 x 24 m at 0.25 m
+    // MINIMUM TRUSTED RANGE. Below this a return is NOT A MEASUREMENT and is
+    // treated exactly like an invalid pixel: no mark, no carve, no information.
+    //
+    // Every stereo camera has one, and inside it the sensor does not fail
+    // quietly -- it fails CONFIDENTLY. At 0.15 m on the D435i the disparity is
+    // past the matcher's search range, the occlusion band is f*B/Z = 447*0.05
+    // /0.15 = 149 px (18 % of an 848-wide frame with no counterpart in the
+    // right image at all), and a close surface reflects enough of the ~1 W
+    // projector to saturate both imagers. What comes back is the speckle class
+    // depth_camera.hpp already warns about: "a hole is safe, a confident wrong
+    // depth is not."
+    //
+    // Marking those returns is worse than useless, and the log-odds asymmetry
+    // is why. lHit/lMiss = 0.85/0.40, so ONE spurious hit cancels two carving
+    // passes: a spurious rate above roughly one frame in three holds a cell
+    // OCCUPIED indefinitely. Near-field garbage is far above that, so it wins
+    // the argument -- and it wins it in the cells the aircraft is sitting in,
+    // where sphereClear's core test then rejects every primitive at its first
+    // point. Observed on a real D435i by holding a hand near the lens: voxels
+    // appear at the eye, flickering, and the first-person view goes solid.
+    //
+    // 0 disables, restoring the old behaviour exactly.
+    float minIntegM = 0.25f;
     float lHit     = 0.85f;    // log-odds added at a ray's termination
     float lMiss    = 0.40f;    // log-odds removed along the free part of a ray
     float lClamp   = 4.0f;     // saturation, so the map can still change its mind

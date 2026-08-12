@@ -368,7 +368,7 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
     cv::Mat localMin;
     if (p_.carveWinPx > 1) {
         cv::Mat dv = depth.clone();
-        dv.setTo(1e9f, depth <= 0.f);
+        dv.setTo(1e9f, depth <= std::max(0.f, p_.minIntegM));
         cv::erode(dv, localMin, cv::getStructuringElement(
                       cv::MORPH_RECT, cv::Size(p_.carveWinPx, p_.carveWinPx)));
     }
@@ -384,6 +384,9 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
             // maxRange on a miss "because there was clearly nothing there" --
             // on an untextured wall there very clearly was.
             if (!(r > 0.f)) continue;
+            // ... and a return inside the sensor's minimum range is not a
+            // measurement either. Same rule, same reason. See minIntegM.
+            if (r < p_.minIntegM) continue;
             float dx, dy, dz; cam.rayFor(pose, u, v, dx, dy, dz);
             // How far can this ray's free space be trusted? Up to the hit minus
             // a few sigma of its own depth uncertainty, capped at maxCarveM.

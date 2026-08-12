@@ -895,16 +895,32 @@ vanishing point. Seeing a path as a path needs a viewpoint the path is not
 pointing at. It is framed on the plan's own length (`horizonS × vMax`) rather
 than on the map's range, for the same reason.
 
-Two details in that pane are worth knowing, because both were wrong first and
-both are invisible from the code:
+All three views draw **the whole ladder**, not one rung of it. This matters more
+than it sounds. Each view used to render the finest map available, and a fine
+map's honest *marking* range is short by construction — 3.5 m at 0.25 m cells,
+2.2 m at 0.10 m — so a room whose nearest surface is four metres off came out as
+an empty pane, on the real camera and in the sim both. The coarse level had
+marked those walls all along (2 m cells reach 10 m) and had nowhere to appear.
+`VoxelMap::renderLadder` casts every level from one eye and keeps the **nearest
+hit** per pixel: fine detail in front where both levels know, coarse blocks
+everywhere the fine map has stopped.
 
-* It renders the **0.25 m map**, not the finest layer available. The near layer's
-  grid covers its own honest range and no more — that is what makes a fine layer
-  cheap — so a camera two metres behind the aircraft is already at its edge.
+Two more details in the chase pane, both wrong first and both invisible from the
+code:
+
+* It **drops the 0.10 m layer**. That grid is ±2.6 m and the chase eye sits
+  1.65 m behind the aircraft, so the fine layer contributes a sliver — for half
+  the render budget, because DDA steps scale as 1/cell (47.5 ms with it, 22.9
+  without, measured over 30 frames).
 * Its **unknown fog is turned down** (`FpvStyle`). Fog for metres of unmeasured
   space is honest when the eye is the aircraft's; when the eye is two metres
   behind it, that unknown is a property of where the eye was put, and at
   first-person strength it saturates immediately and whites out the pane.
+
+Both first-person renders cast at half the pane's resolution and upscale; the
+plan is drawn at full size afterwards. The per-frame render cost is printed
+separately and is **not** counted in `ONBOARD TOTAL` — the aircraft never draws
+any of this.
 
 The viewpoint sits 0.55 × span back and 0.62 × span up, aimed at the middle of
 the plan — about 31° above it. Elevation is the number that matters: a path's

@@ -177,9 +177,10 @@ cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
                              float yawDeg, float pitchDeg,
                              int outW, int outH, float hfovDeg,
                              float maxRange, cv::Mat* hitMask,
-                             const FpvStyle& style) const {
+                             const FpvStyle& style, cv::Mat* hitT) const {
     cv::Mat img(outH, outW, CV_8UC3);
     if (hitMask) *hitMask = cv::Mat(outH, outW, CV_8U, cv::Scalar(0));
+    if (hitT) *hitT = cv::Mat(outH, outW, CV_32F, cv::Scalar(0.f));
     // One focal length for both axes: the vertical FOV then falls out of the
     // aspect ratio, which is what a pinhole does and what makes this line up
     // with the depth image pixel for pixel.
@@ -199,6 +200,7 @@ cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
     for (int v = 0; v < outH; ++v) {
         cv::Vec3b* row = img.ptr<cv::Vec3b>(v);
         uchar* mrow = hitMask ? hitMask->ptr<uchar>(v) : nullptr;
+        float* trow = hitT ? hitT->ptr<float>(v) : nullptr;
         for (int u = 0; u < outW; ++u) {
             // Camera frame: +X right, +Y down, +Z forward, then pitch, then yaw
             // clockwise from North -- identical to DepthCamera::rayFor, because
@@ -229,6 +231,7 @@ cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
             }
             row[u] = cv::Vec3b(uchar(col[0]), uchar(col[1]), uchar(col[2]));
             if (mrow) mrow[u] = h.hit ? 255 : 0;
+            if (trow) trow[u] = h.hit ? h.t : 0.f;
         }
     }
     // Caption strips, top and bottom. Unlike every other pane here the content
@@ -248,6 +251,50 @@ cv::Mat VoxelMap::fpvImageWH(float px, float py, float pz,
         cv::addWeighted(band, 0.55, wash, 0.45, 0.0, band);
     }
     return img;
+}
+
+cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
+                               float px, float py, float pz,
+                               float yawDeg, float pitchDeg,
+                               int outW, int outH, float hfovDeg,
+                               const FpvStyle& style, cv::Mat* hitMask) {
+    cv::Mat out(outH, outW, CV_8UC3, cv::Scalar(238, 240, 244));   // FOG
+    cv::Mat any(outH, outW, CV_8U, cv::Scalar(0));
+    cv::Mat best(outH, outW, CV_32F, cv::Scalar(0.f));             // 0 = no hit
+
+    for (const Layer& L : layers) {
+        if (!L.map || L.range <= 0.f) continue;
+        cv::Mat m, t;
+        cv::Mat img = L.map->fpvImageWH(px, py, pz, yawDeg, pitchDeg,
+                                        outW, outH, hfovDeg, L.range,
+                                        &m, style, &t);
+        for (int v = 0; v < outH; ++v) {
+            const uchar* mr = m.ptr<uchar>(v);
+            const float* tr = t.ptr<float>(v);
+            const cv::Vec3b* ir = img.ptr<cv::Vec3b>(v);
+            cv::Vec3b* orow = out.ptr<cv::Vec3b>(v);
+            uchar* ar = any.ptr<uchar>(v);
+            float* br = best.ptr<float>(v);
+            for (int u = 0; u < outW; ++u) {
+                if (!mr[u]) continue;
+                if (ar[u] && br[u] <= tr[u]) continue;   // something nearer already
+                orow[u] = ir[u]; ar[u] = 255; br[u] = tr[u];
+            }
+        }
+    }
+    // Same rule as fpvImageWH: caption bands unless the caller is compositing
+    // this over a camera image, in which case washing two strips of that image
+    // is vandalism rather than legibility.
+    if (hitMask) { *hitMask = any; }
+    else {
+        for (const cv::Rect& r : {cv::Rect(0, 0, outW, 50),
+                                  cv::Rect(0, outH - 44, outW, 44)}) {
+            cv::Mat band = out(r);
+            cv::Mat wash(band.size(), band.type(), cv::Scalar(238, 240, 244));
+            cv::addWeighted(band, 0.55, wash, 0.45, 0.0, band);
+        }
+    }
+    return out;
 }
 
 // Carve free space along the ray, mark the endpoint occupied. Same DDA as the

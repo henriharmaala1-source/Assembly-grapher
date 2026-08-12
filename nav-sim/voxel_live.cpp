@@ -688,7 +688,7 @@ static int runSession(Config C) {
     PoseHint hint;
     float yaw = 0.f;
     int n = 0;
-    long integUs = 0, planUs = 0;
+    long integUs = 0, planUs = 0, drawUs = 0;
 
     for (;;) {
         if (steps > 0 && n >= steps) break;
@@ -927,6 +927,40 @@ static int runSession(Config C) {
                     cv::circle(img, a, 6, {40, 190, 40}, 2, cv::LINE_AA);
             }
         };
+        // EVERY view draws the whole ladder, not one rung of it.
+        //
+        // This was the single biggest thing wrong with these panes. They each
+        // picked the FINEST map available and rendered only that -- and a fine
+        // map's honest marking range is short by construction: 3.5 m at 0.25 m
+        // cells, 2.2 m at 0.10 m, both on the D435i's 50 mm baseline. So a room
+        // or a wood whose nearest surface is four metres off came out as an
+        // empty pane. That is not a mapping failure and it is not a rendering
+        // failure; the coarse level had already marked those trunks (2 m cells
+        // reach 10 m) and simply had nowhere to appear.
+        //
+        // Nearest hit wins per pixel, so the fine detail sits in front of the
+        // coarse blocks wherever both know about a surface, and the coarse
+        // blocks carry the pane everywhere the fine map has stopped.
+        //
+        // extraBack: distance from the EYE to the aircraft, for views that do
+        // not sit on it. Each level's cast range is its own honest range plus
+        // that, or the level would run out exactly where the aircraft is.
+        auto ladder = [&](float extraBack) {
+            std::vector<VoxelMap::Layer> ls;
+            if (C.farCell > 0.f) ls.push_back({&Mfar, fp.maxIntegM * 1.15f + extraBack});
+            ls.push_back({&M, mp.maxIntegM * 1.6f + extraBack});
+            // The fine layer only when the eye is ON the aircraft. Its grid is
+            // +-2.6 m and the chase eye sits 1.65 m behind, so from there it
+            // contributes a sliver -- and it is the most expensive layer to
+            // cast, because DDA steps scale as 1/cell. Measured, chase pane,
+            // 30 frames: 47.5 ms/frame with it, 22.9 ms without. Half the
+            // render budget for a sliver.
+            if (haveNear && extraBack <= 0.f)
+                ls.push_back({&Mnear, np.maxIntegM * 1.6f});
+            return ls;
+        };
+
+        const int64_t tDraw = cv::getTickCount();
         if (C.viewMode == 1) {
             // OVERLAY. Rendered at the DEPTH IMAGE's own size and horizontal
             // FOV, so the two line up pixel for pixel and any disagreement is
@@ -934,9 +968,10 @@ static int runSession(Config C) {
             // onto a 16:9 frame would be wrong in the vertical by the aspect
             // ratio and would look exactly like a calibration fault.
             cv::Mat mask;
-            cv::Mat vox = M.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
-                                       depth.cols, depth.rows, cp.hfovDeg,
-                                       fpvRange, &mask);
+            cv::Mat vox = VoxelMap::renderLadder(ladder(0.f), pose.e, pose.n,
+                                                 pose.u, yaw, pitchDeg,
+                                                 depth.cols, depth.rows,
+                                                 cp.hfovDeg, FpvStyle(), &mask);
             cv::Mat base = colourDepth(depth, 8.f);
             // Darken the camera image and lay the voxels over it only where
             // something was actually HIT. Blending the fog too would wash the
@@ -951,13 +986,6 @@ static int runSession(Config C) {
             // CHASE. Same renderer, same projection, a viewpoint moved back and
             // up along the aircraft's own heading -- so the plan has extent in
             // the image instead of vanishing down the optical axis.
-            // The MEDIUM map, deliberately, and not the finest one available.
-            // The near layer's grid is sized to its own honest range and no
-            // more -- 2.4 * 2.2 m across -- so a camera two metres BEHIND the
-            // aircraft stands at its edge and sees a couple of metres of the
-            // scene before running out of grid. That is correct behaviour for a
-            // near layer and wrong for an overview.
-            const VoxelMap& src = M;
             // Framed on the PLAN, not on the map: the rollouts are
             // horizonS * vMax long (3 m at 1.5 m/s), and that is what has to
             // fill the pane. Sitting a whole map-range back with a 90 deg lens
@@ -987,10 +1015,17 @@ static int runSession(Config C) {
             const float pitchDown = -std::atan2(up, aimAhead) * 180.f / sim::PI_F;
             FpvStyle cs;
             cs.unknownFogM = 24.f; cs.unknownFogMax = 0.30f;
-            cv::Mat v3 = src.fpvImageWH(ex2, ny2, uz2, yaw, pitchDown,
-                                        PW, PH, chaseFov,
-                                        back + std::max(mp.maxIntegM, span) * 1.4f,
-                                        nullptr, cs);
+            // Cast at HALF the pane's resolution and upscale. Three levels is
+            // three raycasts per pixel and the ladder made this pane the most
+            // expensive thing in the program; a quarter of the rays costs
+            // nothing visible on a picture made of cubes. The plan is still
+            // drawn at full size, and projecting at 2x the render's dimensions
+            // is exact -- focal length and principal point both scale with the
+            // image, so the upscale and the projection agree by construction.
+            cv::Mat v3 = fit(VoxelMap::renderLadder(ladder(back), ex2, ny2, uz2,
+                                                    yaw, pitchDown, PW / 2, PH / 2,
+                                                    chaseFov, cs, nullptr),
+                             PW, PH);
             // Project through the CHASE pose, not the aircraft's.
             auto projC = [&](const std::array<float, 3>& w, cv::Point& o) {
                 float u, v;
@@ -1025,24 +1060,31 @@ static int runSession(Config C) {
                           "eye %.1f m behind", back);
             banner(fPane, cb, 44);
         } else {
-            // Render from the FINEST level available. The first-person view is
-            // a near-field view by construction -- everything past a few metres
-            // is fog -- so the level whose cells are honest there is the right
-            // one to draw. Shorter horizon, two and a half times the detail.
-            const VoxelMap& src = haveNear ? Mnear : M;
-            const float rng = haveNear ? std::max(3.f, np.maxIntegM * 1.6f) : fpvRange;
-            cv::Mat fpv = src.fpvImageWH(pose.e, pose.n, pose.u, yaw, pitchDeg,
-                                         PH, PH, 90.f, rng, nullptr);
+            // FIRST PERSON, all levels. The fine cells carry the near field and
+            // the coarse ones carry everything past where the fine map stopped
+            // -- which is most of any real scene.
+            // Half-res cast, upscaled back to SQUARE before the plan is drawn.
+            // The order matters: this render is square (vfov = hfov = 90) and
+            // the pane is 4:3, so stretching first and projecting after would
+            // draw the plan through an aspect the render was never made with.
+            cv::Mat fpv = fit(VoxelMap::renderLadder(ladder(0.f), pose.e, pose.n,
+                                                     pose.u, yaw, pitchDeg,
+                                                     PH / 2, PH / 2, 90.f,
+                                                     FpvStyle(), nullptr),
+                              PH, PH);
             drawPlanInto(fpv, 90.f);
             fPane = fit(fpv, PW, PH);
-            banner(fPane, "FIRST PERSON  the map + the plan, from inside");
+            banner(fPane, "FIRST PERSON  map + plan, from inside");
             char nb[96];
-            std::snprintf(nb, sizeof(nb), "%.2f m voxels, honest to %.1f m   "
-                          "pale = UNKNOWN, never air",
+            std::snprintf(nb, sizeof(nb), "%.2f-%.1f m cells out to %.0f m   "
+                          "pale = UNKNOWN",
                           haveNear ? np.cell : mp.cell,
-                          haveNear ? np.maxIntegM : mp.maxIntegM);
+                          C.farCell > 0.f ? fp.cell : mp.cell,
+                          C.farCell > 0.f ? fp.maxIntegM : mp.maxIntegM);
             banner(fPane, nb, 44);
         }
+
+        drawUs += (cv::getTickCount() - tDraw) * 1000000 / cv::getTickFrequency();
 
         cv::Mat full(PH * 2, PW * 2, CV_8UC3);
         dPane.copyTo(full(cv::Rect(0, 0, PW, PH)));
@@ -1080,6 +1122,11 @@ static int runSession(Config C) {
     if (n) {
         std::printf("  map integrate   %6.2f ms/frame\n", integUs / 1000.0 / n);
         std::printf("  plan            %6.2f ms/frame\n", planUs / 1000.0 / n);
+        // NOT part of the total below. Drawing is what the desktop window costs
+        // and the aircraft never pays it -- but it is the number that decides
+        // whether this app feels alive on a laptop, so it is reported.
+        std::printf("  (view render    %6.2f ms/frame, desktop only)\n",
+                    drawUs / 1000.0 / n);
         std::printf("  ONBOARD TOTAL   %6.2f ms/frame  (%.0f Hz sustainable)\n",
                     (integUs + planUs) / 1000.0 / n,
                     1000.0 / std::max(0.001, (integUs + planUs) / 1000.0 / n));

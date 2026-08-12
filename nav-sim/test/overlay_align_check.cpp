@@ -163,6 +163,81 @@ int main() {
               "a point behind the camera is rejected, not mirrored to the front");
     }
 
+    // --- the ladder render: a coarse level must be able to carry the pane ---
+    //
+    // The fault this pins: every view used to draw ONE map, the finest
+    // available, whose honest MARKING range is short by construction. A scene
+    // whose nearest surface is past that range rendered empty -- and looked
+    // like a broken mapper rather than a correctly-scoped one.
+    //
+    // Two posts, one at 2 m and one at 6 m, and a fine map that stops at 3 m.
+    {
+        VoxelWorld w2;
+        const float c2 = 0.10f;
+        const int n2 = int(40.f / c2);
+        w2.init(c2, camE - 20.f, camN - 2.f, camU - 6.f, n2, n2, int(12.f / c2));
+        auto put2 = [&](float e, float nn, float u) {
+            int x, y, z; w2.worldToCell(e, nn, u, x, y, z);
+            w2.set(x, y, z, true); w2.setTex(x, y, z, 0.9f);
+        };
+        // near post: up and right. far post: down and LEFT, so the two never
+        // share an image region and "the far one is missing" is measurable.
+        for (float s = 0.f; s <= 0.3f; s += c2 * 0.5f) {
+            for (float t = 0.f; t <= 0.6f; t += c2 * 0.5f)
+                for (float dd = 0.f; dd <= 0.3f; dd += c2 * 0.5f) {
+                    put2(camE + 0.8f + s, camN + 2.0f + dd, camU + 0.5f + t);
+                    put2(camE - 2.2f - s, camN + 6.0f + dd, camU - 1.6f - t);
+                }
+        }
+        cv::Mat d2 = cam.renderTruth(w2, pose);
+
+        auto build = [&](float cell_, float integ) {
+            VoxelMapParams q;
+            q.cell = cell_; q.maxIntegM = integ; q.maxCarveM = integ * 2.f;
+            q.depthSigCoef = mp.depthSigCoef;
+            auto* vm = new VoxelMap();
+            vm->init(q, camE, camN, camU);
+            for (int i = 0; i < 6; ++i) vm->integrate(d2, cam, pose);
+            return vm;
+        };
+        VoxelMap* fine = build(0.10f, 3.0f);
+        VoxelMap* crse = build(0.50f, 9.0f);
+
+        // Count hits in the lower-LEFT quadrant, where only the far post is.
+        auto quad = [&](const cv::Mat& m) {
+            int c = 0;
+            for (int y = m.rows / 2; y < m.rows; ++y)
+                for (int x = 0; x < m.cols / 2; ++x) if (m.at<uchar>(y, x)) ++c;
+            return c;
+        };
+        const int RW = 200, RH = 200;
+        cv::Mat mf, mc, ml;
+        VoxelMap::renderLadder({{fine, 9.f}}, camE, camN, camU, yaw, pitch,
+                               RW, RH, 87.f, FpvStyle(), &mf);
+        VoxelMap::renderLadder({{crse, 9.f}}, camE, camN, camU, yaw, pitch,
+                               RW, RH, 87.f, FpvStyle(), &mc);
+        VoxelMap::renderLadder({{crse, 9.f}, {fine, 9.f}}, camE, camN, camU,
+                               yaw, pitch, RW, RH, 87.f, FpvStyle(), &ml);
+        const int qf = quad(mf), qc = quad(mc), qm = quad(ml);
+        check(qf < 5, "the FINE map alone cannot see a post past its own range",
+              std::to_string(qf) + " px");
+        check(qc > 20, "the coarse map can", std::to_string(qc) + " px");
+        check(qm >= qc, "and the ladder keeps it", std::to_string(qm) + " px");
+
+        // The ladder must never LOSE a surface either level had.
+        int tf = 0, tc = 0, tm = 0;
+        for (int y = 0; y < RH; ++y)
+            for (int x = 0; x < RW; ++x) {
+                tf += mf.at<uchar>(y, x) ? 1 : 0;
+                tc += mc.at<uchar>(y, x) ? 1 : 0;
+                tm += ml.at<uchar>(y, x) ? 1 : 0;
+            }
+        check(tm >= tf && tm >= tc, "the ladder is the union of what each level sees",
+              std::to_string(tf) + " / " + std::to_string(tc) + " -> " +
+              std::to_string(tm) + " px");
+        delete fine; delete crse;
+    }
+
     // --- the chase view's unknown fog -------------------------------------
     // Standing BEHIND the aircraft means every ray crosses metres of space
     // nobody ever measured before it reaches the scene. At first-person fog

@@ -1337,6 +1337,47 @@ three were found by rendering it and reading the picture rather than the code:
   extent survives — and a 55 deg lens magnifies the plan without pushing the
   camera further from it.
 
+### The panes were drawing one rung of the ladder
+
+Even after all that the chase pane had almost no voxels in it, and so did the
+first-person pane — which is exactly what I saw on the real camera and wrote up
+as "the range was very very small, no larger voxels". It was not the range and
+it was not the mapper. **Every view picked the FINEST map available and rendered
+only that**, and a fine map's honest *marking* range is short by construction:
+3.5 m at 0.25 m cells, 2.2 m at 0.10 m, both on the D435i's 50 mm baseline. A
+room or a wood whose nearest surface is four metres away therefore rendered as
+an empty pane. The coarse level had already marked those trunks — 2 m cells
+reach 10 m — and simply had nowhere to appear.
+
+`VoxelMap::renderLadder` casts every level from one eye and keeps the **nearest
+hit** per pixel. No priority order is needed: where two levels both know about a
+surface, the fine one is in front of the coarse one's blocky approximation and
+wins on its own merits; where only the coarse one knows anything, it is all
+there is. `overlay_align_check` pins it with two posts and a fine map that stops
+between them — fine alone sees 0 px of the far post, coarse sees 327, the ladder
+keeps 327.
+
+Costs, measured on the chase pane over 30 frames, and the reason for two
+decisions:
+
+| | view render |
+|---|---|
+| three levels, full pane resolution | 47.5 ms |
+| three levels, half resolution, upscaled | 47.5 ms → *the near layer dominates* |
+| without the 0.10 m layer | 22.9 ms |
+
+So the chase view drops the fine layer: its grid is ±2.6 m and the chase eye
+sits 1.65 m behind the aircraft, so it contributes a sliver for half the render
+budget. DDA steps scale as 1/cell, which is why the finest layer is always the
+dearest to *draw* as well as to build. Both first-person views cast at half the
+pane's resolution and upscale — a picture made of cubes loses nothing, and the
+plan is still drawn at full size. Order matters there: the first-person render
+is square (vfov = hfov = 90°) and the pane is 4:3, so stretching before
+projecting would draw the plan through an aspect the render was never made with.
+
+Render cost is now reported separately and explicitly excluded from ONBOARD
+TOTAL — the aircraft never draws any of this.
+
 Unrelated but found the same way: `voxel_live` silently ignored unknown flags,
 so `--steps 40` (there is no such flag; it is `--frames`) opened a windowed
 session that ran forever and wrote nothing, and looked exactly like a hang. It

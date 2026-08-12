@@ -356,7 +356,33 @@ public:
                        float yawDeg, float pitchDeg,
                        int outW, int outH, float hfovDeg,
                        float maxRange, cv::Mat* hitMask = nullptr,
-                       const FpvStyle& style = FpvStyle()) const;
+                       const FpvStyle& style = FpvStyle(),
+                       cv::Mat* hitT = nullptr) const;
+
+    // Render several maps from one eye and keep, per pixel, the NEAREST hit.
+    //
+    // This exists because the ladder is otherwise invisible. Every view here
+    // used to draw ONE level, and the level it picked was the finest -- whose
+    // honest marking range is 3.5 m at 0.25 m cells, or 2.2 m at 0.10 m. So a
+    // scene whose nearest trunk is four metres away rendered as an empty room,
+    // in the sim and on the real camera both, and looked like a broken mapper
+    // rather than a correctly-scoped one. The coarse level DOES mark that trunk
+    // -- 2 m cells reach 10 m -- it simply had nowhere to appear.
+    //
+    // Nearest-hit rather than a priority order: where two levels both know
+    // about a surface the finer one is in front of the coarser one's blocky
+    // approximation and wins on its own merits, and where only the coarse one
+    // knows anything it is all there is. No arbitration needed.
+    struct Layer {
+        const VoxelMap* map = nullptr;
+        float range = 0.f;              // how far to cast in THIS level
+    };
+    static cv::Mat renderLadder(const std::vector<Layer>& layers,
+                                float px, float py, float pz,
+                                float yawDeg, float pitchDeg,
+                                int outW, int outH, float hfovDeg,
+                                const FpvStyle& style = FpvStyle(),
+                                cv::Mat* hitMask = nullptr);
 
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }

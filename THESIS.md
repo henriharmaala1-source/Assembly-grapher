@@ -215,8 +215,30 @@ The project has had no stated finish line, which is how a project like this
 improves forever. This is v1, and it is deliberately modest:
 
 > **Sixty seconds of continuous autonomous flight in a real wood, no contact with
-> anything, at ≥ 2 m/s, with all perception and planning running on the Raspberry
+> anything, at ≥ 1 m/s, with all perception and planning running on the Raspberry
 > Pi 5, and a logged compute figure showing headroom.**
+
+**Why 1 m/s and not 2, which is what this said first.** The planner's usefulness
+is the ratio of SEE-AHEAD to PLAN-AHEAD. The honest marking range is 3.5 m and
+the rollout horizon is `horizonS * vMax`:
+
+| speed | horizon | ratio to 3.5 m seen | behaviour |
+|---|---|---|---|
+| 0.5 m/s | 1.0 m | 3.5 | genuinely weaves |
+| **1.0 m/s** | **2.0 m** | **1.75** | avoids, with margin |
+| 1.5 m/s | 3.0 m | 1.2 | forward or stop |
+| 2.0 m/s | 4.0 m | 0.9 | plans past what it knows |
+
+At 2 m/s the plan extends BEYOND the map's honest range, so there is nothing to
+steer around -- only things to stop for. Observed in the field as exactly that:
+the command reads AHEAD or a large evasive turn, and almost nothing between.
+
+So v1 demonstrates **"does not hit anything"**, not "picks a good path". Given a
+3.5 m horizon that is the truthful claim, and it is still a real result.
+
+**Weaving is v2, and its prerequisite is pose.** More see-ahead comes from range
+(capped by the 50 mm baseline), from memory (which needs odometry -- see
+`POSE_AND_OPENNESS_PLAN.md` §5), or from flying slower. Only the last is free.
 
 Supporting evidence that makes it a demonstration rather than an anecdote:
 

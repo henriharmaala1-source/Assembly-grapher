@@ -159,6 +159,14 @@ int main(int argc, char** argv) {
     // never plan a path that goes BACKWARDS -- which is exactly the manoeuvre
     // escaping a dead end requires. Exposed to test that.
     float coneDeg = -1.f;
+    float unkCost = -1.f;      // <0 keeps GeneralParams' own default
+    // SWEPT RADIUS. 0.6 m means a 1.2 m vehicle, which is a large quadcopter --
+    // and it is the term that decides whether MORE MAP helps or hurts, because
+    // an OCCUPIED cell blocks anywhere inside this ball while an UNKNOWN one
+    // blocks only on the centre line. Extending the marking range therefore
+    // grows the blocking volume from a line to a ball, and how much that costs
+    // depends entirely on how big the ball is.
+    float robotR = 0.6f;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
@@ -181,6 +189,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--hfov")) hfov = float(std::atof(next("70")));
         else if (!std::strcmp(argv[i], "--baseline")) baseline = float(std::atof(next("0.12")));
         else if (!std::strcmp(argv[i], "--maxinteg")) maxIntegOverride = float(std::atof(next("-1")));
+        else if (!std::strcmp(argv[i], "--unkcost")) unkCost = float(std::atof(next("0.45")));
+        else if (!std::strcmp(argv[i], "--robot")) robotR = float(std::atof(next("0.6")));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/nav");
         else if (!std::strcmp(argv[i], "--truth")) useTruth = true;
         else if (!std::strcmp(argv[i], "--general-only")) generalOnly = true;
@@ -421,7 +431,14 @@ int main(int argc, char** argv) {
     // against truth above, so this asserts something already checked.
     M.seedFree(px, py, pz, 1.5f);
 
-    GeneralParams gp; gp.robotR = 0.6f;
+    GeneralParams gp; gp.robotR = robotR;
+    // HISTOGRAM PLANNER ONLY. `unknownCost` lives in GeneralParams, and the
+    // default reactive layer here is the TRAJECTORY LIBRARY, which has no such
+    // term -- so this changes nothing unless --general is in play. Exposed with
+    // that written down because I swept it against the trajectory planner and
+    // got four identical rows, which is the only reason I noticed I had been
+    // explaining a result with a knob that was not connected to it.
+    if (unkCost >= 0.f) gp.unknownCost = unkCost;
     if (emaA    >= 0) gp.fieldEma     = emaA;
     if (dwellM  >= 0) gp.switchMargin = dwellM;
     if (revP    >= 0) gp.revPenalty   = revP;

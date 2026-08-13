@@ -2916,12 +2916,77 @@ worth x1.29 if it is really 0.15; then resolution, worth x1.23; then baseline,
 worth x1.55. Together x2.1 without new optics and x3.3 with them. Every one of
 those is a measurement or a purchase, and none of them is a constant to nudge.
 
+## 2026-08-13 — CORRECTION: why more map stalls it, and gathering is not the same decision as using
+
+Pushed back on, correctly: "seeing further might not help the planning we have,
+but gathering more information WILL be useful, when we tune for it." I had
+collapsed those two into one and concluded "nothing changed", which was the
+wrong shape of answer.
+
+**And the mechanism I gave was wrong.** I explained the stall through
+`GeneralPlanner::probe` -- unknown accrues reach at `1 - unknownCost` while
+occupied truncates the ray. Swept `unknownCost` at 0.45 / 0.60 / 0.75 against
+the stalling case and got **four identical rows**, which is how I found out that
+`voxel_sim`'s default reactive layer is the TRAJECTORY LIBRARY, not the
+histogram. `unknownCost` is not in that path at all. I had explained a
+measurement with a knob that was not connected to it.
+
+**The real mechanism, from `voxel_traj.cpp`:**
+
+    if (!sphereClear(m, wx,wy,wz, robotR, coreFrac)) break;   // OCCUPIED anywhere in a 0.6 m ball
+    if (m.stateAt(wx,wy,wz) != FREE)                 break;   // UNKNOWN only on the centre line
+
+`coreFrac` defaults to **0**, so an unknown cell blocks only where the path
+actually passes, while an occupied cell blocks anywhere within the swept radius.
+**Extending the marking range therefore promotes a line-blocker into a
+ball-blocker**, and the blocking volume grows by the ratio of a 0.6 m ball to a
+line. That is not the map becoming pessimistic -- it is the map finally knowing
+there are trunks within 0.6 m of paths it was previously flying on the strength
+of not having looked.
+
+**Vehicle radius is the term that decides whether more map helps.** Measured:
+
+| seed | radius | 3.9 m | 5.24 m |
+|---|---|---|---|
+| 1 | 0.6 m | 109.2 m, clr 0.57 | 20.7 m, clr 0.53, **stopped 319/400** |
+| 1 | 0.35 m | 58.3 m, clr **0.16** | 58.3 m, clr 0.16 |
+| 3 | 0.6 m | 88.2 m, clr 0.48 | 71.3 m, clr 0.53 |
+| 3 | 0.35 m | 117.4 m, clr **0.20** | 97.5 m, clr 0.16 |
+
+Shrinking the vehicle does not rescue it either: progress moves both ways and
+**minimum true clearance collapses to 0.16-0.20 m**, which is a near miss on
+every run. The swept radius is doing real work.
+
+**So the conclusion stands but the framing was wrong.** More marking range does
+not help THIS planner -- a reactive primitive library with a 12 m rollout and no
+memory, whose swept-volume test is the thing that reacts to the extra knowledge.
+That is a statement about the consumer, not about the information.
+
+**The gathering is already done.** The bearing field carries 3.5 to 20 m at
+3.2 ms a frame and ~1800 live bins, and nothing about it is capped by Z_max --
+its ANGULAR accuracy does not decay with range, only its range accuracy does.
+The far information exists today; what does not exist is anything that spends it.
+
+**The consumer to build, and it is already in the tree.** `PrecisePlanner` --
+the A* router -- coarsens the FINE map, so it has a 25 m search horizon reading
+a 3.5 m picture. `NOTES` already records "a reactive planner with a 12 m horizon
+cannot see out of a dead end". The router is exactly the thing that wants 20 m
+of rough bearing data and cannot currently get it, and it is where "tuning for
+it" should start -- not in the reactive layer's constants.
+
+Order, then: router reads the bearing field; `OBSTACLE_DISTANCE` publishes it;
+and only after those does raising Z_max become a question worth asking again.
+
 ## Open / unresolved
 
-* **Z_max and `unknownCost` are coupled and neither may move alone.** Raising the
-  marking range 3.9 -> 5.2 m cost seed 1 eighty per cent of its progress and
-  stopped it on 319 of 400 steps, because occupied truncates the openness ray
-  while unknown only discounts it. Re-tune together or not at all.
+* **Give the A* router the bearing field.** It has a 25 m search horizon and
+  reads a 3.5 m map. This is the consumer that makes far information worth
+  gathering, and it is the right place to start tuning for it.
+* **Z_max is coupled to the SWEPT RADIUS, not to `unknownCost`** (which is not
+  in the trajectory planner's path at all). Occupied blocks anywhere in the
+  0.6 m ball; unknown blocks only on the centre line; so marking further grows
+  the blocking volume from a line to a ball. Raising the marking range 3.9 ->
+  5.2 m cost seed 1 eighty per cent of its progress.
 * **Measure sigma_d.** Assumed 0.25 px since the beginning; it sets every range
   in the ladder and is worth x1.29 on Z_max if it is really 0.15.
 

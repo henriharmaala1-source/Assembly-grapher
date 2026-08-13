@@ -94,10 +94,12 @@ public:
     // else. There are no cube faces here, so face shading is replaced by the
     // surface's local slope in bearing space, which is what gives a wall its
     // form instead of leaving it a flat wash.
+    // `minRange` lets the caller band it exactly as a voxel level is banded, so
+    // it can be composited BEYOND the fine map rather than competing with it.
     static cv::Mat render(const BearingField& bf,
                           float yawDeg, float pitchDeg,
                           int outW, int outH, float hfovDeg,
-                          float maxRange, float eyeAltM,
+                          float minRange, float maxRange, float eyeAltM,
                           cv::Mat* hitMask = nullptr);
 
 private:

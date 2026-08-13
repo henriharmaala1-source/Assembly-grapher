@@ -166,7 +166,7 @@ void BearingField::occupancy(int& live, int& total) const {
 cv::Mat BearingField::render(const BearingField& bf,
                              float yawDeg, float pitchDeg,
                              int outW, int outH, float hfovDeg,
-                             float maxRange, float eyeAltM,
+                             float minRange, float maxRange, float eyeAltM,
                              cv::Mat* hitMask) {
     cv::Mat img(outH, outW, CV_8UC3);
     if (hitMask) *hitMask = cv::Mat(outH, outW, CV_8U, cv::Scalar(0));
@@ -195,7 +195,7 @@ cv::Mat BearingField::render(const BearingField& bf,
             const float az = std::atan2(dx, dy) * 180.f / PI_F_;
             const float el = std::asin(std::max(-1.f, std::min(1.f, dz))) * 180.f / PI_F_;
             const float r = bf.rangeAt(az, el);
-            if (!(r > 0.f) || r > maxRange) continue;
+            if (!(r > 0.f) || r > maxRange || r < minRange) continue;
             rng.at<float>(v, u) = r;
             alt.at<float>(v, u) = dz * r;      // height of the surface above the eye
         }

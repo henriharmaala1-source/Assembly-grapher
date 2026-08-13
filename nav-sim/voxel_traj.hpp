@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "voxel_map.hpp"
+#include "bearing_field.hpp"
 #include "voxel_planner.hpp"
 
 // ---------------------------------------------------------------------------
@@ -220,6 +221,12 @@ public:
     // are honest. Ordered FINE FIRST.
     struct CoarseLevel { const VoxelMap* map; float rangeM; };
 
+    // THE FAR FIELD, as bearings rather than as cubes. Same job as `coarse` --
+    // it scores a direction and can neither veto nor add speed -- but it keeps
+    // the sensor's angular resolution instead of a cube's, which for awareness
+    // is the only thing that matters. When set it REPLACES `coarse`.
+    struct FarBearings { const BearingField* field; float rangeM; };
+
     // `coarse` is the OPTIONAL awareness ladder. It influences scoring only;
     // every safety test in plan() reads `m` alone. Empty disables it.
     //
@@ -229,7 +236,8 @@ public:
     // mid-resolution level could have told you between 3.5 m and 14 m.
     GeneralResult plan(const VoxelMap& m, float px, float py, float pz,
                        float curYawDeg, float goalAzDeg, float goalElDeg,
-                       const std::vector<CoarseLevel>& coarse = {});
+                       const std::vector<CoarseLevel>& coarse = {},
+                       const FarBearings* far = nullptr);
 
     // The winning rollout in WORLD coordinates, for drawing. Empty if blocked.
     const std::vector<std::array<float, 3>>& chosen() const { return chosen_; }

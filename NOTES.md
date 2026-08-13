@@ -2789,14 +2789,65 @@ awareness, and it is not wired into the planner.
 so the same object serves the pane, the openness score and ArduPilot's own
 avoidance layer.
 
+## 2026-08-13 — the architecture changes: voxels near, a rough depth image far
+
+Decided. The coarse voxel rung is **off by default** and the bearing field owns
+everything past the 0.25 m map's honest 3.5 m -- in the render AND in the
+direction score. `--farcell 1.0` restores the old shape end to end so the two
+remain comparable on real data.
+
+**What each half is for, and the line between them is the whole design.**
+
+* **Near, 0 to 3.5 m: cubes.** Free space, memory, and the swept-volume test all
+  need volume. A bearing bin holds no free space and cannot answer "is this
+  robot-sized tube clear". Nothing here changed, and the safety path still reads
+  the 0.25 m map alone.
+* **Far, 3.5 to 20 m: bearings.** A rough standing copy of the depth image
+  indexed by direction. It scores a heading and can neither veto nor add speed
+  -- the same authority the coarse rung had, which was never permission.
+
+**Why the rung went, in one line:** a cube must be sized for stereo's RANGE
+error, which grows as Z^2, while the lateral error grows only as Z. The ratio is
+Z*sigma/B -- a hundred to one at 20 m -- so a cube honest in range throws away
+all the bearing detail the sensor still has. Then the banded handovers between
+levels produced, in order: a circular fog disc, two rungs that held obstacles and
+drew nothing, and a wall of near faces when the band was loosened. Three
+defects, one cause.
+
+**Cost, and it is NOT a speedup -- say so plainly.**
+
+| | integrate | far field | total | far-field fidelity |
+|---|---|---|---|---|
+| old, 1.0 m rung | 21.1 ms | (in the 21.1) | 21.1 | **11** independent bearings |
+| new | 18.4 ms | 3.2 ms | **21.6** | **~1800** live bins |
+
+Half a millisecond dearer for a hundred and sixty times the angular resolution
+and no handover seam. Mobility unchanged: free 2.85 m against 2.87, 1.50 m/s
+both, blocked on 0 of 25 frames both.
+
+**A mistake worth recording, because it briefly made a picture that lied.** The
+first version of the composite drew the bearing field whenever the fine ladder
+had a gap -- INCLUDING when `--farcell` had asked for the old architecture. So
+the "before" pane in my own comparison was already showing the new far field,
+and the two looked nearly identical. The banner in `--compare` had the same
+class of fault: it read "22 ms | 3.2 ms" as though the field replaced all the
+voxel work, when it replaces the coarse rung's ~2.6 ms of it. Both fixed. A
+comparison that cannot show the old behaviour is not a comparison.
+
+**Still open before this can fly:** the field is wired to the direction score
+only. Nothing reads it for permission, and nothing should until it can answer a
+swept-volume query -- which it structurally cannot, since one bin cannot hold two
+surfaces along a bearing. `obstacleDistance()` already emits the 72-bin array,
+so the ArduPilot side is one message away.
+
 ## Open / unresolved
 
-* **Replace the coarse RUNG with the bearing field.** Now built and comparable
-  side by side (`--compare`): 3.2 ms against 22 ms, ~1800 live bins against 11
-  independent bearings, no handover seam. Still NOT wired into the planner --
-  it has no free space and cannot answer a swept-volume query, so the decision
-  is what the planner should read from it (openness score, `OBSTACLE_DISTANCE`)
-  and never permission.
+* ~~**Replace the coarse RUNG with the bearing field.**~~ **DONE** 2026-08-13:
+  default `--farcell 0`, field owns 3.5-20 m in the render and in the direction
+  score. It must never gain permission -- one bin cannot hold two surfaces along
+  a bearing, so it cannot answer a swept-volume query.
+* **Publish `OBSTACLE_DISTANCE` from the bearing field.** The array is already
+  built; the bridge needs the message.
 * **The far field should not be voxels.** A cube sized for stereo's range error
   is Z*sigma/B times coarser than its lateral resolution -- 100:1 at 20 m. Build
   the bearing-space map from `POSE_AND_OPENNESS_PLAN.md` section 1; it is also

@@ -113,7 +113,8 @@ TrajectoryPlanner::TrajectoryPlanner(const TrajParams& p) : p_(p) {
 
 GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, float pz,
                                       float curYawDeg, float goalAzDeg, float goalElDeg,
-                                      const std::vector<CoarseLevel>& coarse) {
+                                      const std::vector<CoarseLevel>& coarse,
+                                      const FarBearings* far) {
     GeneralResult r;
     chosen_.clear();
     cands_.clear();
@@ -172,7 +173,14 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         // Coarse-map openness along the bearing this primitive ends on. Reward
         // only -- it cannot veto, and it cannot raise the speed budget.
         float farOpen = 0.f;
-        if (!coarse.empty() && p_.farWeight > 0.f) {
+        if (far && far->field && p_.farWeight > 0.f) {
+            // Bearing lookup instead of a march: the field already answers
+            // "nearest surface on this bearing", so openness along a heading is
+            // one query rather than a walk through cubes.
+            const float r = far->field->rangeAt(endAz, endEl);
+            const float reach = (r < 0.f) ? far->rangeM : std::min(r, far->rangeM);
+            farOpen = reach / std::max(0.1f, far->rangeM);
+        } else if (!coarse.empty() && p_.farWeight > 0.f) {
             const float dx = std::sin(deg2rad(endAz)) * std::cos(deg2rad(endEl));
             const float dy = std::cos(deg2rad(endAz)) * std::cos(deg2rad(endEl));
             const float dz = std::sin(deg2rad(endEl));

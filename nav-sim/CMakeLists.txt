@@ -125,7 +125,8 @@ add_executable(voxel_sim
   depth_improve.cpp
   voxel_map.cpp
   voxel_planner.cpp
-  voxel_traj.cpp)
+  voxel_traj.cpp
+  bearing_field.cpp)
 target_include_directories(voxel_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_sim PRIVATE ${OpenCV_LIBS})
 if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
@@ -147,7 +148,8 @@ add_executable(gui_preview
   depth_camera.cpp
   voxel_map.cpp
   voxel_planner.cpp
-  voxel_traj.cpp)
+  voxel_traj.cpp
+  bearing_field.cpp)
 target_include_directories(gui_preview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(gui_preview PRIVATE ${OpenCV_LIBS})
 if(ompl_FOUND)
@@ -165,6 +167,7 @@ if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
     voxel_map.cpp
     voxel_planner.cpp
     voxel_traj.cpp
+    bearing_field.cpp
     ompl_planner.cpp)
   target_include_directories(voxel_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(voxel_gui PRIVATE ${OpenCV_LIBS})
@@ -193,7 +196,8 @@ add_executable(voxel_live
   depth_camera.cpp
   voxel_map.cpp
   voxel_planner.cpp
-  voxel_traj.cpp)
+  voxel_traj.cpp
+  bearing_field.cpp)
 target_include_directories(voxel_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_live PRIVATE ${OpenCV_LIBS})
 if(NOT WIN32)
@@ -270,6 +274,7 @@ add_executable(chase_turn_check
   test/chase_turn_check.cpp
   voxel_map.cpp
   voxel_traj.cpp
+  bearing_field.cpp
   voxel_planner.cpp
   depth_camera.cpp
   voxel_world.cpp)

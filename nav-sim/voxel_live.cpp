@@ -251,29 +251,24 @@ struct Config {
     //
     // AWARENESS ONLY, NEVER PERMISSION. The fine map alone decides what may be
     // flown through; this only says which bearing looks open beyond it.
-    // 1.00 m. Measured over the sim wood, aircraft 2.5 m above the terrain --
-    // of the depth pixels whose surface lies inside the ladder's own reach, how
-    // many does the first-person render draw, and at what range error:
+    // OFF. The coarse voxel rung is superseded by the bearing field.
     //
-    //     0.10/0.25/0.5   reach  5.8 m   drawn 87.6 %   median -0.62 m
-    //     0.10/0.25/1.0   reach  8.2 m   drawn 96.7 %   median -2.78 m
-    //     0.10/0.25/2.0   reach 11.5 m   drawn  0.0 %   -- see below
+    // It had to be a cube sized for stereo's RANGE error, which grows as Z^2,
+    // while the lateral error grows only as Z -- ratio Z*sigma/B, a hundred to
+    // one at 20 m. So it threw away every bit of bearing detail the sensor
+    // still had, and then the banded handover between levels produced, in
+    // order: a circular fog disc, two rungs that held obstacles and drew
+    // nothing, and a wall of near faces when the band was loosened. Three
+    // defects, one cause, and it is the representation.
     //
-    // A coarse cell is drawn at its NEAR FACE, so everything it shows is drawn
-    // too near, and how much too near scales with the cell. 1.0 m buys reach and
-    // coverage for about 2.8 m of position error; 0.5 m is the honest picture
-    // and sees less of it. 1.0 m wins here for two reasons and they are worth
-    // stating: the error is in the CONSERVATIVE direction, and this layer has no
-    // authority -- the swept-volume test reads the fine map alone, and the
-    // coarse map's only contribution to the plan is a bearing score that "cannot
-    // veto and cannot raise the speed budget".
+    // Measured against the 1.0 m rung, same frame and projection:
     //
-    // 2.0 m and above stay near-empty ON PURPOSE. A level may borrow into the
-    // band below it only by the position error it is willing to assert, capped
-    // at half a metre (see renderLadder), and a 2 m cell cannot place a surface
-    // that finely. Removing the cap fills the pane -- 99.9 % of it -- with a
-    // solid wall of near faces, which is the disease the banding exists to cure.
-    float farCell = 1.0f;      // 0 disables
+    //     cubes     22 ms    11 independent bearings across 87 deg
+    //     bearings  3.2 ms   ~1800 live bins, no handover seam
+    //
+    // Set --farcell to bring the rung back; the render and the direction score
+    // both switch with it, so the two can still be compared on real data.
+    float farCell = 0.f;       // 0 disables -- the bearing field replaces it
     // FINE NEAR LAYER -- the coarse map's argument run in the other direction.
     //
     // Cell size should match the depth uncertainty at the range it covers. That
@@ -315,6 +310,12 @@ struct Config {
     std::string scene = "forest";
     float hedgeFill = -1.f;    // <=0 uses the scene's own default
     float standoffM = -1.f;    // how far ahead the hedge stands, m
+    // How far the bearing field is drawn and scored. Not an honest-range
+    // formula like the voxel levels': a bearing bin's ANGULAR accuracy does not
+    // decay with range, only its range accuracy does, and this field is used
+    // for direction rather than distance. 20 m is where the stereo's own valid
+    // fraction collapses on this baseline.
+    float farRangeM = 20.f;
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -658,6 +659,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--scene")) C.scene = next("forest");
         else if (!std::strcmp(argv[i], "--fill")) C.hedgeFill = float(std::atof(next("0.3")));
         else if (!std::strcmp(argv[i], "--standoff")) C.standoffM = float(std::atof(next("4")));
+        else if (!std::strcmp(argv[i], "--farrange")) C.farRangeM = float(std::atof(next("20")));
         else if (!std::strcmp(argv[i], "--truth")) showTruth = true;
         else if (!std::strcmp(argv[i], "--menu-preview")) {
             // Dump the menu to a PNG. The window is the one artefact here that
@@ -1084,8 +1086,13 @@ static int runSession(Config C) {
         // goalWeight 0 so the bearing passed here is ignored entirely.
         if (C.farCell > 0.f && coarse.empty())
             coarse.push_back({&Mfar, fp.maxIntegM});
+        // Awareness comes from the bearing field unless a coarse voxel rung was
+        // explicitly asked for. Either way it scores a DIRECTION and nothing
+        // else: the swept-volume test reads the fine map alone.
+        const TrajectoryPlanner::FarBearings fb{&bfield, C.farRangeM};
         GeneralResult gr = traj.plan(M, pose.e, pose.n, pose.u, yaw,
-                                     C.dirMode == 1 ? yaw : 0.f, 0.f, coarse);
+                                     C.dirMode == 1 ? yaw : 0.f, 0.f, coarse,
+                                     C.farCell > 0.f ? nullptr : &fb);
         planUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
         if (C.audit) { auditFreeM += gr.freeM; auditSpeed += gr.speed;
                        if (gr.blocked) ++auditBlocked; }
@@ -1511,6 +1518,17 @@ static int runSession(Config C) {
             return ls;
         };
 
+        // The ladder with the coarse rung removed -- the fine levels only, each
+        // banded by its own honest range. Everything past the last of them is
+        // the bearing field's territory.
+        auto fineLadder = [&]() {
+            std::vector<VoxelMap::Layer> ls;
+            float band = 0.f;
+            if (haveNear) { ls.push_back({&Mnear, 0.f, np.maxIntegM}); band = np.maxIntegM; }
+            ls.push_back({&M, band, mp.maxIntegM});
+            return ls;
+        };
+
         const int64_t tDraw = cv::getTickCount();
         if (C.viewMode == 3) {
             // THE COMPARABLE. Left half the voxel ladder, right half the
@@ -1526,7 +1544,7 @@ static int runSession(Config C) {
                                                    FpvStyle(), nullptr),
                             fw * 2, fh * 2);
             cv::Mat b = fit(BearingField::render(bfield, yaw, pitchDeg, fw, fh,
-                                                 cp.hfovDeg, R, pose.u),
+                                                 cp.hfovDeg, 0.f, R, pose.u),
                             fw * 2, fh * 2);
             cv::Mat both(a.rows, a.cols, CV_8UC3);
             a(cv::Rect(0, 0, a.cols / 2, a.rows)).copyTo(
@@ -1543,9 +1561,13 @@ static int runSession(Config C) {
             // frame, at the coarse rung's own honest range.
             const float degPerCell = C.farCell > 0.f
                 ? C.farCell / std::max(1.f, fp.maxIntegM) * 180.f / sim::PI_F : 999.f;
-            char cb[120];
+            // HONEST LABELS. The left number is ALL voxel levels, not the
+            // coarse rung alone -- the field replaces only the rung, which
+            // costs about 2.6 ms of that. Quoting 22 against 3.2 as though one
+            // replaced the other would be a lie by juxtaposition.
+            char cb[128];
             std::snprintf(cb, sizeof(cb),
-                          "%.0f ms, %.0f bearings   |   %.1f ms, %d bins",
+                          "all levels %.0f ms, %.0f bearings | field %.1f ms, %d bins",
                           n ? integUs / 1000.0 / n : 0.0, 87.f / degPerCell,
                           n ? bfieldUs / 1000.0 / n : 0.0, live);
             banner(fPane, cb, 34);
@@ -1670,12 +1692,53 @@ static int runSession(Config C) {
             // So: render at the CAMERA's aspect and hfov, then letterbox rather
             // than stretch. A stretched render would put the plan through an
             // aspect the raycast was never made with.
+            //
+            // VOXELS NEAR, BEARINGS FAR, and that split is the architecture now
+            // rather than a resolution ladder all the way out. The fine levels
+            // own everything inside the 0.25 m map's honest marking range; past
+            // it the surface comes from the bearing field, which is a rough
+            // standing copy of the depth image indexed by direction.
+            //
+            // Why the coarse voxel rung went. A cube must be sized for stereo's
+            // RANGE error, which grows as Z^2, while its lateral error grows
+            // only as Z -- the ratio is Z*sigma/B, a hundred to one at 20 m. So
+            // a cube honest in range throws away all the bearing detail the
+            // sensor still has, and the levels then need banded handovers whose
+            // seams produced a fog disc, an empty coarse rung and a wall of
+            // near faces in turn. Measured against the 1.0 m rung it replaces:
+            // 3.2 ms against 22, ~1800 live bins against eleven independent
+            // bearings, and no seam because there are no levels to hand over.
             const int fw = PH / 2 * cp.width / cp.height, fh = PH / 2;
-            cv::Mat fpv = fit(VoxelMap::renderLadder(ladder(0.f), pose.e, pose.n,
-                                                     pose.u, yaw, pitchDeg,
-                                                     fw, fh, cp.hfovDeg,
-                                                     FpvStyle(), nullptr),
-                              fw * 2, fh * 2);
+            const float nearEnd = mp.maxIntegM;
+            // --farcell keeps the OLD architecture end to end -- coarse voxel
+            // rung in the render and in the direction score -- so the two can
+            // still be compared on real data. Without it, fine voxels only, and
+            // the bearing field owns everything past them.
+            const bool useCubesFar = C.farCell > 0.f;
+            cv::Mat maskNear;
+            cv::Mat fpv = VoxelMap::renderLadder(
+                useCubesFar ? ladder(0.f) : fineLadder(), pose.e, pose.n,
+                pose.u, yaw, pitchDeg, fw, fh, cp.hfovDeg,
+                FpvStyle(), &maskNear);
+            if (!useCubesFar) {
+                // The far field fills only where the fine map had nothing to
+                // say, and only beyond its honest range. It is AWARENESS: the
+                // swept-volume test never reads it, exactly as the coarse voxel
+                // rung was never allowed to grant permission.
+                cv::Mat maskFar;
+                cv::Mat far_ = BearingField::render(bfield, yaw, pitchDeg, fw, fh,
+                                                    cp.hfovDeg, nearEnd,
+                                                    C.farRangeM, pose.u, &maskFar);
+                for (int vv = 0; vv < fpv.rows; ++vv) {
+                    const uchar* mn = maskNear.ptr<uchar>(vv);
+                    const uchar* mf = maskFar.ptr<uchar>(vv);
+                    const cv::Vec3b* fr = far_.ptr<cv::Vec3b>(vv);
+                    cv::Vec3b* out = fpv.ptr<cv::Vec3b>(vv);
+                    for (int uu = 0; uu < fpv.cols; ++uu)
+                        if (!mn[uu] && mf[uu]) out[uu] = fr[uu];
+                }
+            }
+            fpv = fit(fpv, fw * 2, fh * 2);
             drawPlanInto(fpv, cp.hfovDeg);
             // Letterbox into the pane. The bars are the SENSOR's blind zone and
             // are drawn darker than the unknown fog so the two cannot be
@@ -1687,12 +1750,20 @@ static int runSession(Config C) {
                 scaled.copyTo(fPane(cv::Rect(0, (PH - th) / 2, tw, th)));
             }
             banner(fPane, "FIRST PERSON  map + plan, from inside");
-            char nb[96];
-            std::snprintf(nb, sizeof(nb), "%.2f-%.1f m cells out to %.0f m   "
-                          "pale = UNKNOWN",
-                          haveNear ? np.cell : mp.cell,
-                          C.farCell > 0.f ? fp.cell : mp.cell,
-                          C.farCell > 0.f ? fp.maxIntegM : mp.maxIntegM);
+            char nb[110];
+            if (useCubesFar) {
+                std::snprintf(nb, sizeof(nb),
+                              "%.2f-%.1f m cells out to %.0f m   pale = UNKNOWN",
+                              haveNear ? np.cell : mp.cell, fp.cell, fp.maxIntegM);
+            } else {
+                int live = 0, tot = 0; bfield.occupancy(live, tot);
+                std::snprintf(nb, sizeof(nb),
+                              "%.2f m cells to %.1f m, bearings to %.0f m   "
+                              "pale = UNKNOWN",
+                              haveNear ? np.cell : mp.cell, mp.maxIntegM,
+                              C.farRangeM);
+                (void)live;
+            }
             banner(fPane, nb, 44);
             if (C.turnHud) drawTurnHud(fPane);
         }

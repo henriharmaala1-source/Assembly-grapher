@@ -3207,7 +3207,64 @@ aircraft. Inventing awareness is cheap; inventing permission is not. Pinned both
 ways -- a hole between agreeing neighbours fills, a real gap with nothing on one
 side does not.
 
+## 2026-08-13 — is the bearing field viable for path planning? Measured, not asserted
+
+I had been asserting "no, it has no free space". That was half right for the
+wrong reason, so here is the experiment: 14,688 probe points inside the fine
+map's range, static camera (the only regime where the comparison is fair, since
+neither representation has odometry), each asked the question the planner asks --
+is a 0.6 m ball at this point clear?
+
+    both say clear                   13939   94.9 %
+    both say blocked                     0    0.0 %
+    voxels clear, bearings blocked     749    5.1 %   bearings MORE cautious
+    bearings clear, voxels BLOCKED       0    0.0 %   the dangerous disagreement
+
+**Zero dangerous disagreements.** In 14,688 probes the bearing field never once
+said clear where the voxel map said blocked.
+
+**And it still cannot grant permission, for a reason the same run makes
+quantitative:**
+
+    some bearing in the cone was never observed   14675   99.9 %
+
+Nearly every swept cone contains at least one bin that never returned. A
+conservative test -- "every bearing in the cone must be KNOWN and farther than
+d" -- would therefore refuse almost everything. The field is too holey at bin
+resolution to permit anything, and loosening it to "unknown counts as clear" is
+precisely the two-state collapse the whole map exists to prevent. My 94.9 %
+"both clear" figure above is computed with that loosening, and it is not a
+result to quote as safety.
+
+**The second blocker is worse and is structural: the field ignores translation
+entirely.** `grep 'pose\.[enu]' bearing_field.cpp` returns **zero** -- `update`
+applies a yaw index shift and nothing else. The moment the aircraft moves, every
+bin is stale in range AND in bearing. Bearing plus range IS a point, so
+re-projecting all 17k bins through a new origin is exact and cheap -- but it
+needs the translation, which is the odometry this project does not have.
+
+**So the verdict, and it is a useful one rather than a rejection:**
+
+* **As a PERMIT: no.** 99.9 % of cones are incompletely observed, and it has no
+  position.
+* **As a VETO: yes, and safely.** It disagreed with the voxel map 749 times and
+  every single one was in the cautious direction. Wiring it as an ADDITIONAL way
+  to reject a primitive can only make the system more conservative, never less.
+  That is the same argument as publishing `OBSTACLE_DISTANCE` -- an independent
+  path to a stop, with different code and different failure modes.
+
+That asymmetry is now the rule for the whole layer: **it may take permission
+away and may never grant it.** Same shape as "inventing awareness is cheap;
+inventing permission is not", arrived at from a different direction.
+
 ## Open / unresolved
+
+* **Wire the bearing field as a VETO on primitives.** Measured safe: 749
+  disagreements with the voxel map, all cautious, zero dangerous, over 14,688
+  probes. It must never be able to permit.
+* **The bearing field ignores translation.** Yaw is an index shift; position is
+  not handled at all. Re-projecting bins through a new origin is exact and cheap
+  but needs odometry.
 
 * **A flyable world with branch-scale obstacles needs to be SMALL.** 200 m at
   0.05 m is 19 GB; 40 m is 0.8 GB. That is the shape of the fix, and it is the

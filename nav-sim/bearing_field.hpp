@@ -48,6 +48,20 @@ struct BearingFieldParams {
     // the nearest sample in its bin by construction, so a bare minimum is
     // maximally sensitive to the one thing this sensor produces most.
     int   minSamples = 4;
+    // FILL FRACTION -- "did most of what looked that way actually come back?"
+    //
+    // `minSamples` counts VALID returns only, so a bin with four good pixels out
+    // of four hundred looking that way passes it. That is exactly what empty sky
+    // is: a few thousand no-returns and a handful of spurious matches on cloud
+    // edge or sensor noise. The bin then claims a surface, holds it for
+    // forgetFrames, and the pane grows a ceiling that is not there.
+    //
+    // So a bin must also be BACKED: of the pixels pointing into it, this
+    // fraction must have returned something. Sky is a few per cent and fails;
+    // foliage is a third and passes; a wall is nearly all of it. This is the
+    // difference between drawing the map and drawing the frame's silhouette of
+    // found depth, and it is the second question after "how far".
+    float minFillFrac = 0.25f;
     // CONFIRMATION, the bearing-space equivalent of log-odds. The voxel map
     // needs repeated hits before a cell crosses occThresh, and that is most of
     // why it does not speckle. A bearing field that believes the first frame
@@ -122,7 +136,8 @@ private:
     BearingFieldParams p_;
     std::vector<float>   r_;      // nearest range last seen, or kNone
     std::vector<float>   cur_;    // this frame's minimum per bin
-    std::vector<int32_t> cnt_;    // and how many samples voted for it
+    std::vector<int32_t> cnt_;    // valid returns that voted for it
+    std::vector<int32_t> look_;   // and how many pixels looked that way at all
     std::vector<int32_t> conf_;   // consecutive frames agreeing on r_
     std::vector<int32_t> age_;    // frame index last written
     int32_t frame_ = 0;

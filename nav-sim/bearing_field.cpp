@@ -16,6 +16,7 @@ void BearingField::init(const BearingFieldParams& p) {
     age_.assign(r_.size(), -1);
     cur_.assign(r_.size(), kNone);
     cnt_.assign(r_.size(), 0);
+    look_.assign(r_.size(), 0);
     conf_.assign(r_.size(), 0);
     frame_ = 0;
 }
@@ -88,6 +89,8 @@ void BearingField::update(const cv::Mat& depth, const DepthCamera& cam,
     else std::fill(cur_.begin(), cur_.end(), kNone);
     if (cnt_.size() != r_.size()) cnt_.assign(r_.size(), 0);
     else std::fill(cnt_.begin(), cnt_.end(), 0);
+    if (look_.size() != r_.size()) look_.assign(r_.size(), 0);
+    else std::fill(look_.begin(), look_.end(), 0);
 
     const int yawShift = ((int(std::lround(pose.yawDeg / 360.f * p_.nAz))
                            % p_.nAz) + p_.nAz) % p_.nAz;
@@ -95,14 +98,18 @@ void BearingField::update(const cv::Mat& depth, const DepthCamera& cam,
         const float* row = depth.ptr<float>(v);
         const int32_t* brow = &bin_[size_t(v) * depth.cols];
         for (int u = 0; u < depth.cols; u += s) {
-            const float r = row[u];
-            if (!(r > p_.minRangeM) || r > p_.maxRangeM) continue;
             const int32_t b = brow[u];
             if (b < 0) continue;
             const int ie = b / p_.nAz;
             int ia = b % p_.nAz + yawShift;
             if (ia >= p_.nAz) ia -= p_.nAz;
             const size_t k = size_t(ie) * p_.nAz + ia;
+            // EVERY sampled pixel counts as a LOOK, whether it returned or not.
+            // That denominator is the whole point: without it there is no way to
+            // tell a surface from a few noise matches in an empty sky.
+            ++look_[k];
+            const float r = row[u];
+            if (!(r > p_.minRangeM) || r > p_.maxRangeM) continue;
             ++cnt_[k];
             if (r < cur_[k]) cur_[k] = r;
         }
@@ -113,6 +120,8 @@ void BearingField::update(const cv::Mat& depth, const DepthCamera& cam,
     // claim a surface at all.
     for (size_t k = 0; k < cur_.size(); ++k) {
         if (cnt_[k] < p_.minSamples || cur_[k] >= kNone) continue;
+        if (look_[k] > 0 &&
+            float(cnt_[k]) / float(look_[k]) < p_.minFillFrac) continue;
         const float tol = std::max(p_.agreeM, p_.agreeFrac * cur_[k]);
         if (age_[k] >= 0 && std::fabs(cur_[k] - r_[k]) <= tol) {
             ++conf_[k];

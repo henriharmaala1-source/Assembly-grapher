@@ -85,6 +85,31 @@ int main() {
         check(r > 4.5f && r < 5.5f, "a patch of them does", std::to_string(r) + " m");
     }
 
+    // --- empty sky must not become a ceiling ------------------------------
+    // A bin backed by four good pixels out of four hundred looking that way
+    // passes a count test and is exactly what sky is: thousands of no-returns
+    // and a handful of spurious matches on cloud edge or sensor noise. The bin
+    // then claims a surface and holds it, and the pane grows a roof that is not
+    // there. The fill fraction is the denominator that tells them apart.
+    {
+        BearingField bf; BearingFieldParams p; bf.init(p);
+        cv::Mat sky(cp.height, cp.width, CV_32F, cv::Scalar(-1.f));
+        // Scattered noise matches: every 9th pixel, at a plausible far range.
+        for (int v = 0; v < cp.height; v += 3)
+            for (int u = 0; u < cp.width; u += 3) sky.at<float>(v, u) = 18.f;
+        for (int i = 0; i < 6; ++i) bf.update(sky, cam, pose);
+        int live = 0, tot = 0; bf.occupancy(live, tot);
+        check(bf.rangeAt(0.f, 0.f) < 0.f && live == 0,
+              "a sparse scatter of far matches is sky, not a surface",
+              std::to_string(live) + " live bins");
+        // The same scene once it is genuinely filled in.
+        cv::Mat solid(cp.height, cp.width, CV_32F, cv::Scalar(18.f));
+        for (int i = 0; i < 6; ++i) bf.update(solid, cam, pose);
+        bf.occupancy(live, tot);
+        check(bf.rangeAt(0.f, 0.f) > 0.f && live > 100,
+              "and a filled one is", std::to_string(live) + " live bins");
+    }
+
     // --- yaw is an exact index shift -------------------------------------
     // The whole per-frame cost collapses to a table lookup because a rotation
     // about the vertical is a rotation of the azimuth index. If that is wrong

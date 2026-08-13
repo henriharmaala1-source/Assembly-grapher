@@ -316,6 +316,10 @@ struct Config {
     // for direction rather than distance. 20 m is where the stereo's own valid
     // fraction collapses on this baseline.
     float farRangeM = 20.f;
+    // "Did most of what looked that way actually come back?" Empty sky is a few
+    // per cent and fails; foliage is a third and passes. 0 disables the test,
+    // which is how you see what it was rejecting.
+    float fillFrac = 0.25f;
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -660,6 +664,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--fill")) C.hedgeFill = float(std::atof(next("0.3")));
         else if (!std::strcmp(argv[i], "--standoff")) C.standoffM = float(std::atof(next("4")));
         else if (!std::strcmp(argv[i], "--farrange")) C.farRangeM = float(std::atof(next("20")));
+        else if (!std::strcmp(argv[i], "--fillfrac")) C.fillFrac = float(std::atof(next("0.25")));
         else if (!std::strcmp(argv[i], "--truth")) showTruth = true;
         else if (!std::strcmp(argv[i], "--menu-preview")) {
             // Dump the menu to a PNG. The window is the one artefact here that
@@ -707,6 +712,10 @@ int mainCli(int argc, char** argv) {
                 "  --frames N          stop after N frames\n"
                 "  --alt 2.5           SIM only: height above the terrain, m\n"
                 "  --scene forest      SIM world: forest | hedge\n"
+                "  --farrange 20       how far the bearing field is drawn, m\n"
+                "  --fillfrac 0.25     a bearing bin needs this fraction of its\n"
+                "                      pixels to have RETURNED; 0 disables.\n"
+                "                      Empty sky is a few per cent and fails\n"
                 "  --fill 0.30         hedge porosity; lower = more see-through\n"
                 "  --standoff 4        how far ahead the hedge stands, m\n"
                 "  --audit             report whether the map agrees with the depth\n"
@@ -996,7 +1005,8 @@ static int runSession(Config C) {
     // unconditionally so the cost is always on the log line and the comparison
     // is never one the viewer had to be put into.
     BearingField bfield;
-    { BearingFieldParams bp; bp.maxRangeM = 30.f; bfield.init(bp); }
+    { BearingFieldParams bp; bp.maxRangeM = 30.f;
+      bp.minFillFrac = C.fillFrac; bfield.init(bp); }
     long bfieldUs = 0;
 
     // Opened lazily on the first frame, when the depth size is known for sure.

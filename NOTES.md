@@ -3088,6 +3088,40 @@ band: the field renders to `--farrange` (20 m by default, 30 m stored), and its
 elevation band is +-40 degrees. A roof at 25 m, or above 40 degrees on a pitched
 camera, is outside both by configuration rather than by defect.
 
+## 2026-08-13 — empty sky was becoming a ceiling: the fill fraction
+
+Reported: "even the empty sky shows up. can we get the nothing signal filtered
+out? so silhouettes of found depth?" The existing filter could not do it, and
+the reason is a missing denominator.
+
+`minSamples` counts **valid returns only**. A bin backed by four good pixels out
+of four hundred looking that way passes it -- and that is precisely what sky is:
+thousands of no-returns and a handful of spurious matches on cloud edge or
+sensor noise. The bin then claims a surface, holds it for `forgetFrames`, and
+the pane grows a ceiling that is not there.
+
+**Added `minFillFrac`: of the pixels pointing into a bin, this fraction must
+have RETURNED something.** Every sampled pixel now counts as a LOOK whether it
+returned or not, and that denominator is the whole mechanism. Sky is a few per
+cent and fails; foliage is a third and passes; a wall is nearly all of it.
+
+    a sparse scatter of far matches is sky, not a surface     0 live bins
+    and a filled one is                                    2796 live bins
+
+Both pinned in `bearing_field_check`. `--fillfrac 0` disables it, which is how
+you see what it was rejecting.
+
+**Stated plainly: the SIM cannot demonstrate this.** Its sky is a clean
+no-return with no spurious matches at all, so the change moves 1.4 % of pixels
+there. The test proves the mechanism; the real camera against a real sky is
+where it earns its place, and that is a thing to check rather than assume.
+
+**And it is the right question in general, not just for sky.** "How far is the
+nearest thing on this bearing" and "how much of that bearing actually came back"
+are two different measurements, and the second one is the confidence the first
+one needs. The voxel map has always had its equivalent -- a cell must earn
+OCCUPIED over several hits -- and the bearing field had only half of it.
+
 ## Open / unresolved
 
 * **`voxel_sim` does not run the shipping architecture.** Own voxel ladder, own

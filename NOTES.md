@@ -2840,7 +2840,90 @@ swept-volume query -- which it structurally cannot, since one bin cannot hold tw
 surfaces along a bearing. `obstacleDistance()` already emits the 72-bin array,
 so the ArduPilot side is one message away.
 
+## 2026-08-13 — can the 3.5 m go further? Yes on paper, NO in the loop, and the reason is worth the whole entry
+
+Asked whether the fine map's honest range could be pushed out, with two voxel
+levels. There already are two -- 0.10 m to 2.2 m and 0.25 m to 3.5 m -- so the
+question is really what sets 3.5, and every term is a lever:
+
+    Z_max = sqrt(cell * f * B / sigma_d) * 0.75
+
+| lever | Z_max | vs now |
+|---|---|---|
+| **now** -- cell 0.25, f 447, B 50 mm, sigma 0.25 px, derate 0.75 | 3.55 m | -- |
+| derate 1.00 (the formula's own point) | 4.73 m | x1.33 |
+| sigma_d measured at 0.15 px instead of assumed 0.25 | 4.58 m | x1.29 |
+| 1280x720 instead of 848x480 (f 674) | 4.35 m | x1.23 |
+| cell 0.50 m | 5.01 m | x1.41 |
+| baseline 120 mm | 5.49 m | x1.55 |
+| **720p + sigma 0.15 + derate 1.0** | **7.49 m** | **x2.11** |
+| all of that + 120 mm baseline | 11.61 m | x3.27 |
+
+**The derate looked free.** It was chosen against a false-free table, and that
+table predates the angular carve guard. Re-measured, nine poses, three seeds,
+false-free against TRUTH:
+
+| derate | marking range | false-free |
+|---|---|---|
+| 0.75 | 3.55 m | 0.029 % |
+| 0.90 | 4.25 m | **0.018 %** |
+| 1.00 | 4.73 m | 0.028 % |
+| 1.15 | 5.44 m | 0.043 % |
+
+Essentially flat. On that evidence the derate is buying nothing and a third more
+range is sitting there for free.
+
+**It is not free, and the closed loop says so loudly.** `voxel_sim`, 400 steps,
+progress toward the goal:
+
+| seed | default (3.9 m) | maxinteg 5.24 | cell 0.5 m |
+|---|---|---|---|
+| 1 | 109.2 m, clr 0.57, stopped 10 | **20.7 m, stopped 319** | 114.4 m, clr 0.48 |
+| 2 | 115.0, 0.57, 5 | 115.0, 0.58, 6 | 106.2, 0.44 |
+| 3 | 88.2, 0.48, 65 | 71.3, 0.53, 138 | 109.8, 0.38 |
+
+Seed 1 collapses from 109 m of progress to twenty, stationary on **319 of 400
+steps**, with the map no less correct -- false-free 0.000 % throughout.
+
+**The mechanism, and it is not the one I expected.** Speed is gated by `freeRun`,
+which ends at the first cell that is not FREE -- and UNKNOWN and OCCUPIED end it
+alike, so marking further should not change speed. What changes is the DIRECTION
+score:
+
+    if (s == OCCUPIED) { stillFree = false; break; }          // hard stop
+    reach = (s == FREE) ? t : reach + step * (1 - unknownCost); // unknown: 0.55/step
+
+Unknown accrues reach at a discount; occupied **truncates the ray**. So extending
+the marking range converts cheap discounted fog into hard walls across the whole
+bearing field at once, every direction's openness collapses together, and the
+escape branch starts firing. **A more complete map of a dense wood says there are
+trees everywhere, and a planner that scores openness reads that as nowhere to
+go.** The unknown discount was doing load-bearing work and nobody knew.
+
+That is a real coupling between the map's honest range and `unknownCost`, and it
+means **Z_max cannot be raised without re-tuning the planner**. Neither should be
+touched alone.
+
+**And the second voxel level does not pay either.** `cell 0.5` gains progress
+(mean 110.1 m against 104.1) and loses clearance (**mean 0.43 m against 0.54**)
+against a 0.6 m robot radius -- a fifth of the safety margin for six per cent
+more distance. Wrong side of that trade for the one layer that grants
+permission.
+
+**So: nothing changed.** The route to more see-ahead is not tuning. It is
+measuring sigma_d, which has been assumed at 0.25 px since the beginning and is
+worth x1.29 if it is really 0.15; then resolution, worth x1.23; then baseline,
+worth x1.55. Together x2.1 without new optics and x3.3 with them. Every one of
+those is a measurement or a purchase, and none of them is a constant to nudge.
+
 ## Open / unresolved
+
+* **Z_max and `unknownCost` are coupled and neither may move alone.** Raising the
+  marking range 3.9 -> 5.2 m cost seed 1 eighty per cent of its progress and
+  stopped it on 319 of 400 steps, because occupied truncates the openness ray
+  while unknown only discounts it. Re-tune together or not at all.
+* **Measure sigma_d.** Assumed 0.25 px since the beginning; it sets every range
+  in the ladder and is worth x1.29 on Z_max if it is really 0.15.
 
 * ~~**Replace the coarse RUNG with the bearing field.**~~ **DONE** 2026-08-13:
   default `--farcell 0`, field owns 3.5-20 m in the render and in the direction

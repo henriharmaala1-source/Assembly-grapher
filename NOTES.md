@@ -2508,8 +2508,57 @@ false-UNKNOWN. Add one -- "of the surfaces the depth image saw within the honest
 range, what fraction did the map mark" is exactly the `--audit` number, and it
 belongs in `voxel_sim` too.
 
+## 2026-08-13 — "if unknown is not free, how does it ever move in the open?"
+
+The right question, and the answer is four mechanisms, three of which were each
+bought with a failure already in this notebook.
+
+**1. Carving and marking have DIFFERENT ranges, and that is the whole escape.**
+`maxCarveM = 25 m` against `maxIntegM = 3.5 m`. A ray that returns twelve metres
+is trusted to say "the space in front of me is empty" out to `r - k*sigma`, even
+though it is not trusted to say "there is a surface here" past 3.5 m. So a
+single distant return confirms a long corridor of free space. Open ground with
+nothing at all inside the 5.8 m reach: **free 2.86 m, cmd 1.45 m/s, blocked on
+0 of 30 frames.** It flies.
+
+**2. Direction and speed read different quantities.** `openM` discounts unknown
+at 0.45 and chooses the bearing, so unknown space is steerable-toward -- refusing
+to would mean never moving. `freeM` counts only confirmed-free and sets the
+speed. The file records what conflating them cost: openness-gated speed scored
+an ENTIRELY UNMAPPED direction at 6.6 m of "clearance" out of a 12 m horizon and
+flew into a tree at 1.5 m/s on step 18, with perfect depth.
+
+**3. Speed is a stopping-distance budget, not a threshold.**
+`v = -a*t_r + sqrt((a*t_r)^2 + 2*a*d)` is positive for any positive free
+distance, so the vehicle creeps instead of freezing. The threshold version
+deadlocked: 638 of 700 steps stationary, 7.3 m travelled in a 175 m run.
+
+**4. Takeoff needs a bootstrap**, because at rest nothing has been carved:
+`seedFree(px, py, pz, 1.5 m)`, once, at a spawn already validated as clear.
+Without it: 0.0 m travelled, stopped on 400 of 400 steps.
+
+**And the degenerate case is real. Measured, not argued.** Pitch the camera 50
+degrees up so the frame contains only sky -- no returns anywhere:
+
+    mobility: free 0.00 m, cmd 0.00 m/s, blocked on 15 of 15 frames
+
+**That is correct behaviour and it is also an operational limit.** You cannot
+confirm free space you have not measured. Open space is not the problem --
+the ground is nearly always in frame and one return carves a corridor. FEATURELESS
+space is: fog, water, a clear sky with the projector off, a blank wall past
+MinZ. In any of those the aircraft stops dead, and it will look like a fault.
+
+Belongs in the failure-mode matrix, and it wants a named behaviour rather than
+"stops": hold heading and descend? hold and hover on the last confirmed corridor?
+The valid-pixel fraction is already computed and already unconsumed -- this is
+the second thing that should gate on it, after the speed budget.
+
 ## Open / unresolved
 
+* **No behaviour is defined for "no returns at all".** Measured: free 0.00 m,
+  cmd 0.00 m/s, blocked on every frame. Correct by doctrine, but fog, water, a
+  clear sky or a blank wall all produce it and the aircraft simply stops. Needs a
+  named degraded mode and should gate on the valid-pixel fraction.
 * **`voxel_sim` has no false-UNKNOWN metric**, so the only flying test is blind
   to every map defect found since 2026-08-12. Port the `--audit` measurement.
 * **`voxel_sim` runs a 0.25/1.0/2.0 ladder and a 120 mm baseline; `voxel_live`

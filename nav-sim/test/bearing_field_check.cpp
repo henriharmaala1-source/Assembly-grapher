@@ -110,6 +110,34 @@ int main() {
               "and a filled one is", std::to_string(live) + " live bins");
     }
 
+    // --- support: solid surface against silhouette edge --------------------
+    // The fill fraction was a gate and the value was thrown away. It is the
+    // more interesting half: a bin at 0.9 is a wall, one at 0.3 is an edge or
+    // foliage. That boundary is the outline of found depth, and it is measured
+    // rather than drawn.
+    {
+        BearingField bf; BearingFieldParams p; bf.init(p);
+        // Left half a solid wall, right half empty -- a vertical silhouette.
+        cv::Mat d(cp.height, cp.width, CV_32F, cv::Scalar(-1.f));
+        for (int v = 0; v < cp.height; ++v)
+            for (int u = 0; u < cp.width / 2; ++u) d.at<float>(v, u) = 9.f;
+        for (int i = 0; i < 4; ++i) bf.update(d, cam, pose);
+        // A bearing well inside the wall, and one well outside it. The wall
+        // occupies negative azimuth here because column 0 is to the LEFT.
+        const float inWall = bf.supportAt(-30.f, 0.f);
+        const float inSky  = bf.supportAt(30.f, 0.f);
+        check(inWall > 0.9f, "a bearing inside a solid wall has full support",
+              std::to_string(inWall));
+        check(inSky < 0.f, "and one in the empty half reports nothing",
+              std::to_string(inSky));
+        int solid = 0, partial = 0, none = 0;
+        bf.supportHistogram(solid, partial, none);
+        check(solid > 100 && partial >= 0,
+              "the histogram separates solid from partial",
+              std::to_string(solid) + " solid, " + std::to_string(partial) +
+              " partial");
+    }
+
     // --- yaw is an exact index shift -------------------------------------
     // The whole per-frame cost collapses to a table lookup because a rotation
     // about the vertical is a rotation of the azimuth index. If that is wrong

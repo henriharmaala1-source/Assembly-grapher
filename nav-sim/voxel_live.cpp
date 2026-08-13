@@ -1815,13 +1815,16 @@ static int runSession(Config C) {
                               "%.2f-%.1f m cells out to %.0f m   pale = UNKNOWN",
                               haveNear ? np.cell : mp.cell, fp.cell, fp.maxIntegM);
             } else {
-                int live = 0, tot = 0; bfield.occupancy(live, tot);
+                int solid = 0, partial = 0, none = 0;
+                bfield.supportHistogram(solid, partial, none);
+                // SOLID against PARTIAL is the silhouette, reported as a number
+                // rather than left to the eye: a bin is partial where only some
+                // of that direction returned, which is an edge or foliage.
                 std::snprintf(nb, sizeof(nb),
                               "%.2f m cells to %.1f m, bearings to %.0f m   "
-                              "pale = UNKNOWN",
+                              "%d solid / %d edge",
                               haveNear ? np.cell : mp.cell, mp.maxIntegM,
-                              C.farRangeM);
-                (void)live;
+                              C.farRangeM, solid, partial);
             }
             banner(fPane, nb, 44);
             if (C.turnHud) drawTurnHud(fPane);

@@ -62,6 +62,9 @@ struct BearingFieldParams {
     // difference between drawing the map and drawing the frame's silhouette of
     // found depth, and it is the second question after "how far".
     float minFillFrac = 0.25f;
+    // Above this a bin is a SOLID surface rather than an edge. Only used for
+    // reporting and shading -- nothing is rejected by it.
+    float solidFillFrac = 0.70f;
     // CONFIRMATION, the bearing-space equivalent of log-odds. The voxel map
     // needs repeated hits before a cell crosses occThresh, and that is most of
     // why it does not speckle. A bearing field that believes the first frame
@@ -102,6 +105,18 @@ public:
     // Bins carrying anything, and how many bins there are. For the log line.
     void occupancy(int& live, int& total) const;
 
+    // HOW MUCH of that bearing came back, 0..1, or <0 if the bin says nothing.
+    //
+    // The fill fraction was a GATE and the value was thrown away, which wasted
+    // the more interesting half of it. A bin at 0.9 is a solid surface; one at
+    // 0.3 is a silhouette edge or foliage, where the sensor is returning from
+    // part of the direction and not the rest. That boundary IS the outline of
+    // found depth, and it is a measurement rather than a rendering choice.
+    float supportAt(float azDeg, float elDeg) const;
+
+    // Bins by support band, for the log line: solid, partial, and nothing.
+    void supportHistogram(int& solid, int& partial, int& none) const;
+
     // First-person render, deliberately through the SAME projection, the same
     // height colour key and the same haze as VoxelMap::fpvImageWH -- because
     // the only honest way to compare two representations is to change nothing
@@ -138,6 +153,7 @@ private:
     std::vector<float>   cur_;    // this frame's minimum per bin
     std::vector<int32_t> cnt_;    // valid returns that voted for it
     std::vector<int32_t> look_;   // and how many pixels looked that way at all
+    std::vector<float>   sup_;    // fraction of that bearing that returned
     std::vector<int32_t> conf_;   // consecutive frames agreeing on r_
     std::vector<int32_t> age_;    // frame index last written
     int32_t frame_ = 0;

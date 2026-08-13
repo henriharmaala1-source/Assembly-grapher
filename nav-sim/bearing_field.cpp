@@ -17,6 +17,7 @@ void BearingField::init(const BearingFieldParams& p) {
     cur_.assign(r_.size(), kNone);
     cnt_.assign(r_.size(), 0);
     look_.assign(r_.size(), 0);
+    sup_.assign(r_.size(), -1.f);
     conf_.assign(r_.size(), 0);
     frame_ = 0;
 }
@@ -122,6 +123,7 @@ void BearingField::update(const cv::Mat& depth, const DepthCamera& cam,
         if (cnt_[k] < p_.minSamples || cur_[k] >= kNone) continue;
         if (look_[k] > 0 &&
             float(cnt_[k]) / float(look_[k]) < p_.minFillFrac) continue;
+        sup_[k] = look_[k] > 0 ? float(cnt_[k]) / float(look_[k]) : -1.f;
         const float tol = std::max(p_.agreeM, p_.agreeFrac * cur_[k]);
         if (age_[k] >= 0 && std::fabs(cur_[k] - r_[k]) <= tol) {
             ++conf_[k];
@@ -141,6 +143,25 @@ float BearingField::rangeAt(float azDeg, float elDeg) const {
     if (age_[k] < 0 || frame_ - age_[k] > p_.forgetFrames) return -1.f;
     if (conf_[k] < p_.confirmFrames) return -1.f;
     return r_[k];
+}
+
+float BearingField::supportAt(float azDeg, float elDeg) const {
+    const int ie = elIdx(elDeg);
+    if (ie < 0) return -1.f;
+    const size_t k = size_t(ie) * p_.nAz + azIdx(azDeg);
+    if (age_[k] < 0 || frame_ - age_[k] > p_.forgetFrames) return -1.f;
+    if (conf_[k] < p_.confirmFrames) return -1.f;
+    return sup_[k];
+}
+
+void BearingField::supportHistogram(int& solid, int& partial, int& none) const {
+    solid = partial = none = 0;
+    for (size_t i = 0; i < r_.size(); ++i) {
+        const bool live = age_[i] >= 0 && frame_ - age_[i] <= p_.forgetFrames
+                       && conf_[i] >= p_.confirmFrames;
+        if (!live) { ++none; continue; }
+        if (sup_[i] >= p_.solidFillFrac) ++solid; else ++partial;
+    }
 }
 
 std::vector<float> BearingField::obstacleDistance(float yawDeg, int bins) const {
@@ -191,6 +212,7 @@ cv::Mat BearingField::render(const BearingField& bf,
     // Range per pixel first, then shade -- the slope term needs its neighbours.
     cv::Mat rng(outH, outW, CV_32F, cv::Scalar(-1.f));
     cv::Mat alt(outH, outW, CV_32F, cv::Scalar(0.f));
+    cv::Mat sup(outH, outW, CV_32F, cv::Scalar(1.f));
     for (int v = 0; v < outH; ++v)
         for (int u = 0; u < outW; ++u) {
             const float rx = (float(u) - cx_) / f, ry = (float(v) - cy_) / f;
@@ -206,6 +228,7 @@ cv::Mat BearingField::render(const BearingField& bf,
             const float r = bf.rangeAt(az, el);
             if (!(r > 0.f) || r > maxRange || r < minRange) continue;
             rng.at<float>(v, u) = r;
+            sup.at<float>(v, u) = bf.supportAt(az, el);
             alt.at<float>(v, u) = dz * r;      // height of the surface above the eye
         }
 
@@ -241,6 +264,15 @@ cv::Mat BearingField::render(const BearingField& bf,
             col *= 0.42f + 0.58f * shade;
             const float d = std::min(1.f, r / maxRange);
             col = col * (1.f - 0.55f * d) + FOG * (0.55f * d);
+            // SUPPORT AS TRANSPARENCY. A bin where only a third of the pixels
+            // returned is a silhouette edge or foliage, and drawing it as
+            // solidly as a wall asserts more than was measured. Fading it makes
+            // the outline of found depth visible instead of implied.
+            const float sv = sup.at<float>(v, u);
+            if (sv >= 0.f) {
+                const float a = 0.35f + 0.65f * std::min(1.f, sv / 0.7f);
+                col = col * a + FOG * (1.f - a);
+            }
             row[u] = cv::Vec3b(uchar(std::min(255.f, col[0])),
                                uchar(std::min(255.f, col[1])),
                                uchar(std::min(255.f, col[2])));

@@ -3122,7 +3122,52 @@ are two different measurements, and the second one is the confidence the first
 one needs. The voxel map has always had its equivalent -- a cell must earn
 OCCUPIED over several hits -- and the bearing field had only half of it.
 
+## 2026-08-13 — "can it detect if a silhouette is depth?" Half yes, and the other half needs a different sensor channel
+
+Two questions live inside that one, and they have different answers.
+
+**"Is there depth on this bearing?" -- YES, and it is now a measured VALUE.**
+The fill fraction was a gate and the value was thrown away, which was the more
+interesting half of it. `supportAt()` returns it: the fraction of pixels looking
+that way that actually returned. A bin at 0.9 is a wall; one at 0.3 is an edge
+or foliage, where the sensor returns from part of the direction and not the
+rest. **That boundary IS the outline of found depth.** The pane now fades
+partial bins toward fog rather than drawing them as solidly as a wall -- drawing
+them equally asserted more than was measured -- and the caption carries
+`solid / edge` counts. Pinned in `bearing_field_check`.
+
+**"Is this silhouette an OBJECT?" -- NO, and not from depth at any resolution.**
+The camera "clearly can" see the roof because a roof against bright sky is a
+strong **INTENSITY** edge. The DEPTH image cannot measure sky at all; it simply
+stops returning. So in depth:
+
+    object edge against sky      ->  returns stop
+    textureless surface          ->  returns stop
+    beyond the disparity range   ->  returns stop
+
+All three are the same signal. Support tells you WHERE returns stop; it cannot
+tell you WHY, and no amount of filtering recovers a distinction the channel does
+not carry. Claiming otherwise would be exactly the "confidently wrong" failure
+this map exists to avoid.
+
+**What would close it, and it is already half-built.** The D435i publishes the
+left IR image, and `VoxelMap::integrate` already has an intensity overload with
+a per-cell texture byte. But **nothing requests the infrared stream** --
+`grep INFRARED realsense_dyn.cpp` returns zero. So the channel that answers the
+question is available, plumbed at the far end, and never opened.
+
+With it the test is direct: a depth boundary WITH a coincident intensity edge is
+an object silhouette; a depth boundary with NO intensity edge is the matcher
+giving up on a textureless surface. That is `APPEARANCE_AND_BLOBS_PLAN.md`, and
+this is the first concrete argument for it that came from the field rather than
+from the plan.
+
 ## Open / unresolved
+
+* **The IR stream is never requested.** `realsense_dyn.cpp` asks for depth only,
+  while `VoxelMap::integrate` already accepts an intensity image and stores a
+  per-cell texture byte. Opening it is what lets an object silhouette be told
+  from a textureless surface -- in depth alone both are "returns stop".
 
 * **`voxel_sim` does not run the shipping architecture.** Own voxel ladder, own
   120 mm baseline, no bearing field. The only closed-loop evidence in the

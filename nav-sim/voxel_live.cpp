@@ -60,6 +60,7 @@
 #include "frame_source.hpp"
 #include "voxel_map.hpp"
 #include "voxel_traj.hpp"
+#include "bearing_field.hpp"
 #include "voxel_world.hpp"
 
 using namespace sim;
@@ -637,6 +638,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
         else if (!std::strcmp(argv[i], "--chase")) viewMode = 2;
+        else if (!std::strcmp(argv[i], "--compare")) viewMode = 3;
         else if (!std::strcmp(argv[i], "--noarrow")) C.turnHud = false;
         else if (!std::strcmp(argv[i], "--record")) C.recordPath = next("run.kdr");
         else if (!std::strcmp(argv[i], "--depthmax"))
@@ -691,6 +693,7 @@ int mainCli(int argc, char** argv) {
                 "                      59 ms/frame at 848x480 and cannot keep up\n"
                 "                      with a 30 fps camera; 2 is 19 ms\n"
                 "  --overlay           composite the voxel view ON the depth image\n"
+                "  --compare           voxel ladder BESIDE a bearing field, same instant\n"
                 "  --nearcell 0.10     fine near layer, 0 = off. Honest to 2.2 m\n"
                 "  --farcell 1.0       coarse far layer, 0 = off. Honest to 7 m\n"
                 "  --openness          score on room alone (default; no goal)\n"
@@ -986,6 +989,14 @@ static int runSession(Config C) {
 
     const bool haveNear = C.nearCell > 0.f && C.nearCell < cell;
 
+    // The COMPARABLE. Same frames, same pose, same projection -- the only thing
+    // that differs from the voxel ladder is where a range comes from. Built
+    // unconditionally so the cost is always on the log line and the comparison
+    // is never one the viewer had to be put into.
+    BearingField bfield;
+    { BearingFieldParams bp; bp.maxRangeM = 30.f; bfield.init(bp); }
+    long bfieldUs = 0;
+
     // Opened lazily on the first frame, when the depth size is known for sure.
     DepthRecordWriter rec;
     bool recOpen = false, recFailed = false;
@@ -1021,6 +1032,9 @@ static int runSession(Config C) {
         if (C.farCell > 0.f) Mfar.integrate(depth, cam, pose);
         if (haveNear) { Mnear.integrate(depth, cam, pose); Mnear.recentre(pose.e, pose.n, pose.u); }
         integUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
+        { const int64 tb = cv::getTickCount();
+          bfield.update(depth, cam, pose, 1);
+          bfieldUs += (cv::getTickCount() - tb) * 1000000 / cv::getTickFrequency(); }
 
         // --- the audit ---------------------------------------------------
         // Sampled coarsely, because it is a diagnostic and not a product, and
@@ -1498,7 +1512,44 @@ static int runSession(Config C) {
         };
 
         const int64_t tDraw = cv::getTickCount();
-        if (C.viewMode == 1) {
+        if (C.viewMode == 3) {
+            // THE COMPARABLE. Left half the voxel ladder, right half the
+            // bearing field, through the same projection at the same instant.
+            // Split rather than alternating panes, because the eye is far
+            // better at a seam than at a memory.
+            const int fw = PH / 2 * cp.width / cp.height, fh = PH / 2;
+            const float R = C.farCell > 0.f ? fp.maxIntegM * 1.15f
+                                            : mp.maxIntegM * 1.15f;
+            cv::Mat a = fit(VoxelMap::renderLadder(ladder(0.f), pose.e, pose.n,
+                                                   pose.u, yaw, pitchDeg,
+                                                   fw, fh, cp.hfovDeg,
+                                                   FpvStyle(), nullptr),
+                            fw * 2, fh * 2);
+            cv::Mat b = fit(BearingField::render(bfield, yaw, pitchDeg, fw, fh,
+                                                 cp.hfovDeg, R, pose.u),
+                            fw * 2, fh * 2);
+            cv::Mat both(a.rows, a.cols, CV_8UC3);
+            a(cv::Rect(0, 0, a.cols / 2, a.rows)).copyTo(
+                both(cv::Rect(0, 0, a.cols / 2, a.rows)));
+            b(cv::Rect(a.cols / 2, 0, a.cols - a.cols / 2, a.rows)).copyTo(
+                both(cv::Rect(a.cols / 2, 0, a.cols - a.cols / 2, a.rows)));
+            cv::line(both, {a.cols / 2, 0}, {a.cols / 2, a.rows}, {40, 40, 40}, 2);
+            fPane = cv::Mat(PH, PW, CV_8UC3, cv::Scalar(206, 208, 212));
+            { const int tw = PW, th = std::min(PH, tw * both.rows / both.cols);
+              fit(both, tw, th).copyTo(fPane(cv::Rect(0, (PH - th) / 2, tw, th))); }
+            banner(fPane, "CUBES  |  BEARINGS      same frame, same projection");
+            int live = 0, tot = 0; bfield.occupancy(live, tot);
+            // Independent bearings each representation carries across the
+            // frame, at the coarse rung's own honest range.
+            const float degPerCell = C.farCell > 0.f
+                ? C.farCell / std::max(1.f, fp.maxIntegM) * 180.f / sim::PI_F : 999.f;
+            char cb[120];
+            std::snprintf(cb, sizeof(cb),
+                          "%.0f ms, %.0f bearings   |   %.1f ms, %d bins",
+                          n ? integUs / 1000.0 / n : 0.0, 87.f / degPerCell,
+                          n ? bfieldUs / 1000.0 / n : 0.0, live);
+            banner(fPane, cb, 34);
+        } else if (C.viewMode == 1) {
             // OVERLAY. Rendered at the DEPTH IMAGE's own size and horizontal
             // FOV, so the two line up pixel for pixel and any disagreement is
             // real rather than a rendering artefact. A square render stretched
@@ -1672,7 +1723,7 @@ static int runSession(Config C) {
             const int k = cv::waitKey(paused ? 0 : 1);
             if (k == 'q' || k == 27) break;
             if (k == 'm') { backToMenu = true; break; }
-            if (k == 'v') C.viewMode = (C.viewMode + 1) % 3;  // fpv / overlay / chase
+            if (k == 'v') C.viewMode = (C.viewMode + 1) % 4;  // fpv / overlay / chase / compare
             if (k == 'a') C.turnHud = !C.turnHud;             // the turn arrow
             if (k == ' ') paused = !paused;
             if (k == 's') { cv::imwrite(out + "_frame.png", full);
@@ -1907,7 +1958,7 @@ int main(int argc, char** argv) {
         else if (id == 13) { iSpin = (iSpin + 1) % 5; C.yawRateDps = SPINS[iSpin]; }
         else if (id == 14) { C.stride = (C.stride >= 4) ? 1 : C.stride * 2; }
         else if (id == 15) { C.dirMode = 1 - C.dirMode; }
-        else if (id == 16) { C.viewMode = (C.viewMode + 1) % 3; }
+        else if (id == 16) { C.viewMode = (C.viewMode + 1) % 4; }
         else if (id == 17) { C.turnHud = !C.turnHud; }
         else if (id == 18) { iFar = (iFar + 1) % 5; C.farCell = FARS[iFar]; }
         else if (id == 21) break;

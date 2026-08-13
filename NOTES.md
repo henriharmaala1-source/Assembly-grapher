@@ -2742,11 +2742,61 @@ which is simultaneously `POSE_AND_OPENNESS_PLAN.md` section 1, the
 `OBSTACLE_DISTANCE` message ArduPilot already consumes, and the thing that ends
 the handover seams. Four reasons now point at the same object.
 
+## 2026-08-13 — the bearing field, built as a comparable rather than as a proposal
+
+`--compare` splits the first-person pane: voxel ladder on the left, bearing
+field on the right, **same frame, same pose, same projection, same colour key**.
+The only thing that differs is where a range came from. Two scenes:
+
+| scene | cubes | bearings |
+|---|---|---|
+| forest, 2.5 m AGL | 22 ms, **11** independent bearings | **3.2 ms**, 1801 live bins |
+| hedge 4 m ahead | 20 ms, 11 | 3.2 ms, 2128 bins |
+
+The cube side draws the trunk as a slab and the hedge as a flat wall with a fog
+disc in it. The bearing side draws the trunk as a slim column and the hedge as a
+**porous** thing with gaps in it, which is what it is.
+
+**Three defects of my own on the way, all worth recording because each is a trap
+anyone building this would hit.**
+
+1. **Running minimum per bin is wrong.** The minimum of N noisy samples is biased
+   low and the bias GROWS with N, so every bin crept toward the nearest outlier
+   it had ever seen and the pane turned to salt and pepper. A bearing bin is
+   fully re-observed whenever it is in frame -- unlike a voxel, which can be
+   occluded -- so the rule is: minimum WITHIN a frame, replace ACROSS frames.
+2. **`rayFor` per pixel cost 15.75 ms**, twenty times the work it wrapped,
+   because it rebuilds the whole rotation -- six trig calls -- for each of
+   407 k pixels. Fixed by precomputing the BODY-frame bin per pixel once: a yaw
+   rotation is an exact index shift on a uniform azimuth grid, so the per-frame
+   cost collapses to a table lookup and a compare. **15.75 -> 3.2 ms.**
+3. **It still speckled, and the reason is instructive.** The voxel map does not
+   speckle because log-odds makes a cell earn OCCUPIED over several hits. A
+   bearing field that believes the first frame has no such filter. So it needs
+   its own: a bin must be seen at consistently the same range (within
+   max(0.3 m, 10 %)) for two frames before it is reported. **Without that the
+   comparison would have flattered cubes for the wrong reason** -- the speckle
+   is genuinely in the depth image, and the voxel map genuinely rejects it.
+
+**What it cannot do, and why the near field keeps its cubes.** A bin says "the
+nearest thing on this bearing is at r". That cannot answer "is this robot-sized
+tube clear", it holds no free space at all, and it cannot represent two surfaces
+along one bearing. Wiring it into the swept-volume test would be a serious
+mistake. It is a candidate for the COARSE RUNG, whose job was only ever
+awareness, and it is not wired into the planner.
+
+`obstacleDistance()` already emits the 72-bin array `OBSTACLE_DISTANCE` wants,
+so the same object serves the pane, the openness score and ArduPilot's own
+avoidance layer.
+
 ## Open / unresolved
 
-* **Replace the coarse RUNG with a bearing profile** (keep voxels near). Measured
-  77x the angular resolution at 0.6x the cost, and it removes the handover seam
-  that keeps producing fog discs. Same object as `OBSTACLE_DISTANCE`.
+* **Replace the coarse RUNG with the bearing field.** Now built and comparable
+  side by side (`--compare`): 3.2 ms against 22 ms, ~1800 live bins against 11
+  independent bearings, no handover seam. Still NOT wired into the planner --
+  it has no free space and cannot answer a swept-volume query, so the decision
+  is what the planner should read from it (openness score, `OBSTACLE_DISTANCE`)
+  and never permission.
 * **The far field should not be voxels.** A cube sized for stereo's range error
   is Z*sigma/B times coarser than its lateral resolution -- 100:1 at 20 m. Build
   the bearing-space map from `POSE_AND_OPENNESS_PLAN.md` section 1; it is also

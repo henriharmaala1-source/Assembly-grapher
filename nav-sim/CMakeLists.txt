@@ -185,6 +185,7 @@ endif()
 # able to break a build at all.
 add_executable(voxel_live
   voxel_live.cpp
+  bearing_field.cpp
   frame_source.cpp
   realsense_dyn.cpp
   depth_record.cpp

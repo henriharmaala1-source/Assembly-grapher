@@ -3162,7 +3162,56 @@ giving up on a textureless surface. That is `APPEARANCE_AND_BLOBS_PLAN.md`, and
 this is the first concrete argument for it that came from the field rather than
 from the plan.
 
+## 2026-08-13 — "I don't see random borders: it's always depth segments, even if vague"
+
+Correct, and it corrects me. I had said depth cannot tell an object silhouette
+from a textureless surface because both are "returns stop". True about the
+CAUSE, and it misses the point: the no-return regions are **coherent patches**,
+and coherence is itself information even when the cause is ambiguous.
+
+**The tree already had the component that exploits it, and a verdict on it.**
+`depth_improve.cpp` fills holes adjacent to near returns -- explicitly "a hole
+adjacent to a near return is not an absence of information: it is a MATCHING
+failure on a surface we already know is close". Measured **net negative**: plain
+forest -0.114 efficiency, 6 of 8 seeds worse, two catastrophic, minimum
+clearance 0.38 against 0.43. The mechanism of the harm is precise -- a filled
+pixel becomes an OCCUPIED cell, `sphereClear` hard-rejects OCCUPIED anywhere in
+the robot ball, so every fabricated cell deletes primitives from the library.
+
+The notes named the reopening condition: **"thin branches in the world model,
+not a better parameter"**. `genHedgeRow` added 4 cm twigs today, by accident,
+which meets it -- but only in a 30 m static scene, and the improver has to be
+judged in flight.
+
+**Why the flyable world still has no branches, with the number.** `genForest`
+builds at the MAP's cell, and the flight world is 200 m:
+
+    200 m at 0.25 m  ->  7.7e7 cells    0.2 GB      <- what exists
+    200 m at 0.05 m  ->  9.6e9 cells   19.2 GB
+    200 m at 0.04 m  ->  1.9e10 cells  37.5 GB
+     40 m at 0.05 m  ->  3.8e8 cells    0.8 GB      <- affordable
+
+So it was never laziness: a 200 m world at branch resolution is tens of
+gigabytes. The way out is a SMALL fine world -- a 40 m corridor rather than a
+200 m plot -- which is what `genHedgeRow` already proves is affordable.
+
+**And the same idea is much safer one layer out.** Added neighbour consensus to
+the BEARING FIELD: a bin that failed the fill test while five of its eight
+neighbours agree on a range is a hole in a surface, and takes their mean at
+**half their support**, so it renders as inferred rather than measured.
+
+The reason this is safe here and was not safe in the depth image is the whole
+argument: **this layer has no authority.** It scores a bearing and can neither
+veto nor add speed, so an invented bin cannot delete a primitive or stop the
+aircraft. Inventing awareness is cheap; inventing permission is not. Pinned both
+ways -- a hole between agreeing neighbours fills, a real gap with nothing on one
+side does not.
+
 ## Open / unresolved
+
+* **A flyable world with branch-scale obstacles needs to be SMALL.** 200 m at
+  0.05 m is 19 GB; 40 m is 0.8 GB. That is the shape of the fix, and it is the
+  precondition NOTES set for revisiting the depth improver.
 
 * **The IR stream is never requested.** `realsense_dyn.cpp` asks for depth only,
   while `VoxelMap::integrate` already accepts an intensity image and stores a

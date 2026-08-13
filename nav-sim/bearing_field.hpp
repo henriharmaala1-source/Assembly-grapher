@@ -65,6 +65,26 @@ struct BearingFieldParams {
     // Above this a bin is a SOLID surface rather than an edge. Only used for
     // reporting and shading -- nothing is rejected by it.
     float solidFillFrac = 0.70f;
+    // NEIGHBOUR CONSENSUS -- "it is always depth segments, even if vague".
+    //
+    // Reported from the field, and it is right: no-return regions are not
+    // random, they are coherent patches. A bin that failed the fill test while
+    // its neighbours agree on a range is a HOLE IN A SURFACE, not an edge --
+    // the matcher lost the interior of something whose rim it resolved.
+    //
+    // Filling it fabricates an obstacle, and fabricating obstacles is exactly
+    // what made the image-space depth improver a net loss: a filled pixel
+    // becomes an OCCUPIED cell and `sphereClear` hard-rejects OCCUPIED anywhere
+    // in the robot ball, so every invented cell deletes primitives. Here that
+    // argument does not apply, because THIS LAYER HAS NO AUTHORITY -- it scores
+    // a bearing and can neither veto nor add speed. Inventing awareness is
+    // cheap; inventing permission is not. That asymmetry is the whole reason
+    // this is done in bearing space rather than in the depth image.
+    //
+    // 0 disables. Filled bins carry HALF their neighbours' support, so they
+    // render faint and are never mistaken for measurements.
+    int   consensusMin = 5;     // of 8 neighbours, this many must agree
+    float consensusTolFrac = 0.15f;
     // CONFIRMATION, the bearing-space equivalent of log-odds. The voxel map
     // needs repeated hits before a cell crosses occThresh, and that is most of
     // why it does not speckle. A bearing field that believes the first frame

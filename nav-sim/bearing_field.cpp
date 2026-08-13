@@ -134,6 +134,37 @@ void BearingField::update(const cv::Mat& depth, const DepthCamera& cam,
         }
         age_[k] = frame_;
     }
+    // --- neighbour consensus ------------------------------------------------
+    // Second pass, after every bin has had its own say, so a filled bin can
+    // never seed another. One round only: a segment recovers its interior, and
+    // a genuine gap between two surfaces stays a gap.
+    if (p_.consensusMin > 0) {
+        for (int ie = 1; ie + 1 < p_.nEl; ++ie)
+            for (int ia = 0; ia < p_.nAz; ++ia) {
+                const size_t k = size_t(ie) * p_.nAz + ia;
+                if (age_[k] == frame_) continue;          // spoke for itself
+                if (look_[k] < p_.minSamples) continue;   // nobody looked there
+                float sum = 0.f, supN = 0.f, first = -1.f; int agree = 0;
+                for (int de = -1; de <= 1; ++de)
+                    for (int da = -1; da <= 1; ++da) {
+                        if (!de && !da) continue;
+                        int na = ia + da;
+                        if (na < 0) na += p_.nAz; else if (na >= p_.nAz) na -= p_.nAz;
+                        const size_t nk = size_t(ie + de) * p_.nAz + na;
+                        if (age_[nk] != frame_ || conf_[nk] < p_.confirmFrames) continue;
+                        if (first < 0.f) first = r_[nk];
+                        else if (std::fabs(r_[nk] - first) >
+                                 p_.consensusTolFrac * first) continue;
+                        sum += r_[nk]; supN += sup_[nk]; ++agree;
+                    }
+                if (agree < p_.consensusMin) continue;
+                r_[k] = sum / float(agree);
+                sup_[k] = 0.5f * supN / float(agree);   // inferred, not measured
+                conf_[k] = p_.confirmFrames;            // its neighbours vouched
+                age_[k] = frame_;
+            }
+    }
+
 }
 
 float BearingField::rangeAt(float azDeg, float elDeg) const {
@@ -143,6 +174,7 @@ float BearingField::rangeAt(float azDeg, float elDeg) const {
     if (age_[k] < 0 || frame_ - age_[k] > p_.forgetFrames) return -1.f;
     if (conf_[k] < p_.confirmFrames) return -1.f;
     return r_[k];
+
 }
 
 float BearingField::supportAt(float azDeg, float elDeg) const {

@@ -138,6 +138,36 @@ int main() {
               " partial");
     }
 
+    // --- neighbour consensus: a hole in a surface is not an edge ----------
+    // "It is always depth segments, even if vague." A bin that failed the fill
+    // test while its neighbours agree on a range is the matcher losing the
+    // interior of something whose rim it resolved. Safe HERE and nowhere else,
+    // because this layer scores a bearing and cannot grant permission.
+    {
+        BearingField bf; BearingFieldParams p; bf.init(p);
+        // A wall with a textureless patch punched out of the middle of it.
+        cv::Mat d(cp.height, cp.width, CV_32F, cv::Scalar(7.f));
+        const int cx = cp.width / 2, cy = cp.height / 2;
+        for (int v = cy - 6; v <= cy + 6; ++v)
+            for (int u = cx - 6; u <= cx + 6; ++u) d.at<float>(v, u) = -1.f;
+        for (int i = 0; i < 4; ++i) bf.update(d, cam, pose);
+        const float r = bf.rangeAt(0.f, 0.f);
+        const float sup = bf.supportAt(0.f, 0.f);
+        check(r > 6.f && r < 8.f, "a hole surrounded by agreeing neighbours is filled",
+              std::to_string(r) + " m");
+        check(sup >= 0.f && sup < 0.5f,
+              "and carries reduced support, so it renders as inferred",
+              std::to_string(sup));
+        // A genuine gap must survive: nothing either side to vouch for it.
+        BearingField bf2; BearingFieldParams p2; bf2.init(p2);
+        cv::Mat e(cp.height, cp.width, CV_32F, cv::Scalar(-1.f));
+        for (int v = 0; v < cp.height; ++v)
+            for (int u = 0; u < 40; ++u) e.at<float>(v, u) = 7.f;
+        for (int i = 0; i < 4; ++i) bf2.update(e, cam, pose);
+        check(bf2.rangeAt(20.f, 0.f) < 0.f,
+              "a real gap is not filled in from one side");
+    }
+
     // --- yaw is an exact index shift -------------------------------------
     // The whole per-frame cost collapses to a table lookup because a rotation
     // about the vertical is a rotation of the azimuth index. If that is wrong

@@ -2114,6 +2114,43 @@ to feed a position back to the FC, and the shape of that feedback is now a
 different message with different semantics. Resolve before any GNSS-denied
 flight. Logged in `PROJECT_CV.md` §5.
 
+## 2026-08-12 — the ArduPilot bridge, conceptualised
+
+`onboard/docs/MAVLINK_BRIDGE_PLAN.md`. Three findings worth keeping here.
+
+**Architecture C wins for v1: estimate position NOWHERE.** The planner is
+body-frame by construction, the map is local and short-lived, and nothing in the
+thesis needs a global position. So the Pi-side Kalman is not ported to
+ArduPilot -- it is unwired. It stays in the tree because it is correct code for
+the *later* architecture (Pi sends odometry increments, EKF3 fuses), but it does
+not belong in the v1 flight path. The cheapest architecture is the one the
+thesis argues for anyway.
+
+**And the current shape is not merely non-idiomatic, it is statistically
+wrong.** Feeding EKF3 an already-filtered Pi estimate makes it treat a smoothed
+value as an independent measurement -- two filters in series, neither aware of
+the other, lag and over-confidence and a covariance that means nothing.
+
+**The consequence most likely to bite on the field day**, stated now rather than
+discovered: **GUIDED velocity setpoints need a horizontal velocity estimate, and
+GNSS-denied there isn't one.** No GPS, no external nav, no optical flow leaves
+EKF3 with IMU and baro -- enough for attitude, not for velocity. So v1 commands
+ATTITUDE, and speed is expressed as pitch angle. Crude, and correct for the
+constraint. Optical flow plus a downward rangefinder (~40 euro) is what upgrades
+this, and it was on no list until now.
+
+**One elegant find:** ArduPilot's proximity layer consumes `OBSTACLE_DISTANCE`
+(330), a 72-element array of distances by bearing -- which is *exactly* the
+angular openness map already designed in `POSE_AND_OPENNESS_PLAN.md` §1. Same
+structure, same units. Publishing it costs one message and buys a second,
+independent avoidance layer running inside ArduPilot with different code and
+different failure modes. For a project whose safety argument is built on
+independent paths to a veto, that is close to free defence in depth.
+
+Also noted: `EKF_STATUS_REPORT` (193) has no decoder, and it is the FC's own
+"do I trust myself" signal -- the gap `PROJECT_CV.md` records as every safety
+mechanism assuming the map might be wrong and none assuming the system might be.
+
 ## Open / unresolved
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes

@@ -10,6 +10,7 @@ specific missing artifacts that turn an arguable claim into a checkable one.
 | `NOTES.md` | the lab notebook — tried, measured, rejected |
 | `PROJECT.md` | the public technical write-up |
 | `ROADMAP.md` | phase plan, P2–P6 |
+| `onboard/docs/MAVLINK_BRIDGE_PLAN.md` | where state estimation lives under ArduPilot |
 | **this** | role, inventory, claims, and the gaps in the record |
 
 Rewritten 2026-08-12 after a full survey of the tree. Motivation is stated
@@ -92,7 +93,9 @@ model would run faster on the phone and flatter the Pi).
 
 * **Dependency-free MAVLink v2 codec** — 14 messages, CRC_EXTRA table,
   trailing-zero truncation, size-sorted field order, zero-extension — pinned
-  against pymavlink golden frames.
+  against pymavlink golden frames. Signed frames are *rejected* rather than
+  mis-parsed, and payloads are zero-extended so a short frame reads as defaults
+  rather than garbage.
 * **Loosely-coupled Kalman state estimator**: linear core, all nonlinearity
   (geodetic projection, body→world rotation) pushed to the measurement
   boundary — a deliberate choice over a fragile full EKF.
@@ -171,6 +174,15 @@ A weekend of **writing**, not building, and what a reviewer will probe.
 - [ ] **Interface control.** `grep VoxelMap onboard/` returns nothing: `nav-sim`
       and `onboard` share zero code. `THESIS.md` P3, a flight blocker.
 - [ ] **THE STATE MODEL DID NOT FOLLOW THE FLIGHT-STACK DECISION.**
+      *Architecture designed: `onboard/docs/MAVLINK_BRIDGE_PLAN.md`.* The answer
+      is that **v1 should estimate position nowhere at all** — the planner is
+      body-frame, the map is local and short-lived, and nothing in the thesis
+      needs a global position. The Pi does perception and local planning; the FC
+      does attitude and rate. That deletes the Pi-side Kalman from the flight
+      path rather than porting it. Two flight blockers fall out: an `ATTITUDE`
+      decoder (~30 lines, in the enum, no decoder), and a `SET_ATTITUDE_TARGET`
+      command path — because **GUIDED velocity setpoints need a horizontal
+      velocity estimate, and GNSS-denied there isn't one.**
       `state_estimator.hpp` is still written against **iNAV** throughout: its
       constants are copied from iNAV (`gpsTimeoutS` "matches
       INAV_GPS_TIMEOUT_MS", `glitchRadiusM` "matches INAV_GPS_GLITCH_RADIUS"),
@@ -196,6 +208,11 @@ A weekend of **writing**, not building, and what a reviewer will probe.
       mounting. **The hardest integration work in this project is currently
       invisible in the artifact**, and by this project's own rule undocumented
       work did not happen.
+- [ ] **Optical flow + downward rangefinder, ~€40.** Probably the
+      highest-value small purchase available: it gives EKF3 a horizontal
+      velocity source GNSS-denied (`EK3_SRC1_VELXY = OpticalFlow`), which
+      upgrades the control interface from attitude commands to velocity
+      setpoints. See `MAVLINK_BRIDGE_PLAN.md` §3.2. Not previously on any list.
 - [ ] **Crash tolerance as an ITERATION-RATE item, not a safety one.** The
       competitor's airframe carries full prop guards and lands undamaged. Every
       open measurement here is gated on flights you are reluctant to risk.

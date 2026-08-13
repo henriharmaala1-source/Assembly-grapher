@@ -251,9 +251,40 @@ int main() {
                     upperFine += mNearOnly.at<uchar>(y, x) ? 1 : 0;
                     upperBand += mBanded.at<uchar>(y, x) ? 1 : 0;
                 }
-            check(upperFine > 20 && upperBand == upperFine,
-                  "the coarse level cannot intrude on the fine level's range",
+            // BOUNDED, not zero. A coarse cell that STRADDLES the handover may
+            // legitimately speak: it could hold a surface at or beyond the band
+            // start, and the fine level -- honest only to that range -- provably
+            // cannot know. What must stay excluded is a cell lying ENTIRELY
+            // inside the fine band, which is the one that draws a wall far too
+            // close and filled a real pane in a room. The exact-equality version
+            // of this check forbade both, and in doing so it cut a disc out of
+            // the middle of every first-person view.
+            check(upperFine > 20 && upperBand <= upperFine * 7 / 5,
+                  "a straddling coarse cell may speak, but only just",
                   std::to_string(upperFine) + " -> " + std::to_string(upperBand) + " px");
+            // And the cell that lies wholly inside the fine band must not.
+            {
+                VoxelMap* deep = build(0.50f, 9.0f);
+                cv::Mat mDeep;
+                // Band start pushed far out: every coarse cell holding the posts
+                // now lies entirely inside it.
+                VoxelMap::renderLadder({{fine, 0.f, 8.f}, {deep, 8.f, 12.f}},
+                                       camE, camN, camU, yaw, pitch, RW, RH, 87.f,
+                                       FpvStyle(), &mDeep);
+                cv::Mat mFineOnly;
+                VoxelMap::renderLadder({{fine, 0.f, 8.f}}, camE, camN, camU, yaw,
+                                       pitch, RW, RH, 87.f, FpvStyle(), &mFineOnly);
+                int a = 0, b = 0;
+                for (int y = 0; y < RH; ++y)
+                    for (int x = 0; x < RW; ++x) {
+                        a += mFineOnly.at<uchar>(y, x) ? 1 : 0;
+                        b += mDeep.at<uchar>(y, x) ? 1 : 0;
+                    }
+                check(b == a, "and a coarse cell wholly inside the fine band "
+                              "still may not", std::to_string(a) + " -> " +
+                              std::to_string(b) + " px");
+                delete deep;
+            }
         }
 
         // Banding means the ladder is deliberately NOT the union. It must gain
@@ -329,12 +360,36 @@ int main() {
                 for (int x = 50; x < 70; ++x) c += m.at<uchar>(y, x) ? 1 : 0;
             return c;
         };
-        check(centreHits(3.0f * 1.15f) < 100,
-              "an inflated internal handover blanks the centre of the pane",
-              std::to_string(centreHits(3.0f * 1.15f)) + "/400 px");
         check(centreHits(3.0f) == 400,
-              "and handing over at the exact marking range fills it",
+              "handing over at the exact marking range fills the pane centre",
               std::to_string(centreHits(3.0f)) + "/400 px");
+        // The 1.15x inflation used to blank the centre outright, and this test
+        // pinned that symptom. It no longer does, because a level may now borrow
+        // into the band below it by min(half a cell, kBorrowM) -- a 1 m cell
+        // covers a 0.45 m inflation comfortably. Pin the property rather than
+        // the symptom: an inflated handover must not COST coverage.
+        check(centreHits(3.0f * 1.15f) >= 400 * 9 / 10,
+              "and a modestly inflated one no longer blanks it",
+              std::to_string(centreHits(3.0f * 1.15f)) + "/400 px");
+        // ... but the borrow is capped in METRES, so a rung too coarse to place
+        // a surface within that cap stays banded out instead of filling the
+        // pane with near faces. Measured before the cap: an 8 m rung covered
+        // 99.9 % of the pane with a solid wall.
+        {
+            VoxelMapParams q8 = qc; q8.cell = 8.0f; q8.maxIntegM = 20.f;
+            VoxelMap M8; M8.init(q8, camE, camN, camU);
+            for (int i = 0; i < 6; ++i) M8.integrate(d4, cam, pose);
+            cv::Mat m8;
+            VoxelMap::renderLadder({{&Mf, 0.f, 3.f}, {&M8, 3.f, 22.f}},
+                                   camE, camN, camU, yaw, pitch, 120, 120, 87.f,
+                                   FpvStyle(), &m8);
+            int c8 = 0;
+            for (int y = 50; y < 70; ++y)
+                for (int x = 50; x < 70; ++x) c8 += m8.at<uchar>(y, x) ? 1 : 0;
+            check(c8 < 100, "and a rung too coarse to place a surface inside the "
+                            "borrow cap stays banded out",
+                  std::to_string(c8) + "/400 px");
+        }
     }
 
     // --- the carve clamp must scale with the CELL, not be a fixed metre ----

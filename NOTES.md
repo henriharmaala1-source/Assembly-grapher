@@ -2608,8 +2608,92 @@ earning a single metre of speed. The safety argument is stronger than I stated
 it, and the coarse map's contribution is scored `farOpen`, whose own comment
 reads "reward only -- it cannot veto, and it cannot raise the speed budget."
 
+## 2026-08-13 — the far field was being thrown away by the band test, not by physics
+
+Reported from the field as "still a lot of far away detail thrown away", and
+separately as "far 1-7 is the one that maps the furthest" -- which is the same
+observation from the other side, because 1 m cells with a 7 m reach were beating
+8 m cells with a 20 m reach. That should be impossible, and it was the render.
+
+**Measured in the viewer**, sim wood, 2.5 m AGL, fraction of the first-person
+pane holding any map at all:
+
+| far rung | nominal reach | occupied cells in the far grid | pane covered |
+|---|---|---|---|
+| 0.5 m | 5.8 m | 52 | 29.2 % |
+| 1.0 m | 7.1 m | 87 | 38.5 % |
+| 2.0 m | 11.5 m | 91 | **3.2 %** |
+| 8.0 m | 23.1 m | 28 | **3.6 %** |
+
+**The 2 m and 8 m grids held obstacles and drew nothing.** The band test compares
+the ray's CELL ENTRY FACE against a `minRange` derived from SURFACE range; an 8 m
+cell's face is up to 8 m short, so almost every far hit was rejected. This is the
+circular fog disc from the hedge scene, at full scale.
+
+**The fix, and why it is capped in metres.** A level may borrow into the band
+below it by `min(0.5 * cell, 0.5 m)`. Sweeping the tolerance:
+
+| slack | intrusion on the fine band | 1 m rung | 8 m rung |
+|---|---|---|---|
+| 0 (was) | none (896 px) | 38.5 % | 3.6 % |
+| 0.5 cell | +22 % (1097 px) | 68.6 % | **99.9 %** |
+| 1.0 cell | +168 % (2398 px) | 73.1 % | 99.9 % |
+
+Half of an 8 m cell is FOUR METRES of asserted position error, and at that
+setting the rung filled 99.9 % of the pane with a solid wall of near faces --
+exactly the disease the banding was written to cure. So the slack is capped in
+metres, and the cap is a statement about how wrong a drawn surface may be. The
+consequence is deliberate: **a rung too coarse to place a surface inside the cap
+stays banded out**, which is the honest answer rather than a full pane.
+
+**Two tests were rewritten, and it should be said plainly why rather than that
+they were made to pass.**
+
+* *"the coarse level cannot intrude on the fine level's range"* asserted EXACT
+  equality. That forbids a coarse cell which STRADDLES the handover from
+  speaking -- and such a cell may hold a surface at or beyond the band start,
+  which the fine level, honest only to that range, provably cannot know.
+  Forbidding it is what cut the disc out of the middle of the pane. Now bounded
+  (<= 1.4x), plus a NEW check that a cell lying WHOLLY inside the fine band is
+  still rejected -- that is the one that draws a wall far too close, and it is
+  the property that actually mattered.
+* *"an inflated internal handover blanks the centre of the pane"* pinned a
+  SYMPTOM. The borrow now covers a 15 % inflation, so the symptom is gone; the
+  check became "must not blank it", and a new one pins the metre cap by
+  asserting an 8 m rung stays out.
+
+**Default far rung 0.5 -> 1.0 m.** With the fix, drawn coverage of the surfaces
+inside reach: 0.5 m gives 87.6 % at a median -0.62 m; 1.0 m gives **96.7 % at
+-2.78 m**. The coarse rung is drawn at its near face, so everything it shows is
+too near. 1.0 m wins because the error is in the CONSERVATIVE direction and
+because this layer has no authority -- the swept-volume test reads the fine map
+alone and the coarse map's only contribution to the plan is a bearing score that
+"cannot veto and cannot raise the speed budget".
+
+**What is NOT fixed, and cannot be.** Stereo uncertainty is ANISOTROPIC:
+
+    dZ = Z^2*sigma/(f*B)   along the ray        lateral = Z/f
+    ratio = Z*sigma/B      10:1 at 2 m,  50:1 at 10 m,  100:1 at 20 m
+
+At 20 m the D435i still resolves **4.5 cm laterally** while its range error is
+**4.5 m**. A CUBE sized honestly for the range error is therefore a hundred times
+coarser than the bearing detail the sensor actually has, and the cube throws all
+of it away. That is a representation choice, not a sensor limit, and the fix is
+not a finer voxel -- it is to stop using voxels out there. A bearing-space
+structure (angular bins, coarse range) keeps exactly the information stereo has
+and discards exactly what it lacks. It is already designed, in
+`POSE_AND_OPENNESS_PLAN.md` section 1, and it is already the shape ArduPilot
+wants for `OBSTACLE_DISTANCE` -- 72 distances by bearing. Three reasons pointing
+at the same object.
+
 ## Open / unresolved
 
+* **The far field should not be voxels.** A cube sized for stereo's range error
+  is Z*sigma/B times coarser than its lateral resolution -- 100:1 at 20 m. Build
+  the bearing-space map from `POSE_AND_OPENNESS_PLAN.md` section 1; it is also
+  `OBSTACLE_DISTANCE`.
+* ~~**The near/mid handover leaves a circular fog disc**~~ **CLOSED** by the
+  borrow allowance above.
 * **`maxCarveM` is inert on both coarse layers** (25 m and 40 m against an
   11.17 m physical ceiling from the sigma term). Document as derived, or delete.
 * **No behaviour is defined for "no returns at all".** Measured: free 0.00 m,
@@ -2620,10 +2704,6 @@ reads "reward only -- it cannot veto, and it cannot raise the speed budget."
   to every map defect found since 2026-08-12. Port the `--audit` measurement.
 * **`voxel_sim` runs a 0.25/1.0/2.0 ladder and a 120 mm baseline; `voxel_live`
   runs 0.10/0.25/0.5 and 50 mm.** Two programs, two answers, never compared.
-* **The near/mid handover leaves a circular fog disc** when a surface sits within
-  a cell of the band start -- 22.8 deg half-angle at a 2.5 m hedge, predicted and
-  observed. The map is correct (97.9 % OCCUPIED); only the pane is wrong. The
-  one-cell fix collides with the coarse-intrusion test. See the entry above.
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes
   them checkable: the four systems-engineering artifacts nobody has written

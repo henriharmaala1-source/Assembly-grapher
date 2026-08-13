@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include <opencv2/imgproc.hpp>
 
@@ -278,7 +279,31 @@ cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
             for (int u = 0; u < outW; ++u) {
                 if (ar[u]) continue;                     // a finer level already spoke
                 if (!mr[u]) continue;
-                if (tr[u] < L.minRange) continue;        // too near for THIS level to judge
+                // A LEVEL MAY BORROW INTO THE BAND BELOW IT BY THE POSITION
+                // ERROR IT IS WILLING TO ASSERT -- NOT BY A FRACTION OF ITS OWN
+                // COARSENESS.
+                //
+                // `minRange` is derived from where a SURFACE stops being
+                // trustworthy; `tr[u]` is where the ray entered the CELL. They
+                // differ by up to one cell, so the strict test throws away every
+                // hit whose cell straddles the handover -- and because range
+                // grows as D/cos(theta), what it throws away is a DISC centred
+                // on the axis. Measured on a 1 m rung: the pane went from 38.5 %
+                // covered to 68.6 % when this was allowed at half a cell.
+                //
+                // But it cannot simply be half a cell, because half of an 8 m
+                // cell is four metres of asserted position error. Measured: the
+                // 8 m rung then filled 99.9 % of the pane with a solid wall of
+                // near faces -- the exact disease the banding was written to
+                // cure. So the slack is capped in METRES, and the cap is what
+                // says how wrong a drawn surface is allowed to be.
+                //
+                // The consequence is deliberate: a rung so coarse that it cannot
+                // place a surface inside kBorrowM stays banded out of the near
+                // field, which is the honest answer rather than a full pane.
+                const float kBorrowM = 0.5f;
+                if (tr[u] + std::min(0.5f * L.map->params().cell, kBorrowM)
+                        < L.minRange) continue;
                 orow[u] = ir[u]; ar[u] = 255; br[u] = tr[u];
             }
         }

@@ -250,27 +250,29 @@ struct Config {
     //
     // AWARENESS ONLY, NEVER PERMISSION. The fine map alone decides what may be
     // flown through; this only says which bearing looks open beyond it.
-    // 0.50 m, NOT 2.0. Measured over the sim wood with the aircraft 2.5 m above
-    // the terrain -- of the depth pixels whose surface lies inside the ladder's
-    // own reach, how many does the first-person render draw, and at what range
-    // error:
+    // 1.00 m. Measured over the sim wood, aircraft 2.5 m above the terrain --
+    // of the depth pixels whose surface lies inside the ladder's own reach, how
+    // many does the first-person render draw, and at what range error:
     //
-    //     0.10/0.25/0.5   reach  5.8 m   drawn 84.9 %   median -0.60 m
-    //     0.10/0.25/1.0   reach  8.2 m   drawn 44.0 %   median -2.52 m
-    //     0.10/0.25/2.0   reach 11.5 m   drawn  6.4 %   median -3.42 m
+    //     0.10/0.25/0.5   reach  5.8 m   drawn 87.6 %   median -0.62 m
+    //     0.10/0.25/1.0   reach  8.2 m   drawn 96.7 %   median -2.78 m
+    //     0.10/0.25/2.0   reach 11.5 m   drawn  0.0 %   -- see below
     //
-    // A 2 m cell is drawn at its NEAR FACE, which can sit two metres in front
-    // of the surface it contains, and up close one cell subtends twenty degrees
-    // -- so a single block occludes the pane and hides everything behind it.
-    // At 2.0 the render drew six per cent of the scene and 99.8 % of that was
-    // more than a metre too near. Reported from the field as "not a single
-    // trunk is visible", and the eye was right.
+    // A coarse cell is drawn at its NEAR FACE, so everything it shows is drawn
+    // too near, and how much too near scales with the cell. 1.0 m buys reach and
+    // coverage for about 2.8 m of position error; 0.5 m is the honest picture
+    // and sees less of it. 1.0 m wins here for two reasons and they are worth
+    // stating: the error is in the CONSERVATIVE direction, and this layer has no
+    // authority -- the swept-volume test reads the fine map alone, and the
+    // coarse map's only contribution to the plan is a bearing score that "cannot
+    // veto and cannot raise the speed budget".
     //
-    // The coarse map is still worth having for the PLANNER, which reads it for
-    // bearing only and never for permission -- but 10 m of awareness costs the
-    // picture, and the picture is what the demonstration is made of. Pass
-    // --farcell 2.0 to get the reach back.
-    float farCell = 0.5f;      // 0 disables
+    // 2.0 m and above stay near-empty ON PURPOSE. A level may borrow into the
+    // band below it only by the position error it is willing to assert, capped
+    // at half a metre (see renderLadder), and a 2 m cell cannot place a surface
+    // that finely. Removing the cap fills the pane -- 99.9 % of it -- with a
+    // solid wall of near faces, which is the disease the banding exists to cure.
+    float farCell = 1.0f;      // 0 disables
     // FINE NEAR LAYER -- the coarse map's argument run in the other direction.
     //
     // Cell size should match the depth uncertainty at the range it covers. That
@@ -690,7 +692,7 @@ int mainCli(int argc, char** argv) {
                 "                      with a 30 fps camera; 2 is 19 ms\n"
                 "  --overlay           composite the voxel view ON the depth image\n"
                 "  --nearcell 0.10     fine near layer, 0 = off. Honest to 2.2 m\n"
-                "  --farcell 0.5       coarse far layer, 0 = off. Honest to 5 m\n"
+                "  --farcell 1.0       coarse far layer, 0 = off. Honest to 7 m\n"
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"
                 "  --noarrow           no command arrow on the first-person pane\n"

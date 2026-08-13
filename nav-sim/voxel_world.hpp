@@ -247,6 +247,65 @@ struct CulDeSacParams {
 };
 void genCulDeSac(VoxelWorld& w, const CulDeSacParams& p);
 
+
+// --- the hedge, and it exists because the field disagreed with the harness ---
+//
+// A real bush fence, plainly visible in the depth image at eight metres,
+// produced NOT ONE occupied cell. The mechanism turned out to be the rays that
+// pass THROUGH its gaps carving free the very cells its own twigs had marked --
+// and the harness could not reproduce it, because `genForest` contains trunks
+// and nothing else. `NOTES.md` has recorded that gap as blocking for weeks:
+// trunks are the easy case, and thin porous structure is what a hedge, a wire
+// fence, a branch and a power line all are.
+//
+// So this scene is built to be hard in exactly that way and no other:
+//
+//   * a fence line of THIN members -- posts an eighth of a metre across, rails
+//     thinner still -- with gaps far wider than a map cell, so most rays go
+//     straight past and only a few terminate on it;
+//   * a hedge band grown along it at a settable FILL FRACTION, which is the one
+//     parameter that decides whether the carve wins or the mark does;
+//   * a BACKDROP well behind it, and this is the part that is easy to leave out.
+//     Without something for the passing rays to hit, they return nothing, carve
+//     nothing, and the failure cannot occur at all. The field had a street
+//     behind the hedge; the harness needs one too.
+//
+// Everything is well textured EXCEPT the hedge, which is deliberately not: a
+// bush fence in shade against a bright sky is the case that failed, and making
+// it easy to see would quietly turn a perception test into a geometry one.
+struct HedgeParams {
+    // THE WORLD IS BUILT FINER THAN THE MAP, AND IT HAS TO BE.
+    //
+    // Every other generator takes the MAP's cell size, so the finest thing that
+    // can exist in the harness is one map cell -- a quarter of a metre. A hedge
+    // made of quarter-metre twigs is not a hedge, it is a perforated wall, and
+    // it passes mappers that a real hedge defeats. That is exactly why the field
+    // disagreed with the simulator and why `NOTES.md` has "no thin obstacles"
+    // recorded as blocking.
+    //
+    // So this scene carries its own resolution and its own extent, sized around
+    // the spawn rather than around the map grid: 30 m of world at 0.04 m is
+    // 750 x 750 x 300 cells, which is affordable precisely because it does not
+    // have to be 200 m wide.
+    float sizeM      = 30.f;
+    float cell       = 0.04f;
+    float topM       = 12.f;
+    float spawnE     = 30.f;   // where the aircraft will be placed
+    float spawnN     = 15.f;
+    float standoffM  = 4.0f;   // hedge this far in front of the spawn
+    float backdropM  = 14.0f;  // and a treeline this far, for the rays that pass
+    float hedgeH     = 1.8f;
+    float hedgeT     = 0.5f;   // thickness front to back
+    float twigM      = 0.04f;  // twig thickness -- ONE CENTIMETRE-SCALE cell
+    float fill       = 0.10f;  // fraction of twig cells actually solid
+    float hedgeTex   = 0.18f;  // BARK IN SHADE. The case that failed.
+    float postEveryM = 1.2f;
+    float postW      = 0.12f;
+    float groundTex  = 0.60f;
+    unsigned seed    = 1;
+};
+void genHedgeRow(VoxelWorld& w, const HedgeParams& p);
+
 // --- real-data importers ---------------------------------------------------
 //
 // Both are deliberately dumb text formats so you can produce them with a few

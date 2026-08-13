@@ -306,6 +306,12 @@ struct Config {
     // Height above the terrain for the SIM aircraft, metres. An FPV airframe
     // under canopy flies a few metres up; the old harness put it at twelve.
     float altM = 2.5f;
+    // Which synthetic world. "forest" is the general case; "hedge" is the one
+    // the field disagreed with -- a porous bush fence at four metres with a
+    // street behind it, which produced no voxels at all on real hardware.
+    std::string scene = "forest";
+    float hedgeFill = -1.f;    // <=0 uses the scene's own default
+    float standoffM = -1.f;    // how far ahead the hedge stands, m
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -645,6 +651,9 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--headless")) headless = true;
         else if (!std::strcmp(argv[i], "--audit")) C.audit = true;
         else if (!std::strcmp(argv[i], "--alt")) C.altM = float(std::atof(next("2.5")));
+        else if (!std::strcmp(argv[i], "--scene")) C.scene = next("forest");
+        else if (!std::strcmp(argv[i], "--fill")) C.hedgeFill = float(std::atof(next("0.3")));
+        else if (!std::strcmp(argv[i], "--standoff")) C.standoffM = float(std::atof(next("4")));
         else if (!std::strcmp(argv[i], "--truth")) showTruth = true;
         else if (!std::strcmp(argv[i], "--menu-preview")) {
             // Dump the menu to a PNG. The window is the one artefact here that
@@ -690,6 +699,9 @@ int mainCli(int argc, char** argv) {
                 "  --ui 0.75           window scale; 1 is the old (large) size\n"
                 "  --frames N          stop after N frames\n"
                 "  --alt 2.5           SIM only: height above the terrain, m\n"
+                "  --scene forest      SIM world: forest | hedge\n"
+                "  --fill 0.30         hedge porosity; lower = more see-through\n"
+                "  --standoff 4        how far ahead the hedge stands, m\n"
                 "  --audit             report whether the map agrees with the depth\n"
                 "  --headless          no window; write PNGs to --out\n",
                 haveLiveSupport() ? "" : "  [NOT in this build -- no librealsense]");
@@ -740,15 +752,37 @@ static int runSession(Config C) {
                     camW, camH, fps, emitter ? "ON" : "off");
     } else {
         world.reset(new VoxelWorld());
-        ForestParams fp; fp.cell = cell; fp.seed = 1;
-        genForest(*world, fp, nullptr);
+        if (C.scene == "hedge") {
+            // Sized and placed around where the aircraft will be put, which is
+            // derived from the map grid a few lines below. Kept in step by
+            // using the same expression rather than a copied number.
+            // NOTE the cell is NOT the map's. See HedgeParams.
+            HedgeParams hp;
+            if (C.hedgeFill > 0.f) hp.fill = C.hedgeFill;
+            if (C.standoffM > 0.f) {
+                hp.standoffM = C.standoffM;
+                hp.backdropM = C.standoffM + 10.f;   // keep something behind it
+            }
+            hp.spawnE = 240 * cell * 0.5f;
+            hp.spawnN = 240 * cell * 0.25f;
+            genHedgeRow(*world, hp);
+            std::printf("[sim] hedge: %.0f m world at %.2f m cells "
+                        "(%.1f M), twigs %.0f cm, fill %.2f, %.1f m ahead\n",
+                        hp.sizeM, hp.cell,
+                        double(hp.sizeM/hp.cell)*(hp.sizeM/hp.cell)*(hp.topM/hp.cell)/1e6,
+                        hp.twigM*100.f, hp.fill, hp.standoffM);
+        } else {
+            ForestParams fp; fp.cell = cell; fp.seed = 1;
+            genForest(*world, fp, nullptr);
+        }
         CamParams cp;
         cp.width = camW; cp.height = camH; cp.hfovDeg = 87.f; cp.baselineM = 0.05f;
         auto s = std::unique_ptr<SimFrameSource>(new SimFrameSource(*world, cp, showTruth));
         CamPose p0; p0.e = 15.f; p0.n = 10.f; p0.u = 6.f;
         s->setPose(p0);
         src = std::move(s);
-        std::printf("[sim] synthetic forest, %s depth\n", showTruth ? "PERFECT" : "stereo");
+        std::printf("[sim] synthetic %s, %s depth\n", C.scene.c_str(),
+                    showTruth ? "PERFECT" : "stereo");
     }
 
     const DepthCamera& cam = src->camera();

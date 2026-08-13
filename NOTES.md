@@ -2401,7 +2401,67 @@ sqrt(B), so the 50 mm baseline is the whole story: 120 mm would put R at 8.9 m
 and a trunk at 8 m would appear. It is the same conclusion the range budget has
 reached from three different directions now.
 
+## 2026-08-13 — a hedge scene at last, and a circular hole it immediately found
+
+`NOTES.md` has carried "**no thin obstacles in voxel_world.cpp — trunks only**"
+as a blocking gap for weeks. `genHedgeRow` closes it: ground, a fence line of
+posts and rails, a hedge band of settable fill, and a **backdrop** — which is the
+part that is easy to leave out, because without something for the passing rays
+to hit they return nothing, carve nothing, and the failure the scene exists for
+cannot occur.
+
+**The scene carries its own resolution, and that is the point.** Every other
+generator takes the MAP's cell, so the finest thing the harness could contain was
+a quarter of a metre. A hedge of quarter-metre twigs is a perforated wall, and it
+passes mappers a real hedge defeats. This one is **0.04 m over 30 m** (169 M
+cells), so a 4 cm twig exists.
+
+**It does NOT reproduce the field failure, and that is worth recording.** Hedge at
+8 m, 4 cm twigs, fill 0.20, backdrop at 18 m, `--farcell 2.0` — the exact field
+configuration — gives **100.0 % of returns in OCCUPIED cells at 7–10 m, on the
+PRE-FIX map as well as the current one.** So the bush fence that produced no
+voxels in the field was the far layer's `carveWinPx = 0`, which was fixed on
+2026-08-12; the angular guard added afterwards is a separate improvement found in
+the forest. Two fixes, two causes, and the scene distinguishes them.
+
+**What it did find, within an hour of existing: a circular fog disc.**
+
+Hedge 2.5 m ahead, default ladder. The map has it — audit says **97.9 % OCCUPIED**
+at 2.2–3.5 m. The PANE has a hole in the middle. `--nonear` removes the hole
+entirely, which localises it to the near/mid handover.
+
+Mechanism, and it is the cell-face-versus-surface-range mismatch again. The near
+layer owns [0, 2.19 m]; the mid layer's band therefore starts at 2.19. The
+render tests the ray's **cell entry face** against that, and a 0.25 m cell holding
+a surface at 2.25 m has its face as near as 2.00 — **rejected**. Off-axis the
+range grows as D/cos(theta), the face clears 2.19, and the pixel fills. So the
+rejection region is a disc:
+
+    front 2.25 m, band start 2.19 m, cell 0.25 m
+    rejected while 2.25/cos(theta) - 0.25 < 2.19  ->  theta < 22.8 deg
+
+**22.8 degrees of a 43.5 degree half-width — 52 %** — and the hole in the render
+is about half the pane wide. Predicted and observed agree.
+
+**NOT FIXED, deliberately.** The obvious repair is one cell of slack on the band
+test, and I implemented it earlier today and reverted it: it lets a COARSE layer
+intrude a whole coarse cell into a finer layer's range, `overlay_align_check`
+caught it (896 -> 2398 px on the near post), and the measured render error went
+to a median 2.41 m too near. One cell is geometrically right for the LAYER BEING
+CONSULTED and too much when that layer is much coarser than the one it is
+borrowing from. Resolving that is a design decision about what a coarse cell is
+allowed to assert, not a patch, and it should be made deliberately.
+
+Interim: it only bites where a surface sits within about a cell of a handover
+range. `--nonear` avoids it, and so does any standoff clear of 2.19 m — the 3.0 m
+shot is clean.
+
 ## Open / unresolved
+
+* **The near/mid handover leaves a circular fog disc** when a surface sits within
+  a cell of the band start -- 22.8 deg half-angle at a 2.5 m hedge, predicted and
+  observed. The map is correct (97.9 % OCCUPIED); only the pane is wrong. The
+  one-cell fix collides with the coarse-intrusion test. See the entry above.
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes
   them checkable: the four systems-engineering artifacts nobody has written
@@ -2463,7 +2523,9 @@ reached from three different directions now.
   high_accuracy and high_density are different `subpixelPx` values on the same
   hardware. Measure both with `d435i_probe.py --preset sweep`, then make the
   noise a function of texture rather than a constant.
-* **No thin obstacles in `voxel_world.cpp`.** Trunks only. This is now blocking:
+* ~~**No thin obstacles in `voxel_world.cpp`.** Trunks only.~~ **CLOSED**
+  2026-08-13 by `genHedgeRow`, which carries its own 0.04 m resolution so a 4 cm
+  twig can exist. Original text: this is now blocking:
   it is the reason the depth improver cannot be evaluated on the case it exists
   for, and it flatters every other result too, since branches are what a forest
   actually hits you with.

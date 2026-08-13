@@ -435,6 +435,67 @@ void genCulDeSac(VoxelWorld& w, const CulDeSacParams& p) {
     }
 }
 
+
+void genHedgeRow(VoxelWorld& w, const HedgeParams& p) {
+    const int n  = int(p.sizeM / p.cell);
+    const int nz = int(p.topM / p.cell);
+    // Centred on the spawn in x, with most of the depth AHEAD of it, because
+    // that is where everything in this scene lives.
+    w.init(p.cell, p.spawnE - p.sizeM * 0.5f, p.spawnN - p.sizeM * 0.25f, 0,
+           n, n, nz);
+    std::mt19937 rng(p.seed);
+    std::uniform_real_distribution<float> u01(0.f, 1.f);
+
+    // Ground, one cell thick at the top of a filled slab -- filled rather than a
+    // shell so rays cannot slip underneath it, which is the same reason
+    // loadLidarXyz fills down.
+    const float X0 = p.spawnE - p.sizeM * 0.5f, X1 = X0 + p.sizeM;
+    const float Y0 = p.spawnN - p.sizeM * 0.25f, Y1 = Y0 + p.sizeM;
+    fillBox(w, X0, Y0, 0.f, X1, Y1, 0.06f, p.groundTex);
+
+    const float y = p.spawnN + p.standoffM;
+
+    // Posts and rails. Thin on purpose: at 4 m a 0.12 m post spans 13 px and
+    // the 1.2 m gap between them spans 134, so nine rays in ten go past.
+    for (float x = X0; x < X1; x += p.postEveryM)
+        fillBox(w, x, y, 0.f, x + p.postW, y + p.postW, p.hedgeH, 0.55f);
+    for (float h : {0.45f, 1.05f, 1.55f})
+        fillBox(w, X0, y + 0.02f, h, X1, y + 0.08f, h + 0.05f, 0.55f);
+
+    // The hedge itself: a band of cells switched on at random. `fill` is the
+    // knob that matters -- at 1.0 it is a wall and every mapper passes; at 0.2
+    // it is twigs, most rays see straight through, and one hit at +0.85 has to
+    // survive the carves of everything that missed.
+    {
+        int a0, b0, c0, a1, b1, c1;
+        w.worldToCell(X0, y - p.hedgeT * 0.5f, 0.08f, a0, b0, c0);
+        w.worldToCell(X1, y + p.hedgeT * 0.5f, p.hedgeH, a1, b1, c1);
+        for (int z = c0; z <= c1; ++z)
+            for (int yy = b0; yy <= b1; ++yy)
+                for (int x = a0; x <= a1; ++x) {
+                    // Denser low down and thinning toward the top, like a hedge
+                    // and unlike a slab of noise.
+                    float wx, wy, wz; w.cellCentre(x, yy, z, wx, wy, wz);
+                    const float f = p.fill * (1.35f - 0.5f * wz / p.hedgeH);
+                    if (u01(rng) > f) continue;
+                    w.set(x, yy, z, true);
+                    w.setTex(x, yy, z, p.hedgeTex);
+                }
+    }
+
+    // BACKDROP. Without it the rays through the gaps return nothing, carve
+    // nothing, and the failure this scene exists for cannot happen.
+    const float yb = p.spawnN + p.backdropM;
+    fillBox(w, X0, yb, 0.f, X1, yb + 0.5f, 7.f, 0.62f);
+    // A few trunks in front of the backdrop so the far field is not a flat card.
+    for (int i = 0; i < 14; ++i) {
+        const float x = X0 + u01(rng) * p.sizeM;
+        const float yy = yb - 1.f - u01(rng) * 4.f;
+        fillCylinder(w, x, yy, 0.f, 3.f + u01(rng) * 4.f,
+                     0.09f + u01(rng) * 0.10f, 0.30f);
+    }
+}
+
 // --- importers -------------------------------------------------------------
 
 bool loadOsmBuildings(VoxelWorld& w, const std::string& path,

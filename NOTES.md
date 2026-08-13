@@ -2553,8 +2553,65 @@ Belongs in the failure-mode matrix, and it wants a named behaviour rather than
 The valid-pixel fraction is already computed and already unconsumed -- this is
 the second thing that should gate on it, after the speed budget.
 
+## 2026-08-13 — no layer treats unknown as free, and two carve parameters are dead
+
+Asked whether the coarse layer is the permissive one. It is not, and the shape
+of the answer is worth writing down because the question is the obvious one.
+
+**FREE is never inferred, only measured.** A cell becomes FREE because a ray was
+observed to pass THROUGH it. Nothing anywhere promotes unknown to free. What is
+asymmetric is carve range against mark range, and that asymmetry lives INSIDE
+each layer rather than between them:
+
+| layer | cell | marks obstacles to | maxCarveM | actually carves to |
+|---|---|---|---|---|
+| near | 0.10 m | 2.19 m | 4.38 m | **4.38 m — the parameter binds** |
+| mid | 0.25 m | 3.54 m | 25 m | **11.17 m — sigma binds** |
+| far | 0.50 m | 5.01 m | 40 m | **11.17 m — sigma binds** |
+
+All three share `depthSigCoef`, because they share a camera. **So the coarse
+layer is not more generous about free space than the fine one — they carve to
+the same physical limit.** Layers differ only in how far they will MARK.
+
+**Two parameters that look like policy and are dead.** `carve = r - 2*sigma(r)`
+with `sigma = 0.01119 r^2`, so the claimable free distance is not monotonic in
+range:
+
+    return  2 m  ->  1.91 m free      return 20 m  ->  11.05 m
+    return  8 m  ->  6.57 m           return 22.3  ->  11.17 m   <- maximum
+    return 15 m  ->  9.96 m           return 40 m  ->   4.19 m
+
+It peaks at **11.17 m for a return of 22.3 m and falls away after** — a 40 m
+return proves less than an 8 m one, because its own position is worth less.
+`maxCarveM = 25` on the mid layer and `40` on the far layer are therefore
+**never reached on a 50 mm baseline**. Verified end to end: uniform 30 m depth,
+nothing markable, map calls FREE out to **9.88 m** against a predicted 9.86.
+
+They should be documented as inert rather than left looking like tuning knobs —
+someone will one day change 25 to 15 and measure no difference, and conclude
+something false about the map.
+
+**CORRECTION to the entry above on the unmatched trunk.** I wrote that a
+primitive through an unmatched trunk is admissible because the swept-volume grid
+blocks only on OCCUPIED. That is true of `PrecisePlanner`'s coarsened A* grid,
+which is a ROUTER and yields a bearing suggestion. It is NOT true of the reactive
+layer that actually gates flight: `voxel_traj.cpp` breaks the rollout at the
+first cell that is not FREE —
+
+    if (!sphereClear(...))                        { why = 1; break; }   // occupied
+    if (m.stateAt(...) != VoxelMap::FREE)         { why = 2; break; }   // unknown
+
+— and `sphereClear` additionally rejects any unknown cell inside `coreFrac` of
+the robot radius, out-of-bounds included. Unknown space is traversable in the
+sense that a primitive may point into it; it is not traversable in the sense of
+earning a single metre of speed. The safety argument is stronger than I stated
+it, and the coarse map's contribution is scored `farOpen`, whose own comment
+reads "reward only -- it cannot veto, and it cannot raise the speed budget."
+
 ## Open / unresolved
 
+* **`maxCarveM` is inert on both coarse layers** (25 m and 40 m against an
+  11.17 m physical ceiling from the sigma term). Document as derived, or delete.
 * **No behaviour is defined for "no returns at all".** Measured: free 0.00 m,
   cmd 0.00 m/s, blocked on every frame. Correct by doctrine, but fog, water, a
   clear sky or a blank wall all produce it and the aircraft simply stops. Needs a

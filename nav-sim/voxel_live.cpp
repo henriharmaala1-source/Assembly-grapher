@@ -878,6 +878,37 @@ static int runSession(Config C) {
                     fp.cell, fp.maxIntegM, mp.maxIntegM);
     }
 
+    // WHY THE GROUND IS MOSTLY ABSENT, PRINTED RATHER THAN RE-DERIVED.
+    //
+    // Reach is a SPHERE of radius R, and a forward-looking camera grazes the
+    // ground: at altitude h the terrain first comes inside R at a depression of
+    // asin(h/R), so it occupies only the bottom (vfov/2 - asin(h/R)) of the
+    // frame. At 2.5 m with R = 5.8 m that is 2.5 degrees of 56 -- four per cent
+    // of the picture -- and the ground carpet stops sqrt(R^2 - h^2) = 5.2 m
+    // ahead.
+    //
+    // The same sphere is why a distant trunk contributes NOTHING rather than a
+    // little: its nearest point is at eye level, at exactly its horizontal
+    // distance, so once that exceeds R no part of it is in range at any height.
+    // What looks like "the base of the far trunk" is the ground carpet ending
+    // just short of it. Reported from the field as exactly that, twice.
+    {
+        const float R = (C.farCell > 0.f ? fp.maxIntegM : mp.maxIntegM) * 1.15f;
+        const float vfov = 2.f * std::atan(float(cp.height) / (2.f * cam.fpx()))
+                         * 180.f / 3.14159265f;
+        const float h = C.altM;
+        if (mode == "sim" && h < R) {
+            const float dep = std::asin(h / R) * 180.f / 3.14159265f;
+            const float band = std::max(0.f, vfov * 0.5f - dep);
+            std::printf("[geom] ground within reach to %.1f m ahead, in the bottom "
+                        "%.1f deg of a %.0f deg frame (%.0f %% of it). "
+                        "A trunk past %.1f m horizontally is out of range at EVERY "
+                        "height.\n",
+                        std::sqrt(std::max(0.f, R*R - h*h)), band, vfov,
+                        100.f * band / vfov, R);
+        }
+    }
+
     std::printf("[map] min trusted range %.2f m (f*B/126, Intel's MinZ)\n",
                 mp.minIntegM);
     std::printf("[map] cell %.2f m -> honest carve range %.2f m "

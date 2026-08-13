@@ -2352,6 +2352,55 @@ slice crop. The pattern is now unmistakable: every one of them made honest
 absence of data look like a mapping failure, and every one was found by a human
 looking at a picture and asking why it disagreed with the claim.
 
+## 2026-08-13 — the far trunk with only its base showing is the ground, and the sphere
+
+Follow-up to the pane's field-of-view fault: the NEAR trunk renders correctly
+either way; the complaint was about a trunk further back that "only has its base
+showing". Profiled three of them, row by row, against truth depth, stereo depth
+and the map's own state.
+
+**They are at 7.7 m, 18.7 m and 37.6 m horizontally. The reach is 5.77 m.** Every
+row of every one of them reads `unknown`, top to bottom, with truth depth as well
+as stereo. Nothing was dropped.
+
+**What shows at the "base" is the GROUND, and it stops just short of the trunk.**
+On the 7.7 m column the surface changes in the last few rows -- horizontal
+distance falls 7.14, 6.25, 5.56 m and range 7.61, 6.78, 6.15 m -- that is the
+terrain sloping up toward the camera, crossing into reach right under the trunk.
+
+**Two pieces of geometry, and both are worth stating once and printing forever.**
+
+Reach is a SPHERE of radius R, and a forward-looking camera GRAZES the ground.
+At altitude h the terrain first comes inside R at a depression of `asin(h/R)`, so
+it occupies only the bottom `vfov/2 - asin(h/R)` of the frame:
+
+| altitude | ground enters at | share of a 56 deg frame | carpet reaches |
+|---|---|---|---|
+| **2.5 m** | 25.7 deg down | **2.5 deg — 4 %** | 5.2 m ahead |
+| 1.5 m | 15.1 deg down | 13.2 deg — 23 % | 5.6 m ahead |
+| 1.2 m | 12.0 deg down | 16.2 deg — 29 % | 5.6 m ahead |
+
+And a vertical object's NEAREST point is at eye level, at exactly its horizontal
+distance -- so **once a trunk is further than R it is out of range at every
+height**, and contributes nothing rather than a little. There is no partial
+trunk to be had. That is why the eye reads it as "base only": the base is not
+the trunk at all.
+
+Both numbers are now printed at startup as a `[geom]` line, because this is the
+second time it has been investigated from scratch.
+
+**Consequence for the demo, not for the code.** At 2.5 m AGL only four per cent
+of the frame can ever contain ground. At 1.5 m it is twenty-three, and the pane
+shows a continuous carpet with trunks standing out of it -- which is both a
+better picture and a normal under-canopy FPV altitude. `--alt 1.5`. The default
+stays 2.5 m because that is the honest flight case and the picture should not
+choose it.
+
+None of this is fixable in software. R = sqrt(cell*f*B/sigma)*0.75 goes as
+sqrt(B), so the 50 mm baseline is the whole story: 120 mm would put R at 8.9 m
+and a trunk at 8 m would appear. It is the same conclusion the range budget has
+reached from three different directions now.
+
 ## Open / unresolved
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes

@@ -270,6 +270,15 @@ endif()
 # top-down one is world-referenced and does not rotate -- so they cannot be
 # checked against each other by eye, and each of the three yaw conventions in
 # the chain could invert without any single view looking wrong.
+add_executable(bearing_field_check
+  test/bearing_field_check.cpp
+  bearing_field.cpp
+  depth_camera.cpp
+  voxel_world.cpp)
+target_include_directories(bearing_field_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(bearing_field_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME bearing_field_check COMMAND bearing_field_check)
+
 add_executable(chase_turn_check
   test/chase_turn_check.cpp
   voxel_map.cpp

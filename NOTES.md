@@ -2977,7 +2977,53 @@ it" should start -- not in the reactive layer's constants.
 Order, then: router reads the bearing field; `OBSTACLE_DISTANCE` publishes it;
 and only after those does raising Z_max become a question worth asking again.
 
+## 2026-08-13 — is the vision side good? Honest inventory
+
+Asked directly. Two voxel levels near, a rough bearing field far -- is that it?
+
+**Solid, and measured rather than asserted:**
+
+* fine ladder 0.10 / 0.25 m with ranges DERIVED (`Z_max`, Intel's `MinZ`), not chosen;
+* the angular carve guard -- false-free 30 % to 0.4 % at 3.5-5 m;
+* bearing field 3.5-20 m, 3.2 ms, ~1800 live bins, no handover seam;
+* the pane renders the camera's OWN frustum and letterboxes the blind zone;
+* the sim flies at a physical altitude, and the harness contains thin obstacles;
+* `--audit` measures map against depth per range band; `--compare` puts the two
+  representations side by side on one frame;
+* **nine** ctest targets, and the new far field now has its own -- confirmation,
+  the running-minimum trap, the sample floor, the yaw index shift, forgetting,
+  and the `OBSTACLE_DISTANCE` origin.
+
+**Three gaps, and the first two are the ones that matter.**
+
+1. **The bearing field has never seen a real camera.** Every number above is
+   sim. The failure mode I most expect indoors is the one it cannot represent:
+   two surfaces along one bearing. A corridor is exactly that.
+2. **`voxel_sim` -- the only test that FLIES -- does not run this architecture.**
+   It still has its own 0.25/1.0/2.0 voxel ladder, a 120 mm baseline, and no
+   bearing field at all. So the closed-loop evidence (no collision in twelve
+   runs, 0 corridor lies) is evidence about a stack that is no longer the stack.
+   That is the same class as `nav-sim` and `onboard` sharing zero code, and it
+   is now the largest hole in the V&V.
+3. `sigma_d` is still assumed at 0.25 px and sets every range in the ladder.
+
+**And the far field still has no consumer that can use it.** It scores a
+direction and draws a pane. `PrecisePlanner` has a 25 m search horizon reading a
+3.5 m map and is the obvious customer; `OBSTACLE_DISTANCE` is one message away
+and the array is already built.
+
+**So: the representation question looks settled and the integration question is
+wide open.** The honest summary is that the vision side is good enough to stop
+redesigning and start proving -- on the real camera, in the flying test, and
+against something that spends what it gathers.
+
 ## Open / unresolved
+
+* **`voxel_sim` does not run the shipping architecture.** Own voxel ladder, own
+  120 mm baseline, no bearing field. The only closed-loop evidence in the
+  project is about a stack that no longer exists. Largest V&V hole.
+* **The bearing field has never run on a real camera.** Two surfaces along one
+  bearing is the case it cannot represent, and a corridor is exactly that.
 
 * **Give the A* router the bearing field.** It has a 25 m search horizon and
   reads a 3.5 m map. This is the consumer that makes far information worth

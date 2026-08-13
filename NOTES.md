@@ -3257,7 +3257,61 @@ That asymmetry is now the rule for the whole layer: **it may take permission
 away and may never grant it.** Same shape as "inventing awareness is cheap;
 inventing permission is not", arrived at from a different direction.
 
+## 2026-08-13 — the blind patch near the aircraft is the frustum, and memory is what should fill it
+
+Reported from a live frame that otherwise looks right: a pale hole close in.
+It is not a mapping fault. The camera **cannot see the ground near itself**, and
+the number is straightforward:
+
+    848x480, f 447 px  ->  hfov 87.0 deg, VFOV 56.5 deg
+
+The bottom edge of the frame is 28.2 degrees below the horizon, so at altitude h
+the ground first appears at h / tan(28.2 deg):
+
+| altitude | ground first seen | blind disc radius |
+|---|---|---|
+| 1.2 m | 2.2 m ahead | 2.2 m |
+| 1.5 m | 2.8 m | 2.8 m |
+| **2.5 m** | **4.7 m** | **4.7 m** |
+| 3.0 m | 5.6 m | 5.6 m |
+
+**There is a blind disc under the aircraft whose radius is roughly twice its
+height.** Nothing in the map can fix it; the photons never arrive.
+
+**What SHOULD fill it is memory, and that is the tell.** Two seconds ago that
+ground was five metres ahead and plainly visible. A world-anchored voxel map
+holds it -- that is most of what a map is for. But `voxel_live` runs with a
+FIXED pose (`[pose] fixed -- NO translation is estimated`), so nothing
+accumulates as the aircraft moves and the disc never fills. The bearing field is
+worse off still: it has no position at all.
+
+So the blind patch is the **odometry gap wearing a different hat**, and it is
+the most visceral demonstration of that gap yet -- easier to point at than any
+drift number. In `voxel_sim`, where the pose IS known, the same geometry exists
+and the map fills it in from earlier frames.
+
+**Three mitigations, and only one is free:**
+
+* **Pitch the camera down.** Measured: -10 deg brings first sight from 2.8 m to
+  1.9 m, -20 deg to 1.3 m. Costs the top of the frame, which is where the far
+  field lives, so it trades reach for footing.
+* **Odometry**, which fills it properly and is already the project's largest
+  open item.
+* **A downward rangefinder** -- which is bundled with the optical-flow sensor
+  already costed at ~40 EUR in `MAVLINK_BRIDGE_PLAN.md` 3.2. That purchase now
+  answers two separate problems: horizontal velocity for the EKF, and the one
+  direction the depth camera structurally cannot see.
+
+That last point is worth the entry on its own. The same small purchase closes
+the velocity gap AND the blind disc, which moves it from "nice to have" to the
+best-value item on the list.
+
 ## Open / unresolved
+
+* **Blind disc under the aircraft, radius ~2x altitude** (4.7 m at 2.5 m AGL).
+  Frustum geometry, not a map fault. Memory would fill it and there is no
+  odometry; a downward rangefinder would see it directly and is bundled with the
+  optical-flow sensor already on the list.
 
 * **Wire the bearing field as a VETO on primitives.** Measured safe: 749
   disagreements with the voxel map, all cautious, zero dangerous, over 14,688

@@ -39,6 +39,7 @@ int BearingField::elIdx(float elDeg) const {
 void BearingField::rebuildTable(const DepthCamera& cam, float pitchDeg,
                                 float rollDeg, int rows, int cols) {
     tblRows_ = rows; tblCols_ = cols; tblPitch_ = pitchDeg; tblRoll_ = rollDeg;
+    sigCoef_ = p_.subpixelPx / std::max(1e-6f, cam.fpx() * 0.05f);
     bin_.assign(size_t(rows) * cols, -1);
     const float cr = std::cos(rollDeg * PI_F_ / 180.f);
     const float sr = std::sin(rollDeg * PI_F_ / 180.f);
@@ -119,19 +120,30 @@ void BearingField::update(const cv::Mat& depth, const DepthCamera& cam,
     // so a bare minimum is maximally sensitive to exactly the thing this sensor
     // produces most. Require a handful of agreeing samples before a bin may
     // claim a surface at all.
+    rej_ = Rejects();
     for (size_t k = 0; k < cur_.size(); ++k) {
-        if (cnt_[k] < p_.minSamples || cur_[k] >= kNone) continue;
-        if (look_[k] > 0 &&
-            float(cnt_[k]) / float(look_[k]) < p_.minFillFrac) continue;
-        sup_[k] = look_[k] > 0 ? float(cnt_[k]) / float(look_[k]) : -1.f;
-        const float tol = std::max(p_.agreeM, p_.agreeFrac * cur_[k]);
-        if (age_[k] >= 0 && std::fabs(cur_[k] - r_[k]) <= tol) {
-            ++conf_[k];
-            r_[k] = 0.7f * r_[k] + 0.3f * cur_[k];   // settle, do not jitter
-        } else {
-            r_[k] = cur_[k];
-            conf_[k] = 1;
+        if (look_[k] > 0) ++rej_.looked;
+        if (cnt_[k] < p_.minSamples || cur_[k] >= kNone) {
+            if (look_[k] > 0) ++rej_.tooFewSamples;
+            continue;
         }
+        if (look_[k] > 0 &&
+            float(cnt_[k]) / float(look_[k]) < p_.minFillFrac) {
+            ++rej_.tooSparse; continue;
+        }
+        ++rej_.accepted;
+        sup_[k] = look_[k] > 0 ? float(cnt_[k]) / float(look_[k]) : -1.f;
+        // EXISTENCE confirms; range does not have to hold still.
+        const bool wasLive = age_[k] >= 0 && frame_ - age_[k] <= 1;
+        conf_[k] = wasLive ? conf_[k] + 1 : 1;
+        const float tol = std::max(p_.agreeM,
+                                   p_.agreeSigK * sigCoef_ * cur_[k] * cur_[k]);
+        // Smooth only while the range is steady. Across a silhouette flip, take
+        // the new value outright -- averaging a trunk with the gap behind it
+        // would place a surface where there is none.
+        r_[k] = (wasLive && std::fabs(cur_[k] - r_[k]) <= tol)
+              ? 0.7f * r_[k] + 0.3f * cur_[k]
+              : cur_[k];
         age_[k] = frame_;
     }
     // --- neighbour consensus ------------------------------------------------
@@ -158,6 +170,7 @@ void BearingField::update(const cv::Mat& depth, const DepthCamera& cam,
                         sum += r_[nk]; supN += sup_[nk]; ++agree;
                     }
                 if (agree < p_.consensusMin) continue;
+                ++rej_.filledByConsensus;
                 r_[k] = sum / float(agree);
                 sup_[k] = 0.5f * supN / float(agree);   // inferred, not measured
                 conf_[k] = p_.confirmFrames;            // its neighbours vouched

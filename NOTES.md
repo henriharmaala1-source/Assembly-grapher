@@ -3306,6 +3306,54 @@ That last point is worth the entry on its own. The same small purchase closes
 the velocity gap AND the blind disc, which moves it from "nice to have" to the
 best-value item on the list.
 
+## 2026-08-13 — the white gaps: confirmation was demanding range stability across silhouettes
+
+Spotted in a live frame -- small white holes scattered through the far field.
+Instrumented rather than guessed at, because the last four of these were
+instrument faults and guessing has a bad record here.
+
+**Classified every fog pixel that HAS a depth return inside 20 m:**
+
+    drawn by voxels                      0    0.0 %
+    drawn by bearings               198867   77.8 %
+    FOG -- a gap                     56848   22.2 %
+       surface inside the fine map's 3.5 m:   106   0.2 % of gaps
+       beyond it, the bearing field's job:  56742  99.8 %
+
+So the gaps were **entirely the bearing field's**, not the voxels'.
+
+**Which filter?** Counted per frame, of the 2812 bins any pixel points into:
+
+    accepted                      2055   73.1 %
+    rejected: too few returns      623   22.2 %
+    rejected: too sparse (fill)    134    4.8 %
+    rescued by consensus            22
+
+**And a wrong hypothesis first, recorded because it was expensive.** I assumed
+the agreement tolerance was tighter than the sensor's own noise -- stereo error
+at 15 m is 2.5 m against a 1.5 m tolerance -- and rewrote it as k sigma(r) from
+the camera's model, the same expression `VoxelMap` uses. Gaps moved 22.2 % to
+**20.9 %**. Almost nothing. The change is right and stays, but it was not the
+cause.
+
+**The cause: confirmation demanded RANGE stability, and a bin straddling a
+silhouette has none.** Its minimum flips between the foreground trunk and the
+background metres behind as pixels come and go, so `conf_` reset to 1 every
+frame and the bin never drew. **In a wood most bins straddle an edge**, so the
+filter was rejecting precisely the structure it exists to reveal.
+
+Confirmation is now about EXISTENCE: a bin that keeps producing an accepted
+measurement is confirmed however much the distance jumps. The range is smoothed
+only while it is steady -- across a flip the new value is taken outright, because
+averaging a trunk with the gap behind it would place a surface where there is
+none.
+
+    gaps  22.2 %  ->  5.6 %          (no confirmation at all would be 5.5 %)
+
+So confirmation now costs a tenth of a point instead of seventeen, and every
+anti-speckle test still passes -- the sky scatter, the lone pixel, the one-frame
+outlier. **The filter was not too strong; it was measuring the wrong thing.**
+
 ## Open / unresolved
 
 * **Blind disc under the aircraft, radius ~2x altitude** (4.7 m at 2.5 m AGL).

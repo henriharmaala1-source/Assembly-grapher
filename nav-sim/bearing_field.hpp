@@ -94,8 +94,36 @@ struct BearingFieldParams {
     // genuinely contains and the voxel map genuinely rejects -- which would
     // make the comparison flatter cubes for the wrong reason.
     int   confirmFrames = 2;
-    float agreeM = 0.30f;       // and this fraction of range, whichever larger
-    float agreeFrac = 0.10f;
+    // AGREEMENT MUST FOLLOW THE SENSOR'S OWN NOISE, NOT A FLAT FRACTION.
+    //
+    // A bin is confirmed when consecutive frames agree on its range. The
+    // tolerance was max(0.3 m, 10 % of range) -- and stereo error grows as
+    // Z^2*sigma/(f*B), which at 15 m on a 50 mm baseline is 2.5 m against a
+    // 1.5 m tolerance. So far bins jittered by MORE than the tolerance every
+    // frame, never confirmed, and never drew. Measured: gaps 22.2 % of visible
+    // surface with confirmation on, 5.4 % with it off -- seventeen points of
+    // hole caused by a threshold, not by the sensor.
+    //
+    // Now k sigmas of the camera's own model, which is the same expression
+    // VoxelMap uses for carve shortening. Two layers, one noise model.
+    //
+    // AND THAT WAS NOT THE MAIN CAUSE. Widening the tolerance moved the gaps
+    // 22.2 % to 20.9 % -- almost nothing. The real reason confirmation was
+    // eating a fifth of the scene is that it demanded RANGE stability, and a
+    // bin straddling a silhouette has none: its minimum flips between the
+    // foreground trunk and the background metres behind it as pixels come and
+    // go. In a wood most bins straddle an edge, so the filter was rejecting
+    // exactly the structure it exists to reveal.
+    //
+    // So confirmation is now about EXISTENCE, not range: a bin that keeps
+    // producing an accepted measurement is confirmed, however much the distance
+    // jumps. That preserves what the filter was for -- a bin appearing once and
+    // vanishing never confirms -- without punishing edges.
+    float agreeM = 0.30f;       // floor, for the near field where sigma is tiny
+    float agreeSigK = 2.0f;     // and this many sigma(r), whichever is larger
+    // sigma(Z) = Z^2 * subpixel / (f*B). Filled from the camera on first use so
+    // the field does not have to be told the optics.
+    float subpixelPx = 0.25f;
     float minRangeM = 0.2f;
     float maxRangeM = 30.f;
 };
@@ -137,6 +165,18 @@ public:
     // Bins by support band, for the log line: solid, partial, and nothing.
     void supportHistogram(int& solid, int& partial, int& none) const;
 
+    // WHY a bin said nothing, counted for the last frame. Written because the
+    // pane had gaps and there was no way to tell which of four filters was
+    // rejecting them -- and guessing at that is how the last three days went.
+    struct Rejects {
+        long looked = 0;      // bins any pixel pointed into
+        long tooFewSamples = 0;
+        long tooSparse = 0;   // failed the fill fraction
+        long accepted = 0;
+        long filledByConsensus = 0;
+    };
+    const Rejects& rejects() const { return rej_; }
+
     // First-person render, deliberately through the SAME projection, the same
     // height colour key and the same haze as VoxelMap::fpvImageWH -- because
     // the only honest way to compare two representations is to change nothing
@@ -165,6 +205,7 @@ private:
     // collapses to a table lookup and a comparison -- no trigonometry at all.
     // That is the difference between 15.8 ms and something worth shipping.
     std::vector<int32_t> bin_;
+    float sigCoef_ = 0.f;         // subpixelPx / (f*B), from the camera
     int   tblRows_ = 0, tblCols_ = 0;
     float tblPitch_ = 1e9f, tblRoll_ = 1e9f;
 
@@ -176,6 +217,7 @@ private:
     std::vector<float>   sup_;    // fraction of that bearing that returned
     std::vector<int32_t> conf_;   // consecutive frames agreeing on r_
     std::vector<int32_t> age_;    // frame index last written
+    Rejects rej_;
     int32_t frame_ = 0;
 };
 

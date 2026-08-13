@@ -3051,6 +3051,43 @@ and the composite that drew the new far field even when asked for the old one.
 The pattern is worth stating: **every one of them was a comparison that could not
 have shown me I was wrong.**
 
+## 2026-08-13 — "the clearly contrasted roof is nowhere to be seen" — the overlay pane was showing half the map
+
+It was, and the roof was never in that pane's reach.
+
+`--overlay` renders `ladder(0.f)` and nothing else. Once the coarse voxel rung
+was retired that ladder stops at **3.5 m**, so the alignment instrument was
+comparing a depth image full of structure at fifteen metres against a map that
+had been told to stop at three and a half. Everything past it showed as bare
+depth, correctly, and read as "the map does not have this".
+
+Fixed: the overlay now composites the bearing field beyond the fine map, exactly
+as the first-person pane does. Sim hedge at 6 m, same frame:
+
+* before -- near ground only, the hedge and the backdrop entirely uncovered;
+* after -- the hedge, the backdrop and the canopy all carried.
+
+**Fourth instrument fault in three days, and the pattern is now the finding.**
+The 90 degree frustum, the composite that ignored `--farcell`, the comparison
+that split the scene instead of the representation, and now a pane that showed a
+subset of the map while captioned as the map. Every one made honest data look
+like missing data, and every one was found by a human looking at a picture and
+asking why it disagreed with the claim. **The tests never found one**, because
+each fault was in the thing being used to judge, not in the thing being judged.
+
+**And one that CANNOT be fixed, recorded so it is not attempted.** The chase pane
+does not get the far field and must not. A bearing bin is a function of direction
+FROM THE AIRCRAFT and carries no position, so it cannot be re-projected from a
+displaced eye; the chase view sits 1.65 m behind, and rendering the field from
+there would draw every far surface at the wrong bearing while looking entirely
+plausible. That is the price of an egocentric representation. The chase pane is
+honestly short-ranged instead.
+
+**If a roof is still missing after this**, the next two candidates are range and
+band: the field renders to `--farrange` (20 m by default, 30 m stored), and its
+elevation band is +-40 degrees. A roof at 25 m, or above 40 degrees on a pitched
+camera, is outside both by configuration rather than by defect.
+
 ## Open / unresolved
 
 * **`voxel_sim` does not run the shipping architecture.** Own voxel ladder, own

@@ -1529,6 +1529,19 @@ static int runSession(Config C) {
             return ls;
         };
 
+        // NOTE FOR THE CHASE PANE, which does NOT get the far field.
+        //
+        // A bearing bin is a function of direction FROM THE AIRCRAFT and holds
+        // no position -- so it cannot be re-projected from a displaced eye. The
+        // chase view sits 1.65 m behind, and rendering the field from there
+        // would draw every far surface at the wrong bearing while looking
+        // entirely plausible. That is the worst kind of wrong, so it is not
+        // drawn at all and the chase pane is honestly short-ranged.
+        //
+        // This is the price of an egocentric representation and it should be
+        // stated rather than discovered: the far field exists only from where
+        // the aircraft is.
+
         const int64_t tDraw = cv::getTickCount();
         if (C.viewMode == 3) {
             // THE COMPARABLE, and the first version of it was a bad
@@ -1598,6 +1611,24 @@ static int runSession(Config C) {
                                                  pose.u, yaw, pitchDeg,
                                                  depth.cols, depth.rows,
                                                  cp.hfovDeg, FpvStyle(), &mask);
+            // The far field belongs here too -- this pane is the alignment
+            // instrument, and an instrument that omits half the map cannot
+            // show a disagreement in the half it omits.
+            if (C.farCell <= 0.f) {
+                cv::Mat maskFar;
+                cv::Mat far_ = BearingField::render(bfield, yaw, pitchDeg,
+                                                    depth.cols, depth.rows,
+                                                    cp.hfovDeg, mp.maxIntegM,
+                                                    C.farRangeM, pose.u, &maskFar);
+                for (int vv = 0; vv < vox.rows; ++vv) {
+                    const uchar* mf = maskFar.ptr<uchar>(vv);
+                    uchar* mn = mask.ptr<uchar>(vv);
+                    const cv::Vec3b* fr = far_.ptr<cv::Vec3b>(vv);
+                    cv::Vec3b* out = vox.ptr<cv::Vec3b>(vv);
+                    for (int uu = 0; uu < vox.cols; ++uu)
+                        if (!mn[uu] && mf[uu]) { out[uu] = fr[uu]; mn[uu] = 255; }
+                }
+            }
             cv::Mat base = C.depthEq ? colourDepthEq(depth, dMax)
                                      : colourDepth(depth, dMax);
             // Darken the camera image and lay the voxels over it only where
@@ -1608,7 +1639,9 @@ static int runSession(Config C) {
             drawPlanInto(base, cp.hfovDeg);
             fPane = fit(base, PW, PH);
             banner(fPane, "OVERLAY  voxels ON the depth they came from");
-            banner(fPane, "aligned = intrinsics, frame and pose all agree", 44);
+            banner(fPane, C.farCell > 0.f
+                   ? "aligned = intrinsics, frame and pose all agree"
+                   : "cubes to 3.5 m then bearings -- the WHOLE map, not half", 44);
         } else if (C.viewMode == 2) {
             // CHASE. Same renderer, same projection, a viewpoint moved back and
             // up along the aircraft's own heading -- so the plan has extent in

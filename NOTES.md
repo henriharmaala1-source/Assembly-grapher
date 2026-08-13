@@ -2686,8 +2686,67 @@ and discards exactly what it lacks. It is already designed, in
 wants for `OBSTACLE_DISTANCE` -- 72 distances by bearing. Three reasons pointing
 at the same object.
 
+## 2026-08-13 — is ray casting the right method? For the near field yes; for the far field no, and here are the numbers
+
+Asked directly, after noticing that the depth heat map plainly shows a wall the
+voxel pane mangles. The answer splits, and the split is the useful part.
+
+**Ray casting does two different jobs and only one of them is in question.**
+Integration casts a ray per depth pixel to CARVE free space and mark the
+endpoint; rendering casts a ray per screen pixel to draw the pane. The first is
+not a detection method and nothing replaces it: it is what turns a
+single-viewpoint depth image into a persistent, viewpoint-independent volume with
+an explicit UNKNOWN state, and it is the only reason a swept-volume test can be
+run against anything but the current frame. A model that looks at one depth image
+gives you SURFACES; it does not give you free space and it has no memory.
+
+**For the far field it is the wrong tool, measured:**
+
+| | cost | independent bearings across 87 deg |
+|---|---|---|
+| far voxel rung, 1.0 m cells, stride 4 | 2.58 ms/frame | **11** (8.1 deg per cell at 7.1 m) |
+| bearing profile straight off the depth image, every pixel | **1.58 ms/frame** | **848** (0.10 deg per column) |
+| the same at 72 bins (`OBSTACLE_DISTANCE` shape) | 1.26 ms | 72 |
+
+**Seventy-seven times the angular resolution at 0.6 of the cost** -- and the
+comparison is stacked in the voxel layer's favour, because it reads one pixel in
+sixteen while the profile reads all of them. 846 of 848 columns carried a return.
+
+This is the anisotropy argument arriving from a second direction. Stereo's range
+error at 7 m is 0.55 m and its lateral error is 1.6 cm; a cube honest in range
+throws the lateral away, and casting rays through that cube then samples the
+result at the cube's resolution rather than the sensor's.
+
+**The seam is the third witness.** Today's residual fog disc sits at the mid/far
+handover. Swept both constants of the borrow rule: centre fog goes 67 / 58 / 38 %
+as the cap goes 0.25 / 0.35 / 0.5 m and then PLATEAUS, because half of the 1 m
+far cell becomes the binding term. Closing the rest needs a whole cell of
+asserted position error, which fails the straddle bound. **It is a seam between
+resolution levels, and it is not tunable away** -- every one of the last three
+days' render defects (circular blind spot, empty coarse rungs, this disc) is an
+artefact of stitching cube grids of different sizes together and marching rays
+across the joins.
+
+**What "a CV model" should mean here, and what it should not.** Classical, not
+learned: v-disparity for the ground plane, column minima for the obstacle
+profile, connected components or RANSAC planes for walls. Deterministic, no
+training data, no accelerator, ~1 ms. A LEARNED model needs the accelerator the
+Pi 5 does not have and would break the compute claim that is the point of the
+project -- STEPP and WVN were surveyed for the long-range openness problem and
+deferred for exactly that reason.
+
+**So the proposal is narrow and should stay narrow: delete the coarse RUNG, not
+the map.** Near field 0 to ~3.5 m stays voxels, because that is where free space,
+memory and the swept volume live. Beyond it, a bearing-indexed range profile,
+which is simultaneously `POSE_AND_OPENNESS_PLAN.md` section 1, the
+`OBSTACLE_DISTANCE` message ArduPilot already consumes, and the thing that ends
+the handover seams. Four reasons now point at the same object.
+
 ## Open / unresolved
 
+* **Replace the coarse RUNG with a bearing profile** (keep voxels near). Measured
+  77x the angular resolution at 0.6x the cost, and it removes the handover seam
+  that keeps producing fog discs. Same object as `OBSTACLE_DISTANCE`.
 * **The far field should not be voxels.** A cube sized for stereo's range error
   is Z*sigma/B times coarser than its lateral resolution -- 100:1 at 20 m. Build
   the bearing-space map from `POSE_AND_OPENNESS_PLAN.md` section 1; it is also

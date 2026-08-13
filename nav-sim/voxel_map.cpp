@@ -301,6 +301,15 @@ cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
                 // The consequence is deliberate: a rung so coarse that it cannot
                 // place a surface inside kBorrowM stays banded out of the near
                 // field, which is the honest answer rather than a full pane.
+                // 0.5 m and half a cell. Swept both: the centre fog on the sim
+                // wood goes 67 % / 58 % / 38 % as the cap goes 0.25 / 0.35 /
+                // 0.5 m and then PLATEAUS, because half of the 1 m far cell is
+                // 0.5 m and becomes the binding term. Closing the last of it
+                // needs a whole cell of asserted position error, which fails
+                // the straddle bound below. That residual disc is a seam
+                // between resolution levels and it is not fixable by tuning
+                // these two numbers -- see NOTES on why the far field wants a
+                // bearing-space representation rather than cubes.
                 const float kBorrowM = 0.5f;
                 if (tr[u] + std::min(0.5f * L.map->params().cell, kBorrowM)
                         < L.minRange) continue;

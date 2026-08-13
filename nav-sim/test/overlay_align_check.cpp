@@ -371,6 +371,95 @@ int main() {
               "an eighth of a cell");
     }
 
+    // --- the carve guard is an ANGULAR question ---------------------------
+    // The case above marks every return, because maxIntegM is 20 m. The real
+    // map does not: a layer honest to 3.5 m treats a 10 m return as "the space
+    // in front of me is empty" and NOT as "there is a surface here", so those
+    // rays carve with nothing to weigh against them. In a forest that is 95 %
+    // of the returns, and one hit at +0.85 does not survive a hundred carves
+    // at -0.40.
+    //
+    // Against that, a fixed pixel window is the wrong instrument, because the
+    // question is whether a surface could be inside the same CELL -- and a cell
+    // subtends cell*f/r pixels, which varies by two orders of magnitude over
+    // the ladder. Nine pixels answers it at one range and nowhere else.
+    {
+        auto foliageHolds = [&](float cellM, int gapPx) {
+            VoxelMapParams q;
+            q.cell = cellM; q.maxIntegM = 3.5f; q.maxCarveM = 25.f;
+            q.depthSigCoef = 0.f; q.carveWinPx = 9; q.minIntegM = 0.f;
+            // Foliage at 2.5 m: every gapPx-th pixel returns it, the rest see
+            // 10 m straight past -- beyond the marking range, so those rays
+            // carve and never mark.
+            cv::Mat d4(d.rows, d.cols, CV_32F, cv::Scalar(10.f));
+            for (int y = 0; y < d4.rows; y += gapPx)
+                for (int x = 0; x < d4.cols; x += gapPx) d4.at<float>(y, x) = 2.5f;
+            VoxelMap M4; M4.init(q, camE, camN, camU);
+            for (int i = 0; i < 8; ++i) M4.integrate(d4, cam, pose);
+            // Scan a BOX. camE lands exactly on a cell boundary in x, so an
+            // on-axis probe reads whichever side floor() happens to pick while
+            // the marks land on both -- the same instrument fault as the range
+            // probe above, in a different coordinate, and it cost half an hour.
+            int occ = 0;
+            for (float t = 2.5f - cellM; t <= 2.5f + cellM; t += cellM * 0.5f)
+                for (float e = -cellM; e <= cellM; e += cellM * 0.5f)
+                    for (float uu = -cellM; uu <= cellM; uu += cellM * 0.5f)
+                        if (M4.stateAt(camE + e, camN + t, camU + uu)
+                            == VoxelMap::OCCUPIED) ++occ;
+            return occ;
+        };
+        // Coarse cells are where the fixed window fails, because that is where
+        // a cell is widest in pixels. Measured with the old single 9 px erode:
+        // 8 occupied samples at 2 m cells, 40 at 1 m. With the pyramid: 32
+        // and 53. The threshold sits in the gap so the test discriminates.
+        check(foliageHolds(2.0f, 8) >= 24,
+              "porous foliage survives on a COARSE grid when the rays past it "
+              "are too far to mark",
+              std::to_string(foliageHolds(2.0f, 8)) + " occupied samples");
+        check(foliageHolds(1.0f, 8) >= 48,
+              "and on a 1 m grid",
+              std::to_string(foliageHolds(1.0f, 8)) + " occupied samples");
+        // ... and the angular rule must never NARROW the guard. A fine cell at
+        // long range spans fewer pixels than carveWinPx, and dropping to that
+        // width lets an 8 px foliage gap carve through -- measured, 30
+        // occupied samples became 0. carveWinPx is a floor, not a suggestion.
+        {
+            VoxelMapParams q;
+            q.cell = 0.25f; q.maxIntegM = 10.f; q.maxCarveM = 40.f;
+            q.depthSigCoef = 0.f; q.carveWinPx = 9; q.minIntegM = 0.f;
+            cv::Mat d6(d.rows, d.cols, CV_32F, cv::Scalar(25.f));
+            for (int y = 0; y < d6.rows; y += 8)
+                for (int x = 0; x < d6.cols; x += 8) d6.at<float>(y, x) = 8.f;
+            VoxelMap M6; M6.init(q, camE, camN, camU);
+            for (int i = 0; i < 8; ++i) M6.integrate(d6, cam, pose);
+            int occ = 0;
+            for (float t = 8.f - 0.25f; t <= 8.f + 0.25f; t += 0.125f)
+                for (float e = -0.25f; e <= 0.25f; e += 0.125f)
+                    for (float uu = -0.25f; uu <= 0.25f; uu += 0.125f)
+                        if (M6.stateAt(camE + e, camN + t, camU + uu)
+                            == VoxelMap::OCCUPIED) ++occ;
+            check(occ >= 24, "and a FINE cell at long range keeps the old fixed "
+                             "window, which the angular rule alone would shrink",
+                  std::to_string(occ) + " occupied samples");
+        }
+        // ... and none of this may simply refuse to carve. An unbroken wall at
+        // 8 m, every return beyond the marking range, still has to leave
+        // confirmed-free space in front of it -- a map that calls nothing free
+        // is a vehicle that never moves, and this project has had that failure.
+        VoxelMapParams q5;
+        q5.cell = 0.25f; q5.maxIntegM = 3.5f; q5.maxCarveM = 25.f;
+        q5.depthSigCoef = 0.f; q5.carveWinPx = 9; q5.minIntegM = 0.f;
+        cv::Mat d5(d.rows, d.cols, CV_32F, cv::Scalar(8.f));
+        VoxelMap M5; M5.init(q5, camE, camN, camU);
+        for (int i = 0; i < 8; ++i) M5.integrate(d5, cam, pose);
+        int freeAhead = 0;
+        for (float t = 1.f; t <= 7.f; t += 0.25f)
+            if (M5.stateAt(camE, camN + t, camU) == VoxelMap::FREE) ++freeAhead;
+        check(freeAhead >= 20, "and open space in front of a plain wall is "
+                               "still carved free",
+              std::to_string(freeAhead) + " of 25 samples");
+    }
+
     // --- the chase view's unknown fog -------------------------------------
     // Standing BEHIND the aircraft means every ray crosses metres of space
     // nobody ever measured before it reaches the scene. At first-person fog

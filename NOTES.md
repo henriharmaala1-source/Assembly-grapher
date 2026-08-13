@@ -2151,6 +2151,90 @@ Also noted: `EKF_STATUS_REPORT` (193) has no decoder, and it is the FC's own
 "do I trust myself" signal -- the gap `PROJECT_CV.md` records as every safety
 mechanism assuming the map might be wrong and none assuming the system might be.
 
+## 2026-08-13 — the carve guard was a fixed pixel window and the question is angular
+
+Reported from a sim screenshot: "your sim screenshot clearly has a tree, which
+is not filled with voxels". It did, and it was not.
+
+**First, a new instrument, because the argument had been running on
+screenshots for two days.** `voxel_live --audit` asks one question and asks it
+per range bucket: a return at range r lands in a cell — is that cell OCCUPIED,
+in the layer that owns r? FREE is the bad answer; it means something carved
+through a surface it had already seen. It also prints a census of each grid and
+the planner's mobility, because a guard that fixes false-free by refusing to
+carve anything is not a fix.
+
+**The instrument was wrong first, and it cost an hour.** `DepthCamera::rayFor`
+returns the pinhole ray with a forward component of 1, NOT a unit vector, and
+depth is a range along the ray. The audit multiplied the unnormalised ray by r,
+which scales every off-axis point by 1/cos t — 24 % at the corner of an 87 deg
+frame — so it probed a cell two behind the one the mapper wrote and reported a
+mapper that marks nothing. Two separate "defects" evaporated when it was fixed.
+Write down which convention a vector is in.
+
+**The real defect.** The anti-carve-through guard is a minimum filter over a
+FIXED pixel window (`carveWinPx = 5`, 9 on the far layer). The question it needs
+to answer is whether a surface it can see nearby could be inside the same CELL,
+and a cell subtends `cell*f/r` pixels:
+
+    0.25 m cells, f = 447 px:   14 px at 8 m     56 px at 2 m
+    2.00 m cells, f = 447 px:  112 px at 8 m    447 px at 2 m
+
+Nine pixels answers that at one range and nowhere else.
+
+It is invisible on a layer that marks everything, and that is why it survived.
+A return beyond `maxIntegM` **carves without marking** — trusted to say "the
+space in front of me is empty", not trusted to say "there is a surface here". On
+the 0.25 m layer, honest to 3.5 m, that is 95 % of a forest's returns. One hit
+at +0.85 against a hundred carves at -0.40 is not a contest.
+
+**Fix:** a pyramid of minimum filters, built by min-pooling rather than by
+widening the kernel (about 1.33 passes of a 3x3 erode, not one 200x200 one).
+Level k is consulted only where its own width is still under one cell —
+`lm * winPx <= cell * f` — so the guard widens as the surface comes closer.
+
+**And `carveWinPx` stays as a FLOOR.** The angular rule alone is a regression
+where cells are fine and the surface far: 0.25 m cells at 8 m span 7 px, so it
+consults a 6 px window where the old code used 9, and an 8 px foliage gap then
+carves straight through. Measured, that exact case: 30 occupied samples before,
+0 after. The angular rule may widen the guard and never narrow it.
+
+**Measured, sim forest, stereo depth, 60 frames, 0.10/0.25/2.0 ladder:**
+
+| range m | OCC before | OCC after | FREE before | FREE after |
+|---|---|---|---|---|
+| 1.0–2.2 | 62.6 % | **89.3 %** | 37.1 % | **9.3 %** |
+| 2.2–3.5 | 55.0 % | **90.4 %** | 44.9 % | **9.3 %** |
+| 3.5–5.0 | 69.7 % | **99.6 %** | 30.2 % | **0.4 %** |
+| 5.0–7.0 | 66.3 % | **99.9 %** | 33.3 % | **0.1 %** |
+| 7.0–10  | 68.7 % | **100.0 %** | 30.0 % | **0.0 %** |
+
+    voxel_live --sim --headless --audit --frames 60 --cell 0.25 \
+               --nearcell 0.10 --farcell 2.0 --yawrate 8
+
+**And it is CHEAPER: integrate 32.2 -> 22.7 ms/frame**, 30 -> 41 Hz sustainable,
+because a carve that stops at the obstacle is a shorter DDA than one that runs
+through it. That was not the intent and it is the second time a correctness fix
+in this map has also been a speed fix.
+
+**The cost, stated plainly.** Confirmed-free distance 2.93 -> 2.72 m, commanded
+speed 1.50 -> 1.45 m/s, and the planner was blocked on 1 frame of 60 instead of
+0. Seven per cent of the speed budget for the false-free rate going to nearly
+zero, which is the right side of that trade for a vehicle whose whole safety
+argument is that unknown is not free.
+
+**Pinned** by four new checks in `overlay_align_check`: porous foliage on 2.0 m
+and 1.0 m grids with the rays past it too far to mark (8 and 40 occupied samples
+before, 32 and 53 after), the fine-cell-at-long-range non-regression, and a
+plain wall at 8 m still leaving 25 of 25 samples free. The first two fail on the
+old code, which is what makes them a test rather than a description.
+
+**A second instrument fault, same session.** The first version of the new test
+probed along the optical axis, and `camE` sits exactly on a cell boundary in x —
+so `floor()` picked one side while the marks landed on both. It read as a map
+that marks nothing. This is the same class as the range-probe fault already
+documented two blocks above it, in a different coordinate. Probe a box.
+
 ## Open / unresolved
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes

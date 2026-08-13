@@ -361,18 +361,74 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
                       && intensity.rows == depth.rows && intensity.cols == depth.cols;
     if (wantTex && tex_.empty()) tex_.assign(log_.size(), 0);
 
+    // THE CARVE GUARD IS AN ANGULAR QUESTION AND IT WAS ASKED IN PIXELS.
+    //
     // Nearest valid return in each pixel's neighbourhood -- see carveWinPx.
     // Invalid pixels are set to +inf so they never win the minimum; what
-    // constrains carving is a nearer SURFACE, not the absence of one. A min
-    // filter is exactly cv::erode, so this costs one optimised pass rather
-    // than a hand-rolled window scan.
-    cv::Mat localMin;
+    // constrains carving is a nearer SURFACE, not the absence of one.
+    //
+    // The old version was ONE erode at a FIXED width, and that is the defect.
+    // The question the guard actually needs to answer is "could a surface I can
+    // see nearby be inside the same CELL this ray is about to carve", and a
+    // cell's angular width is cell/r radians -- so the right neighbourhood is
+    // cell*f/r pixels wide and changes with range by two orders of magnitude:
+    //
+    //     0.25 m cells, f = 447 px:   at 8 m -> 14 px      at 2 m -> 56 px
+    //     2.00 m cells, f = 447 px:   at 8 m -> 112 px     at 2 m -> 447 px
+    //
+    // Five pixels answers it correctly at 22 m and nowhere else. Measured
+    // consequence, sim forest, perfect depth, static camera, 20 frames: SIX
+    // occupied cells in the entire 0.25 m grid, and 76 % of the returns between
+    // 2.2 and 3.5 m landing in a cell the map called FREE. Not a stereo
+    // problem -- truth depth did the same, which is what proves it is this and
+    // not the sensor.
+    //
+    // The mechanism is specific and worth naming, because it is invisible on
+    // the coarse layer. A return beyond maxIntegM carves WITHOUT marking: it is
+    // trusted to say "the space in front of me is empty" and not trusted to say
+    // "and there is a surface here". On the 0.25 m layer, whose honest range is
+    // 3.5 m, that is 95 % of a forest's returns -- thousands of rays per frame
+    // erasing, and only the few short ones marking. One hit at +0.85 against a
+    // hundred misses at -0.40 is not a contest.
+    //
+    // So: a PYRAMID of minimum filters, and each level applies only over the
+    // range where its own width is still under one cell. Built by min-pooling
+    // rather than by widening the kernel, so the whole ladder costs about 1.33
+    // passes of a 3x3 erode instead of one 200x200 one.
+    std::vector<cv::Mat> lmPyr;     // level k is downsampled by 2^k
+    std::vector<float>   lmWinPx;   // its effective full-res width
     if (p_.carveWinPx > 1) {
-        cv::Mat dv = depth.clone();
-        dv.setTo(1e9f, depth <= std::max(0.f, p_.minIntegM));
-        cv::erode(dv, localMin, cv::getStructuringElement(
-                      cv::MORPH_RECT, cv::Size(p_.carveWinPx, p_.carveWinPx)));
+        cv::Mat cur = depth.clone();
+        cur.setTo(1e9f, depth <= std::max(0.f, p_.minIntegM));
+        const cv::Mat k3 = cv::getStructuringElement(cv::MORPH_RECT, {3, 3});
+        for (int k = 0; k < 7; ++k) {
+            cv::Mat e; cv::erode(cur, e, k3);
+            lmPyr.push_back(e);
+            lmWinPx.push_back(3.f * float(1 << k));
+            if (e.cols < 8 || e.rows < 8) break;
+            // Min-pool to the next level. cv::resize has no min, and averaging
+            // here would defeat the whole point -- a mean lets one far pixel
+            // wash out the near return that the guard exists to notice.
+            cv::Mat half((cur.rows + 1) / 2, (cur.cols + 1) / 2, CV_32F);
+            for (int y = 0; y < half.rows; ++y) {
+                const float* a = cur.ptr<float>(std::min(2 * y, cur.rows - 1));
+                const float* b = cur.ptr<float>(std::min(2 * y + 1, cur.rows - 1));
+                float* o = half.ptr<float>(y);
+                for (int x = 0; x < half.cols; ++x) {
+                    const int x0 = std::min(2 * x, cur.cols - 1);
+                    const int x1 = std::min(2 * x + 1, cur.cols - 1);
+                    o[x] = std::min(std::min(a[x0], a[x1]), std::min(b[x0], b[x1]));
+                }
+            }
+            cur = half;
+        }
     }
+    // One cell subtends cellPx/r pixels. A level of the pyramid is consulted
+    // only where its width is under that, which is what makes this a geometric
+    // statement rather than a tuned one.
+    const float cellPx = p_.cell * cam.fpx();
+    // The old fixed window, rounded up to the nearest level the pyramid has.
+    const float floorWinPx = float(p_.carveWinPx) * 1.5f;
 
     const int stride = std::max(1, p_.integrateStride);
     for (int v = 0; v < depth.rows; v += stride) {
@@ -394,8 +450,28 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
             float sig = p_.depthSigCoef > 0.f ? p_.depthSigCoef * r * r : 0.f;
             float carve = std::min(p_.maxCarveM, r - p_.carveSigK * sig);
             // Never claim free space beyond the nearest thing seen nearby.
-            if (!localMin.empty()) {
-                float lm = localMin.at<float>(v, u);
+            for (size_t k = 0; k < lmPyr.size(); ++k) {
+                const float lm = lmPyr[k].at<float>(v >> k, u >> k);
+                if (lm > 1e8f) continue;         // nothing valid in this window
+                // Two ways a level may speak, and it needs BOTH.
+                //
+                // (1) The angular test: does a surface at lm, seen this far off
+                //     axis, share a CELL with the ray? Only then may it
+                //     constrain the carve. Without it the widest level would
+                //     clamp on anything anywhere in the frame and the map would
+                //     never call anything free -- which is a vehicle that never
+                //     moves, a failure this project has already had.
+                //
+                // (2) carveWinPx as a FLOOR, always. The angular test alone is
+                //     a REGRESSION where cells are fine and the surface is far:
+                //     0.25 m cells at 8 m span 7 px, so it would consult a 6 px
+                //     window where the old code used 9, and a foliage gap of 8
+                //     px then carves straight through. Measured, that exact
+                //     case: 30 occupied samples before, 0 after. The angular
+                //     rule is allowed to WIDEN the guard and never to narrow
+                //     it, because the fixed window was not wrong, only blind
+                //     past its own width.
+                if (lmWinPx[k] > floorWinPx && lm * lmWinPx[k] > cellPx) continue;
                 // MINUS ONE CELL, and this is the whole point of the clamp.
                 //
                 // Carving to `lm + slack` stops 0.5 m past the nearest
@@ -419,7 +495,7 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
                 // first place. My first attempt kept the slack (lm + 0.5 - cell)
                 // and the new test failed on the FINE grid too, because
                 // lm + 0.25 is still past lm.
-                if (lm < 1e8f) carve = std::min(carve, lm - p_.cell);
+                carve = std::min(carve, lm - p_.cell);
             }
             bool markHit = (r <= p_.maxIntegM);
             if (carve <= 0.f && !markHit) continue;

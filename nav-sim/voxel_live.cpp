@@ -272,6 +272,17 @@ struct Config {
     // wrong, and it earns that only with a measurement behind it -- see NOTES
     // for why the MID rung of the coarse ladder was reverted.
     float nearCell = 0.10f;    // 0 disables
+    // THE AUDIT. Every complaint about this map has taken the same form -- "the
+    // depth image plainly shows a thing and the voxel pane does not" -- and
+    // every time the argument that followed was conducted on screenshots. This
+    // turns that argument into a number: for a sample of returns, is the cell
+    // the return LANDS IN actually OCCUPIED, in the layer that owns that range?
+    //
+    // It is deliberately not a test of the whole pipeline. It asks one
+    // question, the one the eye asks, and it asks it per range bucket -- because
+    // the failures found so far were all range-dependent and a single aggregate
+    // percentage would have hidden every one of them.
+    bool  audit = false;
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -609,6 +620,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--frames")) steps = std::atoi(next("-1"));
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/voxel_live");
         else if (!std::strcmp(argv[i], "--headless")) headless = true;
+        else if (!std::strcmp(argv[i], "--audit")) C.audit = true;
         else if (!std::strcmp(argv[i], "--truth")) showTruth = true;
         else if (!std::strcmp(argv[i], "--menu-preview")) {
             // Dump the menu to a PNG. The window is the one artefact here that
@@ -843,9 +855,26 @@ static int runSession(Config C) {
     int n = 0;
     long integUs = 0, planUs = 0, drawUs = 0;
 
+    const bool haveNear = C.nearCell > 0.f && C.nearCell < cell;
+
     // Opened lazily on the first frame, when the depth size is known for sure.
     DepthRecordWriter rec;
     bool recOpen = false, recFailed = false;
+
+    // Audit buckets. Edges chosen to straddle the ladder's handovers rather
+    // than to be round numbers, because the handovers are where every defect
+    // found so far actually lived.
+    static const float kAuditEdge[] = { 0.f, 1.f, 2.2f, 3.5f, 5.f, 7.f, 10.f, 15.f };
+    const int kAuditN = int(sizeof(kAuditEdge) / sizeof(kAuditEdge[0])) - 1;
+    std::vector<long> auditSeen(kAuditN, 0), auditOcc(kAuditN, 0),
+                      auditFree(kAuditN, 0), auditUnk(kAuditN, 0),
+                      auditOob(kAuditN, 0);
+    double auditFreeM = 0, auditSpeed = 0; long auditBlocked = 0;
+    auto auditBucket = [&](float r) {
+        for (int i = 0; i < kAuditN; ++i)
+            if (r >= kAuditEdge[i] && r < kAuditEdge[i + 1]) return i;
+        return -1;
+    };
 
     for (;;) {
         if (steps > 0 && n >= steps) break;
@@ -861,9 +890,51 @@ static int runSession(Config C) {
         int64 t0 = cv::getTickCount();
         M.integrate(depth, cam, pose);
         if (C.farCell > 0.f) Mfar.integrate(depth, cam, pose);
-        const bool haveNear = C.nearCell > 0.f && C.nearCell < cell;
         if (haveNear) { Mnear.integrate(depth, cam, pose); Mnear.recentre(pose.e, pose.n, pose.u); }
         integUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
+
+        // --- the audit ---------------------------------------------------
+        // Sampled coarsely, because it is a diagnostic and not a product, and
+        // because 1/16 of the returns is already tens of thousands per frame.
+        if (C.audit) {
+            const int as = std::max(1, C.stride * 2);
+            for (int v = 0; v < depth.rows; v += as) {
+                const float* row = depth.ptr<float>(v);
+                for (int u = 0; u < depth.cols; u += as) {
+                    const float r = row[u];
+                    if (!(r > 0.f) || r < mp.minIntegM) continue;
+                    const int b = auditBucket(r);
+                    if (b < 0) continue;
+                    ++auditSeen[b];
+                    float dx, dy, dz; cam.rayFor(pose, u, v, dx, dy, dz);
+                    // NORMALISE. rayFor returns the pinhole ray with a forward
+                    // component of 1, not a unit vector, and the depth value is
+                    // a RANGE along the ray (VoxelWorld::raycast normalises
+                    // before marching, so what it reports is metric distance).
+                    // Skipping this multiplies every off-axis point by 1/cos t
+                    // -- 24 % at the corner of an 87 deg frame -- and the audit
+                    // then probes a cell two behind the one the mapper wrote,
+                    // which reads exactly like a mapper that marks nothing.
+                    // It cost an hour and it was the instrument, not the map.
+                    const float dl = std::sqrt(dx*dx + dy*dy + dz*dz);
+                    dx /= dl; dy /= dl; dz /= dl;
+                    const float wx = pose.e + dx * r, wy = pose.n + dy * r,
+                                wz = pose.u + dz * r;
+                    // The layer that OWNS this range -- the same arbitration the
+                    // panes use. Asking a layer about a range it was banded out
+                    // of would measure the banding, not the map.
+                    const VoxelMap* L = &M;
+                    if (haveNear && r < np.maxIntegM)      L = &Mnear;
+                    else if (r > mp.maxIntegM && C.farCell > 0.f) L = &Mfar;
+                    int cx2, cy2, cz2; L->worldToCell(wx, wy, wz, cx2, cy2, cz2);
+                    if (!L->inBounds(cx2, cy2, cz2)) { ++auditOob[b]; continue; }
+                    const VoxelMap::State s = L->stateAt(wx, wy, wz);
+                    if (s == VoxelMap::OCCUPIED) ++auditOcc[b];
+                    else if (s == VoxelMap::FREE) ++auditFree[b];
+                    else ++auditUnk[b];
+                }
+            }
+        }
 
         t0 = cv::getTickCount();
         // dirMode 1 aims along the camera's own heading; dirMode 0 has
@@ -873,6 +944,8 @@ static int runSession(Config C) {
         GeneralResult gr = traj.plan(M, pose.e, pose.n, pose.u, yaw,
                                      C.dirMode == 1 ? yaw : 0.f, 0.f, coarse);
         planUs += (cv::getTickCount() - t0) * 1000000 / cv::getTickFrequency();
+        if (C.audit) { auditFreeM += gr.freeM; auditSpeed += gr.speed;
+                       if (gr.blocked) ++auditBlocked; }
 
         ++n;
 
@@ -1553,6 +1626,46 @@ static int runSession(Config C) {
         std::printf("  ONBOARD TOTAL   %6.2f ms/frame  (%.0f Hz sustainable)\n",
                     (integUs + planUs) / 1000.0 / n,
                     1000.0 / std::max(0.001, (integUs + planUs) / 1000.0 / n));
+    }
+    if (C.audit && n) {
+        auto census = [](const char* nm, const VoxelMap& L) {
+            const VoxelMapParams& q = L.params();
+            long occ = 0, fre = 0, unk = 0;
+            for (int z = 0; z < q.nz; ++z)
+              for (int y = 0; y < q.ny; ++y)
+                for (int x = 0; x < q.nx; ++x) {
+                    const float l = L.logAt(x, y, z);
+                    if (l > q.occThresh) ++occ; else if (l < q.freeThresh) ++fre; else ++unk;
+                }
+            std::printf("  %-5s cell %.2f m: %8ld occupied, %10ld free, %10ld unknown\n",
+                        nm, q.cell, occ, fre, unk);
+        };
+        std::printf("\n  --- census: what is in each grid ---\n");
+        if (haveNear) census("near", Mnear);
+        census("mid", M);
+        if (C.farCell > 0.f) census("far", Mfar);
+        std::printf("  mobility: free %.2f m, cmd %.2f m/s, blocked on %ld of %d frames\n",
+                    auditFreeM / n, auditSpeed / n, auditBlocked, n);
+        std::printf("\n  --- audit: does the map agree with the depth image? ---\n");
+        std::printf("  a return at range r lands in a cell. is that cell OCCUPIED,\n"
+                    "  in the layer that owns r? FREE is the bad answer -- it means\n"
+                    "  something carved through a surface it had already seen.\n");
+        std::printf("  %10s %10s %8s %8s %8s %8s   owner\n",
+                    "range m", "returns", "OCC", "FREE", "UNKN", "OFFGRID");
+        for (int i = 0; i < kAuditN; ++i) {
+            if (!auditSeen[i]) continue;
+            const float mid = (kAuditEdge[i] + kAuditEdge[i + 1]) * 0.5f;
+            const char* owner = "mid";
+            if (haveNear && mid < np.maxIntegM) owner = "near";
+            else if (mid > mp.maxIntegM) owner = C.farCell > 0.f ? "far" : "none";
+            char rng[32];
+            std::snprintf(rng, sizeof(rng), "%.1f-%.1f", kAuditEdge[i], kAuditEdge[i + 1]);
+            const double t = double(auditSeen[i]);
+            std::printf("  %10s %10ld %7.1f%% %7.1f%% %7.1f%% %7.1f%%   %s\n",
+                        rng, auditSeen[i], 100.0 * auditOcc[i] / t,
+                        100.0 * auditFree[i] / t, 100.0 * auditUnk[i] / t,
+                        100.0 * auditOob[i] / t, owner);
+        }
     }
     if (n && !lastComposite.empty()) {
         cv::imwrite(out + "_last.png", lastComposite);

@@ -182,7 +182,9 @@ A weekend of **writing**, not building, and what a reviewer will probe.
       path rather than porting it. Two flight blockers fall out: an `ATTITUDE`
       decoder (~30 lines, in the enum, no decoder), and a `SET_ATTITUDE_TARGET`
       command path — because **GUIDED velocity setpoints need a horizontal
-      velocity estimate, and GNSS-denied there isn't one.**
+      velocity estimate, and GNSS-denied there isn't one.** (The cheap way out
+      of that constraint later is an optical-flow sensor giving
+      `EK3_SRC1_VELXY = OpticalFlow`; see `MAVLINK_BRIDGE_PLAN.md` §3.2.)
       `state_estimator.hpp` is still written against **iNAV** throughout: its
       constants are copied from iNAV (`gpsTimeoutS` "matches
       INAV_GPS_TIMEOUT_MS", `glitchRadiusM` "matches INAV_GPS_GLITCH_RADIUS"),
@@ -201,26 +203,18 @@ A weekend of **writing**, not building, and what a reviewer will probe.
       golden-frame MAVLink checks, a SITL suite, 26 tracker evals). What is
       missing is requirement → demonstration traceability.
 
-## 6. TODO — the hardware record
-
-- [ ] **`docs/HARDWARE.md`.** Parts, the power chain and *why that chain*, what
-      failed first, measured rail behaviour under throttle, thermal, vibration
-      mounting. **The hardest integration work in this project is currently
-      invisible in the artifact**, and by this project's own rule undocumented
-      work did not happen.
-- [ ] **Optical flow + downward rangefinder, ~€40.** Probably the
-      highest-value small purchase available: it gives EKF3 a horizontal
-      velocity source GNSS-denied (`EK3_SRC1_VELXY = OpticalFlow`), which
-      upgrades the control interface from attitude commands to velocity
-      setpoints. See `MAVLINK_BRIDGE_PLAN.md` §3.2. Not previously on any list.
-- [ ] **Crash tolerance as an ITERATION-RATE item, not a safety one.** The
-      competitor's airframe carries full prop guards and lands undamaged. Every
-      open measurement here is gated on flights you are reluctant to risk.
 - [ ] **Run the `THESIS.md` P1 benchmark under flight power and thermals**, on
       **outdoor** data — indoor recordings flatter the number by ~30 %, because
-      cost scales with scene depth.
+      cost scales with scene depth. This is a *measurement*, and it is the one
+      that decides whether the compute claim survives contact with the field.
+- [ ] **`docs/HARDWARE.md` — write down the airframe that already exists.** The
+      modules are built and integrated; the record is not. Parts, the power
+      chain and *why that chain*, what failed first, measured rail behaviour
+      under throttle, thermal, vibration mounting. **The hardest integration
+      work in this project is currently invisible in the artifact**, and by this
+      project's own rule undocumented work did not happen. Writing, not buying.
 
-## 7. TODO — demo assets
+## 6. TODO — demo assets
 
 > A video of a drone not hitting trees is weak evidence. Every viewer has seen
 > DJI do it since 2016, and **the constraints that make this interesting are
@@ -236,7 +230,7 @@ A weekend of **writing**, not building, and what a reviewer will probe.
 - [ ] **Keep the raw `.kdr` of every demo run.** Video gets attention; the repo
       survives the scrutiny that follows.
 
-## 8. TODO — personal
+## 7. TODO — personal
 
 - [ ] **Read this repository closely — the derivations are in it.** The exposure
       is the gap between directing and building, and someone will probe it: why

@@ -2235,6 +2235,64 @@ so `floor()` picked one side while the marks landed on both. It read as a map
 that marks nothing. This is the same class as the range-probe fault already
 documented two blocks above it, in a different coordinate. Probe a box.
 
+## 2026-08-13 — the sim was flying at twelve metres, and altitude was a function of --cell
+
+Reported as "the ground is still missing" and "not a single trunk is visible in
+the voxels". Both were real, and neither was a mapping bug.
+
+**The harness fault.** The sim camera's altitude was `nz * cell * 0.5` — derived
+from the SIZE OF THE MAP GRID rather than from anything physical. In a boreal
+stand with a 2.9 m floor that put the aircraft at **12 m, up in the canopy**,
+with the forest floor seventeen metres away along the ray and therefore outside
+every rung's honest range. Measured, bottom third of the frame at 12 m: 48.9 %
+valid, mean range 8.9 m, mean height 9.3 m, **0.3 %** of returns inside the
+0.25 m map's honest range, and 10.8 % below the grid floor entirely.
+
+**And it made altitude depend on the cell size**: 4.8 m at `--cell 0.10`, 12 m at
+0.25, 24 m at 0.50. Every comparison across cell sizes was quietly comparing
+different scenes. That is the kind of harness fault that makes a day of
+measurements mean nothing, and it had been there the whole time.
+
+Now: walk up from the floor to the first empty cell, and fly `--alt` (2.5 m)
+above it. Casting DOWN from above finds the canopy, not the terrain — it
+reported 18.00 m on the first attempt and put the aircraft above the treetops.
+
+**The second fault: a 2 m cell is drawn at its NEAR FACE.** Up close one
+subtends twenty degrees, so a single block occludes the pane and hides
+everything behind it. New instrument — for every depth pixel whose surface lies
+inside the ladder's own reach, does the render draw it, AND AT WHAT RANGE:
+
+| ladder | reach | drawn | median error | >1 m too near |
+|---|---|---|---|---|
+| 0.10 / 0.25 | 4.1 m | 0.0 % | — | — |
+| **0.10 / 0.25 / 0.5** | **5.8 m** | **87.5 %** | **-0.63 m** | **15.5 %** |
+| 0.10 / 0.25 / 1.0 | 8.2 m | 44.0 % | -2.52 m | 93.2 % |
+| 0.10 / 0.25 / 2.0 | 11.5 m | **6.4 %** | -3.42 m | **99.8 %** |
+
+    voxel_live --sim --headless --frames 30 --yawrate 0     (camera 2.5 m AGL)
+
+The old 2.0 m default drew **six per cent** of the scene and 99.8 % of that was
+more than a metre too near. Default is now 0.50 m. `--farcell 2.0` gets the
+reach back for the planner, which reads the coarse map for BEARING only and
+never for permission.
+
+**A fix I nearly shipped and should not have.** The render's band test compares
+a SURFACE range against a CELL ENTRY FACE, which differ by up to one cell, so I
+gave it one cell of slack. Coverage went 31 % to 100 % and it looked like the
+answer. Then I measured the range error: median **2.41 m too near**, 80 % of
+drawn pixels more than a metre out — it was filling the pane with near faces.
+`overlay_align_check` failed on exactly that ("the coarse level cannot intrude
+on the fine level's range", 896 -> 2398 px). The test was right; reverted.
+Coverage alone cannot tell a correct hit from a blob drawn two metres too near,
+and I had built a one-sided instrument.
+
+**What is NOT a bug, stated so it is not re-investigated.** At 2.5 m AGL a
+forward-looking camera grazes the ground: the bottom edge of a 56 deg vertical
+frame meets it at 2.5/sin(28 deg) = **5.3 m of range**, past the 0.25 m map's
+3.5 m and right at the 0.5 m rung's 5.0 m. Pitching down does not rescue it —
+measured at -10 and -20 deg, coverage falls. The ground is out of RANGE, not
+lost. It is the 50 mm baseline again, and it is the argument for a wider one.
+
 ## Open / unresolved
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes

@@ -250,7 +250,27 @@ struct Config {
     //
     // AWARENESS ONLY, NEVER PERMISSION. The fine map alone decides what may be
     // flown through; this only says which bearing looks open beyond it.
-    float farCell = 2.0f;      // 0 disables
+    // 0.50 m, NOT 2.0. Measured over the sim wood with the aircraft 2.5 m above
+    // the terrain -- of the depth pixels whose surface lies inside the ladder's
+    // own reach, how many does the first-person render draw, and at what range
+    // error:
+    //
+    //     0.10/0.25/0.5   reach  5.8 m   drawn 84.9 %   median -0.60 m
+    //     0.10/0.25/1.0   reach  8.2 m   drawn 44.0 %   median -2.52 m
+    //     0.10/0.25/2.0   reach 11.5 m   drawn  6.4 %   median -3.42 m
+    //
+    // A 2 m cell is drawn at its NEAR FACE, which can sit two metres in front
+    // of the surface it contains, and up close one cell subtends twenty degrees
+    // -- so a single block occludes the pane and hides everything behind it.
+    // At 2.0 the render drew six per cent of the scene and 99.8 % of that was
+    // more than a metre too near. Reported from the field as "not a single
+    // trunk is visible", and the eye was right.
+    //
+    // The coarse map is still worth having for the PLANNER, which reads it for
+    // bearing only and never for permission -- but 10 m of awareness costs the
+    // picture, and the picture is what the demonstration is made of. Pass
+    // --farcell 2.0 to get the reach back.
+    float farCell = 0.5f;      // 0 disables
     // FINE NEAR LAYER -- the coarse map's argument run in the other direction.
     //
     // Cell size should match the depth uncertainty at the range it covers. That
@@ -283,6 +303,9 @@ struct Config {
     // the failures found so far were all range-dependent and a single aggregate
     // percentage would have hidden every one of them.
     bool  audit = false;
+    // Height above the terrain for the SIM aircraft, metres. An FPV airframe
+    // under canopy flies a few metres up; the old harness put it at twelve.
+    float altM = 2.5f;
     bool  emitter = false, headless = false, showTruth = false;
 };
 
@@ -621,6 +644,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/voxel_live");
         else if (!std::strcmp(argv[i], "--headless")) headless = true;
         else if (!std::strcmp(argv[i], "--audit")) C.audit = true;
+        else if (!std::strcmp(argv[i], "--alt")) C.altM = float(std::atof(next("2.5")));
         else if (!std::strcmp(argv[i], "--truth")) showTruth = true;
         else if (!std::strcmp(argv[i], "--menu-preview")) {
             // Dump the menu to a PNG. The window is the one artefact here that
@@ -657,7 +681,7 @@ int mainCli(int argc, char** argv) {
                 "                      with a 30 fps camera; 2 is 19 ms\n"
                 "  --overlay           composite the voxel view ON the depth image\n"
                 "  --nearcell 0.10     fine near layer, 0 = off. Honest to 2.2 m\n"
-                "  --farcell 2.0       coarse far layer, 0 = off. Honest to 10 m\n"
+                "  --farcell 0.5       coarse far layer, 0 = off. Honest to 5 m\n"
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"
                 "  --noarrow           no command arrow on the first-person pane\n"
@@ -665,6 +689,8 @@ int mainCli(int argc, char** argv) {
                 "  --record FILE.kdr   save every frame, for replay and A/B\n"
                 "  --ui 0.75           window scale; 1 is the old (large) size\n"
                 "  --frames N          stop after N frames\n"
+                "  --alt 2.5           SIM only: height above the terrain, m\n"
+                "  --audit             report whether the map agrees with the depth\n"
                 "  --headless          no window; write PNGs to --out\n",
                 haveLiveSupport() ? "" : "  [NOT in this build -- no librealsense]");
             return 0;
@@ -746,7 +772,43 @@ static int runSession(Config C) {
     // The camera sits at the middle of the grid looking +y (North), so the map
     // has room behind it as well -- a mapper that can only grow forwards would
     // hide exactly the recentring bugs this is meant to expose.
-    const float px = mp.nx * cell * 0.5f, py = mp.ny * cell * 0.25f, pz = mp.nz * cell * 0.5f;
+    const float px = mp.nx * cell * 0.5f, py = mp.ny * cell * 0.25f;
+    float pz = mp.nz * cell * 0.5f;
+
+    // ALTITUDE IS PHYSICAL, NOT A PROPERTY OF THE GRID.
+    //
+    // It used to be nz*cell*0.5, which put the simulated aircraft at 12 m in a
+    // boreal stand -- ten metres up, in the canopy, with the forest floor
+    // seventeen metres away along the ray and therefore outside every rung's
+    // honest range. That is why the ground never appeared: not a mapping
+    // failure, a scene where the ground was never in range to begin with.
+    //
+    // Worse, it made altitude a function of --cell: 4.8 m at 0.10, 12 m at
+    // 0.25, 24 m at 0.50. Every comparison across cell sizes was quietly
+    // comparing different scenes, and it is the kind of harness fault that
+    // makes a whole day's measurements mean nothing.
+    //
+    // Measured at the old 12 m, bottom third of the frame: 48.9 % valid,
+    // mean range 8.9 m, mean height 9.3 m, 0.3 % of returns inside the 0.25 m
+    // map's honest range, and 10.8 % below the grid floor entirely.
+    if (auto* s = dynamic_cast<SimFrameSource*>(src.get())) {
+        // Ground under the start point, found by walking UP from the floor to
+        // the first empty cell. Casting down from above finds the canopy, not
+        // the terrain -- it reported 18.00 m in a stand whose floor is at 2 m,
+        // and put the aircraft 2.5 m above the treetops instead of the ground.
+        float gnd = 0.f;
+        for (float z = 0.f; z < 40.f; z += cell * 0.5f) {
+            int gx, gy, gz;
+            world->worldToCell(px, py, z, gx, gy, gz);
+            if (!world->inBounds(gx, gy, gz) || !world->solid(gx, gy, gz)) break;
+            gnd = z;
+        }
+        pz = gnd + C.altM;
+        std::printf("[sim] ground %.2f m, flying at %.2f m (%.2f m AGL, --alt)\n",
+                    gnd, pz, C.altM);
+        CamPose p0; p0.e = px; p0.n = py; p0.u = pz;
+        s->setPose(p0);
+    }
     VoxelMap M;
     M.init(mp, px, py, pz);
 

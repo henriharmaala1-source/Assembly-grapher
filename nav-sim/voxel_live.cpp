@@ -1531,13 +1531,23 @@ static int runSession(Config C) {
 
         const int64_t tDraw = cv::getTickCount();
         if (C.viewMode == 3) {
-            // THE COMPARABLE. Left half the voxel ladder, right half the
-            // bearing field, through the same projection at the same instant.
-            // Split rather than alternating panes, because the eye is far
-            // better at a seam than at a memory.
+            // THE COMPARABLE, and the first version of it was a bad
+            // instrument in a way that took a field screenshot to notice.
+            //
+            // It put the LEFT HALF OF THE FRAME through cubes and the RIGHT
+            // HALF through bearings. Those are different parts of the scene, so
+            // whichever representation happened to be pointed at the near
+            // clutter looked better. On the frame that exposed it the near mass
+            // was entirely on the right, so the bearing side carried it and the
+            // cube side looked empty for reasons that had nothing to do with
+            // either representation.
+            //
+            // Now BOTH halves show the SAME central slice of the frame, one
+            // rendered each way. Same content, same projection, same instant --
+            // which is the only arrangement that can answer the question.
             const int fw = PH / 2 * cp.width / cp.height, fh = PH / 2;
             const float R = C.farCell > 0.f ? fp.maxIntegM * 1.15f
-                                            : mp.maxIntegM * 1.15f;
+                                            : C.farRangeM;
             cv::Mat a = fit(VoxelMap::renderLadder(ladder(0.f), pose.e, pose.n,
                                                    pose.u, yaw, pitchDeg,
                                                    fw, fh, cp.hfovDeg,
@@ -1546,30 +1556,36 @@ static int runSession(Config C) {
             cv::Mat b = fit(BearingField::render(bfield, yaw, pitchDeg, fw, fh,
                                                  cp.hfovDeg, 0.f, R, pose.u),
                             fw * 2, fh * 2);
-            cv::Mat both(a.rows, a.cols, CV_8UC3);
-            a(cv::Rect(0, 0, a.cols / 2, a.rows)).copyTo(
-                both(cv::Rect(0, 0, a.cols / 2, a.rows)));
-            b(cv::Rect(a.cols / 2, 0, a.cols - a.cols / 2, a.rows)).copyTo(
-                both(cv::Rect(a.cols / 2, 0, a.cols - a.cols / 2, a.rows)));
-            cv::line(both, {a.cols / 2, 0}, {a.cols / 2, a.rows}, {40, 40, 40}, 2);
+            // The middle half of the frame, taken from each.
+            const int cw = a.cols / 2, x0 = a.cols / 4;
+            cv::Mat both(a.rows, cw * 2, CV_8UC3);
+            a(cv::Rect(x0, 0, cw, a.rows)).copyTo(both(cv::Rect(0, 0, cw, a.rows)));
+            b(cv::Rect(x0, 0, cw, b.rows)).copyTo(both(cv::Rect(cw, 0, cw, b.rows)));
+            cv::line(both, {cw, 0}, {cw, both.rows}, {40, 40, 40}, 2);
             fPane = cv::Mat(PH, PW, CV_8UC3, cv::Scalar(206, 208, 212));
             { const int tw = PW, th = std::min(PH, tw * both.rows / both.cols);
               fit(both, tw, th).copyTo(fPane(cv::Rect(0, (PH - th) / 2, tw, th))); }
-            banner(fPane, "CUBES  |  BEARINGS      same frame, same projection");
+            banner(fPane, C.farCell > 0.f
+                   ? "CUBES | BEARINGS   same slice, both ways"
+                   : "FINE CUBES | BEARINGS   same slice, both ways");
             int live = 0, tot = 0; bfield.occupancy(live, tot);
-            // Independent bearings each representation carries across the
-            // frame, at the coarse rung's own honest range.
-            const float degPerCell = C.farCell > 0.f
-                ? C.farCell / std::max(1.f, fp.maxIntegM) * 180.f / sim::PI_F : 999.f;
-            // HONEST LABELS. The left number is ALL voxel levels, not the
-            // coarse rung alone -- the field replaces only the rung, which
-            // costs about 2.6 ms of that. Quoting 22 against 3.2 as though one
-            // replaced the other would be a lie by juxtaposition.
             char cb[128];
-            std::snprintf(cb, sizeof(cb),
-                          "all levels %.0f ms, %.0f bearings | field %.1f ms, %d bins",
-                          n ? integUs / 1000.0 / n : 0.0, 87.f / degPerCell,
-                          n ? bfieldUs / 1000.0 / n : 0.0, live);
+            if (C.farCell > 0.f) {
+                // Independent bearings the coarse rung carries at its own range.
+                const float degPerCell = C.farCell / std::max(1.f, fp.maxIntegM)
+                                       * 180.f / sim::PI_F;
+                std::snprintf(cb, sizeof(cb),
+                              "%.0f m, %.0f bearings | %.0f m, %d bins, %.1f ms",
+                              fp.maxIntegM, 87.f / degPerCell, C.farRangeM, live,
+                              n ? bfieldUs / 1000.0 / n : 0.0);
+            } else {
+                // No coarse rung: say so rather than printing "0 bearings",
+                // which is what the old label did and it read as a measurement.
+                std::snprintf(cb, sizeof(cb),
+                              "%.1f m, no coarse rung | %.0f m, %d bins, %.1f ms",
+                              mp.maxIntegM, C.farRangeM, live,
+                              n ? bfieldUs / 1000.0 / n : 0.0);
+            }
             banner(fPane, cb, 34);
         } else if (C.viewMode == 1) {
             // OVERLAY. Rendered at the DEPTH IMAGE's own size and horizontal

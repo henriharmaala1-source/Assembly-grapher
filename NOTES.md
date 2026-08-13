@@ -3017,13 +3017,49 @@ wide open.** The honest summary is that the vision side is good enough to stop
 redesigning and start proving -- on the real camera, in the flying test, and
 against something that spends what it gathers.
 
+## 2026-08-13 — the bearing field on a real camera, and a comparison instrument that flattered it
+
+First live frames. `--compare` on the D435i: **field 2.1 ms, 2661 live bins** at
+91.9 % valid -- cheaper than in the sim (3.2 ms) and carrying more, because a
+real outdoor scene fills more bearings than a synthetic wood. The composite
+first-person view, fine cubes to 3.5 m and bearings to 20 m, holds a wall, the
+ground and the structure beyond it; the overlay shows the voxels landing on the
+depth they came from.
+
+**And the comparison pane was a bad instrument.** It put the LEFT HALF OF THE
+FRAME through cubes and the RIGHT HALF through bearings -- different parts of
+the scene. On the frame that exposed it the near mass was entirely on the right,
+so the bearing side carried it and the cube side looked empty for reasons that
+had nothing to do with either representation. **A split like that measures where
+the clutter happened to be.**
+
+Now both halves show the SAME central slice, one rendered each way. That is the
+only arrangement that can answer the question, and with it:
+
+* `--farcell 1.0`: cubes to 7 m, **11 bearings**, slabs and a fog disc | field to
+  20 m, 1801 bins, trunks and ground.
+* default: fine cubes to 3.5 m -- **empty in that slice, correctly, because
+  nothing is inside 3.5 m there** | field carrying the whole scene.
+
+**The label was wrong too.** With no coarse rung it printed "0 bearings", which
+reads as a measurement of the cube side rather than as "there is no cube side".
+It now says so in words.
+
+Third instrument fault in three days that made a picture argue for a conclusion
+the data did not support -- after the pane that claimed a 90 deg vertical field
+and the composite that drew the new far field even when asked for the old one.
+The pattern is worth stating: **every one of them was a comparison that could not
+have shown me I was wrong.**
+
 ## Open / unresolved
 
 * **`voxel_sim` does not run the shipping architecture.** Own voxel ladder, own
   120 mm baseline, no bearing field. The only closed-loop evidence in the
   project is about a stack that no longer exists. Largest V&V hole.
-* **The bearing field has never run on a real camera.** Two surfaces along one
-  bearing is the case it cannot represent, and a corridor is exactly that.
+* ~~**The bearing field has never run on a real camera.**~~ First live frames
+  2026-08-13: 2.1 ms, 2661 bins, 91.9 % valid. Still untested on the case it
+  cannot represent -- two surfaces along one bearing, which is what a corridor
+  is. Run `--compare` indoors.
 
 * **Give the A* router the bearing field.** It has a 25 m search horizon and
   reads a 3.5 m map. This is the consumer that makes far information worth

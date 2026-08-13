@@ -2456,8 +2456,64 @@ Interim: it only bites where a surface sits within about a cell of a handover
 range. `--nonear` avoids it, and so does any standoff clear of 2.19 m — the 3.0 m
 shot is clean.
 
+## 2026-08-13 — the original closed-loop sim passes, and it passed before the fix too
+
+Ran `voxel_sim` -- the flying, goal-seeking, scored-against-truth simulation
+that predates all of this -- across six seeds on the current map and on the map
+as it stood before the angular carve guard (`0eee8d7`). 400 steps each.
+
+| seed | progress old | new | clearance old | new | stopped old | new |
+|---|---|---|---|---|---|---|
+| 1 | 112.4 m | 109.2 | 0.45 m | **0.57** | 8 | 10 |
+| 2 | 115.7 | 115.0 | 0.52 | **0.57** | 2 | 5 |
+| 3 | 58.7 | **88.2** | 0.46 | 0.48 | 120 | **65** |
+| 4 | 3.5 | 3.2 | 0.34 | **0.39** | 383 | 385 |
+| 5 | **114.0** | 91.8 | 0.50 | 0.48 | 3 | **59** |
+| 6 | 1.2 | **29.7** | 1.18 | 0.56 | 390 | **279** |
+| mean | 67.6 | 72.9 | 0.58 | 0.51 | 151 | 134 |
+
+**No collision in any of the twelve runs. `corridor lies` 0 of 400 in every one.
+`map false-free` 0.000 % in every one -- before and after.**
+
+**So this test never saw any of the last two days' defects, and that is the
+finding.** Its headline metrics score FREE against SOLID: a corridor lie is the
+map calling a cell free where the world is solid. Every bug fixed since the 12th
+was **OCCUPIED against UNKNOWN** -- a surface that should have been marked and
+was left unknown instead. The planner refuses to spend speed on unknown space,
+so a false-unknown never becomes a corridor lie. It becomes an aircraft that
+creeps and stops, and the only place it shows is `stopped on N steps`.
+
+Which is exactly where it does show: seed 6 goes from 1.2 m of progress in 400
+steps to 29.7 m, and seed 3 from 58.7 to 88.2 with the stops halved. **But seed 5
+goes the other way**, 114.0 to 91.8 with stops from 3 to 59 -- a more
+conservative carve buys clearance and costs progress, and at n = 6 the mean
+(+5.3 m) is well inside the spread. Two large wins, one large loss, three flat.
+Not a result yet; a direction.
+
+**Two structural things this run exposed, both worth more than the numbers.**
+
+1. **`voxel_sim` and `voxel_live` disagree about the ladder.** The old program
+   runs **0.25 / 1.0 / 2.0 m** -- it has had the intermediate rung all along,
+   the one whose absence I measured in `voxel_live` today as 6.4 % render
+   coverage against 87.5 %. The newer program had the worse ladder and nobody
+   noticed, because the two are never compared.
+2. **`voxel_sim` flies a 120 mm baseline**, not the D435i's 50 mm. Z_max only
+   works out similar (3.93 m against 3.54 m) because its camera is also lower
+   resolution -- f 229 px against 447. So the closed-loop test has been
+   validating a camera the project does not own, and its range budget is not
+   the one the hardware has.
+
+**The V&V gap, stated plainly:** the only test that flies has no metric for
+false-UNKNOWN. Add one -- "of the surfaces the depth image saw within the honest
+range, what fraction did the map mark" is exactly the `--audit` number, and it
+belongs in `voxel_sim` too.
+
 ## Open / unresolved
 
+* **`voxel_sim` has no false-UNKNOWN metric**, so the only flying test is blind
+  to every map defect found since 2026-08-12. Port the `--audit` measurement.
+* **`voxel_sim` runs a 0.25/1.0/2.0 ladder and a 120 mm baseline; `voxel_live`
+  runs 0.10/0.25/0.5 and 50 mm.** Two programs, two answers, never compared.
 * **The near/mid handover leaves a circular fog disc** when a surface sits within
   a cell of the band start -- 22.8 deg half-angle at a 2.5 m hedge, predicted and
   observed. The map is correct (97.9 % OCCUPIED); only the pane is wrong. The

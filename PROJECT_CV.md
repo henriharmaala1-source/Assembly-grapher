@@ -1,154 +1,233 @@
-# Project CV — what is claimable, and what it takes to claim it
+# Project CV — what was built, what is claimable, what it takes to claim it
 
 The other documents describe the work. This one describes the *position*: what
-role was actually played, what can be said about it honestly, and the specific
-missing artifacts that turn an arguable claim into an unassailable one.
+exists, what role was actually played, what can be said honestly, and the
+specific missing artifacts that turn an arguable claim into a checkable one.
 
 | file | is |
 |---|---|
 | `THESIS.md` | what the project claims technically, and what would prove it |
 | `NOTES.md` | the lab notebook — tried, measured, rejected |
 | `PROJECT.md` | the public technical write-up |
-| **this** | the professional artifact: role, claims, and the gaps in the record |
+| `ROADMAP.md` | phase plan, P2–P6 |
+| **this** | role, inventory, claims, and the gaps in the record |
 
-Written 2026-08-12. Motivation is stated plainly in `THESIS.md` §1.2: this is a
-portfolio piece and a plausible route to funding, in the way an expensive
-demonstration is for a funded lab.
+Rewritten 2026-08-12 after a full survey of the tree. Motivation is stated
+plainly in `THESIS.md` §1.3: portfolio piece and plausible route to funding.
 
 ---
 
-## 1. The role, named accurately
+## 1. Inventory — what actually exists
+
+**~42,000 lines across five subsystems**, none of it framework glue: no ROS, no
+Gazebo, no GPU, and (in `nav-sim`) no dependency beyond OpenCV.
+
+| subsystem | lines | what it is |
+|---|---|---|
+| `nav-sim/` | 13.8 k | the world model, planner, sim, and live viewer |
+| `onboard/` | 13.7 k | the C++ flight runtime |
+| `desktop/` | 10.2 k | the tracker's validation harness — 26 eval scripts |
+| `android-tracker/` | 3.1 k | the lock-on tracker + field test rig |
+| `android/` | 1.2 k | navviz, the navigation-validation rig |
+
+### 1.1 Perception and mapping (`nav-sim/`)
+
+* **Three-state log-odds voxel map** with the doctrine that drives everything:
+  free / occupied / **unknown**, where unknown is never treated as free.
+* **Honest range derived, not assumed.** `Z_max = √(cell·f·B/σ_d) × 0.75`, with
+  the derate measured against a false-free table (stereo at 8 m gives 2.95 %
+  false-free, 25 m gives 13.22 %; truth depth gives 0.00 % at every range, which
+  is what proves the mapper rather than the sensor).
+* **Carving and marking as separate decisions** (`maxCarveM` vs `maxIntegM`) —
+  the fix for a bug that left the map completely empty and the aircraft
+  motionless for 1200 steps.
+* **Minimum trusted range** from Intel's own `MinZ = f·B/126`, not a guess.
+* **Multi-resolution ladder**, 0.10 / 0.25 / 2.0 m, each rung honest to its own
+  `Z_max`, banded so no level is consulted inside a finer level's range.
+* **Stereo camera model** including the occlusion shadow — `f·B·(1/Z_n − 1/Z_f)`
+  px falling on the *left* of near objects — the IR projector as a texture floor
+  with `1/(1+(r/R)²)` falloff, speckle, and a subpixel noise model.
+* **Trajectory planner**: 210 body-frame primitives rolled out with the
+  vehicle's own velocity lag, swept-volume admissibility, and a speed budget
+  that only pays for **confirmed-free** distance.
+* **`voxel_live`** — the same map and planner over real depth, with runtime
+  loading of librealsense (no build-time SDK, no headers, no import lib, API
+  version read from the library itself), `.kdr` recording, replay, and a
+  four-pane diagnostic view.
+
+### 1.2 Lock-on tracker — "TFL1" (`android-tracker/`, `desktop/`)
+
+Reverse-engineered from reference terminal-guidance footage. Designed to hold a
+50–800 m target on a low-Hz, low-contrast analog feed **without a gimbal and
+without a learned model**:
+
+* **Followed crop** — resampled around the prediction so the target stays a
+  *constant size inside the crop* whatever the range. That is what keeps
+  correlation stable across a 16× range change.
+* **NCC template matching** with selectable appearance filters, plus a
+  hand-written **MOSSE/FFT** correlation filter measured at ~4.4× cheaper for
+  equal coverage (validated numerically, deliberately not the default until
+  real footage decides it).
+* **PSR (peak-to-sidelobe ratio) as a per-frame confidence**, driving a
+  lock / coast / lost / searching state machine — the health signal a boolean
+  flag cannot give.
+* **Optical-flow ego-motion feed-forward**, consensus-gated (sim pan: edge
+  error 3.7 → 0.4 px, zero change elsewhere).
+* **Appearance bank** of diverse-pose keyframes with targeted consult.
+* **Occlusion-aware adaptation** — a PSR-drop detector freezes adaptation and
+  scale (noisy-occlusion edge 91 → 98 %).
+* **`desktop/simtrack.py`** — a faithful Python mirror of the Kotlin tracker, so
+  every change is A/B'd in minutes before being ported. Plus ~26 eval scripts:
+  noise floor, re-detect, search capacity, learned-baseline comparison, drift.
+
+**And the test rig is itself a design decision worth claiming.** The tracker is
+*camera-bound, not compute-bound*, so a phone running the same analog capture
+dongle over USB-OTG — same ~30 fps, same ~150 ms latency, same interlacing —
+faithfully predicts Pi behaviour while being a self-contained field rig you can
+carry to a real 800 m target. That equivalence is stated explicitly and its
+limits are stated with it (it holds only because there is no model; a heavy
+model would run faster on the phone and flatter the Pi).
+
+### 1.3 Flight runtime (`onboard/`)
+
+* **Dependency-free MAVLink v2 codec** — 14 messages, CRC_EXTRA table,
+  trailing-zero truncation, size-sorted field order, zero-extension — pinned
+  against pymavlink golden frames.
+* **Loosely-coupled Kalman state estimator**: linear core, all nonlinearity
+  (geodetic projection, body→world rotation) pushed to the measurement
+  boundary — a deliberate choice over a fragile full EKF.
+* **Behaviour arbiter** over nine modes, a crash-survivable black box, a
+  real-time scheduler, an I²C HAL, ToF sources, and a SITL suite.
+
+### 1.4 Deliberately unbuilt
+
+Four plan documents and four `ideas/` notes for components that do **not**
+exist, each with its own argument, cost model and validation plan:
+depth supervisor, appearance/blobs, pose & bearing-space openness,
+context-gated perception, learned decision-making, mission language.
+
+---
+
+## 2. The role, named accurately
 
 **Systems integration + technical architecture + research direction.**
 
-Not project management — no schedule, budget, team or stakeholders to
-coordinate. Not software implementation of the perception and planning code.
+Not project management — no schedule, budget, team or stakeholders. Not software
+implementation of the perception and planning code.
 
 Reviewing work you did not write, and finding defects in it, is **engineering,
-not management**. A principal engineer who catches a rendering bug in someone
-else's code has done engineering. That is a large fraction of what this role has
-consisted of.
+not management**. On 2026-08-12 alone, five real map defects were found by
+looking at screenshots from a real camera and asking why the picture disagreed
+with the claim: a ladder that collapsed to its coarsest rung, a missing minimum
+range, a carve guard switched off, every carve guard written in metres against
+cells, and a range threshold that rendered as a circular blind spot. None was
+found by the tests, the review, or the sim.
 
-## 2. Claimable
+## 3. Claimable
 
-* **Thesis, scope and the constraint framing.** Autonomy in a GNSS-denied and
-  video-denied zone, on cheap CPU-only compute — three chosen constraints, two of
-  them from a single operational scenario, and none of them budget accidents. See
-  `THESIS.md` §1.0. The GNSS-denial choice is the one that makes the architecture
-  coherent rather than a set of workarounds, and it is also the capability the
-  market actually wants.
+* **Thesis, scope and constraint framing.** Autonomy in a GNSS-denied and
+  video-denied zone on cheap CPU-only compute — three chosen constraints, two
+  from one operational scenario. `THESIS.md` §1.0.
 * **The vehicle.** Part selection, airframe build, and the integration that makes
   it one system — including LiPo → Pi 5 over USB-C PD, which is not a lesser
-  layer: the Pi 5 will not grant full performance without a source that actually
-  *negotiates* 5 V/5 A, and from 6S that means ~22 V down to 5 V at 25 W on a bus
-  shared with ESCs switching tens of amps. Inrush, ripple, ground loops, pack sag
-  browning out the companion computer on a throttle punch, the D435i's own bursty
-  draw, vibration isolation, and thermal on a board that throttles. **Integration
-  is the definitional core of systems engineering, and this is where most hobby
-  autonomy attempts die.**
+  layer: the Pi 5 will not grant full performance without a source that
+  *negotiates* 5 V/5 A, and from 6S that is ~22 V to 5 V at 25 W on a bus shared
+  with ESCs switching tens of amps. Inrush, ripple, ground loops, pack sag
+  browning out the companion computer on a punch-out, vibration, thermal.
+  **Integration is the definitional core of systems engineering and it is where
+  most hobby autonomy attempts die.**
+* **The instrument designs.** The phone-as-Pi-equivalent rig; `simtrack.py` as a
+  fast mirror of flight code; `.kdr` record/replay so a change is A/B'd on
+  identical input rather than on a scene that moved.
 * **Architecture decisions and trade studies.** Sensor vs achievable speed,
-  memory vs drift, IMU vs visual odometry, awareness vs permission.
-* **Defect discovery by artifact review.** Repeatedly the mechanism that caught
-  real faults — the ladder rendering, a degenerate first-person path projection
-  that had survived every previous look, an overclaim about the IR emitter.
-* **The epistemic standard.** Negative results kept with their numbers, instruments
-  checked before the experiments that use them, plans written for components
-  deliberately not built. `THESIS.md` §1.1 argues this is the more defensible
-  differentiator of the two.
+  memory vs drift, IMU vs VO, awareness vs permission, 2D vs 3D representation
+  by information content.
+* **The epistemic standard.** Negative and inconclusive results kept *with their
+  numbers* rather than deleted — the depth improver and the sideslip coupling are
+  both in the tree, both off by default, both with the measurement that says why.
 
-## 3. Not claimable — say so first, before anyone asks
+## 4. Not claimable — say so first, before anyone asks
 
-* **Implementation of the perception and planning code.** AI-assisted. Git history
-  makes this trivially checkable, so honesty is strictly the better play; in 2026
-  AI-assisted is not a weak claim, and being caught pretending otherwise is fatal.
-* **Novelty of the ideas.** Scan matching, submapping, local SLAM, VFH, canopy gap
-  fraction — all predate this project. The claim that is *true and stronger*:
-  **independently derived from constraints, then located in the literature.**
-  Verifiable from the notes' timestamps, and more credible to a knowledgeable
-  reader than a novelty claim, which in this area is usually false and always
-  checked.
+* **Implementation of the perception and planning code.** AI-assisted. Git
+  history makes this checkable, so honesty is strictly the better play.
+* **Novelty of the ideas.** Scan matching, submapping, local SLAM, VFH, canopy
+  gap fraction, MOSSE, PSR gating — all predate this project. The true and
+  stronger claim: **independently derived from constraints, then located in the
+  literature**, which the notes' timestamps support.
 
-## 4. TODO — the four systems-engineering artifacts
+---
 
-A weekend of **writing**, not building. Each is cheap, and each is what an
-interviewer or a technical reviewer will probe. Someone who says "systems
-engineering" and produces a power budget and a verification matrix is instantly
-credible; someone who cannot, is not.
+## 5. TODO — the systems-engineering artifacts
 
-- [ ] **Requirements baseline.** There was no definition of done until
-      `THESIS.md` §4, and there is still no requirement *set*: speed, endurance,
-      environment, lighting, failure tolerance, recovery behaviour. The
-      characteristic SE artifact is requirement → design → test traceability.
-- [ ] **Budgets, with allocations and reserve held at system level.** Mass, power,
-      thermal, latency, compute. **The power engineering is done; the budget is
-      not written.** Latency is the one with a live technical consequence —
-      `reactS = 0.25 s` is currently assumed exactly like σ_d, and the true chain
-      is exposure → USB → the D435i's own depth ASIC → us → MAVLink → FC loop.
+A weekend of **writing**, not building, and what a reviewer will probe.
+
+- [ ] **Requirements baseline.** No requirement *set* exists: speed, endurance,
+      environment, lighting, failure tolerance, recovery behaviour. **If the
+      co-founder conversation goes ahead, get their definition of "a proper
+      point" in writing — that is this artifact, handed over for free.**
+- [ ] **Budgets with allocations and reserve.** Mass, power, thermal, latency,
+      compute. The power engineering is done; the budget is not written. Latency
+      has a live consequence — `reactS = 0.25 s` is assumed exactly like σ_d.
 - [ ] **Interface control.** `grep VoxelMap onboard/` returns nothing: `nav-sim`
-      and `onboard` share zero code. That is an interface failure, and preventing
-      exactly that is the job. It is also `THESIS.md` P3, a flight blocker.
-- [ ] **The GNSS-exclusion verification**, as a standing pre-flight item:
-      `EK3_SRC*` logged per flight, plus the connected-vs-unplugged controlled
-      pair. A silently-fusing EKF voids the central claim while looking like
-      success — see `THESIS.md` §1.0.
-- [ ] **V&V matrix.** Good ad-hoc tests exist (8 ctest targets, paired A/Bs,
-      golden-frame MAVLink checks). What is missing is the mapping from each
-      requirement to how it will be demonstrated.
+      and `onboard` share zero code. `THESIS.md` P3, a flight blocker.
+- [ ] **THE STATE MODEL DID NOT FOLLOW THE FLIGHT-STACK DECISION.**
+      `state_estimator.hpp` is still written against **iNAV** throughout: its
+      constants are copied from iNAV (`gpsTimeoutS` "matches
+      INAV_GPS_TIMEOUT_MS", `glitchRadiusM` "matches INAV_GPS_GLITCH_RADIUS"),
+      its rationale is that iNAV's complementary filter cannot fuse VO, and its
+      output path is a synthetic GPS fix for **`MSP2_SENSOR_GPS`**.
+      **Under ArduPilot every one of those is the wrong shape**: EKF3 takes
+      `VISION_POSITION_ESTIMATE` over MAVLink, `EK3_SRC*` selects sources
+      directly, and the iNAV timeout and glitch constants have no meaning. The
+      MAVLink *bridge* was rewritten; the estimator's premise was not. Resolve
+      before any GNSS-denied flight — and note it interacts with the
+      `THESIS.md` §1.0 exclusion claim, since the estimator is *designed* to
+      feed a position back to the FC.
+- [ ] **GNSS-exclusion verification** as a standing pre-flight item: `EK3_SRC*`
+      logged per flight, plus the connected-vs-unplugged controlled pair.
+- [ ] **V&V matrix.** Good tests exist (8 nav-sim ctest targets, paired A/Bs,
+      golden-frame MAVLink checks, a SITL suite, 26 tracker evals). What is
+      missing is requirement → demonstration traceability.
 
-## 5. TODO — the hardware record
+## 6. TODO — the hardware record
 
-- [ ] **`docs/HARDWARE.md`.** Parts list, the power chain and *why that chain*,
-      what failed first, measured rail behaviour under throttle, thermal
-      behaviour, vibration mounting.
+- [ ] **`docs/HARDWARE.md`.** Parts, the power chain and *why that chain*, what
+      failed first, measured rail behaviour under throttle, thermal, vibration
+      mounting. **The hardest integration work in this project is currently
+      invisible in the artifact**, and by this project's own rule undocumented
+      work did not happen.
+- [ ] **Crash tolerance as an ITERATION-RATE item, not a safety one.** The
+      competitor's airframe carries full prop guards and lands undamaged. Every
+      open measurement here is gated on flights you are reluctant to risk.
+- [ ] **Run the `THESIS.md` P1 benchmark under flight power and thermals**, on
+      **outdoor** data — indoor recordings flatter the number by ~30 %, because
+      cost scales with scene depth.
 
-**Right now the hardest integration work in this project is invisible in the
-artifact.** By this project's own rule — measured or it did not happen —
-undocumented work does not count, and for a portfolio or funding conversation the
-bring-up story is compelling and currently missing entirely.
+## 7. TODO — demo assets
 
-- [ ] **Run the `THESIS.md` P1 benchmark under flight power and flight thermals**,
-      not on a desk with a wall adapter. If the board throttles in an airstream or
-      the rail sags on a punch-out, the bench number is fiction — and the bench
-      number is the headline experiment of the whole thesis.
+> A video of a drone not hitting trees is weak evidence. Every viewer has seen
+> DJI do it since 2016, and **the constraints that make this interesting are
+> invisible in footage.**
 
-## 6. TODO — demo assets
-
-The deliverable is **the craft flying**, not a repository. But note the trap:
-
-> A video of a drone not hitting trees is weak evidence on its own. Every viewer
-> has seen DJI do it since 2016, a twenty-second clip cannot distinguish autonomy
-> from a good pilot, and **the thing that makes this one interesting — €80 of
-> compute, no GPU — is completely invisible in the footage.**
-
-So the demo has to show the *constraint*, not just the flight.
-
-- [ ] **Four-pane overlay as picture-in-picture** beside the flight footage:
-      depth, voxel ladder, chase view with the rollout fan, command arrow. With
-      **`Raspberry Pi 5 · N ms/frame · no GPU · GPS: 14 sats, not used for nav`**
-      burned into the corner — both chosen constraints, both invisible in footage
-      unless you put them there, and the second is the operationally interesting
-      one. Note the wording: *having* a fix and declining to use it is a far
-      stronger claim than not having one, which could just mean flying under
-      canopy. For a v2
-      fly-through-blind run, add the video-link state. The
-      visualisation work was built for debugging and it is the demo asset —
-      nobody else's video has it, because nobody else's constraint is interesting.
-- [ ] **Onboard telemetry doubles as overlay data.** `THESIS.md` §4 already
-      requires per-frame integrate/plan/total and valid-pixel fraction for
-      verification; it is the same stream.
+- [ ] **Four-pane overlay as picture-in-picture**, with
+      `Raspberry Pi 5 · N ms/frame · no GPU · GPS: 14 sats, not used for nav`
+      burned in. *Having* a fix and declining to use it is a far stronger claim
+      than not having one, which could just mean flying under canopy.
+- [ ] **Texture-mapped rendering.** The competitor's reconstruction reads far
+      better than coloured cubes, and it is a rendering choice rather than a
+      quality difference — their depth has the same black trunks yours does.
 - [ ] **Keep the raw `.kdr` of every demo run.** Video gets attention; the repo
-      survives the technical scrutiny that follows it. Both are needed and the
-      harder one already exists.
+      survives the scrutiny that follows.
 
-## 7. TODO — personal
+## 8. TODO — personal
 
-- [ ] **Read this repository closely — the derivations are in it.** The real
-      exposure is the gap between "I can direct and evaluate this system" and "I
-      can build it," and someone will probe it: why `carveSigK` exists, derive
-      `Z_max`, what `recentre` does at the boundary. The mitigation is unusually
-      available here, because the code comments and `NOTES.md` were written to be
-      read. Unglamorous work that converts exposure into competence.
+- [ ] **Read this repository closely — the derivations are in it.** The exposure
+      is the gap between directing and building, and someone will probe it: why
+      `carveSigK` exists, derive `Z_max`, what `recentre` does at the boundary.
+      The mitigation is unusually available here, because the comments and
+      `NOTES.md` were written to be read.
 
 Two things are true at once and both should be said out loud: this is a capable
-systems-integration and architecture role, and the software implementation layer
-is directed rather than written. The second is the more fixable of the two.
+systems-integration and architecture role across five subsystems and ~42 k
+lines, and the software implementation layer is directed rather than written.
+The second is the more fixable of the two.

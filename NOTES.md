@@ -2083,6 +2083,37 @@ contradicted: the shadow is negligible *as a hazard* on a 50 mm baseline past
 4 m. (a) does not dispute that — it exploits the shadow as a *predictable
 signal* in the near field, which is a different use of the same measurement.
 
+## 2026-08-12 — the state estimator never followed the ArduPilot decision
+
+Found while rewriting `PROJECT_CV.md`, by reading `state_estimator.hpp` rather
+than assuming. **The flight-stack decision changed and the state model did not.**
+
+The estimator is written against **iNAV** throughout:
+
+* `gpsTimeoutS = 1.5` -- "matches iNAV INAV_GPS_TIMEOUT_MS"
+* `glitchRadiusM = 2.5` -- "matches iNAV INAV_GPS_GLITCH_RADIUS"
+* rationale: "iNAV already fuses raw IMU + GPS + baro into a good attitude and a
+  complementary-filter position estimate... the Pi-side estimator fuses the
+  things the FC can't"
+* output path: "build a synthetic GPS fix from the current estimate for
+  **MSP2_SENSOR_GPS**", to be "fed back to iNAV so its nav modes work GPS-denied"
+
+**Under ArduPilot every one of those is the wrong shape.** EKF3 takes
+`VISION_POSITION_ESTIMATE` over MAVLink rather than a synthetic GPS over MSP;
+`EK3_SRC*` selects position/velocity/yaw sources directly, so the "the FC cannot
+fuse VO" premise is much weaker; and the two tuned constants are iNAV numbers
+with no ArduPilot meaning.
+
+The MAVLink *bridge* was rewritten when the decision was made. The estimator's
+premise was not, and nothing flagged it because the code still compiles, still
+passes its tests, and still reads as deliberate -- the same failure shape as
+every defect found today.
+
+It also touches the `THESIS.md` §1.0 exclusion claim: the estimator is *designed*
+to feed a position back to the FC, and the shape of that feedback is now a
+different message with different semantics. Resolve before any GNSS-denied
+flight. Logged in `PROJECT_CV.md` §5.
+
 ## Open / unresolved
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes

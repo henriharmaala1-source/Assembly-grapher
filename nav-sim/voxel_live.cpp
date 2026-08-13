@@ -1534,17 +1534,40 @@ static int runSession(Config C) {
             // FIRST PERSON, all levels. The fine cells carry the near field and
             // the coarse ones carry everything past where the fine map stopped
             // -- which is most of any real scene.
-            // Half-res cast, upscaled back to SQUARE before the plan is drawn.
-            // The order matters: this render is square (vfov = hfov = 90) and
-            // the pane is 4:3, so stretching first and projecting after would
-            // draw the plan through an aspect the render was never made with.
+            // THE PANE MUST SHOW THE SENSOR'S OWN FRUSTUM AND NOT A WIDER ONE.
+            //
+            // This used to render SQUARE at vfov = hfov = 90. The camera is
+            // 87 deg horizontal by 56 deg vertical, so the top and bottom
+            // SEVENTEEN DEGREES of the pane lay outside anything the sensor had
+            // ever looked at -- permanently, structurally unknown, and drawn as
+            // fog exactly like a genuine gap in the map.
+            //
+            // At 4 m that is 1.2 m of blank above and below the data, which is
+            // why a trunk read as "voxels at the root and nothing above it".
+            // The map had the whole trunk; the pane was asserting a field of
+            // view the camera does not have. Same family as the 8 m depth ramp
+            // and the +-12 m slice crop: the instrument was wrong, and it made
+            // honest absence of data look like a mapping failure.
+            //
+            // So: render at the CAMERA's aspect and hfov, then letterbox rather
+            // than stretch. A stretched render would put the plan through an
+            // aspect the raycast was never made with.
+            const int fw = PH / 2 * cp.width / cp.height, fh = PH / 2;
             cv::Mat fpv = fit(VoxelMap::renderLadder(ladder(0.f), pose.e, pose.n,
                                                      pose.u, yaw, pitchDeg,
-                                                     PH / 2, PH / 2, 90.f,
+                                                     fw, fh, cp.hfovDeg,
                                                      FpvStyle(), nullptr),
-                              PH, PH);
-            drawPlanInto(fpv, 90.f);
-            fPane = fit(fpv, PW, PH);
+                              fw * 2, fh * 2);
+            drawPlanInto(fpv, cp.hfovDeg);
+            // Letterbox into the pane. The bars are the SENSOR's blind zone and
+            // are drawn darker than the unknown fog so the two cannot be
+            // confused: pale means "not seen yet", grey means "cannot be seen".
+            fPane = cv::Mat(PH, PW, CV_8UC3, cv::Scalar(206, 208, 212));
+            {
+                const int tw = PW, th = std::min(PH, tw * fpv.rows / fpv.cols);
+                cv::Mat scaled = fit(fpv, tw, th);
+                scaled.copyTo(fPane(cv::Rect(0, (PH - th) / 2, tw, th)));
+            }
             banner(fPane, "FIRST PERSON  map + plan, from inside");
             char nb[96];
             std::snprintf(nb, sizeof(nb), "%.2f-%.1f m cells out to %.0f m   "

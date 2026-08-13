@@ -2293,6 +2293,65 @@ frame meets it at 2.5/sin(28 deg) = **5.3 m of range**, past the 0.25 m map's
 measured at -10 and -20 deg, coverage falls. The ground is out of RANGE, not
 lost. It is the 50 mm baseline again, and it is the argument for a wider one.
 
+## 2026-08-13 — the first-person pane claimed a field of view the camera does not have
+
+Reported as "the root of the tree gets voxels but the trunk doesn't above it —
+this is a clear failure mode". It was a failure mode, and it was the instrument
+again.
+
+**The pane rendered SQUARE at vfov = hfov = 90 deg.** The D435i is 87 deg
+horizontal by **56.4** vertical at 848x480. So the top and bottom seventeen
+degrees of that pane lay outside anything the sensor had ever looked at:
+permanently, structurally unknown, and drawn as fog in exactly the same colour
+as a genuine gap in the map. At 4 m that is **1.2 m of blank above and below the
+data**, which is precisely a trunk that stops.
+
+Now it renders at the camera's own aspect and hfov and is **letterboxed**, with
+the bars a darker grey than the unknown fog: pale means "not seen yet", grey
+means "cannot be seen".
+
+**How it was found, and the two wrong answers on the way.**
+
+1. *Reach.* Range grows as sqrt(D^2 + h^2), so a vertical object leaves a
+   spherical reach as it climbs. Measured on the nearest trunk: horizontal
+   distance **4.12 m constant**, range 4.12 to 4.65 m over the whole frame
+   height. All of it inside the 5.8 m reach. Not the cause.
+2. *Stereo dropout.* Valid fraction up that trunk's column: 62.8 / 85.9 / 76.9 /
+   89.7 / 80.8 / 85.9 / 67.8 / 53.5 / 94.9 / 62.7 % from top to bottom --
+   scattered, no height trend, and the stereo mean range tracks truth to a few
+   centimetres. Not the cause either.
+
+**The control that settled it.** `--truth` renders the same trunk as a complete
+column; stereo does not, and the OVERLAY -- voxels drawn on the depth they came
+from -- shows the column complete in both once zoomed. So the map had the whole
+trunk the entire time and only the pane was cutting it. Valid fraction
+65.6 % stereo against 90.1 % truth.
+
+**Audit, same scene, 30 frames**: of returns at 3.5-5.0 m (the band the 0.5 m
+rung owns) **98.4 %** land in a cell that layer calls OCCUPIED, against 100.0 %
+with perfect depth. Beyond 5.0 m everything is UNKNOWN, which is correct -- that
+is past the rung's honest marking range.
+
+**What this exposed about the planner, and it is worth writing down.** An
+unmatched trunk is UNKNOWN, not OCCUPIED, and `probe` treats the two very
+differently on purpose:
+
+* UNKNOWN does **not** stop the reach ray -- it accrues at `1 - unknownCost`,
+  because refusing to steer toward unseen space means never moving;
+* UNKNOWN **does** end `freeRun` immediately, so it earns **no speed at all**.
+
+And the swept-volume grid blocks only on OCCUPIED, so a primitive through an
+unmatched trunk is *admissible*. What stands between the aircraft and that trunk
+is the speed budget alone -- and it holds, because a textureless trunk returns
+nothing, nothing is carved along those rays either, and the cone in front of it
+is UNKNOWN too, so `freeRun` ends before it. Conservative by construction, but
+it rests entirely on "no measurement, no information" being obeyed everywhere.
+
+**Third instrument fault in two days**, after the 8 m depth ramp and the +-12 m
+slice crop. The pattern is now unmistakable: every one of them made honest
+absence of data look like a mapping failure, and every one was found by a human
+looking at a picture and asking why it disagreed with the claim.
+
 ## Open / unresolved
 
 * **`PROJECT_CV.md`** — role, defensible claims, and the TODO list that makes

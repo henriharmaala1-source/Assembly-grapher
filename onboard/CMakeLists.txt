@@ -59,6 +59,26 @@ target_include_directories(blackbox_decode PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(blackbox_decode PRIVATE ${OpenCV_LIBS})
 
+# Pi bring-up harness, stage one: do RC/AUX signals reach the Pi at all?
+# READ ONLY on the FC -- it links MavlinkBackend for telemetry and never calls
+# sendControl. Keep it that way: this is the tool you run before you trust the
+# link, so it must not be able to move anything.
+add_executable(rc_probe
+  tools/rc_probe.cpp
+  src/mavlink_backend.cpp
+  src/mavlink_v2.cpp
+  src/serial_port.cpp)
+target_include_directories(rc_probe PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(rc_probe PRIVATE Threads::Threads)
+
+# A fake ArduPilot on a PTY, so the harness can be developed without hardware.
+# Emits a KNOWN pattern (ch1 sweeps, ch7 flicks) so rc_probe has a right answer
+# to be checked against, not merely a signal to display.
+add_executable(fake_fc tools/fake_fc.cpp src/mavlink_v2.cpp)
+target_include_directories(fake_fc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(fake_fc PRIVATE util)
+
 # Field-test recorder for the lock-on tracker: AUX switch on the FC arms the
 # lock, everything is recorded with the overlay burned in plus a CSV.
 # READ ONLY on the FC -- it links MspBackend for telemetry and never calls

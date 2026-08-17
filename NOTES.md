@@ -3495,6 +3495,15 @@ we never paid the cost they are recovering from.
   `v = v_target * (1 - risk)^2` with `risk` from the near map's nearest-obstacle
   distance; it is cheap and it is the one idea from that paper that transfers
   whole.
+* **`onboard/DepthNav` ALREADY RUNS a monocular depth model and already emits a
+  bearing profile.** MiDaS Small / Depth Anything V2 Small on Pi CPU, 256^2 in,
+  96x72 work grid, de-rolled and de-pitched, and `openHist()` is a per-column
+  polar openness histogram -- the exact shape the far field wants. It even names
+  its own gap at `depth_nav.hpp:86-90`: the mono path is NOMINAL scale, metric
+  "until a ranging sensor exists". **It exists** -- the near voxel map, metric to
+  3.54 m, looking at the same image. The two halves have been built and have
+  never been introduced, because `nav-sim/` and `onboard/` share zero code. See
+  `FAR_FIELD_MODELS.md`.
 * **A LEARNED far field. The best lead in the file.** The far field is the one
   place a net is structurally safe, because it has no authority: it scores a
   bearing and can neither veto a primitive nor grant speed, so a hallucination

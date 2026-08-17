@@ -3495,8 +3495,33 @@ we never paid the cost they are recovering from.
   `v = v_target * (1 - risk)^2` with `risk` from the near map's nearest-obstacle
   distance; it is cheap and it is the one idea from that paper that transfers
   whole.
+* **THE REPO IS BEHIND WHAT HAS BEEN TRIED.** Stated by the user 2026-08-17.
+  Anything read out of `onboard/` is a record of what was *written*, not of what
+  *worked* — do not report source as evidence of behaviour, and say which it is
+  every time. This burned a whole entry below within an hour of writing it.
+* **FIELD RESULT: the monocular depth model is CLOSE FIELD ONLY** (tested on
+  mobile). Kills the learned far field as framed. Two structural mechanisms,
+  both of which should have been predicted:
+  1. MiDaS / Depth Anything emit **inverse** depth, so resolution per metre falls
+     as 1/Z^2 -- 3 m and 30 m are 0.33 and 0.033, and the entire far field lives
+     in a few per cent of the output range.
+  2. `depth_nav.cpp:78-86` then **min-max normalises per frame**, so any near
+     object rescales the whole image and crushes the far field to nothing. Then
+     it blurs and column-maxes. (2) is a fixable bug worth fixing anyway, since
+     it also costs close-field contrast in mixed-depth scenes; (1) is not fixable
+     without a metric-at-range model, and all of those are seconds/frame on ARM.
+  **And it breaks the metric anchor** proposed the same day: `Z = 1/(a*d+b)` so
+  `dZ/db = -Z^2`. An anchor fitted on the 0-3.5 m band and extrapolated to 20 m
+  amplifies its own fit error as the square of the range. Same Z^2 that governs
+  `dZ = Z^2*sigma/(fB)` -- not a coincidence, both parameterise by inverse depth
+  and both pay for range in the same currency. **The near map cannot lend
+  precision it does not have at that distance.**
+  => **Motion parallax is now the main line.** Its baseline GROWS with flight
+  (1 s at 1 m/s = 1 m vs the D435i's 50 mm, `Z_max` 3.54 -> ~16 m), so it
+  improves with range exactly where monodepth degrades.
 * **`onboard/DepthNav` ALREADY RUNS a monocular depth model and already emits a
-  bearing profile.** MiDaS Small / Depth Anything V2 Small on Pi CPU, 256^2 in,
+  bearing profile.** *(Plumbing only -- see the field result above; the far half
+  does not work.)* MiDaS Small / Depth Anything V2 Small on Pi CPU, 256^2 in,
   96x72 work grid, de-rolled and de-pitched, and `openHist()` is a per-column
   polar openness histogram -- the exact shape the far field wants. It even names
   its own gap at `depth_nav.hpp:86-90`: the mono path is NOMINAL scale, metric

@@ -2,6 +2,38 @@
 
 Review document. Nothing here is a decision, and nothing here is built.
 
+> ## FIELD RESULT, 2026-08-17 — read this before the rest
+>
+> **Tested on mobile: the monocular depth model is CLOSE FIELD ONLY.** That is a
+> measurement against reality and it outranks everything reasoned from code
+> below. The optimistic reading in §2 and §3 was written from the repo, not from
+> a flight, and the repo is **known to be behind** what has actually been tried.
+>
+> It is also *predictable*, which is worse — it should have been caught before it
+> was written down. Two independent mechanisms, both structural:
+>
+> 1. **MiDaS and Depth Anything emit INVERSE depth.** Resolution per metre falls
+>    as 1/Z². 3 m and 30 m are 0.33 and 0.033 — the whole far field lives in a
+>    few per cent of the output range, indistinguishable from zero.
+> 2. **`depth_nav.cpp:78–86` then min-max normalises PER FRAME.** Whatever is
+>    nearest sets the maximum, so any close object rescales the entire image and
+>    crushes everything beyond a few metres into a sliver at the bottom of the
+>    range. Then it is blurred and column-maxed, which finishes the job.
+>
+> (2) is a pipeline bug and is fixable — normalise over a fixed scale, or over
+> the far band only. **(1) is not fixable without a different class of model**,
+> and every metric-at-range model is Tier C, i.e. seconds per frame on ARM.
+>
+> **This also breaks the metric anchor proposed in §5.1** — see the strikethrough
+> there. The error in an anchor fitted near and extrapolated far grows as Z²,
+> which is precisely the region the far field exists to cover.
+>
+> **Net effect: the learned far field is demoted from "best lead in the file" to
+> "blocked pending a reason to believe the far half is recoverable at all."**
+> Motion parallax (§4) is left standing, and it is better on the merits anyway:
+> its baseline *grows* with flight, so it gets better with range exactly where
+> monodepth gets worse.
+
 **Context.** The far field is the one place in this stack where a learned model
 is structurally safe, because that layer has no authority — it scores a bearing
 and can neither veto a primitive nor grant speed (`nav-sim/bearing_field.hpp`).
@@ -43,10 +75,13 @@ this is a **desktop estimate that has never been checked on Pi silicon**.
 
 ---
 
-## 2. What already exists in this repo
+## 2. What the repo contains — with a health warning
 
-This is the most important section and it was a surprise. **Half of this idea is
-already built and running.**
+**The repo is not up to date with what has been tried.** Everything in this
+section is read from source, and source is a record of what was written, not of
+what worked. Treat it as "this code exists", never as "this works".
+
+With that said: half of the *plumbing* for this idea is already built.
 
 `onboard/include/depth_nav.hpp` — `DepthNav`:
 
@@ -66,8 +101,17 @@ And it already knows its own central weakness. `depth_nav.hpp:86–90`:
 > the monocular path it is a NOMINAL scale (relative openness × scanMaxNominalM)
 > — good enough to bias routing, not a true map, until a ranging sensor exists.*
 
-**"Until a ranging sensor exists."** It exists. It is the near voxel map, it is
-metric out to 3.54 m, and it looks at the same image every frame.
+**"Until a ranging sensor exists."** It exists — the near voxel map, metric out
+to 3.54 m, looking at the same image every frame. That observation still stands,
+but it is now known to buy much less than it appeared to: see §5.1, where the
+anchor turns out to be sound near and useless far.
+
+**And the normalisation immediately below the model is destroying the far field
+independently of anything the model does** — `cv::minMaxLoc` per frame, then
+rescale to [0,1] (`depth_nav.cpp:78–86`). Any near object in view rescales the
+whole image. This is worth fixing regardless of what happens to this document,
+because it also degrades the CLOSE field's contrast whenever the scene has mixed
+depth, and it is a handful of lines.
 
 **The blocker is not modelling.** `NOTES.md` already records it: `nav-sim/` and
 `onboard/` share **zero** code (`grep VoxelMap onboard/` → nothing). Both halves
@@ -156,13 +200,21 @@ a custom anchor — and the anchor is the whole idea.**
 
 ### Needed, and it is smaller than it sounds
 
-1. **A metric anchor — the single highest-value piece.** Monocular depth is
-   scale-free; that is its fundamental limitation and the reason `DepthNav` says
-   "nominal". But the near voxel map is **metric ground truth for the far field's
-   own camera, every frame, in the same image**. A per-frame least-squares fit of
-   `a·d + b` over the overlap band converts relative inverse depth into metres.
-   On the order of **thirty lines**. Nobody ships this because nobody else has
-   both halves — we do, in two repos that don't link.
+1. ~~**A metric anchor — the single highest-value piece.**~~ **BROKEN. Kept
+   because the reason it fails is the useful part.**
+   The idea was: fit `1/Z = a·d + b` on the 0–3.5 m band where the near voxel map
+   is metric ground truth, then apply it everywhere. Sound near, worthless far,
+   and the arithmetic says why. `Z = 1/(a·d + b)`, so `dZ/db = −Z²`. **The
+   sensitivity of the anchor to its own fit error grows as the square of the
+   range being estimated.** At 20 m a one-per-cent error in the fitted offset is
+   metres of range error — and the offset is fitted entirely from near samples,
+   where `d` is large and far behaviour is unconstrained. Extrapolating an
+   anchor calibrated at 3 m out to 20 m is exactly the operation this cannot
+   survive.
+   This is the same Z² that governs stereo (`δZ = Z²σ/(fB)`) and it is not a
+   coincidence: inverse depth is the natural parameterisation for both, and both
+   pay for range in the same currency. The near map cannot lend precision it
+   does not have at that distance.
 2. **A profile head instead of a depth decoder.** We want ~72 numbers, not
    H×W pixels. Truncating the decoder is where the MMAC savings actually live and
    is the only genuinely custom modelling work. Small.
@@ -183,18 +235,30 @@ found by looking at a screenshot, none by a test.
 
 ## 6. How to decide
 
-In order, cheapest first. **Stop as soon as something clears the bar.**
+Reordered after the field result. **Stop as soon as something clears the bar.**
 
-1. **Time MiDaS Small and DAv2-Small on actual Pi 5 silicon.** One afternoon.
-   `onboard` already loads both. If they land near ~110 ms, that is 44× the
-   bearing field and the answer is no until F10 and a smaller net exist. If
-   INT8 + a truncated decoder gets it under ~10 ms, everything changes.
-2. **Evaluate motion parallax first anyway.** It is metric, needs no data, and
-   `Z_max` 3.54 → ~16 m would be a larger win than any model in this file.
-3. **Then, and only then, score a learned far field on `--compare`**, which was
-   built for exactly this: hold the scene, the projection and the near map fixed,
-   swap only the far representation. A new representation is a **comparable, not
-   a proposal** — the standing rule in this project, learned by getting it wrong.
+1. **Motion parallax, first and by a distance.** Metric, no dataset, no
+   sim-to-real risk, and its baseline *grows with flight* — one second at 1 m/s
+   is a 1 m baseline against the D435i's 50 mm, so `Z_max` goes 3.54 → ~16 m by
+   geometry rather than by prior. It needs odometry, which is **P5a (VIO)**,
+   already on the roadmap for other reasons. This is now the main line.
+2. **Fix the per-frame normalisation** (`depth_nav.cpp:78–86`) regardless. Small,
+   and it improves the close field the model *is* good at. Do not expect it to
+   recover the far field on its own — mechanism (1) in the field result is
+   untouched by it.
+3. **Time MiDaS Small and DAv2-Small on real Pi silicon** if and when anything
+   depends on it. The ~110 ms figure is a desktop estimate that
+   `hardware-bringup-checklist.md:42` already flags as unverified. Currently this
+   answers a question nobody is asking, because the far half does not work at any
+   speed.
+4. **A learned far field is parked**, not dead. It needs a reason to believe the
+   far half is recoverable — a metric-at-range model that fits the CPU budget, or
+   a demonstration that a profile head trained directly on our own parallax
+   output beats the parallax it was trained on. If that reason appears, score it
+   on `--compare`, which holds the scene, the projection and the near map fixed
+   and swaps only the far representation. A new representation is a
+   **comparable, not a proposal** — the standing rule here, learned by getting it
+   wrong repeatedly.
 
 **Acceptance:** beats `BearingField` on far-field coverage and median range error
 at equal or lower frame cost, on recorded **real** D435i footage, with the near

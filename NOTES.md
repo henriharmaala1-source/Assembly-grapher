@@ -3538,6 +3538,52 @@ A one-sided check would have shipped a half-fix and called it green.
 Pinned by `test/sky_open_check.cpp` (10th ctest target). Verified against the
 old scoring: 2 failures. All 10 pass on the new.
 
+## 2026-08-17 — Loquercio et al., "Learning High-Speed Flight in the Wild" (Science Robotics 2021)
+
+Loquercio, Kaufmann, Ranftl, Muller, Koltun, Scaramuzza. **The closest published
+work to this project's task, and the strongest published argument against its
+architecture.** Read it properly before the thesis defends a map.
+
+**What they did.** A policy that maps depth + state + a goal direction straight
+to collision-free trajectories, trained ENTIRELY in simulation, zero-shot to
+real forests, ruins, snow, derailed trains, day and night, at up to ~10 m/s.
+
+**Three ideas that matter to us:**
+
+1. **Privileged teacher / student distillation.** The teacher sees the exact 3D
+   map and exact state and samples collision-free trajectories; the student sees
+   only depth and imitates it. The map exists at TRAINING time and is thrown
+   away at inference -- an interesting third position between "map" and "no map".
+2. **Multi-hypothesis output, and the reason for it.** The student predicts a
+   SET of trajectories with costs, not one. A single-output regressor averages
+   "go left of the tree" and "go right of the tree" into "fly into the tree".
+   Multimodality is not a refinement, it is the whole problem.
+3. **Depth as the sim-to-real abstraction.** Depth transfers far better than RGB
+   because it carries much less appearance gap. This is why their sim-only
+   training worked, and it validates `voxel_sim` as a training/eval surface --
+   but it is also a WARNING about the sky-segmenter idea, which would be RGB and
+   would carry exactly the gap they avoided.
+
+**The uncomfortable part, and it is aimed straight at us.** Their argument
+against mapping is not that maps are wrong, it is that **a map requires accurate
+state estimation, and state estimation degrades exactly when you need it most --
+at speed, under aggressive motion.** Mapping baselines lost to the learned
+policy at high speed for that reason.
+
+Our map assumes ZERO drift and has no odometry at all. At the v1 target of
+1 m/s over a 2-3 s memory that is defensible. **The paper is evidence that there
+is a speed above which this architecture stops working, and we have never
+identified it.** That number is the same one `POSE_AND_OPENNESS_PLAN.md` §3
+brackets from the other side, and it should be measured rather than assumed.
+
+**Where we are not refuted.** They fly a Jetson-class GPU, so the compute thesis
+is untouched. And they give up everything the near field exists to provide: no
+free space, no volume, no memory, no veto -- a purely reactive local policy that
+cannot answer "is this robot-sized tube clear". Our multimodality, incidentally,
+comes free: a primitive library with an argmax never averages two modes. It has
+the OPPOSITE failure -- mode FLIPPING -- which is already logged here as one of
+three causes of "the aircraft is spinning", and is why hysteresis exists.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

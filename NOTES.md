@@ -3495,6 +3495,35 @@ we never paid the cost they are recovering from.
   `v = v_target * (1 - risk)^2` with `risk` from the near map's nearest-obstacle
   distance; it is cheap and it is the one idea from that paper that transfers
   whole.
+* **A LEARNED far field. The best lead in the file.** The far field is the one
+  place a net is structurally safe, because it has no authority: it scores a
+  bearing and can neither veto a primitive nor grant speed, so a hallucination
+  costs a bad openness score rather than a crash. (PULP-Dronet crashed 0/6 in the
+  tunnel because the CNN *was* the controller.) And the failure regimes are
+  complementary: stereo dies at `Z_max` = 3.54 m because dZ grows as Z^2, while
+  texture gradient, perspective and occlusion ordering do not degrade with range
+  at all. Geometry runs out exactly where the monocular cues are still strong.
+  * **The training signal is free.** The near map is metric ground truth for the
+    far field's own camera, every frame, in the same image. That anchors
+    monocular scale AND gives self-supervision with no dataset -- the aircraft
+    labels itself by flying toward things.
+  * **The bar is 2.5 ms**, what `BearingField::update` costs. DroNet is
+    41 MMAC/frame only because it emits two scalars; a dense depth decoder is
+    1-20 GMAC and hopeless here. But we do not want pixels -- we want the 72
+    numbers `obstacleDistance()` already emits. A range-profile regressor is a
+    much smaller net. Rough Pi 5 budget: **stay under ~200 MMAC/frame at 10 Hz**
+    (NEON dot-product, four A76 cores, generously discounted). Arithmetic, not
+    measurement.
+  * **Score it on `--compare`**, which exists for exactly this: hold the scene,
+    the projection and the near map fixed and swap only the far representation.
+    A new representation is a comparable, not a proposal.
+  * **Sim-to-real is the trap.** Their accuracy went 83 % -> 90 % purely by
+    adding 1.3K images from the real onboard camera. Training on `voxel_world`
+    renders alone yields something that shines in `voxel_sim` and dies on the
+    D435i -- the exact failure this session hit four times with instruments.
+  * Unchanged limits: still no free space, no volume, cannot represent two
+    surfaces on one bearing. It replaces the MEASUREMENT inside the far
+    representation, not the representation. The near cubes keep the veto.
 * **Nothing on this stack has ever run on a Pi.** Every timing in this file is
   from a Xeon dev box. The Pi 5 estimate (1.5-2.5x) is arithmetic. Until the
   mapper and the stereo matcher are both measured on the target, the cycle

@@ -15,10 +15,14 @@ Review document. Nothing here is a decision, and nothing here is built.
 > 1. **MiDaS and Depth Anything emit INVERSE depth.** Resolution per metre falls
 >    as 1/Z². 3 m and 30 m are 0.33 and 0.033 — the whole far field lives in a
 >    few per cent of the output range, indistinguishable from zero.
-> 2. **`depth_nav.cpp:78–86` then min-max normalises PER FRAME.** Whatever is
+> 2. **Both implementations then min-max normalise PER FRAME.** Whatever is
 >    nearest sets the maximum, so any close object rescales the entire image and
 >    crushes everything beyond a few metres into a sliver at the bottom of the
 >    range. Then it is blurred and column-maxed, which finishes the job.
+>    `desktop/tracker/depth_nav.py:92–102` (**fresh — this is the one being
+>    tested**) and `onboard/src/depth_nav.cpp:78–86` (stale) are line-for-line
+>    the same operation. The mechanism is confirmed in the current code, not
+>    inferred from the old.
 >
 > (2) is a pipeline bug and is fixable — normalise over a fixed scale, or over
 > the far band only. **(1) is not fixable without a different class of model**,
@@ -77,9 +81,19 @@ this is a **desktop estimate that has never been checked on Pi silicon**.
 
 ## 2. What the repo contains — with a health warning
 
-**The repo is not up to date with what has been tried.** Everything in this
-section is read from source, and source is a record of what was written, not of
-what worked. Treat it as "this code exists", never as "this works".
+**Parts of this repo are behind what has been tried.** As of 2026-08-17:
+
+| area | state |
+|---|---|
+| `nav-sim/` — `voxel_sim`, `voxel_live`, `bearing_field`, `voxel_map` | **fresh** |
+| `desktop/tracker/` | **fresh** |
+| `onboard/` — world model, deliberator, perception, `depth_nav.cpp` | **stale** |
+
+Source is a record of what was *written*, not of what *worked*. Everything below
+is read from source; where it matters, the fresh copy is cited in preference to
+the stale one. **`onboard/DepthNav` is in the stale column** — its C++ is quoted
+here only because it is the clearest statement of the design, and the fresh
+Python (`desktop/tracker/depth_nav.py`) implements the same thing.
 
 With that said: half of the *plumbing* for this idea is already built.
 

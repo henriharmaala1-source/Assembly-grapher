@@ -3495,10 +3495,20 @@ we never paid the cost they are recovering from.
   `v = v_target * (1 - risk)^2` with `risk` from the near map's nearest-obstacle
   distance; it is cheap and it is the one idea from that paper that transfers
   whole.
-* **THE REPO IS BEHIND WHAT HAS BEEN TRIED.** Stated by the user 2026-08-17.
-  Anything read out of `onboard/` is a record of what was *written*, not of what
-  *worked* — do not report source as evidence of behaviour, and say which it is
-  every time. This burned a whole entry below within an hour of writing it.
+* **FRESHNESS MAP — which halves of this repo can be trusted (2026-08-17).**
+  | area | state |
+  |---|---|
+  | `nav-sim/` (`voxel_sim`, `voxel_live`, `bearing_field`, `voxel_map`) | **fresh** |
+  | `desktop/tracker/` | **fresh** |
+  | `onboard/` (world model, deliberator, perception, `depth_nav.cpp`) | **stale** |
+  Source is a record of what was *written*, not of what *worked*. Cite the fresh
+  copy in preference to the stale one, and say which is which every time. This
+  burned a whole entry within an hour of writing it: `onboard/DepthNav` was read
+  as evidence that a monocular far field works, when it is stale code AND the
+  behaviour had already been measured to fail. Note the two `depth_nav`
+  implementations are line-for-line equivalent on the point that matters
+  (`desktop/tracker/depth_nav.py:92-102` == `onboard/src/depth_nav.cpp:78-86`),
+  so the diagnosis survived -- by luck, not by method.
 * **FIELD RESULT: the monocular depth model is CLOSE FIELD ONLY** (tested on
   mobile). Kills the learned far field as framed. Two structural mechanisms,
   both of which should have been predicted:

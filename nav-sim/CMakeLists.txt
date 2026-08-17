@@ -279,6 +279,20 @@ target_include_directories(bearing_field_check PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(bearing_field_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME bearing_field_check COMMAND bearing_field_check)
 
+# "The planner only wants to go up now, because it's the most open." Unknown
+# bearings were scoring as maximally open, so the aircraft steered toward
+# whatever it could not see -- which outdoors is the sky.
+add_executable(sky_open_check
+  test/sky_open_check.cpp
+  voxel_map.cpp
+  voxel_traj.cpp
+  bearing_field.cpp
+  depth_camera.cpp
+  voxel_world.cpp)
+target_include_directories(sky_open_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(sky_open_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME sky_open_check COMMAND sky_open_check)
+
 add_executable(chase_turn_check
   test/chase_turn_check.cpp
   voxel_map.cpp

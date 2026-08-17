@@ -3487,6 +3487,57 @@ L1 on a GAP8. A Pi 5 has none of those constraints and this stack has no network
 to quantise. Their 2x memory and 1.6x speed wins are not available to us because
 we never paid the cost they are recovering from.
 
+## 2026-08-17 — "the planner only wants to go up": unknown was scoring as OPEN
+
+Reported from a run. The cause was one line in `voxel_traj.cpp`:
+
+    const float r = far->field->rangeAt(endAz, endEl);
+    const float reach = (r < 0.f) ? far->rangeM : std::min(r, far->rangeM);
+
+`rangeAt` returns **< 0 when a bin holds nothing**, and that was mapped to FULL
+reach -- so a bearing carrying NO INFORMATION scored the maximum openness
+available, 1.0. The largest region of "no information" outdoors is the sky.
+
+**This is `unknown != free`, violated in the far field, thirty lines below the
+place the same function states the rule for the near field:**
+
+    // Only CONFIRMED-FREE length earns speed. Unknown space is
+    // traversable but pays nothing, which is the rule that stopped this
+    // aircraft flying into a tree at 1.5 m/s on perfect depth.
+
+The near field refuses to pay for unknown; the far field paid maximum for it.
+Same function, same frame. `POSE_AND_OPENNESS_PLAN.md` §2 predicted it in
+words -- "openness is not traversability -- a bright gap can be sky above a
+wall" -- and the implementation did not carry the caveat.
+
+**AND IT WAS NOT "PREFERS UP".** Writing the test exposed the real shape: the
+first version checked `elDeg < 15` and the buggy code sailed through it by
+**diving to -36.9 deg**, because below the camera's +-28 deg vertical field of
+view is exactly as unmeasured as above it. The defect was **"steer toward
+whatever I cannot see"**. Up is merely the direction in which that is unbounded.
+A one-sided check would have shipped a half-fix and called it green.
+
+### Two changes
+
+1. **Openness is earned, never assumed.** `r < 0` now scores 0. Absence of a
+   return is absence of knowledge. With no far information the term vanishes
+   and the goal direction decides -- correct behaviour in open ground rather
+   than a special case for it. The retired coarse-voxel path had the identical
+   latent bug (`!occupied` was treated as reach, and most of a coarse map is
+   unknown) and was fixed with it.
+2. **`climbPenalty`, charged relative to the COMMANDED elevation.** Even a
+   genuinely measured, genuinely open sky is the wrong place to go under a
+   canopy, so the fix above is necessary but not sufficient. Sized by a rule,
+   not by taste: 15 deg of uncommanded climb costs 1.0, twice the most the far
+   term can offer at `farWeight` 0.5, so no openness reading can buy a climb on
+   its own. Charged only ABOVE `goalElDeg`, because a flat penalty on absolute
+   climb would forbid climbing when the mission asks for it -- turning a bias
+   into a ceiling. Asymmetric: descent is dangerous for a different reason (the
+   blind disc) and that belongs to the map and the rangefinder, not to a weight.
+
+Pinned by `test/sky_open_check.cpp` (10th ctest target). Verified against the
+old scoring: 2 failures. All 10 pass on the new.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

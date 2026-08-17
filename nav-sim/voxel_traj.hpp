@@ -185,9 +185,34 @@ struct TrajParams {
     //
     // Marching stops at OCCUPIED only -- UNKNOWN does not block, because
     // unknown at range is the normal state and treating it as closed would make
-    // this term a no-op. Unknown therefore scores like open, which is safe here
-    // precisely because it grants no speed.
+    // this term a no-op.
+    //
+    // BUT UNKNOWN DOES NOT SCORE AS OPEN. It used to, and the result was that
+    // the aircraft steered toward whatever it could not see -- which outdoors
+    // is the sky. See `test/sky_open_check.cpp`. Openness is earned by a
+    // confirmed distance; absence of a return is absence of knowledge.
     float farWeight  = 0.5f;
+    // CLIMB IS NOT SYMMETRIC WITH DESCENT, and pricing it inside the goal term
+    // treats it as though it were.
+    //
+    // Three reasons a forest aircraft should resist going up, none of which
+    // apply equally to going down:
+    //   * the map's honest marking range is 3.54 m and the camera sees +-28 deg
+    //     vertically, so a climb flies into volume that was never observed;
+    //   * the sky is unbounded, so any openness measure has an upward bias that
+    //     no amount of filtering fully removes -- the fix above stops unknown
+    //     scoring as open, but a genuine distant return above the canopy is
+    //     still legitimately "open" and still the wrong place to go;
+    //   * altitude is the one axis where the mission almost never wants motion.
+    //     Under the canopy, up is not a route.
+    //
+    // Sized so that 15 deg of UNCOMMANDED climb costs 1.0 -- twice the most the
+    // far term can offer at farWeight 0.5. Asymmetric on purpose: only positive
+    // elevation is charged, and only above the commanded one. Descent is
+    // dangerous for a different reason (the frustum's blind disc underneath)
+    // and that is the near map's and the rangefinder's problem, not a scoring
+    // weight's. 0 disables.
+    float climbPenalty = 6.0f;
     float farRangeM  = 20.f;   // proven value; do not move it and a level in the same test
     // HOW OPENNESS IS MEASURED ALONG A BEARING.
     //

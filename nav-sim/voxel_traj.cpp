@@ -177,9 +177,27 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
             // Bearing lookup instead of a march: the field already answers
             // "nearest surface on this bearing", so openness along a heading is
             // one query rather than a walk through cubes.
+            // UNKNOWN IS NOT OPEN. `rangeAt` returns < 0 for a bin holding
+            // nothing, and that used to be mapped to FULL reach -- so a bearing
+            // with no information scored the maximum, and the largest region of
+            // "no information" in any outdoor scene is THE SKY. Every upward
+            // bearing scored 1.0, the argmax went up, and the aircraft climbed
+            // because the emptiest thing it could see was air.
+            //
+            // The rule is already written thirty lines above for the near
+            // field: unknown space is traversable but pays nothing. This layer
+            // has no free space at all -- it only ever knows "nearest surface
+            // on this bearing" -- so absence of a return is absence of
+            // knowledge, never evidence of clearance.
+            //
+            // Openness is therefore EARNED by a confirmed distance and by
+            // nothing else. With no far information the term simply vanishes
+            // and the goal direction decides, which is the correct behaviour in
+            // open ground rather than a special case for it.
             const float r = far->field->rangeAt(endAz, endEl);
-            const float reach = (r < 0.f) ? far->rangeM : std::min(r, far->rangeM);
-            farOpen = reach / std::max(0.1f, far->rangeM);
+            farOpen = (r < 0.f)
+                    ? 0.f
+                    : std::min(r, far->rangeM) / std::max(0.1f, far->rangeM);
         } else if (!coarse.empty() && p_.farWeight > 0.f) {
             const float dx = std::sin(deg2rad(endAz)) * std::cos(deg2rad(endEl));
             const float dy = std::cos(deg2rad(endAz)) * std::cos(deg2rad(endEl));
@@ -194,11 +212,17 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
                 for (const CoarseLevel& c : coarse)       // fine first
                     if (t <= c.rangeM) { lv = c.map; step = std::max(0.5f, c.map->params().cell * 0.5f); break; }
                 if (!lv) break;                            // past every level's honest range
-                const bool occ =
-                    lv->stateAt(ex + dx * t, ey + dy * t, ez + dz * t) == VoxelMap::OCCUPIED;
-                ++nSamp; if (occ) ++nOcc;
+                // Same rule as the bearing path above, for the same reason: a
+                // cell that is merely NOT OCCUPIED is not thereby open -- most
+                // of a coarse map is unknown, and treating unknown as reach is
+                // how sky wins an openness argmax. Only FREE extends reach.
+                const VoxelMap::State st =
+                    lv->stateAt(ex + dx * t, ey + dy * t, ez + dz * t);
+                const bool occ  = st == VoxelMap::OCCUPIED;
+                const bool free = st == VoxelMap::FREE;
+                ++nSamp; if (!free) ++nOcc;
                 if (occ && p_.farMode == TrajParams::FarMode::FIRST_BLOCKED) break;
-                if (!occ) reach = t;
+                if (free) reach = t; else break;   // stop at the first non-FREE
                 t += step;
             }
             farOpen = (p_.farMode == TrajParams::FarMode::DENSITY)
@@ -206,10 +230,26 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
                     : reach / p_.farRangeM;
         }
 
+        // Charged on the climb ALONE, not on |elevation|, so descending is left
+        // to the goal term and to the map.
+        //
+        // And charged relative to the COMMANDED elevation, not to the horizon.
+        // A flat penalty on absolute climb would also forbid climbing when the
+        // mission explicitly asks for it, which turns a bias into a ceiling.
+        // What must be suppressed is climbing the planner talked ITSELF into --
+        // so the aircraft pays only for the climb it was not told to make.
+        //
+        // Sized by a rule rather than by taste: at 15 deg of uncommanded climb
+        // the penalty is 1.0, which is twice the most the far term can ever
+        // offer at its default weight. No openness reading, however open, can
+        // buy a climb on its own.
+        const float climbUp = std::max(0.f, endEl - goalElDeg) / 90.f;
+
         float score = p_.clearWeight * clear
                     - p_.goalWeight * gd
                     - p_.smoothWeight * smooth
-                    + p_.farWeight * farOpen;
+                    + p_.farWeight * farOpen
+                    - p_.climbPenalty * climbUp;
         if (score > best) {
             best = score; bestPrim = &pr; bestFree = freeLen; bestClear = nClear;
         }

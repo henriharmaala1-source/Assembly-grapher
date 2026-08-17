@@ -3354,8 +3354,151 @@ So confirmation now costs a tenth of a point instead of seventeen, and every
 anti-speckle test still passes -- the sky scatter, the lone pixel, the one-frame
 outlier. **The filter was not too strong; it was measuring the wrong thing.**
 
+## 2026-08-17 — Pi budget: visualisation is already free, and the levers cost coverage
+
+"I'm worried about the performance on Pi. Can it be improved? No visualization
+improves?"
+
+**Visualisation is already excluded and always was.** `voxel_live` prints
+
+    map integrate    18.06 ms/frame
+    plan              1.41 ms/frame
+    (view render     34.45 ms/frame, desktop only)
+    ONBOARD TOTAL    19.46 ms/frame   (51 Hz sustainable)
+
+and `voxel_sim` does the same (`voxel_sim.cpp:853`, `[sim-only] depth render`
+reported separately). The render is nearly **twice** the onboard cost, so
+turning it off roughly triples the laptop's frame rate — and moves the flight
+number by zero. Anything that only draws is not on the aircraft's critical path.
+This is the answer to the question as asked: **there is no visualisation saving
+to find, because it was never being counted.**
+
+### What is actually on the path, measured
+
+`/tmp/bench.cpp` (`cell stride camW camH useNear`), 100 frames of the hedge
+scene, one thread. Run twice on the same box days apart; the absolutes moved a
+lot with machine load, the **ratios barely moved**, so only the ratios are worth
+quoting.
+
+    848x480  cell 0.25  stride 2  near ON   | mid 7.0  near 5.4  bearings 2.5  plan 0.3  TOTAL 15.2
+    848x480  cell 0.25  stride 2  near off  | mid 6.8            bearings 2.5  plan 0.3  TOTAL  9.6
+    848x480  cell 0.25  stride 3  near off  | mid 3.8            bearings 2.5  plan 0.6  TOTAL  6.8
+    848x480  cell 0.25  stride 4  near off  | mid 3.0            bearings 2.6  plan 0.7  TOTAL  6.3
+    848x480  cell 0.35  stride 2  near off  | mid 5.1            bearings 2.5  plan 0.3  TOTAL  7.9
+    848x480  cell 0.35  stride 3  near off  | mid 3.2            bearings 2.4  plan 0.3  TOTAL  6.0
+    424x240  cell 0.25  stride 2  near off  | mid 1.2            bearings 0.7  plan 0.8  TOTAL  2.7
+
+Ladder of levers, cheapest first, each with what it costs:
+
+| lever | saving | what it costs |
+|---|---|---|
+| drop the 0.10 m near rung | **-37 %** | *nothing* — it also **improves** near coverage, 100 % vs 76.3 % at 2 m standoff |
+| stride 2 -> 3 | -29 % | thin-obstacle hit rate; the hedge rails are the case to re-measure |
+| cell 0.25 -> 0.35 | -18 % | clearance resolution against a 0.35 m robot radius |
+| 848x480 -> 424x240 | -72 % | `Z_max` falls by sqrt(2), 3.54 -> 2.5 m, and the bearing field halves |
+
+**The near rung is a free win twice over.** It was already known to *hurt*
+coverage (a 0.10 m cell needs far more hits to cross `occThresh`, so at 2 m
+standoff it is 76.3 % covered where the mid rung is 100 %) — and it is also 37 %
+of the frame time. There is no trade here; it is pure cost. It is already
+retired by default in `voxel_live` and should never come back without a
+measurement that justifies it.
+
+**The bearing field is now the floor.** At 2.5 ms it is a quarter of the budget
+and does not shrink with `cell` or `stride` — it is one linear scan of the depth
+image, and its per-pixel bin table was already the 15.75 -> 3.2 ms fix. Cutting
+it further means cutting camera resolution, which is the one lever that costs
+range. Leave it alone.
+
+**Watch the planner column.** `plan` goes 0.3 -> 0.6 -> 0.7 -> 0.8 ms as the map
+gets coarser or sparser. Every saving above partly **pays itself back into the
+planner**, because a thinner map means more UNKNOWN, and more UNKNOWN means more
+search before `sphereClear` finds something it will accept. The lever table is
+therefore optimistic at the bottom end; only the top row is unambiguously free.
+
+### Pi 5 scaling — ESTIMATE, flagged as one
+
+This box is a Xeon @ 2.1 GHz; the Pi 5 is Cortex-A76 @ 2.4 GHz. Per-clock the
+A76 is in the same class, but the mapper is a **scattered DDA write over a voxel
+grid** — memory-latency bound, not ALU bound — and LPDDR4X-4267 behind a much
+smaller cache is where the difference will show. A 1.5-2.5x slowdown is the
+honest bracket, so the 9.6 ms configuration lands somewhere around 15-25 ms,
+still inside a 100 ms cycle with room to spare. **This is arithmetic, not a
+measurement.** The stereo matcher is the unbudgeted item that actually decides
+this (see Open / unresolved) and it is very likely to dominate everything above.
+Measure on the Pi before believing any of this paragraph.
+
+## 2026-08-17 — Niculescu et al., PULP-Dronet V2 (arXiv 2607.12593): same thesis, opposite method
+
+Read in full. *Improving Autonomous Nano-drones Performance via Automated
+End-to-End Optimization and Deployment of DNNs* — Niculescu, Lamberti, Conti,
+Benini, Palossi; ETH Zurich / Bologna / IDSIA; accepted to IEEE JETCAS. They
+deploy PULP-Dronet, a small CNN, onto a GAP8 ULP multicore SoC on a Crazyflie
+2.1, via two automated quantise-and-tile toolchains (GAPflow and NEMO/DORY).
+
+**The shared thesis, and it is the one this project runs on:** autonomy is not
+gated by compute, it is gated by *how the compute is spent*. Their headline is
+that the AI workload is **never more than 1.64 % of the drone's power budget** —
+the four motors take 7.3 W, the whole perception deck under 120 mW. Perception
+is not what drains a drone. That is the same argument as running this stack on a
+Pi 5 CPU with no GPU.
+
+**And the number that matters most to us:** throughput bought speed, directly and
+almost linearly. 8.7 frame/s -> 12.8 frame/s took safe braking speed 1.41 ->
+1.65 m/s **at the same 0.25 m safety margin**, and free-flight from 1.72 to
+1.96 m/s. This is the see-ahead/plan-ahead ratio from the other end: they could
+not see further, so they bought reaction time with frame rate. It is the
+cleanest external evidence that the Pi budget work above is worth doing — and it
+sets the bar: **the v1 target of 1 m/s is below what a 30 g drone with a
+320x240 grayscale camera and a microcontroller achieves.**
+
+**Where it is the opposite of this project.** They *replace* the map: "classical
+SLAM is too computationally intensive," so the CNN regresses steering and a
+collision probability directly from one grayscale frame. No geometry, no free
+space, no memory. Consequences visible in their own results:
+
+* **It cannot represent what it has not been trained on.** Their generalisation
+  table is honest about it — the narrow tunnel with a static obstacle is
+  **0/6**, the drone drifts into it and crashes. A geometric map does not have
+  a training distribution to fall outside of.
+* **Their two labels are disjoint** and they say so: the network learned
+  "predict the presence of obstacles" and "predict the steering to follow the
+  lane" but *never* "predict the steering to prevent a collision." There is no
+  planner, so avoidance is emergent rather than solved. Our `sphereClear` +
+  primitive search is exactly the "additional level of intelligence between the
+  CNN and the low-level control" their conclusion asks for.
+* **`p_col` oscillates 0.8 -> 0.3 on the same obstacle**, and they patch it with
+  a clipped integral term in the flight controller (Listing 1). That is
+  confirmation filtering, invented for the same reason `BearingField::confirm`
+  exists — and it is the same shape of fix, applied one layer downstream of
+  where the evidence lives.
+
+**What is worth stealing, and it is small but real:** their forward-velocity law
+is **quadratic** in collision probability, not linear, and swapping it was worth
+0.5 -> 1.72 m/s on the same hardware — the aircraft sheds speed hard on approach
+and buys itself steering time *before* it needs to turn. Our speed schedule is
+still effectively a constant. A `v = v_target * (1 - risk)^2` curve driven off
+the near map's nearest-obstacle distance is a cheap experiment and it is the
+highest-value single idea in the paper for us.
+
+**What does not transfer:** the entire toolchain half — quantisation, tiling,
+L1/L2 partitioning, HWC vs CHW layout — is about fitting a network into 64 kB of
+L1 on a GAP8. A Pi 5 has none of those constraints and this stack has no network
+to quantise. Their 2x memory and 1.6x speed wins are not available to us because
+we never paid the cost they are recovering from.
+
 ## Open / unresolved
 
+* **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on
+  unchanged hardware purely by making forward velocity **quadratic** in collision
+  probability instead of linear. Our schedule is effectively constant. Try
+  `v = v_target * (1 - risk)^2` with `risk` from the near map's nearest-obstacle
+  distance; it is cheap and it is the one idea from that paper that transfers
+  whole.
+* **Nothing on this stack has ever run on a Pi.** Every timing in this file is
+  from a Xeon dev box. The Pi 5 estimate (1.5-2.5x) is arithmetic. Until the
+  mapper and the stereo matcher are both measured on the target, the cycle
+  budget is a guess.
 * **Blind disc under the aircraft, radius ~2x altitude** (4.7 m at 2.5 m AGL).
   Frustum geometry, not a map fault. Memory would fill it and there is no
   odometry; a downward rangefinder would see it directly and is bundled with the

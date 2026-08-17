@@ -63,6 +63,10 @@ project has ever run on a Pi.** Every timing is dev-box.
 
 ## 1. The pipeline, end to end
 
+Two sensors, two map representations with different authority, one planner, and a
+link that fails safe. Boxes marked below are what exists; the one marked
+NOT BUILT is what stands between this and a first flight.
+
 ```
    analog FPV camera ──► USB capture ──┐
                                        ├──► frame

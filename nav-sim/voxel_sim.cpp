@@ -139,7 +139,9 @@ int main(int argc, char** argv) {
     // The two knobs the safety fixes introduced, exposed so they can be swept
     // rather than asserted. Both were picked by reasoning and neither has been
     // measured against the progress they cost.
-    float coreFrac  = -1.f;   // <0 = planner default
+    float coreFrac  = -1.f;
+    float climbPen = -1.f;   // <0 = leave TrajParams default
+    float sinkPen  = -1.f;
     int   carveWin  = -1;     // <0 = map default
     // Which reactive layer. The histogram answers "which bearing looks open"
     // and hands it to a vehicle that needs 0.35 s to turn; the library answers
@@ -220,6 +222,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--emitter")) emitterOn = true;
         else if (!std::strcmp(argv[i], "--ambient")) { emitterOn = true; ambientIR = float(std::atof(next("0.3"))); }
         else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
+        else if (!std::strcmp(argv[i], "--climbpen")) climbPen = float(std::atof(next("6.0")));
+        else if (!std::strcmp(argv[i], "--sinkpen")) sinkPen = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
             const char* m = next("stall");
@@ -453,6 +457,8 @@ int main(int argc, char** argv) {
     tp.dt = dt;              // the rollout must use the control period
     if (coreFrac >= 0.f) tp.coreFrac = coreFrac;
     tp.latSlipDeg = latSlip;
+    if (climbPen >= 0.f) tp.climbPenalty  = climbPen;
+    if (sinkPen  >= 0.f) tp.descentPenalty = sinkPen;
     if (latKnee > 0.f) tp.latKneeDps = latKnee;
     TrajectoryPlanner traj(tp);
     if (latSlip != 0.f)

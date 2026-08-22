@@ -212,7 +212,26 @@ struct TrajParams {
     // dangerous for a different reason (the frustum's blind disc underneath)
     // and that is the near map's and the rangefinder's problem, not a scoring
     // weight's. 0 disables.
-    float climbPenalty = 6.0f;
+    float climbPenalty = 2.0f;
+    // AND THE SAME ON DESCENT. The one-sided version was measured and it was
+    // WRONG: suppressing climb does not remove the planner's appetite for
+    // vertical motion, it INVERTS it. 5 seeds, forest, 400 steps --
+    //
+    //     climbPen  sinkPen   maxUP   maxDOWN   dist   travel  stopped
+    //     0         0         0.44     0.10     153.6    61.8     184
+    //     2         0         0.00     0.80     157.0    56.2     203
+    //     6         0         0.00     0.77     158.6    55.6     206
+    //     2         2         0.00     0.04     148.0    69.2     155
+    //
+    // One-sided traded a 0.44 m climb for a 0.80 m SINK -- eight times the
+    // descent, and downward is the worse direction: the blind disc is below
+    // (radius ~2x altitude) and so is the ground. Symmetric holds altitude to
+    // 4 cm AND wins every other column: furthest progress, most distance
+    // travelled, fewest stopped steps, same clearance.
+    //
+    // Also note 6 buys nothing over 2. The 6 was tuned against a synthetic unit
+    // test with farWeight at twice its real value; in the loop it is inert.
+    float descentPenalty = 2.0f;
     float farRangeM  = 20.f;   // proven value; do not move it and a level in the same test
     // HOW OPENNESS IS MEASURED ALONG A BEARING.
     //

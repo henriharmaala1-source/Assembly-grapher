@@ -3584,6 +3584,61 @@ comes free: a primitive library with an argmax never averages two modes. It has
 the OPPOSITE failure -- mode FLIPPING -- which is already logged here as one of
 three causes of "the aircraft is spinning", and is why hysteresis exists.
 
+## 2026-08-17 — the climb penalty measured in the loop: one-sided was WRONG, and the old planner beat the new one
+
+Swept in `voxel_sim`, forest, 400 steps, 5 seeds. `--climbpen` and `--sinkpen`
+added to expose the terms.
+
+    cfg          dist   travel  clear  stopped   maxUP  maxDOWN  altRNG
+    cp0 (off)   153.6    61.8   0.53     184      0.44    0.10     0.54
+    cp2         157.0    56.2   0.57     203      0.00    0.80     0.80
+    cp6         158.6    55.6   0.57     206      0.00    0.77     0.77
+    sym 2/2     148.0    69.2   0.57     155      0.00    0.04     0.04
+
+**The one-sided penalty inverted the bias instead of removing it.** Suppressing
+climb does not remove the planner's appetite for vertical motion -- it sends it
+the other way. maxDOWN went 0.10 -> 0.80 m, EIGHT TIMES the descent, on every
+seed. And down is the worse direction: the blind disc is below (radius ~2x
+altitude) and so is the ground.
+
+**Symmetric wins every column.** Altitude held to 4 cm, furthest progress, most
+distance travelled, fewest stopped steps, same clearance. So: yes, holding
+altitude holds weight -- but only symmetrically. `descentPenalty = 2.0` now.
+
+**And 6 buys nothing over 2.** The 6 was tuned against `sky_open_check` with
+`farWeight` set to twice its real value. Tuning a shipping weight to a synthetic
+scene, which is the mistake this project keeps writing tests to avoid. The test
+now asserts the MECHANISM (more penalty -> less climb, climb stays bounded)
+rather than an angle, and the closed loop sets the weight.
+
+### The uncomfortable one: the histogram planner beats the trajectory planner here
+
+Same sweep, `--histogram` vs `--traj`:
+
+    cfg     dist   travel  clear  stopped   altRNG
+    traj   148.0    69.2   0.57     155       0.04
+    hist    93.2   118.5   0.64       0       1.48
+
+Twice the distance travelled, 55 m closer to goal, BETTER minimum true clearance
+(0.64 vs 0.57), and **it never stops** against 155 of 400 steps stationary. No
+safety difference to pay for it: zero corridor lies, 0.000 % map false-free, no
+collisions, in every run of both.
+
+`voxel_traj.hpp`'s own header claims this planner "replaces" the histogram and
+is eight times cheaper. Cheaper it is. **Better it is not, on this scenario.**
+
+Caveats before anyone acts on this: one world, one step count, 5 seeds, and the
+traj arm's distance spread is +-34-40 m so the *progress* numbers are noisy --
+but stopped=0 vs stopped=155 across all five seeds is not noise. The traj
+planner's own docs already record "638 of 700 steps stationary" as a known
+failure mode, so excessive stopping is a recognised weakness of this design and
+not a surprise. Not yet verified: whether both arms run identical safety
+parameters, and whether the traj planner wins the cases it was actually built
+for (cul-de-sac escape, chord clearance).
+
+**Do not retire either planner on this. Do find out why the trajectory planner
+spends 40 % of its steps stopped**, because that is the whole gap.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

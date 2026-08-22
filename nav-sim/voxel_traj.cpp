@@ -243,13 +243,16 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         // the penalty is 1.0, which is twice the most the far term can ever
         // offer at its default weight. No openness reading, however open, can
         // buy a climb on its own.
-        const float climbUp = std::max(0.f, endEl - goalElDeg) / 90.f;
+        const float dEl     = endEl - goalElDeg;
+        const float climbUp = std::max(0.f,  dEl) / 90.f;
+        const float sinkDn  = std::max(0.f, -dEl) / 90.f;
 
         float score = p_.clearWeight * clear
                     - p_.goalWeight * gd
                     - p_.smoothWeight * smooth
                     + p_.farWeight * farOpen
-                    - p_.climbPenalty * climbUp;
+                    - p_.climbPenalty * climbUp
+                    - p_.descentPenalty * sinkDn;
         if (score > best) {
             best = score; bestPrim = &pr; bestFree = freeLen; bestClear = nClear;
         }

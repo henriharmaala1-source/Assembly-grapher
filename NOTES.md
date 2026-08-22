@@ -3639,6 +3639,52 @@ for (cul-de-sac escape, chord clearance).
 **Do not retire either planner on this. Do find out why the trajectory planner
 spends 40 % of its steps stopped**, because that is the whole gap.
 
+## 2026-08-17 — WHY the trajectory planner stops: throttled, not blocked. Starvation hypothesis dead.
+
+Added a stall breakdown to `voxel_sim` (BLOCKED vs THROTTLED, freeM/openM when
+stopped, the reject histogram, `--horizon`). 8 seeds, two worlds, 400 steps:
+
+    cfg         n   dist  travel  clear  stop  blkd  thrl  freeM  occRej  unkRej  router
+    T_forest    6  158.1    57.8   0.71   194     1   193   0.54     195       0     144
+    H_forest    6   94.0   118.4   0.63     0     0     0     --      --      --       0
+    T_lanes     6  143.2    71.2   0.59   146     1   145   0.54     198       0     100
+    H_lanes     6  101.6   116.7   0.57     0     0     0     --      --      --       5
+
+**It is almost never BLOCKED** -- 1 step in 400. There is essentially always an
+admissible primitive. It is **THROTTLED**: the winner carries ~0.54 m of
+confirmed-free length against `minFreeM` 0.4, so the stopping-distance budget
+correctly commands zero. The safety rule is working as designed.
+
+**MY STARVATION HYPOTHESIS WAS WRONG.** I guessed the planner was being starved
+by unmapped space. `unknown` rejects are **ZERO** in both worlds, at every seed.
+It is not unknown space. It is **occupied** space: 195-198 of 210 primitives
+sweep into cells the map calls OCCUPIED.
+
+### The two planners are answering different questions
+
+* trajectory: "is this ENTIRE 2 s swept arc clear, 0.6 m ball at every point?"
+* histogram:  "does this BEARING look open?"
+
+At `vMax` 3.0 and `horizonS` 2.0 a rollout is up to **6 m**, and the map's honest
+marking limit is **3.54 m**. The planner is demanding a clear tube roughly twice
+as long as the map can confirm, swept by a 0.6 m ball, in a wood.
+
+The histogram planner never stops because it never asks for a tube. It steers,
+re-evaluates every step, and commits to nothing.
+
+**So "the histogram planner is better" was the wrong reading. It is checking
+LESS.** And at n=6 the clearance numbers flip to match: the trajectory planner
+keeps MORE true clearance in both worlds (0.71 vs 0.63 forest, 0.59 vs 0.57
+lanes) while travelling half as far. That is a conservative/aggressive trade,
+not a quality ranking -- and the earlier n=5 reading that put hist ahead on
+clearance did not survive more seeds.
+
+**Open, and testable with the new `--horizon`:** if the stalls come from asking
+for more clear space than the map can confirm, then bounding
+`horizonS x vMax` by the map's honest range should convert throttled steps into
+moving ones with no change to the safety standard. That constraint does not
+exist in the code today.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

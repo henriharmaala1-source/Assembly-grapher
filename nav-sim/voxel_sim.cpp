@@ -141,6 +141,7 @@ int main(int argc, char** argv) {
     // measured against the progress they cost.
     float coreFrac  = -1.f;
     float climbPen = -1.f;   // <0 = leave TrajParams default
+    float horizonS = -1.f;
     float sinkPen  = -1.f;
     int   carveWin  = -1;     // <0 = map default
     // Which reactive layer. The histogram answers "which bearing looks open"
@@ -223,6 +224,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--ambient")) { emitterOn = true; ambientIR = float(std::atof(next("0.3"))); }
         else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
         else if (!std::strcmp(argv[i], "--climbpen")) climbPen = float(std::atof(next("6.0")));
+        else if (!std::strcmp(argv[i], "--horizon")) horizonS = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--sinkpen")) sinkPen = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
@@ -457,6 +459,7 @@ int main(int argc, char** argv) {
     tp.dt = dt;              // the rollout must use the control period
     if (coreFrac >= 0.f) tp.coreFrac = coreFrac;
     tp.latSlipDeg = latSlip;
+    if (horizonS > 0.f) tp.horizonS = horizonS;
     if (climbPen >= 0.f) tp.climbPenalty  = climbPen;
     if (sinkPen  >= 0.f) tp.descentPenalty = sinkPen;
     if (latKnee > 0.f) tp.latKneeDps = latKnee;
@@ -485,6 +488,14 @@ int main(int argc, char** argv) {
     // completely, and that is a different (easier) achievement.
     float trailDev = 0; long trailN = 0, trailIn = 0;
     int collisions = 0, stopped = 0, noPath = 0, replans = 0;
+    // STALL DIAGNOSIS. "stopped" conflates two very different failures:
+    //   BLOCKED   nothing in the library was admissible at all
+    //   THROTTLED something was admissible, but carried too little
+    //             CONFIRMED-FREE length to earn any speed
+    // They have opposite fixes, so counting them together explains nothing.
+    int stalBlocked = 0, stalThrottled = 0;
+    double freeMStop = 0.0, openMStop = 0.0;
+    long rjOcc = 0, rjUnk = 0, rjShort = 0, rjStart = 0, rjSteps = 0;
     int stepsRun = 0;
     long corridorLies = 0;
     bool reached = false;
@@ -620,7 +631,16 @@ int main(int argc, char** argv) {
             : gen.plan(M, px + dE, py + dN, pz + dU, gAz, gEl);
         tGen += double(cv::getTickCount() - tg) / cv::getTickFrequency();
         tPlan += double(cv::getTickCount() - t1) / cv::getTickFrequency();
-        if (gr.speed <= 0.01f) ++stopped;
+        if (gr.speed <= 0.01f) {
+            ++stopped;
+            if (gr.blocked) ++stalBlocked; else ++stalThrottled;
+            freeMStop += gr.freeM; openMStop += gr.openM;
+            if (useTraj) {
+                const auto& rj = traj.lastReject();
+                rjOcc += rj.occupied; rjUnk += rj.unknown;
+                rjShort += rj.tooShort; rjStart += rj.atStart; ++rjSteps;
+            }
+        }
 
         // --- move -------------------------------------------------------------
         float dx, dy, dz;
@@ -802,6 +822,19 @@ int main(int argc, char** argv) {
                "mean deviation %.1f m\n",
                100.0 * double(trailIn) / double(trailN), trailDev / float(trailN));
     printf("  stopped on         %d of %d steps\n", stopped, steps);
+    if (stopped) {
+        printf("    of which BLOCKED   %d  (no admissible primitive at all)\n", stalBlocked);
+        printf("    of which THROTTLED %d  (admissible, but no confirmed-free length)\n",
+               stalThrottled);
+        printf("    mean when stopped  freeM %.2f m   openM %.2f m\n",
+               freeMStop / stopped, openMStop / stopped);
+        if (rjSteps)
+            printf("    rejects/step while stopped: occupied %.0f  unknown %.0f  "
+                   "tooShort %.0f  atStart %.0f  (of %zu prims)\n",
+                   double(rjOcc)/rjSteps, double(rjUnk)/rjSteps,
+                   double(rjShort)/rjSteps, double(rjStart)/rjSteps,
+                   traj.librarySize());
+    }
     printf("  A* replans         %d, of which no path %d\n", replans, noPath);
     // The stall monitor runs in every mode, so under --router never this
     // reports when the router WOULD have been called, not when it was. Saying

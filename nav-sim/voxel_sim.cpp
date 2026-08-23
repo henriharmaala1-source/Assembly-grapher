@@ -170,11 +170,12 @@ int main(int argc, char** argv) {
     // grows the blocking volume from a line to a ball, and how much that costs
     // depends entirely on how big the ball is.
     float robotR = 0.6f;
+    bool  robotSet = false, cellSet = false;
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
-        else if (!std::strcmp(argv[i], "--cell")) cell = float(std::atof(next("0.25")));
+        else if (!std::strcmp(argv[i], "--cell")) { cell = float(std::atof(next("0.25"))); cellSet = true; }
         else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
         else if (!std::strcmp(argv[i], "--lanes")) lanes = true;
         else if (!std::strcmp(argv[i], "--farcell")) farCell = float(std::atof(next("2.0")));
@@ -193,7 +194,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--baseline")) baseline = float(std::atof(next("0.12")));
         else if (!std::strcmp(argv[i], "--maxinteg")) maxIntegOverride = float(std::atof(next("-1")));
         else if (!std::strcmp(argv[i], "--unkcost")) unkCost = float(std::atof(next("0.45")));
-        else if (!std::strcmp(argv[i], "--robot")) robotR = float(std::atof(next("0.6")));
+        else if (!std::strcmp(argv[i], "--robot")) { robotR = float(std::atof(next("0.6"))); robotSet = true; }
         else if (!std::strcmp(argv[i], "--out")) out = next("/tmp/nav");
         else if (!std::strcmp(argv[i], "--truth")) useTruth = true;
         else if (!std::strcmp(argv[i], "--general-only")) generalOnly = true;
@@ -254,6 +255,33 @@ int main(int argc, char** argv) {
     } else if (world == "city") {
         CityParams p; p.cell = cell; p.seed = seed; genCity(W, p);
         px = p.streetM * 0.5f; py = 5.f; pz = 6.f;
+        goalE = p.streetM * 0.5f; goalN = p.sizeM - 10.f; goalU = 6.f;
+    } else if (world == "indoor") {
+        // Fly the diagonal: the straight line to the goal crosses every internal
+        // wall, so the route is a sequence of doorways rather than one corridor.
+        //
+        // TRUTH RESOLUTION IS ITS OWN CONCERN, as in genHedgeRow. A 0.12 m wall
+        // and a 0.9 m door do not exist at 0.25 m, and the first run of this
+        // world proved it: built at 0.25 m the spawn validator could find no
+        // clear cell inside the house and put the aircraft at 5.2 m, above a
+        // 2.4 m ceiling. The world was not the problem; the resolution was.
+        IndoorParams p; p.cell = 0.05f; p.seed = seed;
+        genIndoor(W, p);
+        // And a 0.6 m radius aircraft cannot pass a 0.9 m door -- 1.2 m of
+        // diameter through 0.9 m of opening. Indoors is a small-airframe
+        // problem, so default to one unless told otherwise.
+        if (!robotSet) robotR = 0.20f;
+        if (!cellSet)  cell   = 0.10f;
+        const int nrm = std::max(2, int(p.sizeM / p.roomM));
+        const float rp = p.sizeM / float(nrm);
+        px = rp * 0.5f; py = rp * 0.5f; pz = 1.1f;   // centre of the first room
+        goalE = p.sizeM - 1.5f; goalN = p.sizeM - 1.5f; goalU = 1.1f;
+    } else if (world == "road") {
+        RoadParams p; p.cell = 0.10f; p.seed = seed;
+        genRoad(W, p);
+        if (!robotSet) robotR = 0.35f;
+        px = p.widthM * 0.5f; py = 3.f; pz = 2.0f;
+        goalE = p.widthM * 0.5f; goalN = p.lengthM - 5.f; goalU = 2.0f;
     } else {
         ForestParams p; p.cell = cell; p.seed = seed;
         if (lanes) {
@@ -333,17 +361,27 @@ int main(int argc, char** argv) {
     // condition than a planning failure -- and a harness that cannot tell those
     // apart is worse than no harness.
     {
+        // SCALE THE REQUIREMENT TO THE AIRFRAME. This was a hard-coded 1.5 m,
+        // which is right for a 0.6 m forest aircraft and absurd for a 0.20 m
+        // indoor one: a house corner legitimately offers ~1.0 m, so the
+        // validator declared a perfectly good spawn unusable and then searched
+        // UPWARD ONLY -- straight through the ceiling, putting the aircraft
+        // outside the building at 4.1 m. It reported success.
+        const float needClear = std::max(0.5f, robotR * 2.5f);
         float c0 = trueClearance(W, px, py, pz, 3.0f);
-        if (c0 < 1.5f) {
+        if (c0 < needClear) {
             printf("  spawn clearance only %.2f m -- searching for a clear start\n", c0);
             bool ok = false;
             for (float rad = 1.f; rad <= 25.f && !ok; rad += 1.f)
                 for (int a = 0; a < 24 && !ok; ++a)
-                    for (float dzs = 0.f; dzs <= 8.f && !ok; dzs += 1.f) {
+                    // Search DOWN as well as up: indoors there is a ceiling,
+                    // and 'up' is not always the way out of a tight spawn.
+                    for (float dzs = 0.f; dzs <= 8.f && !ok; dzs += 1.f)
+                    for (int sgn = 1; sgn >= -1 && !ok; sgn -= 2) {
                         float th = a * sim::PI_F / 12.f;
                         float tx = px + rad * std::cos(th), ty = py + rad * std::sin(th),
-                              tz = pz + dzs;
-                        if (trueClearance(W, tx, ty, tz, 3.0f) >= 1.5f) {
+                              tz = pz + sgn * dzs;
+                        if (tz > 0.2f && trueClearance(W, tx, ty, tz, 3.0f) >= needClear) {
                             px = tx; py = ty; pz = tz; ok = true;
                         }
                     }

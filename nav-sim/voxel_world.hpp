@@ -140,6 +140,57 @@ struct CityParams {
 };
 void genCity(VoxelWorld& w, const CityParams& p);
 
+// INDOOR -- the regime every outdoor assumption breaks in.
+//
+// Three things change at once and each has bitten this project already:
+//   * THERE IS A CEILING. "Up" is not sky, it is a surface 2.4 m away. Every
+//     far-field openness argument that leans on the sky being unbounded is
+//     inverted here, and the climb/descent penalties are being asked to hold
+//     altitude in a 2.4 m slot rather than an open one.
+//   * DOORWAYS ARE NARROWER THAN THE HORIZON. A 0.9 m door against a 0.6 m
+//     robot radius leaves 0.15 m each side. A planner that requires a clear
+//     2 s swept tube cannot fit one through a door at any speed.
+//   * WALLS ARE FLAT AND OFTEN UNTEXTURED. Painted plaster is the glass-facade
+//     problem again, at 2 m instead of 40.
+struct IndoorParams {
+    float sizeM      = 24.f;    // building footprint, square
+    float cell       = 0.05f;   // 5 cm -- door frames and chair legs are the point
+    float ceilM      = 2.4f;    // ceiling height
+    float wallM      = 0.12f;   // internal wall thickness
+    float roomM      = 5.0f;    // nominal room pitch
+    float doorW      = 0.9f;    // doorway width
+    float doorH      = 2.0f;
+    float wallTex    = 0.10f;   // painted plaster: low texture, on purpose
+    float clutterTex = 0.55f;
+    float furnishFrac= 0.55f;   // fraction of rooms that get furniture
+    unsigned seed    = 1;
+};
+void genIndoor(VoxelWorld& w, const IndoorParams& p);
+
+// ROAD -- a corridor problem with thin vertical furniture and overhead wires.
+//
+// Chosen because it isolates the failure mode the forest hides: the obstacles
+// that matter are FEW, THIN and TALL against a wide open background, which is
+// the worst case for a stereo mapper (sub-pixel width at range) and the easiest
+// case for an openness histogram (almost everything is open). If the two
+// planners differ anywhere, they differ here.
+struct RoadParams {
+    float lengthM    = 200.f;
+    float widthM     = 40.f;    // full corridor including verges
+    float cell       = 0.10f;
+    float laneM      = 7.0f;    // carriageway width
+    float poleEveryM = 25.f;    // lamp post pitch
+    float poleR      = 0.08f;
+    float poleH      = 8.0f;
+    float wireH      = 6.5f;    // catenary height -- 8 cm wire, the thin case
+    float wireR      = 0.04f;
+    int   nVehicles  = 12;
+    int   nSigns     = 10;
+    bool  wires      = true;
+    unsigned seed    = 1;
+};
+void genRoad(VoxelWorld& w, const RoadParams& p);
+
 struct ForestParams {
     float sizeM      = 200.f;
     float cell       = 0.25f;

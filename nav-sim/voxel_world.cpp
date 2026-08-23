@@ -606,4 +606,141 @@ bool loadLidarXyz(VoxelWorld& w, const std::string& path, float cell, bool fillG
     return true;
 }
 
+
+// ---------------------------------------------------------------------------
+void genIndoor(VoxelWorld& w, const IndoorParams& p) {
+    const int n  = int(p.sizeM / p.cell);
+    const int nz = int((p.ceilM + 0.6f) / p.cell);
+    w.init(p.cell, 0, 0, 0, n, n, nz);
+    std::mt19937 rng(p.seed);
+    std::uniform_real_distribution<float> u01(0.f, 1.f);
+
+    const float S = p.sizeM;
+    // Floor and ceiling. The ceiling is the whole point: a forest has sky
+    // above, a house has a surface 2.4 m up, and any openness measure that
+    // treats "no return" as open will read a ceiling as a doorway.
+    fillBox(w, 0, 0, 0, S, S, p.cell * 0.99f, 0.35f);
+    fillBox(w, 0, 0, p.ceilM, S, S, p.ceilM + p.cell * 0.99f, p.wallTex);
+
+    // Exterior shell.
+    fillBox(w, 0, 0, 0, p.wallM, S, p.ceilM, p.wallTex);
+    fillBox(w, S - p.wallM, 0, 0, S, S, p.ceilM, p.wallTex);
+    fillBox(w, 0, 0, 0, S, p.wallM, p.ceilM, p.wallTex);
+    fillBox(w, 0, S - p.wallM, 0, S, S, p.ceilM, p.wallTex);
+
+    // A wall with a doorway punched through it. The doorway is cut by REMOVING
+    // cells rather than by leaving a gap, so the frame, lintel and reveals all
+    // exist as real geometry -- which is what makes a door hard.
+    auto wallWithDoor = [&](bool alongX, float at, float from, float to, float doorAt) {
+        if (alongX) fillBox(w, from, at, 0, to, at + p.wallM, p.ceilM, p.wallTex);
+        else        fillBox(w, at, from, 0, at + p.wallM, to, p.ceilM, p.wallTex);
+        const float h0 = doorAt - p.doorW * 0.5f, h1 = doorAt + p.doorW * 0.5f;
+        int a0, b0, c0, a1, b1, c1;
+        if (alongX) { w.worldToCell(h0, at, 0, a0, b0, c0);
+                      w.worldToCell(h1, at + p.wallM, p.doorH, a1, b1, c1); }
+        else        { w.worldToCell(at, h0, 0, a0, b0, c0);
+                      w.worldToCell(at + p.wallM, h1, p.doorH, a1, b1, c1); }
+        for (int z = c0; z <= c1; ++z)
+            for (int y = b0; y <= b1; ++y)
+                for (int x = a0; x <= a1; ++x) w.set(x, y, z, false);
+    };
+
+    // Room grid. Doorways are offset per wall so the route through the house is
+    // a dog-leg rather than a straight shot down an aligned corridor.
+    const int rooms = std::max(2, int(S / p.roomM));
+    const float pitch = S / float(rooms);
+    for (int i = 1; i < rooms; ++i) {
+        const float at = i * pitch;
+        for (int j = 0; j < rooms; ++j) {
+            const float f = j * pitch, t = (j + 1) * pitch;
+            const float door = f + pitch * (0.3f + 0.4f * u01(rng));
+            wallWithDoor(true,  at, f, t, door);
+            const float door2 = f + pitch * (0.3f + 0.4f * u01(rng));
+            wallWithDoor(false, at, f, t, door2);
+        }
+    }
+
+    // Furniture. Tables and chair legs are thin, near, and at exactly the
+    // height a low-flying aircraft occupies -- the near-field equivalent of the
+    // thin-trunk case, and the reason cell is 5 cm here.
+    for (int ry = 0; ry < rooms; ++ry)
+        for (int rx = 0; rx < rooms; ++rx) {
+            if (u01(rng) > p.furnishFrac) continue;
+            const float cx = (rx + 0.5f) * pitch, cy = (ry + 0.5f) * pitch;
+            const float tw = 0.7f + u01(rng) * 0.6f, td = 0.5f + u01(rng) * 0.4f;
+            const float th = 0.72f;
+            fillBox(w, cx - tw*0.5f, cy - td*0.5f, th - 0.04f,
+                       cx + tw*0.5f, cy + td*0.5f, th, p.clutterTex);
+            for (int s = 0; s < 4; ++s) {
+                const float lx = cx + ((s & 1) ? tw : -tw) * 0.45f;
+                const float ly = cy + ((s & 2) ? td : -td) * 0.45f;
+                fillCylinder(w, lx, ly, 0, th, 0.025f, p.clutterTex);
+            }
+            if (u01(rng) < 0.5f)   // a tall cupboard against a wall
+                fillBox(w, cx - 1.2f, cy + pitch*0.32f, 0,
+                           cx - 0.4f, cy + pitch*0.32f + 0.55f, 1.9f, p.clutterTex);
+        }
+}
+
+// ---------------------------------------------------------------------------
+void genRoad(VoxelWorld& w, const RoadParams& p) {
+    const int nx = int(p.widthM  / p.cell);
+    const int ny = int(p.lengthM / p.cell);
+    const int nz = int((p.poleH + 3.f) / p.cell);
+    w.init(p.cell, 0, 0, 0, nx, ny, nz);
+    std::mt19937 rng(p.seed);
+    std::uniform_real_distribution<float> u01(0.f, 1.f);
+
+    const float W = p.widthM, L = p.lengthM, mid = W * 0.5f;
+    fillBox(w, 0, 0, 0, W, L, p.cell * 0.99f, 0.30f);          // asphalt/verge
+    // Kerbs bound the carriageway: low, continuous, and a good test of whether
+    // a 0.25 m voxel can represent a 0.12 m step at all.
+    fillBox(w, mid - p.laneM*0.5f - 0.15f, 0, 0, mid - p.laneM*0.5f, L, 0.12f, 0.5f);
+    fillBox(w, mid + p.laneM*0.5f, 0, 0, mid + p.laneM*0.5f + 0.15f, L, 0.12f, 0.5f);
+
+    // Lamp posts, alternating sides, with a cantilever arm over the road.
+    int side = 0;
+    for (float y = p.poleEveryM; y < L - 2.f; y += p.poleEveryM, ++side) {
+        const float x = (side & 1) ? mid + p.laneM*0.5f + 0.6f
+                                   : mid - p.laneM*0.5f - 0.6f;
+        fillCylinder(w, x, y, 0, p.poleH, p.poleR, 0.45f);
+        const float ax0 = std::min(x, mid), ax1 = std::max(x, mid);
+        fillBox(w, ax0, y - 0.05f, p.poleH - 0.25f, ax1, y + 0.05f, p.poleH, 0.45f);
+    }
+
+    // Overhead wires. 8 cm of catenary against open sky is the thinnest thing
+    // in any of these worlds, and it is directly overhead -- so it is also the
+    // only world where a climb is unambiguously the wrong move.
+    if (p.wires) {
+        for (int k = -1; k <= 1; k += 2) {
+            const float x = mid + k * (p.laneM * 0.5f + 0.6f);
+            for (float y = 0; y < L; y += p.cell * 0.5f) {
+                const float sag = 0.6f * std::sin(sim::PI_F *
+                                   std::fmod(y, p.poleEveryM) / p.poleEveryM);
+                fillCylinder(w, x, y, p.wireH - sag,
+                                p.wireH - sag + p.cell, p.wireR, 0.35f);
+            }
+        }
+    }
+
+    // Signs: flat plates on thin posts. Low texture on the back face is the
+    // point -- a sign seen from behind is a featureless rectangle.
+    for (int i = 0; i < p.nSigns; ++i) {
+        const float y = 5.f + u01(rng) * (L - 10.f);
+        const float x = (u01(rng) < 0.5f) ? mid - p.laneM*0.5f - 1.0f
+                                          : mid + p.laneM*0.5f + 1.0f;
+        fillCylinder(w, x, y, 0, 2.2f, 0.04f, 0.4f);
+        fillBox(w, x - 0.35f, y - 0.03f, 1.6f, x + 0.35f, y + 0.03f, 2.3f, 0.12f);
+    }
+
+    // Parked and stopped vehicles -- large, boxy, and often glassy.
+    for (int i = 0; i < p.nVehicles; ++i) {
+        const float y = 8.f + u01(rng) * (L - 16.f);
+        const float x = (u01(rng) < 0.5f) ? mid - p.laneM*0.35f : mid + p.laneM*0.35f;
+        const float len = 4.0f + u01(rng) * 1.4f;
+        fillBox(w, x - 0.9f, y - len*0.5f, 0.25f, x + 0.9f, y + len*0.5f, 1.45f,
+                (u01(rng) < 0.3f) ? 0.08f : 0.5f);
+    }
+}
+
 }  // namespace sim

@@ -65,6 +65,19 @@ struct TrajParams {
     float decelMs2   = 3.0f;
     float reactS     = 0.25f;
     float minFreeM   = 0.4f;
+    // HOW MUCH OF THE CONFIRMED-FREE RUN IS GIVEN BACK AS MARGIN.
+    //
+    // `sphereClear` already proved a ball of radius robotR is clear at EVERY
+    // rollout point, so `bestFree` is the distance the CENTRE may travel with
+    // the body clear -- it is already body-inclusive. The original code then
+    // subtracted robotR from it again, which charges the airframe twice and
+    // makes the bar to move at all `bestFree > robotR + minFreeM` = 1.0 m at
+    // the defaults. Measured `bestFree` when stopped in a forest: 0.54 m.
+    //
+    // 1.0 = the original double-charge, 0.0 = trust the sphere test. Swept
+    // against TRUE clearance, not just progress, because the margin is only
+    // worth keeping if removing it costs safety.
+    float freeMarginFrac = 1.0f;
     // THE VOLUME YOU ARE ABOUT TO OCCUPY MUST BE POSITIVELY KNOWN CLEAR, not
     // merely "not known to be blocked". This is the fix for the failure that
     // an invisible trunk is UNKNOWN rather than OCCUPIED: measured at the

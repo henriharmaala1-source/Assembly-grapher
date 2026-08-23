@@ -3685,6 +3685,50 @@ for more clear space than the map can confirm, then bounding
 moving ones with no change to the safety standard. That constraint does not
 exist in the code today.
 
+## 2026-08-17 — the "double-charged" speed margin: hypothesis REFUTED, and it crashes
+
+`voxel_traj.cpp` computes the speed budget as
+
+    usable = max(0, bestFree - robotR);   if (usable < minFreeM) speed = 0;
+
+`sphereClear` has already proved a ball of radius robotR is clear at EVERY
+rollout point, so `bestFree` is the distance the CENTRE may travel with the body
+clear -- it is already body-inclusive. Subtracting robotR again looked like
+charging the airframe twice, making the bar to move `bestFree > 1.0 m` against a
+measured 0.54 m when stopped. That looked like the whole stall, and like a bug.
+
+**It is not a bug. Swept, forest, 400 steps, 6 seeds, scored against TRUE
+clearance and outcome:**
+
+    cfg                     dist  travel  clear  stop  blkd  thrl  freeM  COLLIDED
+    margin 1.0  robot 0.6  148.0    69.2   0.57   155     1   154   0.50   0 / 6
+    margin 0.5  robot 0.6  141.3    76.7   0.55   130    39    90   0.28   0 / 6
+    margin 0.0  robot 0.6  170.3    40.7   0.59   254     1   253   0.11   0 / 6
+    margin 0.0  robot 0.35 127.7    83.1   0.18     2     0     2   0.14   **3 / 6**
+
+Two results, and both went against the prediction.
+
+**Removing the margin at the same robot size made things WORSE, not better** --
+travel 69.2 -> 40.7, stopped 155 -> 254. The mechanism is visible in `freeM`:
+with no margin the aircraft commits at ever shorter confirmed-free runs (0.50 ->
+0.11 m), moves into tighter space, and stalls there. The margin is not costing
+progress, it is BUYING it, by refusing commitments that end in a corner.
+
+**And margin 0 with the real 0.35 m airframe COLLIDED in three runs of six**,
+with min true clearance 0.18-0.24 m against a 0.35 m body -- the ball was inside
+the geometry. That arm is the only one in this project's history to crash in the
+forest world.
+
+**CAVEAT ON MY OWN EXPERIMENT: that arm changed TWO variables at once** (margin
+AND robot radius), so the collisions cannot be attributed to the margin alone.
+A control arm (margin 1.0, robot 0.35) is running. Reported here anyway because
+"3 of 6 collided" is the kind of result that should not sit in a scratch file
+while the attribution is settled.
+
+**Default unchanged at `freeMarginFrac = 1.0`.** The parameter now exists so the
+next person who notices the apparent double-charge finds this table instead of
+re-deriving it, which is the same reason `coreFrac` is still in the header.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

@@ -299,7 +299,7 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
     // over what was confirmed clear. Same rule as before -- solving
     // d = v*t_react + v^2/(2a) for v -- so this cannot command faster than it
     // can stop inside what it has actually seen.
-    float usable = std::max(0.f, bestFree - p_.robotR);
+    float usable = std::max(0.f, bestFree - p_.robotR * p_.freeMarginFrac);
     if (usable < p_.minFreeM) { r.speed = 0; }
     else {
         const float a = p_.decelMs2, tr = p_.reactS;

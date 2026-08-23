@@ -142,6 +142,7 @@ int main(int argc, char** argv) {
     float coreFrac  = -1.f;
     float climbPen = -1.f;   // <0 = leave TrajParams default
     float horizonS = -1.f;
+    float freeMargin = -1.f;
     float sinkPen  = -1.f;
     int   carveWin  = -1;     // <0 = map default
     // Which reactive layer. The histogram answers "which bearing looks open"
@@ -226,6 +227,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
         else if (!std::strcmp(argv[i], "--climbpen")) climbPen = float(std::atof(next("6.0")));
         else if (!std::strcmp(argv[i], "--horizon")) horizonS = float(std::atof(next("2.0")));
+        else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--sinkpen")) sinkPen = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
@@ -498,6 +500,7 @@ int main(int argc, char** argv) {
     if (coreFrac >= 0.f) tp.coreFrac = coreFrac;
     tp.latSlipDeg = latSlip;
     if (horizonS > 0.f) tp.horizonS = horizonS;
+    if (freeMargin >= 0.f) tp.freeMarginFrac = freeMargin;
     if (climbPen >= 0.f) tp.climbPenalty  = climbPen;
     if (sinkPen  >= 0.f) tp.descentPenalty = sinkPen;
     if (latKnee > 0.f) tp.latKneeDps = latKnee;

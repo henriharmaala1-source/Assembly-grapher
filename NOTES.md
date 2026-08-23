@@ -3719,11 +3719,35 @@ with min true clearance 0.18-0.24 m against a 0.35 m body -- the ball was inside
 the geometry. That arm is the only one in this project's history to crash in the
 forest world.
 
-**CAVEAT ON MY OWN EXPERIMENT: that arm changed TWO variables at once** (margin
-AND robot radius), so the collisions cannot be attributed to the margin alone.
-A control arm (margin 1.0, robot 0.35) is running. Reported here anyway because
-"3 of 6 collided" is the kind of result that should not sit in a scratch file
-while the attribution is settled.
+**CORRECTION -- THE COLLISIONS WERE NOT THE MARGIN AT ALL.** That arm changed two
+variables, so a control was run, and then a second one:
+
+    cfg                            clear  stopped  COLLIDED
+    margin 1.0  robot 0.6  cell 0.25   0.71     194    0 / 6
+    margin 1.0  robot 0.35 cell 0.25   0.18      10    3 / 6
+    margin 0.0  robot 0.35 cell 0.25   0.18       2    3 / 6
+    margin 1.0  robot 0.35 cell 0.125  0.26     163    0 / 6
+
+Identical collision rate with the margin on and off, and it disappears entirely
+when the CELL is halved. The margin is irrelevant to safety here. What matters
+is **the safety radius measured in CELLS**:
+
+    robot 0.6  / cell 0.25   = 2.4 cells  -> 0 / 6
+    robot 0.35 / cell 0.25   = 1.4 cells  -> 3 / 6
+    robot 0.35 / cell 0.125  = 2.8 cells  -> 0 / 6
+
+**DESIGN RULE: robotR must be at least ~2.5 map cells, or discretisation error
+eats the safety margin.** `sphereClear` tests cell centres; at 1.4 cells of
+radius the ball is a handful of cells and a trunk fits between the ones it
+samples. This is the same failure the header already warns about for SAMPLED
+sphere tests -- it returns at low radius even for the exhaustive one.
+
+**This matters for the real aircraft.** The airframe is 0.35 m, not 0.6, and the
+shipping cell is 0.25 m -- that is 1.4 cells, the arm that crashed 3 times in 6.
+Either the near map goes to <=0.14 m cells (8x the cells of 0.25 m, a real
+budget hit) or the safety radius is inflated well above the physical airframe.
+Not yet swept: whether inflating robotR on a 0.25 m map is as safe as a fine map
+at true radius.
 
 **Default unchanged at `freeMarginFrac = 1.0`.** The parameter now exists so the
 next person who notices the apparent double-charge finds this table instead of

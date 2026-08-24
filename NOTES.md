@@ -4001,6 +4001,55 @@ implementation before verifying the mechanism.
 truncated. `rollCapM` is left in, defaulting to 0/off, with the warning
 attached.
 
+## 2026-08-17 — tried to test a small VLM on "go find a tree / a house". Could not, and the reason is the finding.
+
+**No VLM is obtainable here.** HuggingFace, ModelScope, Ollama and the mirrors
+are all blocked by the egress proxy; only PyPI and raw.githubusercontent are
+reachable, and neither carries a vision-language model. So this is a CEILING
+measurement with a large multimodal model on the sim's own imagery, not a test
+of a small one. A 256M model would do strictly worse.
+
+### What each representation actually offers a semantic mission
+
+**VOXEL FPV -- nothing. Zero semantics, by construction.** In the city frame the
+FPV shows GROUND ONLY: a stepped brown ramp. The building standing directly in
+front of the aircraft is **absent from the map**, because its glass facade
+returned nothing. In the forest frame the FPV is essentially empty. A house and
+a tree are the same occupancy; the map cannot tell them apart even in principle.
+
+**DEPTH -- shape, but not class.** The city depth pane genuinely shows a
+building corner: a vertical edge, a roofline running right, a ground plane. The
+forest pane shows repeated vertical bands at varying depth. So "large flat
+vertical surface" vs "many thin vertical things" IS derivable. But there is no
+bark, no windows, no canopy, no colour -- a pole and a sapling are identical,
+and so are a wall, a shipping container and a cliff.
+
+**And that is the limit of the experiment: THE SIM HAS NO APPEARANCE MODEL.**
+`voxel_world` stores one scalar of "texture richness" per cell. There is no
+colour, no material, no structure. A VLM's entire value is appearance, so this
+question **cannot be answered in this simulator at all** -- it needs real camera
+footage. That is a harness limitation, not a model result, and it would have
+been easy to mistake one for the other.
+
+### The one genuinely useful thing that fell out
+
+**Depth SHAPE discriminates forest from built environment for free.** One large
+flat vertical surface versus many thin vertical bands is a trivially cheap
+classical feature -- no model, no training, a few lines over the existing depth
+image. And it is exactly the ENCLOSURE / environment-type signal the horizon
+adaptation needs, since forest wants a 6 m rollout and indoor wants 3.6 m.
+
+So the search for a semantic goal source produced a NON-semantic answer that is
+more immediately useful than the thing looked for.
+
+### What this means for the learned-goal idea
+
+Unchanged in direction, sharpened in requirement: a semantic goal source must
+consume the **RGB or IR camera image**, must be evaluated on **real footage**,
+and must not be pointed at the voxel map -- which throws away precisely the
+information the mission needs. `FAR_FIELD_MODELS.md`'s road-segmentation
+recommendation already had this shape; this confirms it from the other side.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

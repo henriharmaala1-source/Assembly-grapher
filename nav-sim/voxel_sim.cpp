@@ -149,6 +149,7 @@ int main(int argc, char** argv) {
     float climbPen = -1.f;   // <0 = leave TrajParams default
     float horizonS = -1.f;
     float rollCap  = -1.f;
+    float yawRateLim = -1.f;  // deg/s; <0 = instant (the original, unphysical)
     float freeMargin = -1.f;
     std::string dumpNN;
     int dumpView = -1;   // step at which to write the 4-pane view; <0 = off
@@ -237,6 +238,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--climbpen")) climbPen = float(std::atof(next("6.0")));
         else if (!std::strcmp(argv[i], "--horizon")) horizonS = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--rollcap")) rollCap = float(std::atof(next("3.6")));
+        else if (!std::strcmp(argv[i], "--yawrate")) yawRateLim = float(std::atof(next("100")));
         else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--dumpnn")) dumpNN = next("/tmp/nn.csv");
         else if (!std::strcmp(argv[i], "--dumpview")) dumpView = std::atoi(next("0"));
@@ -739,7 +741,23 @@ int main(int argc, char** argv) {
         vz += (dz * gr.speed - vz) * k;
         px += vx * dt; py += vy * dt; pz += vz * dt;
         travelled += std::sqrt(vx * vx + vy * vy + vz * vz) * dt;
-        if (std::hypot(vx, vy) > 0.2f) yaw = std::atan2(vx, vy) * 180.f / sim::PI_F;
+        if (std::hypot(vx, vy) > 0.2f) {
+            // HEADING WAS SLAVED TO COURSE WITH NO RATE LIMIT, i.e. the vehicle
+            // turned instantly. That is not a detail: the trajectory planner
+            // exists BECAUSE "a bearing is not a thing the aircraft can do", and
+            // a simulator that grants any bearing for free deletes the very
+            // mismatch it was built to fix -- biasing every planner comparison
+            // toward whichever planner ignores turning cost.
+            const float want = std::atan2(vx, vy) * 180.f / sim::PI_F;
+            if (yawRateLim > 0.f) {
+                const float d = wrapDeg180(want - yaw);
+                const float lim = yawRateLim * dt;
+                yaw += std::max(-lim, std::min(lim, d));
+                yaw = wrapDeg180(yaw);
+            } else {
+                yaw = want;
+            }
+        }
         trail.push_back({px, py});
         if (trailRun >= 0 && !trails.empty()) {
             const Trail& t = trails[size_t(trailRun) % trails.size()];

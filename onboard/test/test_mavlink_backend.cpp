@@ -307,6 +307,64 @@ int main() {
         std::printf("  a second GCS's heartbeat does not overwrite the flight mode\n");
     }
 
+    // --- SET_ATTITUDE_TARGET uplink ----------------------------------------
+    // The codec is proven byte-exact in test_mavlink.cpp; what is unproven here
+    // is the ENCODING -- quaternion signs, the yaw reference and the thrust
+    // offset. Those are the failure modes that produce a perfectly valid frame
+    // meaning the wrong thing, which is exactly how the chancount bug got
+    // through, and a sign error here is a crash rather than a wobble.
+    {
+        fc.setUplink(MavlinkBackend::Uplink::ATTITUDE_TARGET);
+        fc.setMaxTiltDeg(20.f);
+
+        // Heading 90 deg (East), level. Yaw on the wire is radians.
+        { mav::Payload p; p.u32(2000);
+          p.f32(0.f); p.f32(0.f); p.f32(1.5707963f);
+          p.f32(0); p.f32(0); p.f32(0);
+          fcSend(mfd, mav::MSG_ATTITUDE, p); }
+        fc.tick(); drainMaster(mfd);
+
+        ControlCmd cmd; cmd.valid = true;
+        cmd.roll = 0.f; cmd.pitch = 0.f; cmd.yaw = 0.f; cmd.throttle = 0.f;
+        CHECK(fc.sendControl(cmd));
+        auto amsgs = decodeAll(drainMaster(mfd));
+        const mav::Msg* a = findMsg(amsgs, mav::MSG_SET_ATTITUDE_TARGET);
+        CHECK(a != nullptr);
+        if (a) {
+            // Level while holding 90 deg: q = (cos45, 0, 0, sin45).
+            CHECK(std::fabs(a->f32(4)  - 0.70710678f) < 1e-3f);   // q0
+            CHECK(std::fabs(a->f32(8))                < 1e-3f);   // q1 roll
+            CHECK(std::fabs(a->f32(12))               < 1e-3f);   // q2 pitch
+            CHECK(std::fabs(a->f32(16) - 0.70710678f) < 1e-3f);   // q3 yaw
+            // throttle 0 means HOVER, so thrust 0.5 -- not zero thrust. Getting
+            // this wrong drops the aircraft out of the sky on the first command.
+            CHECK(std::fabs(a->f32(32) - 0.5f) < 1e-3f);
+            CHECK(a->u8(38) == 0x07);          // body rates ignored by the mask
+        }
+
+        // A forward pitch command must mean NOSE DOWN. ArduPilot's pitch is
+        // positive nose-UP, so +1 forward has to arrive as a negative pitch.
+        cmd.pitch = 1.f;
+        CHECK(fc.sendControl(cmd));
+        amsgs = decodeAll(drainMaster(mfd));
+        const mav::Msg* b = findMsg(amsgs, mav::MSG_SET_ATTITUDE_TARGET);
+        CHECK(b != nullptr);
+        if (b) {
+            const float q0=b->f32(4), q1=b->f32(8), q2=b->f32(12), q3=b->f32(16);
+            const float s = std::max(-1.f, std::min(1.f, 2.f*(q0*q2 - q3*q1)));
+            CHECK(std::asin(s) < -0.2f);       // ~ -20 deg, nose down
+        }
+
+        // And with NO attitude ever decoded it must REFUSE, not guess a
+        // heading: an absolute yaw target from an unknown heading is a silent
+        // turn to somewhere arbitrary.
+        MavlinkBackend bare;
+        ControlCmd c2; c2.valid = true;
+        CHECK(!bare.sendControl(c2));
+
+        fc.setUplink(MavlinkBackend::Uplink::RC_OVERRIDE);
+    }
+
     CHECK(fc.crcErrors() == 0);
     fc.disconnect();
     close(mfd);

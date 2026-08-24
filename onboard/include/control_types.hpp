@@ -35,6 +35,22 @@ struct FcTelemetry {
     float  groundCourseDeg = 0.f;  // GPS course over ground, deg (0 = North)
     uint16_t rc[18]{};             // current RC channel values, µs (from MSP_RC)
     int    rcCount      = 0;       // number of valid channels in rc[]
+    // ATTITUDE RATES, from MSG_ATTITUDE. Free with the angles and worth having:
+    // a large rate with a small angle is the signature of a disturbance rather
+    // than a commanded manoeuvre.
+    float  rollRateDps  = 0.f, pitchRateDps = 0.f, yawRateDps = 0.f;
+    bool   attFresh     = false;  // an ATTITUDE frame has been decoded at least once
+
+    // THE FC'S OWN OPINION OF ITSELF, from EKF_STATUS_REPORT.
+    //
+    // Every safety mechanism in this project assumes the MAP might be wrong and
+    // none assumes the SYSTEM might be. This is a free, independent second
+    // opinion from a different estimator, and it should gate the speed budget:
+    // an EKF that does not trust its own velocity is not one to fly fast on.
+    bool   ekfValid     = false;  // a report has been seen
+    float  ekfVelVar    = 0.f;    // >1.0 is ArduPilot's own "unhealthy" line
+    float  ekfPosHorizVar = 0.f, ekfPosVertVar = 0.f, ekfCompassVar = 0.f;
+    uint16_t ekfFlags   = 0;
     bool   linkUp       = false;   // FC serial link alive
 };
 

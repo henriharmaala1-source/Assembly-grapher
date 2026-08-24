@@ -135,8 +135,27 @@ void MavlinkBackend::onMessage(const mav::Msg& m) {
     case mav::MSG_ATTITUDE:
         tel_.rollDeg  = m.f32(4)  * 180.f / kPi;
         tel_.pitchDeg = m.f32(8)  * 180.f / kPi;
+        // KEEP [0,360). Every consumer in this tree and the MSP backend agree on
+        // it; "improving" it to (-180,180] would rotate the world silently for
+        // anything that compares headings without wrapping.
         tel_.yawDeg   = m.f32(12) * 180.f / kPi;
         if (tel_.yawDeg < 0.f) tel_.yawDeg += 360.f;
+        // Rates come free in the same frame and are worth keeping: a large rate
+        // at a small angle is a disturbance, not a commanded manoeuvre.
+        tel_.rollRateDps  = m.f32(16) * 180.f / kPi;
+        tel_.pitchRateDps = m.f32(20) * 180.f / kPi;
+        tel_.yawRateDps   = m.f32(24) * 180.f / kPi;
+        tel_.attFresh     = true;
+        break;
+    case mav::MSG_EKF_STATUS_REPORT:
+        // Floats first, flags last -- MAVLink v2 orders fields by descending
+        // size, so `flags` is the uint16 at offset 20, not at offset 0.
+        tel_.ekfVelVar      = m.f32(0);
+        tel_.ekfPosHorizVar = m.f32(4);
+        tel_.ekfPosVertVar  = m.f32(8);
+        tel_.ekfCompassVar  = m.f32(12);
+        tel_.ekfFlags       = m.u16(20);
+        tel_.ekfValid       = true;
         break;
     case mav::MSG_SYS_STATUS: {
         const uint16_t mv = m.u16(14);
@@ -205,8 +224,63 @@ void MavlinkBackend::latchBaseline() {
     baselineValid_ = true;
 }
 
+// SET_ATTITUDE_TARGET (82). The ArduPilot-shaped uplink: hand the autopilot an
+// attitude to hold and let its own rate loops fly it.
+//
+// WHY ATTITUDE AND NOT VELOCITY: GUIDED velocity setpoints require a horizontal
+// velocity estimate. GNSS-denied, with no optical flow and no external nav,
+// EKF3 has IMU and baro only -- enough for attitude, not for velocity. So
+// SET_POSITION_TARGET_LOCAL_NED in a velocity mask will NOT work for v1 and the
+// planner's speed command has to be expressed as a pitch angle. Crude, and
+// correct for the constraint.
+//
+// YAW IS COMMANDED ABSOLUTELY, as current heading plus the requested increment,
+// which is why this depends on the ATTITUDE decoder above. Without a fresh
+// attitude we do not know what "turn 10 degrees right" means in the frame the
+// autopilot uses, and guessing would be a silent 180 in the worst case -- so
+// this REFUSES rather than assumes.
+bool MavlinkBackend::sendAttitudeTarget(const ControlCmd& cmd) {
+    if (!tel_.attFresh) return false;      // no heading, no absolute yaw target
+
+    const float kDeg = 3.14159265358979f / 180.f;
+    const float roll  = cmd.roll  * maxTiltDeg_ * kDeg;
+    const float pitch = cmd.pitch * maxTiltDeg_ * kDeg;
+    // Body +pitch in ControlCmd is "forward"; a multirotor pitches NOSE DOWN to
+    // go forward, and ArduPilot's pitch is positive nose-UP. Hence the sign.
+    const float pitchCmd = -pitch;
+    const float yaw = (tel_.yawDeg + cmd.yaw * maxTiltDeg_) * kDeg;
+
+    // ZYX (yaw-pitch-roll) to quaternion, w first, as MAVLink wants.
+    const float cr = std::cos(roll*0.5f),  sr = std::sin(roll*0.5f);
+    const float cp = std::cos(pitchCmd*0.5f), sp = std::sin(pitchCmd*0.5f);
+    const float cy = std::cos(yaw*0.5f),   sy = std::sin(yaw*0.5f);
+    const float q0 = cr*cp*cy + sr*sp*sy;
+    const float q1 = sr*cp*cy - cr*sp*sy;
+    const float q2 = cr*sp*cy + sr*cp*sy;
+    const float q3 = cr*cp*sy - sr*sp*cy;
+
+    // ControlCmd.throttle is 0 = hover-bias, 1 = full -- the same convention the
+    // MSP path uses when it writes 1500 us for 0. SET_ATTITUDE_TARGET's thrust
+    // is 0..1 with 0.5 as hover, so the mapping is a half-scale offset, not an
+    // identity. Getting this wrong is a climb or a drop, not a wobble.
+    float thrust = 0.5f + cmd.throttle * 0.5f;
+    thrust = std::max(0.f, std::min(1.f, thrust));
+
+    mav::Payload p;
+    p.u32(uint32_t(nowS() * 1000.0));
+    p.f32(q0); p.f32(q1); p.f32(q2); p.f32(q3);
+    p.f32(0.f); p.f32(0.f); p.f32(0.f);        // body rates, ignored by the mask
+    p.f32(thrust);
+    p.u8(tgtSys_); p.u8(tgtComp_);
+    // Bits 0-2 set = ignore the three body rates; attitude + thrust are used.
+    p.u8(0x07);
+    send(mav::MSG_SET_ATTITUDE_TARGET, p);
+    return true;
+}
+
 bool MavlinkBackend::sendControl(const ControlCmd& cmd) {
     if (!serial_.isOpen() || !cmd.valid) return false;
+    if (uplink_ == Uplink::ATTITUDE_TARGET) return sendAttitudeTarget(cmd);
 
     uint16_t ch[8]{};
     if (assist_) {

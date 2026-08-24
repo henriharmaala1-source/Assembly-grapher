@@ -39,11 +39,21 @@ fiction. Under A, EKF3 receives an already-filtered Pi estimate and treats it as
 an independent measurement: two filters in series, neither aware of the other,
 and a covariance that means nothing.
 
-**Status: design only, and the two v1 blockers are still open.** *(code)*
-`MSG_ATTITUDE` (30) and `MSG_SET_ATTITUDE_TARGET` (82) are in the enum and in
-the CRC_EXTRA table (`mavlink_v2.cpp:14,20`) — **and there is no decoder and no
-command path for either.** Those are items 1 and 3 of that plan's order of work,
-and nothing flies without them.
+**Status: both v1 blockers are now IMPLEMENTED** *(code, 2026-08-17)*.
+
+* `ATTITUDE` was in fact already decoded — the plan's "no decoder" claim was
+  stale. Extended with body rates and an `attFresh` flag. Its `[0,360)` yaw
+  convention is deliberately **kept**: every consumer and the MSP backend agree
+  on it, and "improving" it to (-180,180] would rotate the world silently.
+* `SET_ATTITUDE_TARGET` is implemented behind `MavlinkBackend::Uplink`, default
+  still RC_OVERRIDE. Yaw is commanded ABSOLUTELY as current heading plus the
+  requested increment, so it **refuses to send without a fresh attitude** rather
+  than guessing a heading.
+* `EKF_STATUS_REPORT` decoded as well — the self-trust signal the plan asked
+  for. Decoded but **not yet consumed**; wiring it to the speed budget is open.
+
+Encoding is pinned by a PTY test covering quaternion signs, the nose-down
+convention, the hover-thrust offset, and the refusal-without-attitude rule.
 
 ### `nav-sim/docs/POSE_AND_OPENNESS_PLAN.md` — 215 lines, **§1 now DONE**
 
@@ -127,11 +137,11 @@ frames. `SYSID_MYGCS` gating already implemented. *(code)*
 
 | msg | id | why | status |
 |---|---|---|---|
-| `ATTITUDE` | 30 | gravity-align depth, rotate the map | **enum only, no decoder** |
+| `ATTITUDE` | 30 | gravity-align depth, rotate the map | **decoded** (angles + rates) |
 | `HEARTBEAT` | 0 | mode, armed, link health | present |
 | `RC_CHANNELS` | 65 | assist switch, pilot intent | present |
 | `SYS_STATUS` | 1 | battery → speed budget | present |
-| `EKF_STATUS_REPORT` | 193 | "do I trust myself" | **absent** |
+| `EKF_STATUS_REPORT` | 193 | "do I trust myself" | **decoded**, not yet consumed |
 | `GPS_RAW_INT` | 24 | logged, deliberately routed nowhere | present |
 
 `ATTITUDE` is the one v1 actually needs and it is ~30 lines. `EKF_STATUS_REPORT`

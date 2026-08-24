@@ -68,6 +68,25 @@ public:
     void setAssistMode(bool on) override { assist_ = on; }
     void latchBaseline() override;
     void setBatteryCells(int cells) override { battCells_ = cells; }
+
+    // CONTROL INTERFACE SELECTION -- see onboard/docs/MAVLINK_BRIDGE_PLAN.md.
+    //
+    // RC_OVERRIDE is the iNAV-shaped path: pretend to be the pilot's sticks.
+    // ATTITUDE_TARGET is the ArduPilot-shaped one: tell the autopilot what
+    // attitude to hold and let IT run the rate loops, which it does far better
+    // than we would.
+    //
+    // NOT velocity. GUIDED velocity setpoints need a horizontal velocity
+    // estimate, and GNSS-denied with no optical flow there is not one -- EKF3
+    // has IMU and baro only. That is the single consequence most likely to bite
+    // on a field day, so it is stated here rather than discovered there.
+    enum class Uplink { RC_OVERRIDE, ATTITUDE_TARGET };
+    void setUplink(Uplink u) { uplink_ = u; }
+    Uplink uplink() const { return uplink_; }
+    // Full-scale tilt for a +-1 ControlCmd axis. ArduPilot's own ANGLE_MAX
+    // defaults to 30 deg; staying under it means the command is never clipped
+    // by a limit we cannot see.
+    void setMaxTiltDeg(float d) { maxTiltDeg_ = d; }
     void setRthChannel(int, int) override {}   // MAVLink has a real mode API
 
     // ExtGps is an MSP-shaped struct (lat/lon/alt). ArduPilot's supported
@@ -129,6 +148,9 @@ private:
     bool     baselineValid_ = false;
     uint16_t baseline_[8]{};
     int      battCells_     = 0;
+    Uplink   uplink_        = Uplink::RC_OVERRIDE;
+    float    maxTiltDeg_    = 25.f;
+    bool     sendAttitudeTarget(const ControlCmd& cmd);
 
     bool   originValid_ = false;
     double originLat_ = 0, originLon_ = 0;

@@ -87,6 +87,21 @@ public:
     // defaults to 30 deg; staying under it means the command is never clipped
     // by a limit we cannot see.
     void setMaxTiltDeg(float d) { maxTiltDeg_ = d; }
+
+    // OBSTACLE_DISTANCE (330) -- 72 distances by bearing, clockwise from the
+    // nose, metres, negative where nothing is known.
+    //
+    // This is the cheapest safety win available: ArduPilot's own proximity and
+    // avoidance layer consumes exactly this shape, so publishing it buys a
+    // SECOND, INDEPENDENT avoidance path running different code with different
+    // failure modes and no dependence on our planner being correct. For a
+    // project whose safety argument rests on independent routes to a veto, that
+    // is close to free defence in depth.
+    //
+    // The producer already exists as BearingField::obstacleDistance() in
+    // nav-sim; this is the consumer side of that interface.
+    bool sendObstacleDistance(const float* distM, int n,
+                              float minM = 0.2f, float maxM = 30.f);
     void setRthChannel(int, int) override {}   // MAVLink has a real mode API
 
     // ExtGps is an MSP-shaped struct (lat/lon/alt). ArduPilot's supported

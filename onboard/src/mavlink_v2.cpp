@@ -22,6 +22,7 @@ constexpr Row kMsgs[] = {
     { MSG_VISION_POSITION_ESTIMATE,      158, 117 },
     { MSG_VISION_SPEED_ESTIMATE,         208,  57 },
     { MSG_EKF_STATUS_REPORT,              71,  22 },
+    { MSG_OBSTACLE_DISTANCE,              23, 167 },
     { MSG_STATUSTEXT,                     83,  54 },
 };
 const Row* find(uint32_t id) {

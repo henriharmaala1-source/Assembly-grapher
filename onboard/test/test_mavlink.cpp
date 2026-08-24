@@ -126,6 +126,28 @@ int main() {
                     "99993ecdcc0c3f0101800080");
     }
     {
+        // OBSTACLE_DISTANCE -- the second, independent avoidance path. 72 bins
+        // clockwise from the NOSE, centimetres, 65535 = nothing known on that
+        // bearing. angle_offset is 0 because bin 0 is dead ahead; -180 would
+        // rotate every bearing half a turn and steer avoidance into the
+        // obstacle, so it is worth a golden frame of its own.
+        Codec c = fresh();
+        Payload p;
+        p.u64(123456);
+        for (int i = 0; i < 72; ++i) {
+            uint16_t v = 65535;
+            if (i == 0) v = 350; else if (i == 1) v = 400;
+            else if (i == 35) v = 1200; else if (i == 71) v = 900;
+            p.u16(v);
+        }
+        p.u16(20); p.u16(3000);
+        p.u8(0); p.u8(0);
+        p.f32(5.f); p.f32(0.f); p.u8(12);
+        expectFrame("OBSTACLE_DISTANCE 72 bins from the nose", c,
+                    MSG_OBSTACLE_DISTANCE, p,
+                    "fda70000072abf4a010040e20100000000005e019001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffb004ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff84031400b80b00000000a040000000000ce4df");
+    }
+    {
         // The truncation case, and the reason it has its own test: channels
         // 9-18 are all zero, so twenty bytes vanish from the wire and the
         // length field reads 18 rather than 38.

@@ -61,6 +61,7 @@ enum : uint32_t {
     MSG_VISION_POSITION_ESTIMATE      = 102,
     MSG_VISION_SPEED_ESTIMATE         = 103,
     MSG_EKF_STATUS_REPORT             = 193,
+    MSG_OBSTACLE_DISTANCE             = 330,
     MSG_STATUSTEXT                    = 253,
 };
 

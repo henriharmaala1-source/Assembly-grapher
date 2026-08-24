@@ -141,6 +141,26 @@ struct WorldState {
     std::string vehMode      = "SIM";
 
     // --- Fused state estimate (Pi-side EKF; ENU local frame) ---
+    //
+    // RETIRED ON THE FLIGHT PATH -- ARCHITECTURE A. `MAVLINK_BRIDGE_PLAN.md` §2
+    // retires this and says why: under ArduPilot it is not merely
+    // non-idiomatic, it is STATISTICALLY WRONG. EKF3 would receive an
+    // already-filtered Pi estimate and treat it as an independent measurement
+    // -- two filters in series, each smoothing, neither aware of the other, and
+    // a covariance that means nothing.
+    //
+    // v1 is architecture C: NOBODY estimates position. The thesis needs no
+    // global position, the planner is body-frame by construction, the map is
+    // local and short-lived, and the output is a bearing and a speed. That also
+    // makes the GNSS-exclusion claim checkable rather than trusted: with no
+    // position estimate anywhere, there is nothing for GNSS to contaminate.
+    //
+    // LEFT IN PLACE, NOT DELETED. These are correct code for architecture B
+    // (the FC estimates; the Pi sends odometry increments with honest
+    // covariance), which is the right v2 once VO exists. They must simply not
+    // be wired to anything that flies. `estFeedingFc` in particular describes
+    // injecting a synthetic GPS fix -- the exact thing architecture C exists to
+    // avoid -- and must stay false on any ArduPilot build.
     bool        estValid     = false;
     float       estPe = 0.f, estPn = 0.f, estPu = 0.f;   // local ENU position (m)
     float       estVe = 0.f, estVn = 0.f, estVu = 0.f;   // local ENU velocity (m/s)

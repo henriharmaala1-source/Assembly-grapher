@@ -278,6 +278,42 @@ bool MavlinkBackend::sendAttitudeTarget(const ControlCmd& cmd) {
     return true;
 }
 
+bool MavlinkBackend::sendObstacleDistance(const float* distM, int n,
+                                          float minM, float maxM) {
+    if (!serial_.isOpen() || !distM || n <= 0) return false;
+
+    mav::Payload p;
+    p.u64(uint64_t(nowS() * 1e6));
+    // CENTIMETRES on the wire, and 65535 means "no reading on this bearing".
+    // Writing max_distance instead of the sentinel would tell ArduPilot the
+    // path is CLEAR where we simply have not looked -- the same unknown-is-not-
+    // free rule the near map enforces, applied to a different consumer.
+    const int kBins = 72;
+    for (int i = 0; i < kBins; ++i) {
+        uint16_t cm = 65535;
+        if (i < n) {
+            const float d = distM[i];
+            if (d > 0.f && std::isfinite(d))
+                cm = uint16_t(std::max(1.f, std::min(65534.f, d * 100.f)));
+        }
+        p.u16(cm);
+    }
+    p.u16(uint16_t(minM * 100.f));
+    p.u16(uint16_t(maxM * 100.f));
+    p.u8(0);                     // MAV_DISTANCE_SENSOR_LASER
+    p.u8(0);                     // increment: 0 = use increment_f below
+    p.f32(360.f / float(kBins)); // increment_f, degrees per bin
+    // ANGLE_OFFSET 0, NOT -180. BearingField::obstacleDistance returns bins
+    // clockwise FROM THE NOSE -- its own test pins bin 0 ahead and bin 36
+    // astern. Declaring -180 here would rotate every bearing by half a turn and
+    // ArduPilot would steer AWAY from clear air and INTO the obstacle. This is
+    // the single most dangerous constant in the file.
+    p.f32(0.f);                  // angle_offset: bin 0 is dead ahead
+    p.u8(12);                    // MAV_FRAME_BODY_FRD -- bearings are OURS
+    send(mav::MSG_OBSTACLE_DISTANCE, p);
+    return true;
+}
+
 bool MavlinkBackend::sendControl(const ControlCmd& cmd) {
     if (!serial_.isOpen() || !cmd.valid) return false;
     if (uplink_ == Uplink::ATTITUDE_TARGET) return sendAttitudeTarget(cmd);

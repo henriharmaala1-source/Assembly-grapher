@@ -3753,6 +3753,57 @@ at true radius.
 next person who notices the apparent double-charge finds this table instead of
 re-deriving it, which is the same reason `coreFrac` is still in the header.
 
+## 2026-08-17 — tested a tiny learned model for "which way to go". A 3-WEIGHT GOAL-ONLY MODEL BEAT IT.
+
+Added `--dumpnn` to `voxel_sim`: a 32x24 downsampled depth frame, the goal
+bearing relative to the nose, and the direction the planner chose. 12 seeds,
+forest, 4660 frames; trained on 9 seeds, tested on 3 unseen ones. Target is the
+HEADING CHANGE over the next second, not the instantaneous bearing.
+
+    always 0 (fly straight)                MAE 29.2 deg   dir  --
+    GOAL ONLY, no image at all (3 weights) MAE 25.4 deg   dir 70.1%
+    ridge, image + goal (1539 weights)     MAE 40.3 deg   dir 69.1%
+    tiny MLP, image + goal (74 k params)   MAE 71.5 deg   dir 60.4%
+
+**Three weights and no camera beat everything.** Adding the depth image made it
+worse, and adding capacity made it worse again -- the MLP is the worst model
+tested. All of the predictive signal is in the goal bearing.
+
+### Two experiment-design errors on the way, both mine, both instructive
+
+1. **First target was the bearing relative to the nose.** That is ~0 by
+   construction because the vehicle yaws to follow its own command: std 7.1 deg,
+   a real turn on 3 % of frames, and "always predict 0" beat both models. I was
+   training on a label with no signal in it.
+2. **Then I gave the model no goal.** The same depth image with the goal to the
+   left or the right demands opposite turns, so the task was literally a coin
+   flip. Direction accuracy was 51-58 %, i.e. chance.
+
+Two broken instruments before a valid measurement, on a question about whether a
+model can see. Consistent with everything else in this file.
+
+### Why the image loses, and what it does NOT prove
+
+**The planner reads the MAP, not the frame.** The accumulated voxel map
+remembers what is no longer in view; a single depth image cannot contain that.
+The model was asked to predict a decision made from information it was not
+given. That is a property of the TEACHER, not evidence that vision is useless.
+
+Also honest: 3490 training samples against 74 k parameters is hopeless (PULP-
+Dronet used ~70 K images), the optimiser is plain SGD in numpy with no
+augmentation, and a forest is statistically homogeneous -- one patch of trunks
+looks like another, so the frame genuinely carries little about which way is
+better beyond "go toward the goal".
+
+**What it does establish:** the naive version does not work, more capacity makes
+it worse, and the depth image adds nothing over the goal bearing on this task.
+If a learned direction model is ever built here it needs a teacher whose
+decisions are visible in one frame, orders of magnitude more data, and a
+scenario where the image actually discriminates -- a road, not a wood.
+
+Which is the same conclusion the architecture already encodes: `goalWeight`
+dominates the score, and the model rediscovered that from data.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

@@ -74,6 +74,12 @@ static float trueClearance(const VoxelWorld& w, float x, float y, float z, float
     return best;
 }
 
+// Wrap to (-180,180]. The dump stores the bearing RELATIVE TO THE NOSE, because
+// a world-frame bearing is unlearnable from an egocentric image -- the same
+// picture means "turn left" or "turn right" depending on a heading the model
+// cannot see.
+static inline float wrapDeg180(float d) { return std::fmod(d + 540.f, 360.f) - 180.f; }
+
 int main(int argc, char** argv) {
     std::string world = "forest", out = "/tmp/nav";
     int steps = 600;
@@ -143,6 +149,7 @@ int main(int argc, char** argv) {
     float climbPen = -1.f;   // <0 = leave TrajParams default
     float horizonS = -1.f;
     float freeMargin = -1.f;
+    std::string dumpNN;
     float sinkPen  = -1.f;
     int   carveWin  = -1;     // <0 = map default
     // Which reactive layer. The histogram answers "which bearing looks open"
@@ -228,6 +235,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--climbpen")) climbPen = float(std::atof(next("6.0")));
         else if (!std::strcmp(argv[i], "--horizon")) horizonS = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
+        else if (!std::strcmp(argv[i], "--dumpnn")) dumpNN = next("/tmp/nn.csv");
         else if (!std::strcmp(argv[i], "--sinkpen")) sinkPen = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
@@ -547,6 +555,15 @@ int main(int argc, char** argv) {
 
     const float startDist = std::hypot(goalE - px, goalN - py);
     FILE* csv = csvPath.empty() ? nullptr : std::fopen(csvPath.c_str(), "w");
+    // TRAINING DUMP: a 16x12 downsampled depth frame plus the direction the
+    // planner chose from it. The sim is the only place this pairing is free --
+    // it has both the sensor image and a trusted answer for the same instant.
+    FILE* nn = dumpNN.empty() ? nullptr : std::fopen(dumpNN.c_str(), "w");
+    const int NW = 32, NH = 24;
+    if (nn) {
+        for (int i = 0; i < NW * NH; ++i) std::fprintf(nn, "d%d,", i);
+        std::fprintf(nn, "goalaz,az,el,speed,blocked\n");
+    }
     if (csv) std::fprintf(csv, "step,e,n,u,yaw,speed,freeM,openM,blocked,"
                                "pathFound,pathWp,trueClear,distToGoal,"
                                "cmdAz,goalAz,src\n");
@@ -672,6 +689,24 @@ int main(int argc, char** argv) {
             : gen.plan(M, px + dE, py + dN, pz + dU, gAz, gEl);
         tGen += double(cv::getTickCount() - tg) / cv::getTickFrequency();
         tPlan += double(cv::getTickCount() - t1) / cv::getTickFrequency();
+        if (nn) {
+            cv::Mat small; cv::resize(d, small, cv::Size(NW, NH), 0, 0, cv::INTER_AREA);
+            for (int v = 0; v < NH; ++v)
+                for (int u = 0; u < NW; ++u) {
+                    float z = small.at<float>(v, u);
+                    // No-return is a real state, not a number: encode it as -1
+                    // rather than as a distance, so the model cannot read it as
+                    // "very close" or "very far".
+                    std::fprintf(nn, "%.3f,", (z > 0.f && std::isfinite(z)) ? z : -1.f);
+                }
+            // THE GOAL IS AN INPUT, not a constant. Without it the task is
+            // unlearnable: the same depth image with the goal to the left or to
+            // the right demands opposite turns, so any model trained on the
+            // image alone is being asked to predict a coin flip.
+            std::fprintf(nn, "%.2f,%.2f,%.2f,%.3f,%d\n",
+                         wrapDeg180(gAz - yaw), wrapDeg180(gr.azDeg - yaw),
+                         gr.elDeg, gr.speed, gr.blocked ? 1 : 0);
+        }
         if (gr.speed <= 0.01f) {
             ++stopped;
             if (gr.blocked) ++stalBlocked; else ++stalThrottled;
@@ -960,6 +995,7 @@ int main(int argc, char** argv) {
     cv::imwrite(out + "_top.png", topOut);
     cv::imwrite(out + "_slice.png", M.sliceImage(pz));
     if (csv) { std::fclose(csv); printf("  wrote %s\n", csvPath.c_str()); }
+    if (nn)  { std::fclose(nn);  printf("  wrote %s (nn training rows)\n", dumpNN.c_str()); }
     printf("  wrote %s_top.png (flown path over truth) and %s_slice.png\n",
            out.c_str(), out.c_str());
     return collisions ? 2 : (reached ? 0 : 1);

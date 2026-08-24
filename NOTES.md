@@ -3842,9 +3842,51 @@ maps well; everything on it barely does.
 **City likewise:** the glass facades (`glassFrac` 0.25, tex 0.04) are a solid
 block of no-return in the depth pane and simply absent from the voxel FPV.
 
-The through-line across all three: **in built environments the limiting factor
+~~The through-line across all three: **in built environments the limiting factor
 is not the planner or the map, it is that passive stereo needs texture and
-manufactured surfaces do not have any.** That is an argument for the IR
+manufactured surfaces do not have any.**~~
+
+**CORRECTED THE SAME DAY -- that conclusion was mostly MY OWN PARAMETER.**
+`wallTex` was 0.10 against a `texThresh` of 0.25, so every interior wall fell
+below the hard cutoff and returned NOTHING. That is not what a painted wall
+does. Real interiors carry skirting, door frames, sockets, switches, picture
+rails, scuffs, wallpaper weave, corner shadows and non-uniform lighting; a
+genuinely blank five-metre wall is the exception, not the rule.
+
+Set `wallTex` to 0.35 with a `blankFrac` 0.15 minority of genuinely featureless
+walls, and re-ran the same scene:
+
+    indoor, seed 1, 250 steps      travelled   stopped   dist to goal
+    trajectory, wallTex 0.10          1.2 m      240        26.0 m
+    trajectory, wallTex 0.35          9.4 m      205        20.5 m
+    histogram,  wallTex 0.10         33.5 m        0         3.9 m
+    histogram,  wallTex 0.35         56.4 m        0         3.7 m
+
+**Eight times the distance for the trajectory planner from one parameter.** The
+depth pane goes from nearly empty to densely populated and the map carves proper
+free-space wedges through the doorways.
+
+Three further reasons reality is kinder than the panes suggested, none of which
+the single-frame analysis accounted for:
+
+* **The map is TEMPORAL and I looked at one frame.** Log-odds accumulates; a
+  surface returning on a small fraction of frames still crosses `occThresh` in a
+  few seconds.
+* **The D435i's projector exists for exactly this**, and indoors -- unlike
+  outdoors -- it is inside its useful range. My "the sun swamps it" caveat is an
+  OUTDOOR caveat and I let it colour the indoor case.
+* **Cars and facades are less blank than modelled.** One flat texture value per
+  box ignores panel gaps, badges, lights, tyres, mullions, floor lines and
+  reflections.
+
+**What survives:** large uniform surfaces at range in bright sun -- a glass
+facade outdoors at 30 m -- are genuinely hard, because the projector loses to
+the sun and there is nothing to match. That is the outdoor city case, and it is
+narrow.
+
+**And the process lesson, which is the same one as always:** I read a sensor
+model I had written pessimistically, saw empty depth panes, and concluded
+something about the world. The parameter was the finding. That is an argument for the IR
 projector indoors, and for not trusting any of these worlds' planner
 comparisons without checking what the sensor actually returned first.
 

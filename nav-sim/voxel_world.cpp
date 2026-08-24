@@ -632,8 +632,9 @@ void genIndoor(VoxelWorld& w, const IndoorParams& p) {
     // cells rather than by leaving a gap, so the frame, lintel and reveals all
     // exist as real geometry -- which is what makes a door hard.
     auto wallWithDoor = [&](bool alongX, float at, float from, float to, float doorAt) {
-        if (alongX) fillBox(w, from, at, 0, to, at + p.wallM, p.ceilM, p.wallTex);
-        else        fillBox(w, at, from, 0, at + p.wallM, to, p.ceilM, p.wallTex);
+        const float wt = (u01(rng) < p.blankFrac) ? p.blankTex : p.wallTex;
+        if (alongX) fillBox(w, from, at, 0, to, at + p.wallM, p.ceilM, wt);
+        else        fillBox(w, at, from, 0, at + p.wallM, to, p.ceilM, wt);
         const float h0 = doorAt - p.doorW * 0.5f, h1 = doorAt + p.doorW * 0.5f;
         int a0, b0, c0, a1, b1, c1;
         if (alongX) { w.worldToCell(h0, at, 0, a0, b0, c0);

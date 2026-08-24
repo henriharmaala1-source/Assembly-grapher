@@ -160,7 +160,18 @@ struct IndoorParams {
     float roomM      = 5.0f;    // nominal room pitch
     float doorW      = 0.9f;    // doorway width
     float doorH      = 2.0f;
-    float wallTex    = 0.10f;   // painted plaster: low texture, on purpose
+    // PAINTED PLASTER IS NOT FEATURELESS, and the first value here (0.10) was
+    // pessimism rather than measurement. It sat below `texThresh` 0.25, so every
+    // wall returned NOTHING and the indoor map came out empty -- which then read
+    // as a planner failure. Real interior walls carry skirting, door frames,
+    // sockets, switches, picture rails, scuffs, wallpaper weave, corner shadows
+    // and non-uniform lighting; a genuinely blank five-metre wall is the
+    // exception. 0.35 clears the threshold with margin, which is the honest
+    // default. `blankFrac` keeps the hard case available deliberately rather
+    // than imposing it everywhere.
+    float wallTex    = 0.35f;
+    float blankTex   = 0.08f;   // the genuinely featureless wall
+    float blankFrac  = 0.15f;   // ...and how many walls are like that
     float clutterTex = 0.55f;
     float furnishFrac= 0.55f;   // fraction of rooms that get furniture
     unsigned seed    = 1;

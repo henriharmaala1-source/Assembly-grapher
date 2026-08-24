@@ -3963,6 +3963,44 @@ result needs more seeds before it is load-bearing. But it is the opposite sign
 to what I claimed from n=3, and worth saying plainly: **I called it a defect on
 three samples and it looks like a safety feature on forty-eight.**
 
+## 2026-08-17 — the rollout cap does NOT substitute for the horizon, and I committed a comment saying it did
+
+Indoors the trajectory planner stalls because the rollout is longer than the
+room: 207 of 210 primitives rejected on MAPPED walls, `freeM` 0.15 m, speed
+correctly zero. Shortening `horizonS` fixes it -- 6 seeds, indoor:
+
+    horizon  rollout   travel  progress  stopped  clear  coll
+    0.5      1.5 m       4.6     10.8      167    0.49    0
+    0.8      2.4 m       8.7     25.3      130    0.26    1
+    1.2      3.6 m      12.0     34.3      150    0.28    0   <- best
+    2.0      6.0 m       5.4     15.4      173    0.42    0   <- shipped
+    3.0      9.0 m       6.2     13.7      164    0.43    0
+
+and the forest wants 2.0. Two environments, opposite optima.
+
+**So I added `rollCapM` to truncate the swept-volume walk, on the theory that
+the library could stay fixed. It does not work:**
+
+    indoor    --horizon 1.2   travel 12.0 m    --rollcap 3.6   travel 5.4 m
+    forest    --rollcap off   travel 31.5 m    --rollcap 3.6   travel 26.3 m
+
+No effect indoors, only harm in the forest. **The mechanism I assumed was
+wrong.** A shorter horizon changes the primitive library AND the scoring
+normaliser -- `clear = freeLen / (vMax * horizonS)`. Shrinking that denominator
+makes a given free length score far higher, so a DIFFERENT primitive wins.
+Truncating the walk leaves the denominator, the primitive shape and the aim
+point alone, so the same primitive still wins with less information about it.
+
+**And I had already committed a code comment asserting the cap "achieves the
+same thing cheaply".** It is now corrected in place with these numbers, rather
+than deleted, because the wrong reasoning is the useful part: I optimised the
+implementation before verifying the mechanism.
+
+**The real fix** is two or three precomputed libraries at different horizons
+(~50 kB each) selected by a measured enclosure signal -- not one library
+truncated. `rollCapM` is left in, defaulting to 0/off, with the warning
+attached.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

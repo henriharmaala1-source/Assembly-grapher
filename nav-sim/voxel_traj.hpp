@@ -122,9 +122,23 @@ struct TrajParams {
     float aimS       = 0.2f;
     // ROLLOUT CAP -- stop evaluating a primitive past this many metres.
     //
-    // The library is precomputed in the constructor, so the HORIZON cannot be
-    // changed per frame without rebuilding it. This achieves the same thing
-    // cheaply: keep the long primitives, but truncate the swept-volume walk.
+    // WARNING: THIS DOES NOT SUBSTITUTE FOR CHANGING `horizonS`, and the first
+    // version of this comment claimed it did. Measured, 6 seeds, indoor:
+    //
+    //     --horizon 1.2  (3.6 m primitives)   travel 12.0 m   progress 34.3 %
+    //     --rollcap 3.6  (6 m primitives)     travel  5.4 m   progress 15.5 %
+    //     --rollcap off                       travel  5.4 m   progress 15.4 %
+    //
+    // The cap changes NOTHING indoors and only hurts in the forest. Why: a
+    // shorter horizon changes the primitive LIBRARY and, decisively, the
+    // scoring normaliser -- `clear = freeLen / (vMax * horizonS)`. Shrink the
+    // denominator and a given free length scores far higher, so a DIFFERENT
+    // primitive wins. Truncating the walk leaves the denominator, the primitive
+    // shape and the aim point untouched, so the same primitive still wins; it
+    // just knows less about it.
+    //
+    // The real fix is to hold two or three precomputed libraries at different
+    // horizons (about 50 kB each) and select one, not to truncate one library.
     //
     // It matters because the right rollout length is a property of the ROOM,
     // not of the aircraft, and the two environments measured want opposite

@@ -3804,6 +3804,50 @@ scenario where the image actually discriminates -- a road, not a wood.
 Which is the same conclusion the architecture already encodes: `goalWeight`
 dominates the score, and the model rediscovered that from data.
 
+## 2026-08-17 — the four-pane view finally applied to the non-forest worlds, and the sensor is the story
+
+`voxel_sim` could only ever write a top-down and a slice; the FIRST-PERSON
+render of the voxel map -- the pane that shows what the aircraft BELIEVES rather
+than what is true -- lived only in `voxel_live`. So every non-forest world had
+been judged on numbers with nobody looking at the map. Added `--dumpview`.
+
+Looking at it changed the reading of the indoor result completely.
+
+**Indoors the stereo camera returns almost nothing.** The depth pane is
+overwhelmingly no-return: painted plaster at `wallTex` 0.10 is the glass-facade
+problem at 2 m instead of 40 m. The voxel FPV is nearly empty. So the trajectory
+planner's 1.2 m of travel is not mainly conservatism -- **the map is empty
+because the walls are invisible**, and a planner that requires confirmed-free
+space has none to find.
+
+**Which means the histogram planner's indoor "success" is worse than it looked.**
+It reached the goal by steering through space it had no evidence about, and its
+0.24 m minimum clearance against a 0.20 m robot is the tell: 4 cm of margin,
+earned by not knowing the walls were there.
+
+**Confirmed by turning the projector on.** `--ambient 0.15` (indoor IR levels,
+where a projector actually works) gives the histogram planner a real map and it
+gets WORSE on progress -- 18.4 m from goal against 3.9 m, wandering 64 m instead
+of 33 m. More information made it more cautious. Its advantage was ignorance.
+
+`--emitter` alone does nothing, correctly: it leaves `ambientIR` at 1.0, which
+is bright daylight, and a projector loses to the sun. That is the sim being
+right and me reading the flag wrong.
+
+**Road shows the same sensor story.** Vehicles return only their OUTLINES -- flat
+painted panels have no texture, so the depth image contains rectangles of edge
+and nothing inside them. Lamp posts appear as a few pixels. The road surface
+maps well; everything on it barely does.
+
+**City likewise:** the glass facades (`glassFrac` 0.25, tex 0.04) are a solid
+block of no-return in the depth pane and simply absent from the voxel FPV.
+
+The through-line across all three: **in built environments the limiting factor
+is not the planner or the map, it is that passive stereo needs texture and
+manufactured surfaces do not have any.** That is an argument for the IR
+projector indoors, and for not trusting any of these worlds' planner
+comparisons without checking what the sensor actually returned first.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

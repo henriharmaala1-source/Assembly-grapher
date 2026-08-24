@@ -150,6 +150,7 @@ int main(int argc, char** argv) {
     float horizonS = -1.f;
     float freeMargin = -1.f;
     std::string dumpNN;
+    int dumpView = -1;   // step at which to write the 4-pane view; <0 = off
     float sinkPen  = -1.f;
     int   carveWin  = -1;     // <0 = map default
     // Which reactive layer. The histogram answers "which bearing looks open"
@@ -236,6 +237,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--horizon")) horizonS = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--dumpnn")) dumpNN = next("/tmp/nn.csv");
+        else if (!std::strcmp(argv[i], "--dumpview")) dumpView = std::atoi(next("0"));
         else if (!std::strcmp(argv[i], "--sinkpen")) sinkPen = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
@@ -992,6 +994,55 @@ int main(int argc, char** argv) {
     cv::putText(topOut, collisions ? "COLLIDED" : (reached ? "REACHED GOAL" : "TIMEOUT"),
                 {14, 30}, cv::FONT_HERSHEY_SIMPLEX, 0.8,
                 collisions ? cv::Scalar(30, 30, 220) : cv::Scalar(30, 140, 30), 2);
+    // FOUR-PANE VIEW. The first three panes existed only behind --display, and
+    // the FOURTH -- the aircraft's own first-person render of its VOXEL MAP --
+    // existed only in voxel_live. That is the pane that shows what the vehicle
+    // actually believes, as opposed to what is true, and leaving it out of the
+    // offline sim meant every non-forest world had been evaluated on numbers
+    // alone.
+    if (dumpView >= 0) {
+        const int PW = 480;
+        cv::Mat truthTop2(W.ny(), W.nx(), CV_8UC3, cv::Scalar(250,248,245));
+        int zc; { int a,b; W.worldToCell(0,0,pz,a,b,zc); }
+        for (int y = 0; y < W.ny(); ++y)
+            for (int x = 0; x < W.nx(); ++x)
+                if (W.solid(x,y,zc))
+                    truthTop2.at<cv::Vec3b>(W.ny()-1-y, x) = cv::Vec3b(70,70,70);
+        for (size_t i = 1; i < trail.size(); ++i) {
+            int x0,y0,z0,x1,y1,z1;
+            W.worldToCell(trail[i-1].x, trail[i-1].y, pz, x0,y0,z0);
+            W.worldToCell(trail[i].x,   trail[i].y,   pz, x1,y1,z1);
+            cv::line(truthTop2, {x0,W.ny()-1-y0}, {x1,W.ny()-1-y1}, {40,40,220}, 2);
+        }
+        cv::Mat topV;  cv::resize(truthTop2, topV, cv::Size(PW,PW), 0,0, cv::INTER_AREA);
+        cv::Mat sliceV = M.sliceImage(pz, PW);
+        cv::Mat depthV(PW, PW, CV_8UC3, cv::Scalar(60,60,60));
+        {
+            cv::Mat dd = useTruth ? cam.renderTruth(W, {px,py,pz,yaw,0.f,0.f})
+                                  : cam.renderStereo(W, {px,py,pz,yaw,0.f,0.f}, nullptr);
+            cv::Mat dv(dd.rows, dd.cols, CV_8UC3, cv::Scalar(60,60,60));
+            for (int y=0;y<dd.rows;++y) for (int x=0;x<dd.cols;++x) {
+                float rr = dd.at<float>(y,x); if(!(rr>0.f)) continue;
+                float ff = std::min(1.f, rr/cp.maxRangeM);
+                dv.at<cv::Vec3b>(y,x) = cv::Vec3b(uchar(255*(1-ff)), uchar(80+100*ff), uchar(255*ff));
+            }
+            cv::resize(dv, depthV, cv::Size(PW,PW), 0,0, cv::INTER_NEAREST);
+        }
+        cv::Mat fpv = M.fpvImageWH(px, py, pz, yaw, 0.f, PW, PW, cp.hfovDeg,
+                                   mp.maxIntegM * 2.f);
+        auto label = [&](cv::Mat& im, const char* t, cv::Scalar c) {
+            cv::putText(im, t, {10,24}, cv::FONT_HERSHEY_SIMPLEX, 0.62, c, 2); };
+        label(topV,   "TRUTH + flown path", {30,30,30});
+        label(sliceV, "VOXEL MAP slice",    {30,30,30});
+        label(depthV, useTruth?"DEPTH (truth)":"DEPTH (stereo)", {240,240,240});
+        label(fpv,    "VOXEL FPV (what it believes)", {240,240,240});
+        cv::Mat r1, r2, grid;
+        cv::hconcat(std::vector<cv::Mat>{topV, sliceV}, r1);
+        cv::hconcat(std::vector<cv::Mat>{depthV, fpv},  r2);
+        cv::vconcat(r1, r2, grid);
+        cv::imwrite(out + "_view.png", grid);
+        printf("  wrote %s_view.png (truth | slice | depth | voxel FPV)\n", out.c_str());
+    }
     cv::imwrite(out + "_top.png", topOut);
     cv::imwrite(out + "_slice.png", M.sliceImage(pz));
     if (csv) { std::fclose(csv); printf("  wrote %s\n", csvPath.c_str()); }

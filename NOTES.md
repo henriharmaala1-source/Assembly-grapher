@@ -3890,6 +3890,79 @@ something about the world. The parameter was the finding. That is an argument fo
 projector indoors, and for not trusting any of these worlds' planner
 comparisons without checking what the sensor actually returned first.
 
+## 2026-08-17 — the planner comparison, done properly: 6 worlds x 2 planners x 8 seeds, PAIRED
+
+Every earlier planner comparison in this file ran on the broken `wallTex` 0.10
+sensor model and should be ignored. This one is on the corrected model, paired
+by seed (which removes the +-35 m between-seed variance that made the earlier
+readings weak), 300 steps, `--climbpen 2 --sinkpen 2`.
+
+    world     pl    n  COLL  prog%  travel  clear  stop  lies  plan_ms
+    forest    T     8     0   17.7    42.0   0.69   149   0.0     2.21
+    forest    H     8     0   41.3    88.6   0.66     0   0.0     7.11
+    lanes     T     8     0   26.1    58.4   0.69    94   0.0     1.72
+    lanes     H     8     0   39.2    87.5   0.58     0   0.0     4.66
+    city      T     8     0   14.5    56.7   1.00    99   0.0     2.22
+    city      H     8     0   20.5    88.0   1.02     0   0.0     5.33
+    road      T     8     1   37.1    72.7   0.37    28   0.8     0.57
+    road      H     8     0   45.6    88.9   0.47     0   0.0     1.50
+    indoor    T     8     0   15.6     5.5   0.40   271   0.0     0.31
+    indoor    H     8     0   58.5    55.8   0.28     0   0.1     3.12
+    culdesac  T     8     0   21.5    32.9   1.71   161   0.0     2.08
+    culdesac  H     8     0   51.3    88.3   1.11     0   0.0     5.35
+
+### The histogram planner wins progress in ALL SIX worlds, significantly
+
+Paired, trajectory minus histogram: |t| runs 2.76 to 17.71 on progress, and the
+trajectory planner wins **0 or 1 of 8 seeds** in every world. Same for distance
+travelled and stopped steps. This is not noise and it is not one scenario.
+
+### But the swept-tube check buys clearance in exactly the two ENCLOSED worlds
+
+    world     clear diff (T-H)   |t|    traj wins
+    forest         +0.035       0.34      1/8
+    lanes          +0.110       1.28      5/8
+    city           -0.016       0.08      3/8
+    road           -0.101       1.49      2/8
+    indoor         +0.120       3.41      7/8   <-- significant
+    culdesac       +0.605       3.69      6/8   <-- significant
+
+Indoor and cul-de-sac are the two genuinely enclosed environments. **The
+trajectory planner's conservatism is correctly targeted and always paid for**:
+0.6 m more clearance in a cul-de-sac, 3 cm more in a forest for half the
+distance travelled.
+
+**Collisions: 1 in 96 runs** (trajectory, road). No planner shows a collision
+advantage at this n, so clearance is the only safety signal available.
+
+**Compute: the trajectory planner is 2-3x CHEAPER** (2.2 vs 7.1 ms forest). Its
+header's cost claim holds up even where its quality claim does not.
+
+### CORRECTION: the far field costs progress but EARNS ITS KEEP
+
+I said mid-run that "the far-field term is hurting it", from an n=3 forest
+reading. With 8 seeds across all six worlds that is half right and the missing
+half matters:
+
+    world     prog(off-on)  stop(off-on)  clear(off-on)   collisions off/on
+    forest       +0.059        -31.0         -0.021          0 / 0
+    lanes        +0.020        -20.0         -0.142          0 / 0
+    city         +0.041 *      -79.3 *       -0.247          2 / 0
+    road         +0.050         -5.8         +0.065          0 / 1
+    indoor       +0.006         +0.8         +0.009          0 / 0
+    culdesac     +0.128 *     -122.3 *       -0.282 *        0 / 0
+
+Turning the far field OFF improves progress everywhere and cuts stopping
+sharply (city 99 -> 20, culdesac 161 -> 38). **And in the city it produced two
+collisions where the far field on produced none**, plus a significant clearance
+loss in the cul-de-sac. So the far field is not a bug -- it is buying safety
+with progress, which is the same trade the whole planner makes.
+
+Not significant at n=8 (|t| 1.63 on the collision difference), so the city
+result needs more seeds before it is load-bearing. But it is the opposite sign
+to what I claimed from n=3, and worth saying plainly: **I called it a defect on
+three samples and it looks like a safety feature on forty-eight.**
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

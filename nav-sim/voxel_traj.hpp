@@ -120,6 +120,29 @@ struct TrajParams {
     // against the histogram planner. Short is safe; too short and the command
     // is dominated by the first-order lag rather than the plan.
     float aimS       = 0.2f;
+    // ROLLOUT CAP -- stop evaluating a primitive past this many metres.
+    //
+    // The library is precomputed in the constructor, so the HORIZON cannot be
+    // changed per frame without rebuilding it. This achieves the same thing
+    // cheaply: keep the long primitives, but truncate the swept-volume walk.
+    //
+    // It matters because the right rollout length is a property of the ROOM,
+    // not of the aircraft, and the two environments measured want opposite
+    // values. 6 seeds each, trajectory planner:
+    //
+    //     rollout   forest (dist to goal)   indoor (progress %)
+    //     1.5 m           --                     10.8
+    //     2.4 m         185.7                    25.3
+    //     3.6 m         181.2                    34.3   <- indoor best
+    //     6.0 m         158.1  <- forest best    15.4
+    //     9.0 m         172.8                    13.7
+    //
+    // A 6 m tube cannot exist in a 6 m room, and 207 of 210 primitives were
+    // rejected on MAPPED walls with freeM collapsing to 0.15 m. Cap it at what
+    // the surroundings actually offer and the same planner moves 2.2x further.
+    //
+    // <= 0 disables (evaluate the whole rollout, the original behaviour).
+    float rollCapM   = 0.f;
     // ESCAPE PRIMITIVES -- lateral and rearward translation at the current
     // heading. A multirotor is holonomic; the arc primitives above are a CAR
     // model, and every one of them begins by moving forward.

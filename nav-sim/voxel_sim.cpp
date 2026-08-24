@@ -148,6 +148,7 @@ int main(int argc, char** argv) {
     float coreFrac  = -1.f;
     float climbPen = -1.f;   // <0 = leave TrajParams default
     float horizonS = -1.f;
+    float rollCap  = -1.f;
     float freeMargin = -1.f;
     std::string dumpNN;
     int dumpView = -1;   // step at which to write the 4-pane view; <0 = off
@@ -235,6 +236,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--corefrac")) coreFrac = float(std::atof(next("0.65")));
         else if (!std::strcmp(argv[i], "--climbpen")) climbPen = float(std::atof(next("6.0")));
         else if (!std::strcmp(argv[i], "--horizon")) horizonS = float(std::atof(next("2.0")));
+        else if (!std::strcmp(argv[i], "--rollcap")) rollCap = float(std::atof(next("3.6")));
         else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--dumpnn")) dumpNN = next("/tmp/nn.csv");
         else if (!std::strcmp(argv[i], "--dumpview")) dumpView = std::atoi(next("0"));
@@ -510,6 +512,7 @@ int main(int argc, char** argv) {
     if (coreFrac >= 0.f) tp.coreFrac = coreFrac;
     tp.latSlipDeg = latSlip;
     if (horizonS > 0.f) tp.horizonS = horizonS;
+    if (rollCap  > 0.f) tp.rollCapM = rollCap;
     if (freeMargin >= 0.f) tp.freeMarginFrac = freeMargin;
     if (climbPen >= 0.f) tp.climbPenalty  = climbPen;
     if (sinkPen  >= 0.f) tp.descentPenalty = sinkPen;

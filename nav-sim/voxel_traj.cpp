@@ -141,6 +141,10 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         float freeLen = 0, prevX = px, prevY = py, prevZ = pz;
         int why = 0;                       // 1 occupied, 2 unknown
         for (size_t i = 0; i < pr.pts.size(); ++i) {
+            // Truncate at the cap: everything past it is simply not asked
+            // about, which is different from being rejected -- the primitive
+            // keeps whatever free length it earned up to here.
+            if (p_.rollCapM > 0.f && freeLen >= p_.rollCapM) break;
             float wx, wy, wz; toWorld(pr.pts[i], wx, wy, wz);
             if (!sphereClear(m, wx, wy, wz, p_.robotR, p_.coreFrac)) { why = 1; break; }
             // Only CONFIRMED-FREE length earns speed. Unknown space is

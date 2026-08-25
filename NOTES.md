@@ -4050,6 +4050,58 @@ and must not be pointed at the voxel map -- which throws away precisely the
 information the mission needs. `FAR_FIELD_MODELS.md`'s road-segmentation
 recommendation already had this shape; this confirms it from the other side.
 
+## 2026-08-17 — short-memory IMU odometry: built, measured, and it FAILS on this trajectory. The fix is shorter legs, not a better IMU.
+
+`POSE_AND_OPENNESS_PLAN.md` §6 says "do not use this IMU for translation" and
+names the mechanism: attitude coupling, not accel bias. Built `ImuOdometry` to
+put a number on how long that warning takes to bite, because the near map's
+memory window has a lower bound too and the two might have overlapped.
+
+**They do not overlap. §6 is confirmed against a real trajectory.**
+
+    drift = 0.5 * 9.81 * sin(theta) * t^2  <  one cell (0.25 m)
+
+    tilt err   budget window   measured drift (forest, 300 steps)
+    0.2 deg       3.82 s        mean 0.284 m   worst 1.906 m
+    0.5 deg       2.42 s        mean 0.709 m   worst 4.764 m
+    1.0 deg       1.71 s        mean 1.417 m   worst 9.528 m
+
+    move legs: 3 of them, mean 3.70 s, longest 5.10 s
+
+**The legs are 2-3x longer than the budget**, so drift blows through at every
+tilt error tested -- including 0.2 deg, which is better than EKF3 realistically
+delivers and STILL produces 0.284 m of mean drift, past one cell.
+
+### What DOES work, and it is architectural
+
+**Move-stop-sense hands over a free ZUPT.** SETTLE and THINK are stationary, and
+a stationary vehicle has known-zero velocity -- the classic bound on inertial
+drift. Measured in isolation: 4 legs with a zero-velocity update at each stop cut
+accumulated drift **8.63 m -> 2.16 m**. So the mechanism works; it is simply not
+enough on legs this long.
+
+Confirmed too that the tilt term dominates as §6 says: at 2 s and 1 deg it is
+0.345 m against 0.0196 m from 1 mg of accel bias -- **17x**. Chasing a better
+accelerometer would be chasing the wrong term.
+
+### The actionable conclusion
+
+**Cap the move leg by the drift budget rather than by distance.** At 0.5 deg the
+budget is 2.42 s; a 1.5 s leg costs 0.5*0.0856*2.25 = 0.10 m, comfortably inside
+one cell. The mechanism to do this already exists -- `MissionController` decides
+when to stop -- it simply chooses leg length for other reasons.
+
+That reframes the whole thing: inertial odometry here is not a sensor problem,
+it is a **mission-planning** problem. Stop more often and it works; fly long legs
+and no achievable IMU saves it.
+
+**Still NOT a substitute for** scan matching (§5) or optical flow. This buys
+translation within one short leg, with an expiry date it enforces itself:
+`ImuOdometry` marks the pose INVALID past its budget rather than extrapolating,
+the same refusal-over-guessing rule as unknown-is-not-free, one layer down.
+
+Pinned by `test/imu_odometry_check.cpp` (11th ctest target).
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

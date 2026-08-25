@@ -36,6 +36,7 @@
 #include "ompl_planner.hpp"
 #include "voxel_planner.hpp"
 #include "voxel_traj.hpp"
+#include "imu_odometry.hpp"
 #include "voxel_world.hpp"
 
 using namespace sim;
@@ -150,6 +151,7 @@ int main(int argc, char** argv) {
     float horizonS = -1.f;
     float rollCap  = -1.f;
     float yawRateLim = -1.f;  // deg/s; <0 = instant (the original, unphysical)
+    float imuAttErr  = -1.f;  // deg of tilt error for the IMU odometry probe
     float freeMargin = -1.f;
     std::string dumpNN;
     int dumpView = -1;   // step at which to write the 4-pane view; <0 = off
@@ -239,6 +241,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--horizon")) horizonS = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--rollcap")) rollCap = float(std::atof(next("3.6")));
         else if (!std::strcmp(argv[i], "--yawrate")) yawRateLim = float(std::atof(next("100")));
+        else if (!std::strcmp(argv[i], "--imuatt")) imuAttErr = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--dumpnn")) dumpNN = next("/tmp/nn.csv");
         else if (!std::strcmp(argv[i], "--dumpview")) dumpView = std::atoi(next("0"));
@@ -544,6 +547,18 @@ int main(int argc, char** argv) {
     // completely, and that is a different (easier) achievement.
     float trailDev = 0; long trailN = 0, trailIn = 0;
     int collisions = 0, stopped = 0, noPath = 0, replans = 0;
+    // IMU ODOMETRY PROBE. Measures what short-memory dead reckoning would cost
+    // on THIS trajectory, against truth, rather than against its own formula.
+    ImuOdometry imu; ImuOdometryParams imuP, imuBudget;
+    if (imuAttErr >= 0.f) { imuP.attErrDeg = imuAttErr; imuBudget.attErrDeg = imuAttErr; }
+    imuP.maxDriftM = 1e9f;          // the probe never refuses; we want raw error
+    imu.init(imuP);
+    ImuOdometry imuRef; imuRef.init(imuBudget);   // only to report the real window
+    float imuLegS = 0.f, imuLegMax = 0.f; double imuLegSum = 0.0; int imuLegs = 0;
+    float imuPrevVx = 0.f, imuPrevVy = 0.f, imuPrevVz = 0.f;
+    float imuTrueX = 0.f, imuTrueY = 0.f, imuTrueZ = 0.f;
+    double imuErrSum = 0.0; float imuErrMax = 0.f; long imuN = 0;
+    int   imuZupts = 0;
     // STALL DIAGNOSIS. "stopped" conflates two very different failures:
     //   BLOCKED   nothing in the library was admissible at all
     //   THROTTLED something was admissible, but carried too little
@@ -739,6 +754,40 @@ int main(int argc, char** argv) {
         vx += (dx * gr.speed - vx) * k;
         vy += (dy * gr.speed - vy) * k;
         vz += (dz * gr.speed - vz) * k;
+        // --- IMU odometry probe, measured against the truth it sits beside ---
+        if (imuAttErr >= 0.f) {
+            // The sim's own velocity change IS the true specific force. Corrupt
+            // it only with a constant tilt leak, because that is the term §6
+            // identifies and the one that does not average away.
+            const float tax = (vx - imuPrevVx) / dt;
+            const float tay = (vy - imuPrevVy) / dt;
+            const float taz = (vz - imuPrevVz) / dt;
+            const float leak = 9.81f * std::sin(imuP.attErrDeg * sim::PI_F / 180.f);
+            imu.step(tax + leak, tay, taz, dt);
+            imuTrueX += vx * dt; imuTrueY += vy * dt; imuTrueZ += vz * dt;
+            float ex, ey, ez; imu.position(ex, ey, ez);
+            const float err = std::sqrt((ex-imuTrueX)*(ex-imuTrueX) +
+                                        (ey-imuTrueY)*(ey-imuTrueY) +
+                                        (ez-imuTrueZ)*(ez-imuTrueZ));
+            imuErrSum += err; imuErrMax = std::max(imuErrMax, err); ++imuN;
+            // MOVE-STOP-SENSE GIVES A FREE ZUPT. The planner commanding zero is
+            // the aircraft declaring itself stationary, which is exactly the
+            // condition a zero-velocity update needs -- and it is the whole
+            // reason bounded inertial odometry is viable on this airframe.
+            if (gr.speed <= 0.01f && std::hypot(vx, vy) < imuP.zuptSpeedMs) {
+                if (imuLegS > 0.2f) {          // a real leg, not a momentary dip
+                    imuLegSum += imuLegS; imuLegMax = std::max(imuLegMax, imuLegS);
+                    ++imuLegs;
+                }
+                imuLegS = 0.f;
+                imu.zupt(); ++imuZupts;
+                // Re-anchor truth too, so the error measured is the error WITHIN
+                // a leg rather than the sum of every leg before it.
+                float zx, zy, zz; imu.position(zx, zy, zz);
+                imuTrueX = zx; imuTrueY = zy; imuTrueZ = zz;
+            } else { imuLegS += dt; }
+            imuPrevVx = vx; imuPrevVy = vy; imuPrevVz = vz;
+        }
         px += vx * dt; py += vy * dt; pz += vz * dt;
         travelled += std::sqrt(vx * vx + vy * vy + vz * vz) * dt;
         if (std::hypot(vx, vy) > 0.2f) {
@@ -994,6 +1043,16 @@ int main(int argc, char** argv) {
            1000 * (tSense - tInteg) / nsteps);
 
     VoxelMap::Score sc = M.score(W, px, py, pz, 25.f, 30.f);
+    if (imuAttErr >= 0.f && imuN) {
+        printf("  --- IMU odometry probe (%.1f deg tilt error) ---\n", imuP.attErrDeg);
+        printf("    drift vs truth   mean %.3f m   worst %.3f m\n",
+               imuErrSum / double(imuN), imuErrMax);
+        printf("    move legs        %d, mean %.2f s, longest %.2f s\n",
+               imuLegs, imuLegs ? imuLegSum / imuLegs : 0.0, imuLegMax);
+        printf("    ZUPTs fired      %d\n", imuZupts);
+        printf("    budget: one cell of drift lasts %.2f s at this tilt error\n",
+               imuRef.usableWindowS());
+    }
     printf("  map false-free     %.3f%%\n", 100.0 * sc.falseFreeRate());
 
     // Top-down: truth occupancy at flight height, plus the flown trail.

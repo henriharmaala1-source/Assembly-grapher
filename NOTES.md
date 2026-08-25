@@ -4102,6 +4102,63 @@ the same refusal-over-guessing rule as unknown-is-not-free, one layer down.
 
 Pinned by `test/imu_odometry_check.cpp` (11th ctest target).
 
+## 2026-08-17 — optical flow complements the IMU, and the reason is the ERROR'S SHAPE
+
+Inertial position error grows as t^2: a tilt error is a constant acceleration
+bias and it integrates twice. **Any direct measurement of VELOCITY breaks that**
+-- it bounds the first integral, so position error becomes LINEAR in t. A change
+of kind, not of degree, and it shows up in the measurement.
+
+Same forest run, 300 steps, legs 3.70 s mean / 5.10 s longest:
+
+    config                          mean drift   worst
+    IMU alone, 1.0 deg tilt           1.417 m    9.528 m
+    IMU + flow (5% err), 1.0 deg      0.343 m    1.378 m
+    IMU + flow (15% err), 1.0 deg     0.418 m    1.589 m
+    IMU + flow (5% err), 0.5 deg      0.190 m    0.741 m
+
+**4.1x on the mean, 6.9x on the worst case.** At 0.5 deg with flow the mean is
+0.190 m -- **inside one cell** -- the first configuration measured that works on
+legs this long. Without flow the conclusion was "cap the legs at 1.5 s"; with
+it, 3.7 s legs are fine.
+
+### The finding worth keeping: flow QUALITY barely matters
+
+5 % and 15 % error give 0.343 m and 0.418 m -- 22 % apart, against a 4x gap to
+having no flow at all. **The measurement's EXISTENCE matters far more than its
+precision.** Exactly what t^2 -> t predicts, and the opposite of the intuition
+that a better sensor buys proportionally better odometry. A crude velocity fix
+at 10 Hz beats a perfect accelerometer.
+
+### And this airframe gets metric flow more cheaply than most
+
+Flow gives an ANGULAR rate and needs a range to become metric. A PMW3901 cannot
+do this alone -- it needs a rangefinder, and the VL53L0X on the Matek board is a
+~2 m indoor part, useless outdoors in sun.
+
+**The D435i supplies flow and depth FROM THE SAME FRAME.** v = de-rotated flow x
+depth: no extra hardware, and the scale reference is the same sensor that
+already anchors the near map.
+
+Two real requirements: de-rotate with the attitude FIRST (during a turn rotation
+dominates flow entirely and reads as enormous translation), and sample NEAR
+pixels, because parallax is the signal and far pixels carry least of it with the
+worst depth.
+
+### What this does NOT establish
+
+It tests the FUSION, not the flow extraction. The sim has no appearance model,
+so real flow cannot be extracted here -- the velocity measurement is simulated
+as truth plus a relative (depth-scale) and an absolute (matching-noise) error.
+Real flow can fail outright: no texture, foliage in wind, de-rotation error. The
+honest claim is **"if velocity can be measured to +-15 %, the odometry works on
+3.7 s legs"** -- whether it can be, on a real forest, is untested.
+
+`onboard/src/optical_flow.cpp` already implements sparse grid flow with a median
+and forward-backward check. Right algorithm, WRONG regime: its own comment says
+it assumes far scenes with little parallax, which is the tracker's case and the
+exact opposite of what odometry needs.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

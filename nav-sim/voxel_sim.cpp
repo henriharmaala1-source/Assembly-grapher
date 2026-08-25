@@ -152,6 +152,7 @@ int main(int argc, char** argv) {
     float rollCap  = -1.f;
     float yawRateLim = -1.f;  // deg/s; <0 = instant (the original, unphysical)
     float imuAttErr  = -1.f;  // deg of tilt error for the IMU odometry probe
+    float flowRelErr = -1.f;  // optical-flow velocity error, fraction of speed
     float freeMargin = -1.f;
     std::string dumpNN;
     int dumpView = -1;   // step at which to write the 4-pane view; <0 = off
@@ -242,6 +243,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--rollcap")) rollCap = float(std::atof(next("3.6")));
         else if (!std::strcmp(argv[i], "--yawrate")) yawRateLim = float(std::atof(next("100")));
         else if (!std::strcmp(argv[i], "--imuatt")) imuAttErr = float(std::atof(next("1.0")));
+        else if (!std::strcmp(argv[i], "--flow")) flowRelErr = float(std::atof(next("0.05")));
         else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--dumpnn")) dumpNN = next("/tmp/nn.csv");
         else if (!std::strcmp(argv[i], "--dumpview")) dumpView = std::atoi(next("0"));
@@ -786,6 +788,21 @@ int main(int argc, char** argv) {
                 float zx, zy, zz; imu.position(zx, zy, zz);
                 imuTrueX = zx; imuTrueY = zy; imuTrueZ = zz;
             } else { imuLegS += dt; }
+            // OPTICAL-FLOW VELOCITY UPDATE. Simulated as the true velocity with
+            // a relative error (depth scale) plus an absolute floor (matching
+            // noise) -- the two terms a flow-times-depth estimate actually has.
+            // This tests the FUSION, not the flow extraction; the sim has no
+            // appearance model, so extracting real flow here is not possible.
+            if (flowRelErr >= 0.f && (s % 3) == 0) {      // ~10 Hz against 30 Hz IMU
+                const float rel = flowRelErr;
+                const float absN = 0.03f;
+                auto jit = [&](float v, int k) {
+                    const float r = std::sin(float(s) * 12.9898f + k * 78.233f) * 43758.5453f;
+                    return v * (1.f + rel * (r - std::floor(r) - 0.5f) * 2.f)
+                         + absN * (std::cos(float(s) * 3.7f + k) );
+                };
+                imu.velocityUpdate(jit(vx, 0), jit(vy, 1), jit(vz, 2), 0.35f);
+            }
             imuPrevVx = vx; imuPrevVy = vy; imuPrevVz = vz;
         }
         px += vx * dt; py += vy * dt; pz += vz * dt;

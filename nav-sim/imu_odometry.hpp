@@ -100,6 +100,42 @@ public:
         if (predictedDriftM() > p_.maxDriftM) valid_ = false;
     }
 
+    // VELOCITY MEASUREMENT -- the thing that changes the error's SHAPE.
+    //
+    // Inertial position error grows as t^2, because a tilt error is a constant
+    // acceleration bias and it integrates twice. Any direct measurement of
+    // VELOCITY breaks that: it bounds the first integral, so position error
+    // becomes LINEAR in time instead of quadratic. Over a 5 s leg at 1 deg that
+    // is 2.1 m against 0.5 m -- and the gap widens with every second.
+    //
+    // On this airframe the measurement is nearly free, and more directly than on
+    // most: optical flow gives an ANGULAR rate, which needs a range to become
+    // metric, and the D435i supplies flow and depth FROM THE SAME FRAME. No
+    // separate rangefinder, unlike a PMW3901 which cannot do this alone.
+    //
+    //   v = de-rotated flow (rad/s) x depth (m)
+    //
+    // De-rotation first, using the attitude, because during a turn rotation
+    // dominates flow entirely and would be read as enormous translation. And
+    // sample NEAR pixels: parallax is the signal, so scale error is depth error,
+    // and far pixels carry the least parallax and the worst depth.
+    //
+    // `gain` is a complementary-filter blend, not a Kalman gain -- honest about
+    // being a tuning constant rather than dressed up as optimal. 0 ignores the
+    // measurement, 1 trusts it completely.
+    void velocityUpdate(float mvx, float mvy, float mvz, float gain = 0.3f) {
+        const float k = std::max(0.f, std::min(1.f, gain));
+        vx_ += k * (mvx - vx_);
+        vy_ += k * (mvy - vy_);
+        vz_ += k * (mvz - vz_);
+        // The error clock does NOT fully reset -- a velocity fix bounds the
+        // first integral but says nothing about accumulated POSITION. Rewinding
+        // it partially reflects that the dominant term has been cut, without
+        // pretending the pose is fresh.
+        tSinceResetS_ *= (1.f - k);
+        if (predictedDriftM() <= p_.maxDriftM) valid_ = true;
+    }
+
     // The whole point of the class: what the tilt coupling has cost by now.
     //   d = 0.5 * g * sin(attErr) * t^2
     float predictedDriftM() const {

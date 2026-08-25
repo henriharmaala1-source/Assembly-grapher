@@ -4159,6 +4159,54 @@ and forward-backward check. Right algorithm, WRONG regime: its own comment says
 it assumes far scenes with little parallax, which is the tracker's case and the
 exact opposite of what odometry needs.
 
+## 2026-08-17 — CORRECTION: the D435i does NOT do optical flow. And the flow->velocity estimator, built and tested.
+
+**I wrote "the D435i supplies flow and depth from the same frame". That reads as
+"the camera computes flow". It does not.** The D4 ASIC does stereo matching and
+nothing else. What the camera supplies is the two INGREDIENTS in one
+hardware-timestamped frame -- a global-shutter IR image to compute flow FROM,
+and depth to scale it WITH. The flow costs Pi CPU and is ours to write.
+
+Also confirmed: `realsense_dyn.cpp` enables **depth only**. `STREAM_INFRARED` is
+defined and never requested, exactly as the open item said. Wiring it is real
+work and cannot be tested here without a camera.
+
+### `flow_velocity.{hpp,cpp}` -- the part that CAN be tested without hardware
+
+Sparse grid match, forward-backward gated, de-rotated with FC attitude, scaled
+by per-point depth, solved as a 3x3 least squares:
+
+    du = (-f/Z) tx + (u/Z) tz        dv = (-f/Z) ty + (v/Z) tz
+
+Tested against synthetic pairs with EXACTLY known motion: lateral velocity
+recovered to 1.232 vs 1.200 m/s, depth scaling exact (doubling Z doubles the
+reported speed), flat walls REFUSED rather than reported as zero, far-only
+scenes excluded. And the one that matters: **a 20 deg/s yaw reads as 1.059 m/s
+of phantom translation undivided, and 0.012 m/s de-rotated -- 90x.**
+
+### Three bugs found in the writing, all mine, all instructive
+
+1. **The forward-backward window was narrower than the forward displacement.**
+   A known 7 px shift with a 3 px backward window means the round trip ALWAYS
+   lands on its own boundary, so every point is discarded. Yield was ZERO, and
+   it looked exactly like "no texture". The check was not strict, it was broken.
+2. **Both de-rotation signs were wrong**, so de-rotation ADDED to the phantom
+   translation instead of removing it -- 4.1 m/s where 0 was expected. Now
+   derived in a comment rather than guessed.
+3. **The test built the world backwards.** I made a positive yaw move content
+   RIGHT; yawing right moves content LEFT. The estimator was correct and the
+   test was wrong, which took a round of blaming the estimator to find. Also:
+   the first texture was purely periodic, and a forward-backward check cannot
+   reject an alias that matches consistently in BOTH directions.
+
+Pinned by `test/flow_velocity_check.cpp` (12th ctest target).
+
+### What still needs the camera
+
+Enabling the IR stream, and the yield question: how many points survive texture
+and FB gating on real bark, in wind, under a canopy. The estimator's correctness
+is settled; its **yield** is not, and yield is what decides whether this works.
+
 ## Open / unresolved
 
 * **Speed is not a function of risk.** PULP-Dronet V2 got 0.5 -> 1.72 m/s on

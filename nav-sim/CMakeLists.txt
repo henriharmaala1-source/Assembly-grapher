@@ -282,6 +282,15 @@ add_test(NAME bearing_field_check COMMAND bearing_field_check)
 # "The planner only wants to go up now, because it's the most open." Unknown
 # bearings were scoring as maximally open, so the aircraft steered toward
 # whatever it could not see -- which outdoors is the sky.
+add_executable(flow_velocity_check
+  test/flow_velocity_check.cpp
+  flow_velocity.cpp
+  depth_camera.cpp
+  voxel_world.cpp)
+target_include_directories(flow_velocity_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(flow_velocity_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME flow_velocity_check COMMAND flow_velocity_check)
+
 add_executable(imu_odometry_check test/imu_odometry_check.cpp)
 target_include_directories(imu_odometry_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME imu_odometry_check COMMAND imu_odometry_check)

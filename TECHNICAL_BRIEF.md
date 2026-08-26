@@ -3,7 +3,7 @@
 *A companion-computer perception and planning stack for an ordinary analog FPV
 multirotor. Raspberry Pi 5, 8 GB, CPU only. No GPU, no ROS, no satellite fix.*
 
-**Formatted version:** [`docs/autonomy-technical-brief.pdf`](docs/autonomy-technical-brief.pdf) — 12 pages, A4.
+**Formatted version:** [`docs/autonomy-technical-brief.pdf`](docs/autonomy-technical-brief.pdf) — 9 pages, A4.
 
 Claims are tagged *(measured)* — a number behind it, from a run in this repo;
 *(code)* — read from source, records what was written not what worked; and
@@ -83,28 +83,17 @@ lateral detail the sensor still resolves.
 
 ### 4.1 The near field is a ladder, not a grid
 
-One cell size cannot be honest at 2 m and 12 m, so the near field is three maps,
-each integrated and consulted only inside its own honest band. Every level
-derives its own `Z_max` from the formula rather than carrying a hardcoded number.
-*(code)*
+One cell size cannot be honest at 2 m and at 12 m, so the near field is three
+maps at 0.25 / 1.0 / 2.0 m, each integrated and consulted only inside its own
+honest band, each deriving its own `Z_max` from the formula above. *(code)*
 
-| Level | Cell | Ray stride | Marks to | Carves to | Role |
-|---|---|---|---|---|---|
-| fine | 0.25 m | 1× | 3.54 m | 11.17 m | the only level allowed to veto |
-| mid | 1.00 m | ¼ rays | derived | 25 m | covers the gap an 8× jump leaves |
-| far | 2.00 m | 1/16 rays | derived | 40 m | extends steering horizon only |
-
-Two load-bearing details:
-
-- **Marking and carving are separate decisions with separate limits.** Erasing
-  space you have seen *through* is safe much further out than asserting
-  something is there.
-- **Handovers sit at the exact marking range, with no overlap.** A 2 m cell's
-  near face can sit 2 m in front of the surface it contains, so consulting a
-  coarse level inside a fine level's band draws obstacles far too close.
-  Consulting by nearest-hit instead of by band collapses the ladder to its
-  coarsest rung — three levels integrated, one ever drawn. Both were observed on
-  real hardware before the rule was written down. *(measured)*
+Two details are load-bearing. **Marking and carving are separate decisions with
+separate limits** — erasing space you have seen *through* is safe much further
+out than asserting something is there. And **handovers sit at the exact marking
+range with no overlap**: a 2 m cell's near face can sit 2 m in front of the
+surface it contains, so consulting a coarse level inside a fine level's band
+draws obstacles far too close. Both failures were observed on real hardware
+before the rule was written down. *(measured)*
 
 ### 4.2 Three states, because unknown is not free
 
@@ -138,17 +127,14 @@ it: maximum descent went 0.10 → 0.80 m before symmetry was restored. *(measure
 
 ### 4.4 The planner
 
-| Parameter | Value | Why |
-|---|---|---|
-| Primitives | 210 | 13 yaw × 5 climb × 3 speed = 195 forward, plus 15 escape (5 of 8 rearward directions clearing a 60° off-nose gate × 3 climb) |
-| Horizon | 2.0 s @ 0.1 s | time not distance, so a slow primitive is not judged over a longer path |
-| Robot radius | 0.60 m | configuration-space inflation |
-| Yaw lag τ | 0.35 s | a heading the airframe cannot reach is not a plan |
-| Stopping | 3.0 m/s², 0.25 s react | speed capped so it can stop inside what it has mapped |
+210 precomputed body-frame primitives — 195 forward (13 yaw × 5 climb × 3 speed)
+plus 15 escape manoeuvres — each rolled out over a 2 s horizon and checked by
+swept volume against a 0.6 m ball. Speed is capped so the aircraft can stop
+inside what it has actually mapped.
 
-Score weights: goal 1.00, clearance 0.70, far-field openness 0.50, smoothness
-0.25, climb/descent 2.00 each. `sphereClear` is a hard gate applied *before*
-scoring — score terms trade against each other, the veto does not trade.
+Score terms trade against each other: goal alignment, clearance, far-field
+openness, yaw smoothness, and a symmetric climb/descent penalty. `sphereClear`
+is a hard gate applied *before* scoring — the score trades, the veto does not.
 
 ## 5. The flight-controller link
 
@@ -163,10 +149,6 @@ input as an independent measurement with a stated covariance. Feed it an
 estimate already filtered on the Pi and you have two filters in series, neither
 aware of the other, and a covariance that no longer means anything. The failure
 is silent: the estimate looks plausible and is overconfident.
-
-**Downlink.** `ATTITUDE` (30), `HEARTBEAT` (0), `RC_CHANNELS` (65),
-`SYS_STATUS` (1), `EKF_STATUS_REPORT` (193, decoded but **not yet consumed**),
-`GPS_RAW_INT` (24, logged and routed nowhere else).
 
 **Uplink — attitude, not velocity.** The consequence most likely to bite on a
 field day, stated in the design rather than discovered on the flight line:
@@ -299,11 +281,10 @@ earned, the correct output is to stop, and it stops.
 **How it is verified.** Ground truth is a separate data structure from the map,
 so collisions are never detected against the aircraft's own belief. A
 perfect-depth control run accompanies every sensor run. Wire formats are pinned
-against golden frames from an independent implementation (pymavlink), not
-against our own encoder. 12 registered checks in `nav-sim/` all pass; 13 test
-programs in `onboard/test/`. Any claim comparing two configurations uses
-multi-seed paired statistics — single-seed results are anecdotes, because one of
-them already reversed.
+against golden frames from an independent implementation rather than our own
+encoder. Any claim comparing two configurations uses multi-seed paired
+statistics — single-seed results are anecdotes, because one of them already
+reversed.
 
 **Not done:**
 

@@ -156,6 +156,10 @@ int main(int argc, char** argv) {
     float freeMargin = -1.f;
     std::string dumpNN;
     int dumpView = -1;   // step at which to write the 4-pane view; <0 = off
+    // Pane edge in pixels for that view. 480 is fine on a screen and too coarse
+    // for a figure -- the four-pane grid is 2x this, and a document wants the
+    // voxel FPV legible rather than merely present.
+    int viewPx   = 480;
     float sinkPen  = -1.f;
     int   carveWin  = -1;     // <0 = map default
     // Which reactive layer. The histogram answers "which bearing looks open"
@@ -247,6 +251,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--freemargin")) freeMargin = float(std::atof(next("1.0")));
         else if (!std::strcmp(argv[i], "--dumpnn")) dumpNN = next("/tmp/nn.csv");
         else if (!std::strcmp(argv[i], "--dumpview")) dumpView = std::atoi(next("0"));
+        else if (!std::strcmp(argv[i], "--viewpx"))   viewPx   = std::atoi(next("480"));
         else if (!std::strcmp(argv[i], "--sinkpen")) sinkPen = float(std::atof(next("2.0")));
         else if (!std::strcmp(argv[i], "--carvewin")) carveWin = std::atoi(next("5"));
         else if (!std::strcmp(argv[i], "--router")) {
@@ -1098,7 +1103,7 @@ int main(int argc, char** argv) {
     // offline sim meant every non-forest world had been evaluated on numbers
     // alone.
     if (dumpView >= 0) {
-        const int PW = 480;
+        const int PW = std::max(240, viewPx);
         cv::Mat truthTop2(W.ny(), W.nx(), CV_8UC3, cv::Scalar(250,248,245));
         int zc; { int a,b; W.worldToCell(0,0,pz,a,b,zc); }
         for (int y = 0; y < W.ny(); ++y)

@@ -298,12 +298,38 @@ Two things it shows, both by design:
 
 Integrate 10.6 ms, plan 0.37 ms.
 
-### 6.2 Simulated worlds
+### 6.2 Reference plate — how to read these views
 
-Each is the same four-pane view: ground truth with the flown path, the voxel map
-slice, the stereo depth render, and the aircraft's first-person view of *what it
-believes* — which is the pane that matters, because it is the only one the
-planner can see.
+Every simulated view below is the same four panes in the same places.
+
+![reference plate](docs/images/sim-reference.png)
+
+| pane | what it is | who can see it |
+|---|---|---|
+| top left | **Truth + flown path** — the world as it actually is, and where the aircraft went | the scorer only; *never* the planner |
+| top right | **Voxel map slice** — a horizontal cut through what has been mapped. White is observed free, grey is UNKNOWN, dark specks are occupied | the planner |
+| bottom left | **Depth (stereo)** — the simulated D435i frame. Blue near, sand far, dark is no return | perception |
+| bottom right | **Voxel FPV** — the aircraft's own first-person render of its map. Red is occupied, pale is unknown drawn as fog | **the only pane the planner can see** |
+
+The split between the top-left and bottom-right panes is the whole point of the
+harness. The aircraft plans against its own noisy map; collisions are scored
+against `VoxelWorld`. **They are different data structures on purpose** — a
+harness that checked the plan against the map it planned with would pass no
+matter how wrong the map was.
+
+Here is that bottom-right pane on its own, at full size — a building corner in
+the city world, which shows it more legibly than the forest plate above:
+
+![voxel FPV, full size](docs/images/sim-fpv-reference.png)
+
+Red cubes are voxels the aircraft has *measured* and marked occupied. Everything
+pale is UNKNOWN — not empty, **unobserved**. The planner may fly into neither,
+and that is the difference between this and a two-state grid, which would render
+the entire pale region as open air and steer straight into it.
+
+### 6.3 Simulated worlds
+
+Each is the same four-pane view described above.
 
 **Forest** — the design case. Trunks, canopy, undergrowth.
 

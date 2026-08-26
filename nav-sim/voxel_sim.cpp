@@ -1130,8 +1130,34 @@ int main(int argc, char** argv) {
             }
             cv::resize(dv, depthV, cv::Size(PW,PW), 0,0, cv::INTER_NEAREST);
         }
-        cv::Mat fpv = M.fpvImageWH(px, py, pz, yaw, 0.f, PW, PW, cp.hfovDeg,
-                                   mp.maxIntegM * 2.f);
+        // THE LADDER, NOT THE FINE LEVEL. This pane used to call fpvImageWH on
+        // M alone, which draws 0.25 m cells honest to 3.54 m and nothing else
+        // -- so a scene whose nearest obstacle is four metres away rendered as
+        // an empty room. That is exactly the fault VoxelMap::Layer's header
+        // warns about, and it made a correctly-scoped mapper look broken in
+        // every figure the sim produced. The planner has always consulted all
+        // three levels (`coarseLadder`); the picture now shows what the planner
+        // sees.
+        //
+        // Banded finest-first at each level's own honest range, and NOT
+        // overlapping: a 2 m cell's near face can sit 2 m in front of the
+        // surface it contains, so consulting it inside the fine level's range
+        // draws a wall far too close.
+        std::vector<VoxelMap::Layer> fpvLadder;
+        {
+            float band = 0.f;
+            fpvLadder.push_back({&M, band, mp.maxIntegM});
+            band = mp.maxIntegM;
+            if (useFar && useMid) { fpvLadder.push_back({&Mmid, band, midp.maxIntegM}); band = midp.maxIntegM; }
+            // The 1.15 inflation belongs only on the OUTERMOST edge, where it
+            // covers cells marked slightly beyond maxIntegM before the aircraft
+            // moved. On an internal handover it creates a shell one layer owns
+            // and has no data for, which renders as a round blind spot.
+            if (useFar) fpvLadder.push_back({&Mfar, band, fp2.maxIntegM * 1.15f});
+            else        fpvLadder.back().range = mp.maxIntegM * 1.15f;
+        }
+        cv::Mat fpv = VoxelMap::renderLadder(fpvLadder, px, py, pz, yaw, 0.f,
+                                             PW, PW, cp.hfovDeg);
         auto label = [&](cv::Mat& im, const char* t, cv::Scalar c) {
             cv::putText(im, t, {10,24}, cv::FONT_HERSHEY_SIMPLEX, 0.62, c, 2); };
         label(topV,   "TRUTH + flown path", {30,30,30});

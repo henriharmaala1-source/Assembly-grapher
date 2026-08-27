@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <cmath>
+#include <cstdint>
 
 namespace sim {
 
@@ -19,13 +20,8 @@ float DepthCamera::urand() const {
     return float(rng_ & 0xFFFFFF) / float(0x1000000);
 }
 
-void DepthCamera::rayFor(const CamPose& pose, int u, int v,
-                         float& dx, float& dy, float& dz) const {
-    // Camera frame: +X right, +Y down, +Z forward. Pixel -> normalised ray.
-    float rx = (u - ppx_) / fpx_;
-    float ry = (v - ppy_) / fy_;
-    float rz = 1.f;
-
+void DepthCamera::camToWorld(const CamPose& pose, float rx, float ry, float rz,
+                             float& dx, float& dy, float& dz) {
     // Rotate into world. Yaw is measured from +North, clockwise (matching
     // sim_world's bearing convention), so forward at yaw=0 is +y.
     const float cr = std::cos(pose.rollDeg  * sim::PI_F / 180.f);
@@ -49,6 +45,12 @@ void DepthCamera::rayFor(const CamPose& pose, int u, int v,
     dx = fE * cy_ + fN * sy_;
     dy = -fE * sy_ + fN * cy_;
     dz = fU;
+}
+
+void DepthCamera::rayFor(const CamPose& pose, int u, int v,
+                         float& dx, float& dy, float& dz) const {
+    // Camera frame: +X right, +Y down, +Z forward. Pixel -> normalised ray.
+    camToWorld(pose, (u - ppx_) / fpx_, (v - ppy_) / fy_, 1.f, dx, dy, dz);
 }
 
 cv::Mat DepthCamera::renderTruth(const VoxelWorld& w, const CamPose& pose) const {
@@ -249,6 +251,72 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
     }
     if (validFrac) *validFrac = float(valid) / float(p_.width * p_.height);
     return d;
+}
+
+// ---------------------------------------------------------------------------
+// SYNTHETIC IR. See the header for why intensity must be a function of the
+// world point rather than of the pixel.
+namespace {
+
+inline float hash3i(int x, int y, int z) {
+    uint32_t h = uint32_t(x) * 73856093u ^ uint32_t(y) * 19349663u
+               ^ uint32_t(z) * 83492791u;
+    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+    return float(h & 0xFFFFFFu) / float(0xFFFFFF);
+}
+
+// Trilinear value noise. SMOOTH, and that is not cosmetic: two viewpoints hit
+// a surface at slightly different points, and a discontinuous function would
+// return unrelated values for neighbouring samples of the same patch. The
+// matcher would then see noise where the world has texture.
+inline float vnoise(float x, float y, float z) {
+    const float fx = std::floor(x), fy = std::floor(y), fz = std::floor(z);
+    const int ix = int(fx), iy = int(fy), iz = int(fz);
+    float tx = x - fx, ty = y - fy, tz = z - fz;
+    tx = tx * tx * (3.f - 2.f * tx);
+    ty = ty * ty * (3.f - 2.f * ty);
+    tz = tz * tz * (3.f - 2.f * tz);
+    auto L = [](float a, float b, float t) { return a + (b - a) * t; };
+    const float c00 = L(hash3i(ix, iy,   iz),   hash3i(ix+1, iy,   iz),   tx);
+    const float c10 = L(hash3i(ix, iy+1, iz),   hash3i(ix+1, iy+1, iz),   tx);
+    const float c01 = L(hash3i(ix, iy,   iz+1), hash3i(ix+1, iy,   iz+1), tx);
+    const float c11 = L(hash3i(ix, iy+1, iz+1), hash3i(ix+1, iy+1, iz+1), tx);
+    return L(L(c00, c10, ty), L(c01, c11, ty), tz);
+}
+
+}  // namespace
+
+cv::Mat DepthCamera::renderIR(const VoxelWorld& w, const CamPose& pose) const {
+    cv::Mat ir(p_.height, p_.width, CV_8U, cv::Scalar(0));
+    const float LAT = 1.f / 0.04f;      // 4 cm primary feature scale
+    for (int v = 0; v < p_.height; ++v) {
+        uchar* row = ir.ptr<uchar>(v);
+        for (int u = 0; u < p_.width; ++u) {
+            float dx, dy, dz; rayFor(pose, u, v, dx, dy, dz);
+            float tex = 0.f;
+            const float t = w.raycast(pose.e, pose.n, pose.u, dx, dy, dz,
+                                      p_.maxRangeM, &tex);
+            if (t >= p_.maxRangeM) {          // sky: dark, and flat on purpose
+                row[u] = uchar(std::max(0.f, 6.f + 3.f * (urand() - 0.5f)));
+                continue;
+            }
+            const float hx = pose.e + dx * t, hy = pose.n + dy * t,
+                        hz = pose.u + dz * t;
+            // Two octaves so the surface has structure at more than one scale,
+            // which is what a correlation window actually locks onto.
+            const float n = 0.65f * vnoise(hx * LAT, hy * LAT, hz * LAT)
+                          + 0.35f * vnoise(hx * LAT * 3.f, hy * LAT * 3.f,
+                                           hz * LAT * 3.f);
+            // Active illumination falls off with range. Half brightness at 4 m.
+            const float fall = 1.f / (1.f + (t * t) / 16.f);
+            const float base = 30.f + 170.f * fall;
+            const float amp  = std::min(1.f, std::max(0.f, tex));
+            float val = base * (1.f - 0.5f * amp) + base * amp * n;
+            val += 2.0f * (urand() - 0.5f) * 2.f;      // sensor noise
+            row[u] = uchar(std::min(255.f, std::max(0.f, val)));
+        }
+    }
+    return ir;
 }
 
 }  // namespace sim

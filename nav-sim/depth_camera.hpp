@@ -190,6 +190,31 @@ public:
     void rayFor(const CamPose& pose, int u, int v,
                 float& dx, float& dy, float& dz) const;
 
+    // Rotate a CAMERA-frame vector (+x right, +y down, +z forward) into world
+    // ENU. rayFor is this function applied to a pixel's normalised ray, and it
+    // is written once for the reason stated there: two conventions for the same
+    // thing is a bug waiting to happen. The flow estimator solves in camera
+    // frame and the odometry integrates in world, so somebody has to do this
+    // and it must not be a second copy of the rotation.
+    static void camToWorld(const CamPose& pose, float cx, float cy, float cz,
+                           float& wx, float& wy, float& wz);
+
+    // A SYNTHETIC IR IMAGE, for testing the flow estimator without a camera.
+    //
+    // The one property that makes it useful is that intensity is a function of
+    // the WORLD POINT, not of the pixel: a surface point looks the same from a
+    // different viewpoint, which is precisely the assumption optical flow is
+    // built on. A render that hashed pixel coordinates would produce an image
+    // that correlates with nothing and would fail the estimator for a reason
+    // that has no counterpart on real hardware.
+    //
+    // Texture RICHNESS modulates the amplitude, so a blank wall renders nearly
+    // flat and the estimator finds no points on it -- the same failure the real
+    // sensor has, reproduced rather than papered over. The projector falloff is
+    // modelled too, because IR illumination is what makes bark matchable at 2 m
+    // and unmatchable at 8 m.
+    cv::Mat renderIR(const VoxelWorld& w, const CamPose& pose) const;
+
 private:
     CamParams p_;
     float fpx_ = 0, fy_ = 0, ppx_ = 0, ppy_ = 0;

@@ -291,6 +291,16 @@ target_include_directories(flow_velocity_check PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(flow_velocity_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME flow_velocity_check COMMAND flow_velocity_check)
 
+add_executable(scan_match_check
+  test/scan_match_check.cpp
+  scan_match.cpp
+  depth_camera.cpp
+  voxel_map.cpp
+  voxel_world.cpp)
+target_include_directories(scan_match_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(scan_match_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME scan_match_check COMMAND scan_match_check)
+
 add_executable(flow_odometry_check
   test/flow_odometry_check.cpp
   flow_velocity.cpp

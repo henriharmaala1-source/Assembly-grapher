@@ -188,6 +188,7 @@ endif()
 # able to break a build at all.
 add_executable(voxel_live
   voxel_live.cpp
+  scan_match.cpp
   bearing_field.cpp
   frame_source.cpp
   realsense_dyn.cpp
@@ -290,6 +291,10 @@ add_executable(flow_velocity_check
 target_include_directories(flow_velocity_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(flow_velocity_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME flow_velocity_check COMMAND flow_velocity_check)
+
+add_executable(attitude_check test/attitude_check.cpp)
+target_include_directories(attitude_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME attitude_check COMMAND attitude_check)
 
 add_executable(scan_match_check
   test/scan_match_check.cpp

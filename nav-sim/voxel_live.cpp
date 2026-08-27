@@ -58,6 +58,7 @@
 
 #include "depth_record.hpp"
 #include "frame_source.hpp"
+#include "scan_match.hpp"
 #include "voxel_map.hpp"
 #include "voxel_traj.hpp"
 #include "bearing_field.hpp"
@@ -304,6 +305,23 @@ struct Config {
     // Height above the terrain for the SIM aircraft, metres. An FPV airframe
     // under canopy flies a few metres up; the old harness put it at twelve.
     float altM = 2.5f;
+    // SCAN-MATCH ODOMETRY. Off by default, and that default is the honest one:
+    // without it this tool estimates rotation only and says so on startup.
+    //
+    // What it is: each frame is registered against the map already built, and
+    // the correction is applied PER AXIS -- an axis the score cannot see is
+    // left at the prediction rather than being moved by a number the geometry
+    // does not support. scan_match_check measures which axes a given scene
+    // actually constrains, and indoors it is routinely fewer than three.
+    //
+    // Known and unfixed: a ~1.2 cell vertical bias, see scan_match_check. This
+    // is a demonstration, not a pose source to trust.
+    bool  odom = false;
+    // The truth trajectory the odometry demo has to recover, m/s, and the step
+    // it is flown at. Deliberately slow: the point is to watch the estimate
+    // track or fail to, not to test the search radius.
+    float odomVelE = 0.f, odomVelN = 0.3f, odomVelU = 0.f;
+    float dtS = 0.1f;
     // Which synthetic world. "forest" is the general case; "hedge" is the one
     // the field disagreed with -- a porous bush fence at four metres with a
     // street behind it, which produced no voxels at all on real hardware.
@@ -639,6 +657,13 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("480"));
         else if (!std::strcmp(argv[i], "--fps")) fps = std::atoi(next("30"));
         else if (!std::strcmp(argv[i], "--stride")) stride = std::max(1, std::atoi(next("2")));
+        else if (!std::strcmp(argv[i], "--odom")) C.odom = true;
+        else if (!std::strcmp(argv[i], "--odomvel")) {
+            C.odomVelE = float(std::atof(next("0")));
+            C.odomVelN = float(std::atof(next("0.3")));
+            C.odomVelU = float(std::atof(next("0")));
+            C.odom = true;
+        }
         else if (!std::strcmp(argv[i], "--forward")) dirMode = 1;
         else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
         else if (!std::strcmp(argv[i], "--overlay")) viewMode = 1;
@@ -822,7 +847,7 @@ static int runSession(Config C) {
     // The camera sits at the middle of the grid looking +y (North), so the map
     // has room behind it as well -- a mapper that can only grow forwards would
     // hide exactly the recentring bugs this is meant to expose.
-    const float px = mp.nx * cell * 0.5f, py = mp.ny * cell * 0.25f;
+    float px = mp.nx * cell * 0.5f, py = mp.ny * cell * 0.25f;
     float pz = mp.nz * cell * 0.5f;
 
     // ALTITUDE IS PHYSICAL, NOT A PROPERTY OF THE GRID.
@@ -966,10 +991,15 @@ static int runSession(Config C) {
                 mp.cell, mp.maxIntegM, cam.fpx(), cp.baselineM * 1000.f,
                 mp.integrateStride,
                 (cp.width / mp.integrateStride) * (cp.height / mp.integrateStride));
-    if (mode != "sim")
+    if (mode != "sim" && !C.odom)
         std::printf("[pose] %s -- NO translation is estimated. Move the camera and the\n"
                     "       map is wrong; that is the missing odometry, not a bug here.\n",
                     yawRateDps != 0.f ? "spin at a stated rate" : "fixed");
+    if (C.odom)
+        std::printf("[pose] scan-match odometry ON. Translation comes from registering\n"
+                    "       each frame against the map, PER AXIS -- an axis the geometry\n"
+                    "       cannot constrain is held, not guessed. Known ~1.2 cell +Z\n"
+                    "       bias (scan_match_check); this is a demo, not a pose source.\n");
 
     TrajParams tp;
     tp.robotR = robotR; tp.vMax = vmax; tp.dt = 0.1f;
@@ -1022,6 +1052,21 @@ static int runSession(Config C) {
                       auditFree(kAuditN, 0), auditUnk(kAuditN, 0),
                       auditOob(kAuditN, 0);
     double auditFreeM = 0, auditSpeed = 0; long auditBlocked = 0;
+    // Scan-match odometry state. The guess for each frame is simply the last
+    // accepted pose: at frame rate the motion between frames is far inside the
+    // coarse search radius, so a velocity model buys nothing a demo can see.
+    ScanMatcher matcher;
+    { ScanMatchParams smp; smp.strideX = 8; smp.strideY = 8; matcher.init(smp); }
+    ScanMatch lastMatch;
+    long odomFrames = 0, odomUsed = 0;
+    float odomTravelM = 0.f;
+    // TRUTH, kept separate from the estimate. In sim the aircraft is flown
+    // along a known path and the frames are rendered from THAT, while the map
+    // is built at the ESTIMATED pose -- which is what the real system does and
+    // is the only arrangement in which the drift number means anything. With
+    // one pose for both, the demo would be scoring the estimate against itself.
+    float tE = px, tN = py, tU = pz;
+
     auto auditBucket = [&](float r) {
         for (int i = 0; i < kAuditN; ++i)
             if (r >= kAuditEdge[i] && r < kAuditEdge[i + 1]) return i;
@@ -1035,9 +1080,52 @@ static int runSession(Config C) {
         pose.e = px; pose.n = py; pose.u = pz;
         pose.yawDeg = yaw; pose.pitchDeg = pitchDeg;
 
-        if (auto* s = dynamic_cast<SimFrameSource*>(src.get())) s->setPose(pose);
+        // Fly the truth pose; render from it. Only the odometry demo separates
+        // the two -- everywhere else truth and estimate are the same object.
+        CamPose truth = pose;
+        const bool simTruth = (mode == "sim");
+        if (C.odom && simTruth) {
+            tE += C.odomVelE * C.dtS; tN += C.odomVelN * C.dtS; tU += C.odomVelU * C.dtS;
+            truth.e = tE; truth.n = tN; truth.u = tU;
+        }
+        if (auto* s = dynamic_cast<SimFrameSource*>(src.get())) s->setPose(truth);
         if (!src->next(depth, hint)) break;
-        if (hint.valid) pose = hint.pose;      // the sim knows; nothing else does
+
+        // ATTITUDE-ONLY HINTS CARRY NO POSITION, and taking the whole pose from
+        // one would silently teleport the aircraft to the origin. The live
+        // source reports exactly this: angles from the IMU, translation
+        // unknown. Only a source that claims full knowledge -- the sim -- may
+        // replace the position.
+        if (hint.valid) {
+            if (hint.attitudeOnly) {
+                pose.rollDeg = hint.pose.rollDeg;
+                pose.pitchDeg = hint.pose.pitchDeg;
+                pose.yawDeg = hint.pose.yawDeg;
+                yaw = pose.yawDeg;
+            } else if (!C.odom) {
+                pose = hint.pose;
+            }
+        }
+
+        // REGISTER BEFORE INTEGRATING. Matching against a map that already
+        // contains this frame would be scoring the answer against itself.
+        if (C.odom && odomFrames > 0) {
+            ScanMatch r = matcher.match(M, depth, cam, pose);
+            lastMatch = r;
+            // PER-AXIS. An unobserved axis keeps the prediction; only axes the
+            // score can actually see are moved. Refusing all three because one
+            // is degenerate throws away the two that were measured.
+            float aE = r.axisObserved[0] ? r.dE : 0.f;
+            float aN = r.axisObserved[1] ? r.dN : 0.f;
+            float aU = r.axisObserved[2] ? r.dU : 0.f;
+            if (r.hitFrac >= matcher.params().minHitFrac && (aE || aN || aU)) {
+                px += aE; py += aN; pz += aU;
+                pose.e = px; pose.n = py; pose.u = pz;
+                odomTravelM += std::sqrt(aE*aE + aN*aN + aU*aU);
+                ++odomUsed;
+            }
+        }
+        ++odomFrames;
 
         int64 t0 = cv::getTickCount();
         M.integrate(depth, cam, pose);
@@ -1297,6 +1385,26 @@ static int runSession(Config C) {
                           traj.candidates().size(), gr.freeM, gr.speed,
                           gr.blocked ? "  BLOCKED" : "");
             banner(pPane, b, 44);
+            if (C.odom) {
+                // Per-axis, because that is the honest unit here: a letter is
+                // shown for an axis the score could see and a dot for one it
+                // could not, so a viewer can tell a measured position from a
+                // held one without reading the log.
+                char o[192];
+                std::snprintf(o, sizeof(o),
+                    "ODOM %c%c%c  hit %.2f  used %ld/%ld  travel %.2f m",
+                    lastMatch.axisObserved[0] ? 'E' : '.',
+                    lastMatch.axisObserved[1] ? 'N' : '.',
+                    lastMatch.axisObserved[2] ? 'U' : '.',
+                    lastMatch.hitFrac, odomUsed, odomFrames, odomTravelM);
+                banner(pPane, o, 66);
+                char e[192];
+                const float eE = px - tE, eN = py - tN, eU = pz - tU;
+                std::snprintf(e, sizeof(e), "DRIFT %.2f m  (E %+.2f  N %+.2f  U %+.2f)",
+                              std::sqrt(eE*eE + eN*eN + eU*eU), eE, eN, eU);
+                banner(pPane, e, 88);
+                banner(pPane, "scan-match demo: known +Z bias, do not trust", 110);
+            }
             if (gr.blocked || traj.candidates().empty()) {
                 // WHY, not just THAT. Blocked by something SEEN and blocked by
                 // something merely UNSEEN want opposite responses -- back off

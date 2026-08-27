@@ -45,7 +45,11 @@ namespace rsdyn {
 enum : int {
     STREAM_DEPTH    = 1,
     STREAM_INFRARED = 3,
+    STREAM_GYRO     = 5,
+    STREAM_ACCEL    = 6,
     FORMAT_Z16      = 1,
+    FORMAT_Y8       = 9,
+    FORMAT_MOTION_XYZ32F = 16,
     OPTION_EMITTER_ENABLED = 12,
     CAMERA_INFO_NAME = 0,
     CAMERA_INFO_SERIAL = 1,
@@ -73,12 +77,41 @@ class Pipeline {
 public:
     ~Pipeline() { stop(); }
 
-    bool start(int width, int height, int fps);
+    // `wantIR` adds infrared index 1 -- the LEFT imager, which is the one depth
+    // is computed in and therefore the one already registered with it. `wantIMU`
+    // adds the gyro and accelerometer.
+    //
+    // Both are optional because both can fail independently on a given device
+    // or USB link: a D435 (no i) has no motion sensor at all, and a USB 2
+    // connection routinely refuses the extra bandwidth. A failure to add them
+    // must not cost the depth stream, so each is enabled in its own attempt.
+    bool start(int width, int height, int fps,
+               bool wantIR = false, bool wantIMU = false);
+    bool haveIR()  const { return haveIR_; }
+    bool haveIMU() const { return haveIMU_; }
     void stop();
     bool running() const { return pipe_ != nullptr; }
 
     // Blocks up to timeoutMs. `out` receives width*height uint16 device units.
     bool waitDepth(std::vector<uint16_t>& out, int& w, int& h, int timeoutMs = 2000);
+
+    // One motion sample as delivered. Motion frames arrive at their own rate --
+    // typically 200 Hz gyro against 30 Hz depth -- so a frameset carries
+    // several, and dropping all but the last would throw away most of the
+    // rotation. They are accumulated and handed over whole.
+    struct Motion {
+        bool  isGyro = false;      // false = accelerometer
+        float x = 0, y = 0, z = 0; // rad/s for gyro, m/s^2 for accel
+        double tMs = 0;            // device timestamp
+    };
+
+    // Depth plus whatever else was enabled. `ir` is width*height uint8 and is
+    // left untouched when infrared is off; `motion` is appended to, never
+    // cleared, so a caller can drain several framesets before integrating.
+    bool waitFrames(std::vector<uint16_t>& depth, int& w, int& h,
+                    std::vector<uint8_t>* ir,
+                    std::vector<Motion>* motion,
+                    int timeoutMs = 2000);
 
     float      depthScale() const { return depthScale_; }
     Intrinsics intrinsics() const { return intr_; }
@@ -93,6 +126,7 @@ private:
     void* pipe_ = nullptr;
     void* profile_ = nullptr;
     void* sensor_ = nullptr;
+    bool  haveIR_ = false, haveIMU_ = false;
     float depthScale_ = 0.001f;
     float baseline_ = 0.05f;
     Intrinsics intr_;

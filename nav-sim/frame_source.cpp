@@ -1,5 +1,7 @@
 #include "frame_source.hpp"
 
+#include "attitude_filter.hpp"
+
 #include <cmath>
 #include <cstdio>
 
@@ -59,7 +61,9 @@ bool ReplayFrameSource::next(cv::Mat& depth, PoseHint& hint) {
 class RealSenseSource : public FrameSource {
 public:
     bool start(int w, int h, int fps, bool emitter, std::string* err) {
-        if (!pipe_.start(w, h, fps)) {
+        // Ask for the IMU. Both optional streams fail independently and
+        // neither failure costs depth -- see rsdyn::Pipeline::start.
+        if (!pipe_.start(w, h, fps, false, true)) {
             if (err) *err = pipe_.error();
             return false;
         }
@@ -96,6 +100,11 @@ public:
         scale_ = pipe_.depthScale();
         pending_ = true;          // the frame just read is the first one out
         pendingW_ = fw; pendingH_ = fh;
+        att_.init(AttitudeParams{});
+        haveImu_ = pipe_.haveIMU();
+        std::fprintf(stderr, haveImu_
+            ? "[live] IMU present: attitude will be estimated from it.\n"
+            : "[live] NO IMU stream. Attitude is whatever the caller assumes.\n");
         ok_ = true;
         return true;
     }
@@ -109,9 +118,28 @@ public:
         int w = pendingW_, h = pendingH_;
         if (pending_) {
             pending_ = false;               // reuse the frame start() already took
-        } else if (!pipe_.waitDepth(raw_, w, h, 2000)) {
+        } else if (!pipe_.waitFrames(raw_, w, h, nullptr,
+                                     haveImu_ ? &motion_ : nullptr, 2000)) {
             return false;
         }
+
+        // FEED THE FILTER EVERY SAMPLE, not one per depth frame. The gyro runs
+        // at 200 Hz against 30 Hz of depth, so a frameset carries several and
+        // keeping only the last would throw away most of the rotation -- which
+        // is exactly the rotation the estimate exists to track.
+        for (const auto& m : motion_) {
+            if (m.isGyro) { gx_ = m.x; gy_ = m.y; gz_ = m.z; }
+            else          { ax_ = m.x; ay_ = m.y; az_ = m.z; }
+            const double t = m.tMs;
+            if (lastImuMs_ > 0.0 && t > lastImuMs_) {
+                att_.update(gx_, gy_, gz_, ax_, ay_, az_,
+                            float((t - lastImuMs_) * 0.001));
+            } else if (lastImuMs_ <= 0.0 && !m.isGyro) {
+                att_.seed(ax_, ay_, az_);      // level once, immediately
+            }
+            if (t > 0.0) lastImuMs_ = t;
+        }
+        motion_.clear();
         depth.create(h, w, CV_32F);
         for (int y = 0; y < h; ++y) {
             float* dst = depth.ptr<float>(y);
@@ -119,7 +147,18 @@ public:
             for (int x = 0; x < w; ++x) dst[x] = src[x] ? float(src[x]) * scale_ : -1.f;
         }
         ++idx_;
-        hint.valid = false;      // no odometry yet -- the caller decides
+        // ATTITUDE ONLY, and the flag says so. There is no translation in here
+        // and there must not appear to be: `attitudeOnly` is the seam the whole
+        // frame_source header exists to describe.
+        if (haveImu_ && att_.seeded()) {
+            hint.valid = true;
+            hint.attitudeOnly = true;
+            hint.pose.rollDeg  = att_.rollDeg();
+            hint.pose.pitchDeg = att_.pitchDeg();
+            hint.pose.yawDeg   = att_.yawDeg();
+        } else {
+            hint.valid = false;   // no attitude either -- the caller decides
+        }
         return true;
     }
 
@@ -132,6 +171,11 @@ private:
     std::vector<uint16_t> raw_;
     std::unique_ptr<DepthCamera> cam_;
     float scale_ = 0.001f;
+    std::vector<rsdyn::Pipeline::Motion> motion_;
+    AttitudeFilter att_;
+    double lastImuMs_ = 0.0;
+    float gx_ = 0, gy_ = 0, gz_ = 0, ax_ = 0, ay_ = 0, az_ = 0;
+    bool  haveImu_ = false;
     bool  ok_ = false, pending_ = false;
     int   pendingW_ = 0, pendingH_ = 0, idx_ = 0;
 };

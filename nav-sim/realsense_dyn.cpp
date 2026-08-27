@@ -45,7 +45,13 @@ struct Fns {
     void  (*release_frame)(void*);
     const void* (*get_frame_stream_profile)(const void*, rs2_error_pp);
     void  (*get_video_stream_intrinsics)(const void*, Intrinsics*, rs2_error_pp);
-    void  (*get_stream_profile_data)(const void*, int*, int*, int*, int*, rs2_error_pp);
+    // rs2_get_stream_profile_data(mode, stream, format, index, unique_id,
+    // framerate, error). SIX out-params, not five. The previous declaration
+    // here was one short, which is a stack-corrupting call the moment anything
+    // uses it -- it never had, so it sat as a landmine rather than a bug.
+    void  (*get_stream_profile_data)(const void*, int*, int*, int*, int*, int*,
+                                     rs2_error_pp);
+    double (*get_frame_timestamp)(const void*, rs2_error_pp);
     void* (*get_frame_sensor)(const void*, rs2_error_pp);
 
     void* (*pipeline_profile_get_device)(void*, rs2_error_pp);
@@ -201,6 +207,7 @@ bool resolveAll(std::string* missing) {
         {(void**)&g.get_frame_stream_profile, "rs2_get_frame_stream_profile"},
         {(void**)&g.get_video_stream_intrinsics, "rs2_get_video_stream_intrinsics"},
         {(void**)&g.get_stream_profile_data, "rs2_get_stream_profile_data"},
+        {(void**)&g.get_frame_timestamp, "rs2_get_frame_timestamp"},
         {(void**)&g.get_frame_sensor,  "rs2_get_frame_sensor"},
         {(void**)&g.pipeline_profile_get_device, "rs2_pipeline_profile_get_device"},
         {(void**)&g.delete_device,     "rs2_delete_device"},
@@ -273,7 +280,8 @@ bool load(std::string* err) {
 }
 
 // ---------------------------------------------------------------------------
-bool Pipeline::start(int width, int height, int fps) {
+bool Pipeline::start(int width, int height, int fps,
+                     bool wantIR, bool wantIMU) {
     if (!load(&err_)) return false;
     stop();
 
@@ -292,6 +300,28 @@ bool Pipeline::start(int width, int height, int fps) {
     Err e4;
     g.config_enable_stream(cfg, STREAM_DEPTH, 0, width, height, FORMAT_Z16, fps, &e4);
     if (e4.bad()) { err_ = "enable_stream: " + e4.msg(); g.delete_config(cfg); stop(); return false; }
+
+    // OPTIONAL STREAMS, EACH IN ITS OWN ATTEMPT. A D435 without the i has no
+    // motion sensor, and a USB 2 link will refuse the extra bandwidth -- in
+    // both cases the correct outcome is depth without the extra, not a dead
+    // camera. So a failure here is recorded and swallowed.
+    haveIR_ = false; haveIMU_ = false;
+    if (wantIR) {
+        Err ei;
+        // Index 1 is the LEFT imager. Depth is computed in its frame, so it is
+        // the one already registered with depth; index 2 would need alignment.
+        g.config_enable_stream(cfg, STREAM_INFRARED, 1, width, height,
+                               FORMAT_Y8, fps, &ei);
+        haveIR_ = !ei.bad();
+    }
+    if (wantIMU) {
+        Err eg, ea;
+        // Motion streams carry no resolution. Rate 0 asks for the device
+        // default, which avoids guessing at a value the firmware may not offer.
+        g.config_enable_stream(cfg, STREAM_GYRO,  0, 0, 0, FORMAT_MOTION_XYZ32F, 0, &eg);
+        g.config_enable_stream(cfg, STREAM_ACCEL, 0, 0, 0, FORMAT_MOTION_XYZ32F, 0, &ea);
+        haveIMU_ = !eg.bad() && !ea.bad();
+    }
 
     Err e5;
     profile_ = g.pipeline_start_with_config(pipe_, cfg, &e5);
@@ -372,6 +402,12 @@ std::string Pipeline::deviceInfo(int info) const {
 }
 
 bool Pipeline::waitDepth(std::vector<uint16_t>& out, int& w, int& h, int timeoutMs) {
+    return waitFrames(out, w, h, nullptr, nullptr, timeoutMs);
+}
+
+bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
+                          std::vector<uint8_t>* ir, std::vector<Motion>* motion,
+                          int timeoutMs) {
     if (!pipe_) { err_ = "pipeline not started"; return false; }
     Err e;
     void* fs = g.pipeline_wait_for_frames(pipe_, unsigned(timeoutMs), &e);
@@ -380,10 +416,51 @@ bool Pipeline::waitDepth(std::vector<uint16_t>& out, int& w, int& h, int timeout
     Err e2;
     const int n = g.embedded_frames_count(fs, &e2);
     bool got = false;
-    for (int i = 0; i < n && !got; ++i) {
+    for (int i = 0; i < n; ++i) {
         Err e3;
         void* f = g.extract_frame(fs, i, &e3);
         if (e3.bad() || !f) continue;
+
+        // WHICH STREAM IS THIS? Asking the profile is the only reliable answer:
+        // classifying by size would confuse a Y8 infrared frame with nothing in
+        // particular, and motion frames have no width at all.
+        int st = -1, fmt = 0, idx = 0, uid = 0, rate = 0;
+        { Err ep;
+          const void* sp = g.get_frame_stream_profile(f, &ep);
+          if (!ep.bad() && sp) {
+              Err ed;
+              g.get_stream_profile_data(sp, &st, &fmt, &idx, &uid, &rate, &ed);
+              if (ed.bad()) st = -1;
+          } }
+
+        if (motion && (st == STREAM_GYRO || st == STREAM_ACCEL)) {
+            Err em;
+            const void* d = g.get_frame_data(f, &em);
+            if (!em.bad() && d) {
+                const float* v = static_cast<const float*>(d);
+                Err et;
+                const double ts = g.get_frame_timestamp ? g.get_frame_timestamp(f, &et) : 0.0;
+                motion->push_back({st == STREAM_GYRO, v[0], v[1], v[2],
+                                   et.bad() ? 0.0 : ts});
+            }
+            g.release_frame(f);
+            continue;
+        }
+
+        if (ir && st == STREAM_INFRARED) {
+            Err ew, eh2, em;
+            const int iw = g.get_frame_width(f, &ew), ih = g.get_frame_height(f, &eh2);
+            const void* d = g.get_frame_data(f, &em);
+            if (!ew.bad() && !eh2.bad() && !em.bad() && d && iw > 0 && ih > 0) {
+                ir->resize(size_t(iw) * ih);
+                std::memcpy(ir->data(), d, ir->size());
+            }
+            g.release_frame(f);
+            continue;
+        }
+
+        if (got || (st != -1 && st != STREAM_DEPTH)) { g.release_frame(f); continue; }
+
         Err e4, e5;
         const int fw = g.get_frame_width(f, &e4), fh = g.get_frame_height(f, &e5);
         if (!e4.bad() && !e5.bad() && fw > 0 && fh > 0) {

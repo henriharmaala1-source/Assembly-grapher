@@ -579,12 +579,19 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
 
     std::snprintf(b, sizeof(b), "spin  %.0f deg/s", C.yawRateDps);
     btns.push_back(Button{{20, yset + 112, 210, 40}, b, "", 13, true, C.yawRateDps != 0.f});
+
+    btns.push_back(Button{{260, yset + 112, 280, 40},
+                          C.odom ? "odometry: SCAN MATCH"
+                                 : "odometry: OFF (rotation only)", "", 19,
+                          true, C.odom});
     label(img, "spin: only at a rate you KNOW", 20, yset + 196, 0.42,
           {140, 140, 140});
     label(img, "ray stride 1 cannot keep up at 30 fps;  no goal on a bench, so do not steer toward one",
           20, yset + 176, 0.42, {140, 140, 140});
     label(img, "far layer is AWARENESS ONLY -- it never grants permission to fly",
           300, yset + 196, 0.42, {140, 140, 140});
+    label(img, "odometry: a DEMO. per-axis, refuses what it cannot see, known +Z bias",
+          300, yset + 212, 0.42, {140, 140, 140});
 
     btns.push_back(Button{{20, H - 78, 250, 56}, "START", "", 20,
                           C.mode != "replay" || !C.path.empty()});
@@ -1314,7 +1321,7 @@ static int runSession(Config C) {
             roi &= cv::Rect(0, 0, sliceFull.cols, sliceFull.rows);
             sPane = fit(sliceFull(roi).clone(), PW, PH);
             banner(sPane, "f range  t stride  - + scale (0 auto)  h equalise  "
-                          "r rec  v view", PH - 12);
+                          "r rec  v view  o odom", PH - 12);
             // Range rings on the slice too, so "how far does the map reach" is
             // answerable by eye rather than by trusting the caption.
             const float pxPerM = PW / (2.f * halfM);
@@ -1385,6 +1392,9 @@ static int runSession(Config C) {
                           traj.candidates().size(), gr.freeM, gr.speed,
                           gr.blocked ? "  BLOCKED" : "");
             banner(pPane, b, 44);
+            if (!C.odom) {
+                banner(pPane, "ODOM off -- rotation only  ('o' to try it)", 66);
+            }
             if (C.odom) {
                 // Per-axis, because that is the honest unit here: a letter is
                 // shown for an axis the score could see and a dot for one it
@@ -1966,6 +1976,18 @@ static int runSession(Config C) {
             if (k == 'm') { backToMenu = true; break; }
             if (k == 'v') C.viewMode = (C.viewMode + 1) % 4;  // fpv / overlay / chase / compare
             if (k == 'a') C.turnHud = !C.turnHud;             // the turn arrow
+            if (k == 'o') {                                   // odometry on/off
+                C.odom = !C.odom;
+                // RESTART THE ESTIMATE, don't resume it. Whatever the pose was
+                // while odometry was off is the best guess available now, and
+                // carrying stale counters would report drift accumulated during
+                // a period when nothing was being estimated.
+                odomFrames = 0; odomUsed = 0; odomTravelM = 0.f;
+                lastMatch = ScanMatch{};
+                tE = px; tN = py; tU = pz;
+                std::printf("[pose] scan-match odometry %s\n",
+                            C.odom ? "ON -- a demo, not a pose source" : "OFF");
+            }
             if (k == ' ') paused = !paused;
             if (k == 's') { cv::imwrite(out + "_frame.png", full);
                             std::printf("wrote %s_frame.png\n", out.c_str()); }
@@ -2202,6 +2224,7 @@ int main(int argc, char** argv) {
         else if (id == 16) { C.viewMode = (C.viewMode + 1) % 4; }
         else if (id == 17) { C.turnHud = !C.turnHud; }
         else if (id == 18) { iFar = (iFar + 1) % 5; C.farCell = FARS[iFar]; }
+        else if (id == 19) { C.odom = !C.odom; }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

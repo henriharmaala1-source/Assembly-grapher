@@ -83,6 +83,24 @@ static inline float wrapDeg180(float d) { return std::fmod(d + 540.f, 360.f) - 1
 
 int main(int argc, char** argv) {
     std::string world = "forest", out = "/tmp/nav", pointsFile;
+    // VOXEL ONLY. Plan straight against a saved map, with no camera in the
+    // loop at all -- no stereo render, no integration, no sensing.
+    //
+    // WHY IT IS WORTH HAVING. Loading a saved space as a WORLD and then flying
+    // it normally puts the geometry through a depth model a second time: it was
+    // already built from noisy depth when it was captured, and the sim then
+    // renders synthetic stereo from it and rebuilds a map from that. Two rounds
+    // of dropout, range limit and occlusion on geometry that only ever had one.
+    // If the question is "does the planner handle this shape", that is the
+    // wrong instrument.
+    //
+    // WHAT IT GIVES UP, and it is not small. With no sensing loop the map never
+    // changes and is complete from the first step -- so this is a KNOWN-MAP
+    // planning problem, which is not the problem the aircraft has. And because
+    // the map and the collision truth are then the same data, the harness can
+    // no longer catch a mapping error: it is testing the planner and nothing
+    // else. The normal path stays the one that answers "will this fly".
+    bool voxelOnly = false;
     int steps = 600;
     float cell = 0.25f, dt = 0.1f;
     int   camW = 320, camH = 240;
@@ -193,6 +211,7 @@ int main(int argc, char** argv) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
         else if (!std::strcmp(argv[i], "--points")) pointsFile = next("");
+        else if (!std::strcmp(argv[i], "--voxelonly")) voxelOnly = true;
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
         else if (!std::strcmp(argv[i], "--cell")) { cell = float(std::atof(next("0.25"))); cellSet = true; }
         else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
@@ -270,6 +289,7 @@ int main(int argc, char** argv) {
     // Deterministic sampling planner: same seed -> same flight.
     setPlannerSeed(unsigned(seed));
     VoxelWorld W;
+    bool loadedPoints = false;
     std::vector<Trail> trails;
     float px, py, pz;
     if (world == "lidar" || world == "saved") {
@@ -291,6 +311,7 @@ int main(int argc, char** argv) {
         px = W.nx() * cell * 0.5f; py = W.ny() * cell * 0.2f;
         pz = W.nz() * cell * 0.5f;
         goalE = px; goalN = W.ny() * cell * 0.9f; goalU = pz;
+        loadedPoints = true;
     } else if (world == "culdesac") {
         // Spawn SOUTH of the pocket, goal NORTH beyond it, so the straight
         // line to the goal runs in through the mouth and into the closed end.
@@ -468,6 +489,17 @@ int main(int argc, char** argv) {
     mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
     if (carveWin >= 0) mp.carveWinPx = carveWin;
     VoxelMap M; M.init(mp, px, py, pz);   // after spawn validation, not before
+    if (voxelOnly) {
+        if (!loadedPoints) {
+            std::fprintf(stderr, "--voxelonly needs a saved space: "
+                                 "--world lidar --points FILE.xyz\n");
+            return 1;
+        }
+        if (!M.importXyz(pointsFile, true)) return 1;   // the file IS the world here
+        std::printf("[mode] VOXEL ONLY -- no camera in the loop. The map is complete\n"
+                    "       from step 1 and never changes, so this measures the PLANNER\n"
+                    "       against real geometry and cannot catch a mapping error.\n");
+    }
 
     // FAR-FIELD MAP. Depth error grows as Z^2, so the range at which a
     // measurement can be placed within one voxel is Z_max = sqrt(cell*f*B/sigma)
@@ -646,7 +678,13 @@ int main(int argc, char** argv) {
         CamPose mpose = pose;
         mpose.e += dE; mpose.n += dN; mpose.u += dU; mpose.yawDeg += dY;
         int64 t0 = cv::getTickCount();
-        cv::Mat d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
+        // VOXEL ONLY: no camera, no integration. The map was loaded once and
+        // does not change; recentring would only scroll cells out of a map
+        // nothing is refilling, so that is skipped too.
+        cv::Mat d;
+        if (!voxelOnly)
+            d = useTruth ? cam.renderTruth(W, pose) : cam.renderStereo(W, pose, nullptr);
+        if (!voxelOnly) {
         // Fill holes that sit against a NEAR return, and only those. Applied to
         // the depth image before anything reads it, so every consumer -- fine
         // map, mid, far -- sees the same frame. Once per frame: the improver is
@@ -665,6 +703,8 @@ int main(int argc, char** argv) {
         tInteg += double(cv::getTickCount() - tm) / cv::getTickFrequency();
         tSense += double(cv::getTickCount() - t0) / cv::getTickFrequency();
         M.recentre(px + dE, py + dN, pz + dU);
+        }
+        tSense += 0.0;
 
         // --- precise plan, occasionally ---------------------------------------
         int64 t1 = cv::getTickCount();

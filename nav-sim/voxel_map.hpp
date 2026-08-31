@@ -215,6 +215,24 @@ public:
     // planning against real geometry, never to argue about what the mapper knew.
     bool exportXyz(const std::string& path) const;
 
+    // The other direction: fill this map from a saved space, marking each
+    // point's cell OCCUPIED and leaving everything else UNKNOWN.
+    //
+    // NOT the inverse of exportXyz, and the difference matters. What comes back
+    // is the walls without the fog: free space that was measured returns as
+    // unknown, because a point list never carried it. A planner reading this
+    // map will refuse space the original run had cleared.
+    // `markRestFree` fills everything that is NOT a listed point with FREE.
+    //
+    // That is inventing free space, which this project forbids everywhere else,
+    // and it is correct in exactly one situation: when the file is being used
+    // as GROUND TRUTH rather than as a measurement. If the saved space is the
+    // world, a cell absent from it genuinely has nothing in it.
+    //
+    // It must never be used on a map that will be flown as a belief. Default
+    // false, so the dangerous reading has to be asked for by name.
+    bool importXyz(const std::string& path, bool markRestFree = false);
+
     // Mark a ball as FREE. Exactly one legitimate use: the aircraft knows it is
     // not inside an obstacle at the moment it takes off, and without that one
     // fact a planner that requires positively-confirmed free space can never

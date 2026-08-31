@@ -568,6 +568,33 @@ bool VoxelMap::exportXyz(const std::string& path) const {
     return n > 0;
 }
 
+bool VoxelMap::importXyz(const std::string& path, bool markRestFree) {
+    std::FILE* f = std::fopen(path.c_str(), "r");
+    if (!f) return false;
+    char line[256];
+    long n = 0;
+    while (std::fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        float x, y, z, t = 0.5f;
+        if (std::sscanf(line, "%f %f %f %f", &x, &y, &z, &t) < 3) continue;
+        int cx, cy, cz; worldToCell(x, y, z, cx, cy, cz);
+        if (!inBounds(cx, cy, cz)) continue;
+        log_[idx(cx, cy, cz)] = p_.lClamp;      // seen, and certain
+        if (!tex_.empty()) tex_[idx(cx, cy, cz)] = uint8_t(t * 255.f + 0.5f);
+        ++n;
+    }
+    std::fclose(f);
+    if (markRestFree) {
+        // Occupied cells are already at +lClamp, so only the untouched ones
+        // move. See the header for why this is admissible only as truth.
+        for (size_t i = 0; i < log_.size(); ++i)
+            if (log_[i] <= p_.occThresh) log_[i] = -p_.lClamp;
+    }
+    std::printf("[map] loaded %ld occupied cells from %s%s\n", n, path.c_str(),
+                markRestFree ? ", everything else marked FREE (truth mode)" : "");
+    return n > 0;
+}
+
 void VoxelMap::recentre(float cx, float cy, float cz) {
     float nox = cx - p_.nx * p_.cell * 0.5f;
     float noy = cy - p_.ny * p_.cell * 0.5f;

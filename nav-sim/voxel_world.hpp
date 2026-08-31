@@ -56,6 +56,13 @@ public:
     void init(float cell, float ox, float oy, float oz, int nx, int ny, int nz);
 
     float cell() const { return cell_; }
+    // The world coordinate of cell (0,0,0)'s min corner. Needed by anything
+    // that has to place a second grid over this one -- a loaded space does not
+    // sit at the origin, and a map centred on the spawn instead of on the
+    // GEOMETRY silently drops whatever falls outside it.
+    float ox() const { return ox_; }
+    float oy() const { return oy_; }
+    float oz() const { return oz_; }
     int   nx() const { return nx_; }
     int   ny() const { return ny_; }
     int   nz() const { return nz_; }

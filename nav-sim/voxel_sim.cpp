@@ -308,9 +308,17 @@ int main(int argc, char** argv) {
         }
         // Spawn at the middle of the loaded extent and aim across it. Nothing
         // clever: the validator below moves it if that lands inside geometry.
-        px = W.nx() * cell * 0.5f; py = W.ny() * cell * 0.2f;
-        pz = W.nz() * cell * 0.5f;
-        goalE = px; goalN = W.ny() * cell * 0.9f; goalU = pz;
+        // PLACE AGAINST THE LOADED GEOMETRY, not against the grid indices. A
+        // saved space does not begin at the origin: this one starts at z =
+        // -0.125, and a map centred on a spawn computed from nz*cell*0.5 put
+        // its floor at exactly 0 -- silently dropping 27 of 721 cells, the
+        // ground plane among them. Measured, not guessed.
+        const float wx0 = W.ox(), wy0 = W.oy(), wz0 = W.oz();
+        const float wxs = W.nx() * cell, wys = W.ny() * cell, wzs = W.nz() * cell;
+        px = wx0 + wxs * 0.5f;
+        py = wy0 + wys * 0.15f;
+        pz = wz0 + wzs * 0.5f;
+        goalE = px; goalN = wy0 + wys * 0.9f; goalU = pz;
         loadedPoints = true;
     } else if (world == "culdesac") {
         // Spawn SOUTH of the pocket, goal NORTH beyond it, so the straight

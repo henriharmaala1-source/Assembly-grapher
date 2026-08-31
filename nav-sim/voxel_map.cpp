@@ -546,6 +546,28 @@ void VoxelMap::integrate(const cv::Mat& depth, const cv::Mat& intensity,
     }
 }
 
+bool VoxelMap::exportXyz(const std::string& path) const {
+    std::FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) return false;
+    std::fprintf(f, "# voxel map export: x y z tex   cell %.3f  grid %dx%dx%d\n",
+                 p_.cell, p_.nx, p_.ny, p_.nz);
+    std::fprintf(f, "# OCCUPIED cells only. Unknown is not representable here;\n"
+                    "# on reload everything absent reads as free. See the header.\n");
+    long n = 0;
+    for (int z = 0; z < p_.nz; ++z)
+        for (int y = 0; y < p_.ny; ++y)
+            for (int x = 0; x < p_.nx; ++x) {
+                if (log_[idx(x, y, z)] <= p_.occThresh) continue;
+                float wx, wy, wz; cellCentre(x, y, z, wx, wy, wz);
+                std::fprintf(f, "%.3f %.3f %.3f %.3f\n", wx, wy, wz,
+                             tex_.empty() ? 0.5f : tex_[idx(x, y, z)] / 255.f);
+                ++n;
+            }
+    std::fclose(f);
+    std::printf("[map] wrote %ld occupied cells to %s\n", n, path.c_str());
+    return n > 0;
+}
+
 void VoxelMap::recentre(float cx, float cy, float cz) {
     float nox = cx - p_.nx * p_.cell * 0.5f;
     float noy = cy - p_.ny * p_.cell * 0.5f;

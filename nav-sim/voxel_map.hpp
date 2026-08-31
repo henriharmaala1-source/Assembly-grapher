@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <opencv2/core.hpp>
@@ -198,6 +199,21 @@ public:
 
     // Recentre on the vehicle, decaying anything that scrolls in from outside.
     void recentre(float cx, float cy, float cz);
+
+    // SAVE THE SPACE. Writes every OCCUPIED cell's centre as "x y z tex", one
+    // per line, which is exactly what loadLidarXyz already reads -- so a place
+    // mapped with the real camera becomes a world the simulator can fly against,
+    // repeatedly and deterministically, with no camera and no aircraft.
+    //
+    // That is the loop this project has been missing: a walk turns into a
+    // fixture. Change a threshold, re-fly the same room, compare.
+    //
+    // WHAT IT CANNOT CARRY, and the omission is the honest part: a point list
+    // has no way to say UNKNOWN. Everything not written becomes free space when
+    // it is loaded back, so a re-flown map is MORE confident than the one that
+    // was measured -- the fog is gone and only the walls remain. Use it to test
+    // planning against real geometry, never to argue about what the mapper knew.
+    bool exportXyz(const std::string& path) const;
 
     // Mark a ball as FREE. Exactly one legitimate use: the aircraft knows it is
     // not inside an obstacle at the moment it takes off, and without that one

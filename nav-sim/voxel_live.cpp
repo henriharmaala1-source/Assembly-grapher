@@ -317,6 +317,12 @@ struct Config {
     // Known and unfixed: a ~1.2 cell vertical bias, see scan_match_check. This
     // is a demonstration, not a pose source to trust.
     bool  odom = false;
+    // FREE LOOK. Detach the first-person eye from the vehicle and fly it
+    // through the map that has been built. The map is a fixed 60 x 60 x 24 m
+    // box in this tool -- never recentred, so nothing in it is ever forgotten
+    // -- and until now the only way to see it was from wherever the camera
+    // happened to be pointing.
+    bool  freeLook = false;
     // The truth trajectory the odometry demo has to recover, m/s, and the step
     // it is flown at. Deliberately slow: the point is to watch the estimate
     // track or fail to, not to test the search radius.
@@ -1068,6 +1074,11 @@ static int runSession(Config C) {
     // Scan-match odometry state. The guess for each frame is simply the last
     // accepted pose: at frame rate the motion between frames is far inside the
     // coarse search radius, so a velocity model buys nothing a demo can see.
+    // The free-look eye. Follows the vehicle until detached, so pressing 'g'
+    // starts from what you were already looking at rather than from the origin.
+    float eyeE = 0, eyeN = 0, eyeU = 0, eyeYaw = 0, eyePitch = 0;
+    bool  eyeAttached = true;
+
     ScanMatcher matcher;
     { ScanMatchParams smp; smp.strideX = 8; smp.strideY = 8; matcher.init(smp); }
     ScanMatch lastMatch;
@@ -1126,6 +1137,11 @@ static int runSession(Config C) {
             } else if (!C.odom) {
                 pose = hint.pose;
             }
+        }
+
+        if (eyeAttached) {
+            eyeE = pose.e; eyeN = pose.n; eyeU = pose.u;
+            eyeYaw = yaw;  eyePitch = pitchDeg;
         }
 
         // REGISTER BEFORE INTEGRATING. Matching against a map that already
@@ -1335,7 +1351,7 @@ static int runSession(Config C) {
             roi &= cv::Rect(0, 0, sliceFull.cols, sliceFull.rows);
             sPane = fit(sliceFull(roi).clone(), PW, PH);
             banner(sPane, "f range  t stride  - + scale (0 auto)  h equalise  "
-                          "r rec  v view  o odom", PH - 12);
+                          "r rec  v view  o odom  g fly  p save", PH - 12);
             // Range rings on the slice too, so "how far does the map reach" is
             // answerable by eye rather than by trusting the caption.
             const float pxPerM = PW / (2.f * halfM);
@@ -1908,10 +1924,15 @@ static int runSession(Config C) {
             const bool useCubesFar = C.farCell > 0.f;
             cv::Mat maskNear;
             cv::Mat fpv = VoxelMap::renderLadder(
-                useCubesFar ? ladder(0.f) : fineLadder(), pose.e, pose.n,
-                pose.u, yaw, pitchDeg, fw, fh, cp.hfovDeg,
+                useCubesFar ? ladder(0.f) : fineLadder(), eyeE, eyeN,
+                eyeU, eyeYaw, eyePitch, fw, fh, cp.hfovDeg,
                 FpvStyle(), &maskNear);
-            if (!useCubesFar) {
+            // THE FAR FIELD IS NOT DRAWN FROM A DETACHED EYE. A bearing bin is
+            // a direction FROM THE AIRCRAFT and holds no position, so it cannot
+            // be re-projected from somewhere else -- it would put every far
+            // surface at the wrong bearing while looking entirely plausible.
+            // The same reason the chase pane goes without it.
+            if (!useCubesFar && eyeAttached) {
                 // The far field fills only where the fine map had nothing to
                 // say, and only beyond its honest range. It is AWARENESS: the
                 // swept-volume test never reads it, exactly as the coarse voxel
@@ -1940,7 +1961,20 @@ static int runSession(Config C) {
                 cv::Mat scaled = fit(fpv, tw, th);
                 scaled.copyTo(fPane(cv::Rect(0, (PH - th) / 2, tw, th)));
             }
-            banner(fPane, "FIRST PERSON  map + plan, from inside");
+            if (C.freeLook) {
+                // SAY SO LOUDLY. A detached eye in the same pane as the
+                // aircraft's own view is exactly the sort of thing that gets
+                // mistaken for the aircraft's own view.
+                banner(fPane, "FREE LOOK -- NOT the aircraft's view");
+                char fl[128];
+                std::snprintf(fl, sizeof(fl),
+                              "eye %.1f %.1f %.1f  yaw %.0f  pitch %.0f   "
+                              "wasd e/c ijkl   g to reattach",
+                              eyeE, eyeN, eyeU, eyeYaw, eyePitch);
+                banner(fPane, fl, 44);
+            } else {
+                banner(fPane, "FIRST PERSON  map + plan, from inside");
+            }
             char nb[110];
             if (useCubesFar) {
                 std::snprintf(nb, sizeof(nb),
@@ -1989,7 +2023,38 @@ static int runSession(Config C) {
             if (k == 'q' || k == 27) break;
             if (k == 'm') { backToMenu = true; break; }
             if (k == 'v') C.viewMode = (C.viewMode + 1) % 4;  // fpv / overlay / chase / compare
-            if (k == 'a') C.turnHud = !C.turnHud;             // the turn arrow
+            // ---- FREE LOOK ------------------------------------------------
+            // 'g' detaches the first-person eye from the vehicle so the map
+            // that has been built can be flown through. While detached, wasd /
+            // ec / ijkl are movement and SHADOW their normal bindings -- which
+            // is why they are handled first and the rest are guarded below.
+            if (k == 'g') {
+                C.freeLook = !C.freeLook;
+                eyeAttached = !C.freeLook;
+                if (eyeAttached) { eyeYaw = yaw; eyePitch = pitchDeg; }
+                std::printf("[view] free look %s%s\n",
+                            C.freeLook ? "ON -- wasd move, e/c up-down, ijkl look, g back"
+                                       : "OFF",
+                            C.freeLook ? "" : " (eye back on the aircraft)");
+            }
+            if (C.freeLook) {
+                const float STEP = 0.25f, TURN = 5.f;      // one cell, five deg
+                const float cy = std::cos(eyeYaw * sim::PI_F / 180.f);
+                const float sy = std::sin(eyeYaw * sim::PI_F / 180.f);
+                // Forward is the eye's own heading, so movement stays intuitive
+                // after turning. Yaw is clockwise from North, as everywhere.
+                if (k == 'w') { eyeE += sy * STEP; eyeN += cy * STEP; }
+                if (k == 's') { eyeE -= sy * STEP; eyeN -= cy * STEP; }
+                if (k == 'd') { eyeE += cy * STEP; eyeN -= sy * STEP; }
+                if (k == 'a') { eyeE -= cy * STEP; eyeN += sy * STEP; }
+                if (k == 'e') eyeU += STEP;
+                if (k == 'c') eyeU -= STEP;
+                if (k == 'j') eyeYaw -= TURN;
+                if (k == 'l') eyeYaw += TURN;
+                if (k == 'i') eyePitch = std::min(89.f, eyePitch + TURN);
+                if (k == 'k') eyePitch = std::max(-89.f, eyePitch - TURN);
+            }
+            if (!C.freeLook && k == 'a') C.turnHud = !C.turnHud;   // the turn arrow
             if (k == 'o') {                                   // odometry on/off
                 C.odom = !C.odom;
                 // RESTART THE ESTIMATE, don't resume it. Whatever the pose was
@@ -2003,7 +2068,14 @@ static int runSession(Config C) {
                             C.odom ? "ON -- a demo, not a pose source" : "OFF");
             }
             if (k == ' ') paused = !paused;
-            if (k == 's') { cv::imwrite(out + "_frame.png", full);
+            if (k == 'p') {                                   // save the space
+                // The map as a world the simulator can fly. See
+                // VoxelMap::exportXyz for what a point list cannot carry.
+                M.exportXyz(out + "_map.xyz");
+                std::printf("[map] replay it with:  voxel_sim --world lidar "
+                            "--points %s_map.xyz\n", out.c_str());
+            }
+            if (!C.freeLook && k == 's') { cv::imwrite(out + "_frame.png", full);
                             std::printf("wrote %s_frame.png\n", out.c_str()); }
             // --- live settings, so a sweep does not need a restart ----------
             // Everything below used to be a command-line flag, which meant
@@ -2012,7 +2084,7 @@ static int runSession(Config C) {
             if (k == 'h') { C.depthEq = !C.depthEq;
                             std::printf("[view] depth colour %s\n",
                                         C.depthEq ? "equalised" : "linear"); }
-            if (k == 'f') {                                   // far layer range
+            if (!C.freeLook && k == 'f') {                    // far layer range
                 // LATCH the display scale first. dMax follows the coarsest
                 // layer when depthMaxM is 0, so pressing 'f' used to move the
                 // map range AND the picture's colour scale together -- two
@@ -2093,6 +2165,12 @@ static int runSession(Config C) {
 
     if (recOpen) { rec.close(); std::printf("[rec] wrote %d frames to %s\n",
                                             n, C.recordPath.c_str()); }
+
+    // Always save the space at the end of a run. It costs a file and it is the
+    // difference between a session you watched and a fixture you can re-fly.
+    M.exportXyz(out + "_map.xyz");
+    std::printf("[map] re-fly it:  voxel_sim --world lidar --points %s_map.xyz\n",
+                out.c_str());
 
     std::printf("\n--- %d frames from %s ---\n", n, src->name());
     if (n) {

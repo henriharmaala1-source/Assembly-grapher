@@ -82,7 +82,7 @@ static float trueClearance(const VoxelWorld& w, float x, float y, float z, float
 static inline float wrapDeg180(float d) { return std::fmod(d + 540.f, 360.f) - 180.f; }
 
 int main(int argc, char** argv) {
-    std::string world = "forest", out = "/tmp/nav";
+    std::string world = "forest", out = "/tmp/nav", pointsFile;
     int steps = 600;
     float cell = 0.25f, dt = 0.1f;
     int   camW = 320, camH = 240;
@@ -192,6 +192,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         auto next = [&](const char* d) { return (i + 1 < argc) ? argv[++i] : d; };
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
+        else if (!std::strcmp(argv[i], "--points")) pointsFile = next("");
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
         else if (!std::strcmp(argv[i], "--cell")) { cell = float(std::atof(next("0.25"))); cellSet = true; }
         else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
@@ -271,7 +272,26 @@ int main(int argc, char** argv) {
     VoxelWorld W;
     std::vector<Trail> trails;
     float px, py, pz;
-    if (world == "culdesac") {
+    if (world == "lidar" || world == "saved") {
+        // A SPACE SAVED FROM REAL DATA. voxel_live writes one with 'p'; this
+        // flies the planner through it, deterministically and as often as you
+        // like. The point of the whole exercise: a walk becomes a fixture.
+        // fillGround FALSE, and the default is wrong for this input. The
+        // loader normally closes the ground beneath the lowest return in each
+        // column, which is right for an aerial lidar survey and invents
+        // geometry for a MAP: a map is a partial observation from inside, and
+        // everything it never saw would become solid rock. Measured on the
+        // first round trip -- a hedge scan reloaded as a near-solid block.
+        if (!loadLidarXyz(W, pointsFile, cell, false)) {
+            std::fprintf(stderr, "--world lidar needs --points FILE.xyz\n");
+            return 1;
+        }
+        // Spawn at the middle of the loaded extent and aim across it. Nothing
+        // clever: the validator below moves it if that lands inside geometry.
+        px = W.nx() * cell * 0.5f; py = W.ny() * cell * 0.2f;
+        pz = W.nz() * cell * 0.5f;
+        goalE = px; goalN = W.ny() * cell * 0.9f; goalU = pz;
+    } else if (world == "culdesac") {
         // Spawn SOUTH of the pocket, goal NORTH beyond it, so the straight
         // line to the goal runs in through the mouth and into the closed end.
         // Escaping means abandoning the goal bearing and going around.

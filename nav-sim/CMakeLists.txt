@@ -292,6 +292,15 @@ target_include_directories(flow_velocity_check PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(flow_velocity_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME flow_velocity_check COMMAND flow_velocity_check)
 
+add_executable(lookaround_check
+  test/lookaround_check.cpp
+  depth_camera.cpp
+  voxel_map.cpp
+  voxel_world.cpp)
+target_include_directories(lookaround_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(lookaround_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME lookaround_check COMMAND lookaround_check)
+
 add_executable(attitude_check test/attitude_check.cpp)
 target_include_directories(attitude_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME attitude_check COMMAND attitude_check)

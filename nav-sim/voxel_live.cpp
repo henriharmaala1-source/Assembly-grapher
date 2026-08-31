@@ -772,7 +772,13 @@ static int runSession(Config C) {
     const std::string& mode = C.mode; const std::string& path = C.path;
     const std::string& out = C.out;
     const float cell = C.cell, robotR = C.robotR, vmax = C.vmax;
-    const float yawRateDps = C.yawRateDps, pitchDeg = C.pitchDeg;
+    const float yawRateDps = C.yawRateDps;
+    // PITCH IS NO LONGER A CONSTANT once a real IMU is reporting it, and every
+    // view in this file draws with it. It was const, so the map integrated at
+    // the IMU's pitch while every pane rendered at the command line's -- the
+    // two agree until the moment the camera is actually tilted, which is the
+    // only moment the number matters.
+    float pitchDeg = C.pitchDeg;
     const float maxIntegOverride = C.maxIntegOverride;
     const int camW = C.camW, camH = C.camH, fps = C.fps, steps = C.steps;
     const bool emitter = C.emitter, headless = C.headless, showTruth = C.showTruth;
@@ -1109,6 +1115,14 @@ static int runSession(Config C) {
                 pose.pitchDeg = hint.pose.pitchDeg;
                 pose.yawDeg = hint.pose.yawDeg;
                 yaw = pose.yawDeg;
+                pitchDeg = pose.pitchDeg;      // the views draw with this one
+                // ROLL IS INTEGRATED BUT NOT DRAWN. renderLadder and
+                // BearingField::render take yaw and pitch and no roll, so the
+                // map is built with the camera's real roll while every pane
+                // shows it unrolled. On a bench that reads as the world tilting
+                // when the camera does not. A renderer limit, not a mapping
+                // error, and it wants fixing before anyone reads these panes in
+                // flight.
             } else if (!C.odom) {
                 pose = hint.pose;
             }

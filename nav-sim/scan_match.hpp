@@ -62,10 +62,72 @@ struct ScanMatchParams {
     float minRangeM = 0.35f;
     float maxRangeM = 0.f;              // 0 = take the map's own marking range
 
-    // An axis counts as observed when moving one fine step off the optimum
-    // costs at least this fraction of the peak score. Measured, not guessed --
-    // see scan_match_check.
-    float minCurvatureFrac = 0.004f;
+    // YAW, searched as a fourth degree of freedom about the vertical through
+    // the camera. Roll and pitch are NOT searched: gravity references them
+    // absolutely, so the accelerometer already answers them better than any
+    // amount of geometry could. Yaw is the one attitude the IMU cannot bound --
+    // gravity says nothing about heading -- so it is the one the map has to.
+    //
+    // THE RESOLUTION LIMIT, which is geometry and not tuning. A yaw error
+    // moves a point at range R sideways by R*theta, and that is only visible
+    // once it exceeds a cell:
+    //
+    //     theta_min ~ cell / R = 0.25 m / 3 m = 4.8 degrees
+    //
+    // Measured, consistent with it: a 1.5 degree error against a pillar 2 m
+    // away gives 0.0046 of score curvature where the best translation axis
+    // gives 0.52 -- two orders down, and correctly refused.
+    //
+    // THE CONSEQUENCE IS THE POINT. Scan matching at this cell size cannot
+    // bound the slow gyro drift that actually accumulates: half a degree per
+    // second over a few seconds is far below what a 0.25 m map at 3 m can see.
+    // It could only ever catch gross heading errors. Bounding real yaw drift
+    // needs a finer map, a much longer range, or a compass -- which is why the
+    // airframe carries one.
+    // OFF BY DEFAULT, and honestly so: see the resolution limit below. The
+    // search is implemented and reports observability, but it has not been
+    // shown to recover a known heading error in any scene tried, so nothing
+    // ships with it enabled.
+    float yawStepDeg  = 0.5f;
+    float yawRangeDeg = 0.0f;
+    // A DEADBAND, and it earned its place immediately. On a CORRECT guess in a
+    // corridor the search picked -0.5 degrees -- one quantisation step, chosen
+    // by noise on a nearly flat score -- and that spurious rotation then made
+    // the along-corridor axis look observable, because rotating a corridor
+    // manufactures an apparent gradient along it. One bad degree of freedom
+    // corrupted the honesty of another.
+    //
+    // So a heading correction has to PAY for itself: unless the best yaw beats
+    // the predicted yaw by this fraction of the score, the prediction stands.
+    // Same rule as everywhere else here -- do not act on evidence you do not
+    // have.
+    float yawMinGainFrac = 0.004f;
+
+    // OBSERVABILITY IS A COMPARISON, not a threshold. What matters is whether
+    // an axis is pinned like the others, and the absolute numbers move with the
+    // scene: the same corridor gives 0.82 on the vertical and 0.02 laterally,
+    // while a sparser scene scales all three down together. A fixed cut would
+    // have to be retuned per environment, which is how a safety gate quietly
+    // stops gating.
+    //
+    // So an axis is observed when it carries at least this fraction of the
+    // best-constrained axis, with a small absolute floor beneath it for the
+    // case where nothing is constrained at all.
+    float relCurvatureFrac = 0.15f;
+    float minCurvatureFrac = 0.01f;
+    // HOW FAR OFF, and this is NOT the fine search step. Probing at 0.03 m
+    // against a 0.25 m grid measures CELL QUANTISATION rather than the scene: a
+    // featureless plane marked into a voxel grid has structure at the cell
+    // pitch, so sliding a fraction of a cell along it changes which cells the
+    // points fall in and manufactures a gradient where the world has none.
+    //
+    // Observed: a straight corridor reported its along-axis observable at
+    // 0.0075 against a 0.004 threshold, on the strength of the floor alone.
+    // Probing at one full cell asks about the SCENE instead.
+    //
+    // 0 takes the map's own cell size, which is the right default -- the map
+    // knows its resolution and this file should not carry a second copy of it.
+    float curvStepM = 0.f;
 
     // And the fit itself has to be worth something: this fraction of sampled
     // points must land on cells the map calls OCCUPIED.
@@ -74,12 +136,18 @@ struct ScanMatchParams {
 
 struct ScanMatch {
     float dE = 0.f, dN = 0.f, dU = 0.f;   // correction to the predicted pose, m
+    float dYawDeg = 0.f;                  // and to its heading
     int   points = 0;                     // sampled and inside the useful band
-    float score = 0.f;                    // log-odds sum at the optimum
+    float score = 0.f;                    // corroborating cells at the optimum
     float hitFrac = 0.f;                  // of `points`, fraction on OCCUPIED
-    float curv[3] = {0.f, 0.f, 0.f};      // score drop per fine step, E/N/U
-    bool  axisObserved[3] = {false, false, false};
-    bool  valid = false;                  // ALL of: points, hitFrac, 3 axes
+    float curv[4] = {0, 0, 0, 0};         // score drop per fine step, E/N/U/yaw
+    bool  axisObserved[4] = {false, false, false, false};
+    bool  valid = false;                  // points, hitFrac, and E/N/U observed
+    // Yaw is reported separately and is NOT required for `valid`: a translation
+    // fix is useful without a heading fix, and in a rotationally symmetric room
+    // yaw is unobservable while translation is fine. Consumers that want the
+    // heading must check axisObserved[3] themselves.
+    bool  yawObserved() const { return axisObserved[3]; }
 };
 
 class ScanMatcher {
@@ -89,9 +157,11 @@ public:
 
     // `guess` is where the vehicle thinks it is -- from inertial propagation,
     // or from constant velocity, or from the last pose if nothing better.
-    // Attitude in `guess` is TAKEN AS GIVEN and never solved for: roll and
-    // pitch are gravity-referenced and drift-free, which is the whole reason
-    // this can search three degrees of freedom instead of six.
+    //
+    // ROLL AND PITCH IN `guess` ARE TAKEN AS GIVEN and never solved for. They
+    // are gravity-referenced and drift-free, so geometry cannot improve on
+    // them. YAW is solved, because nothing else can: it is the one attitude
+    // with no absolute reference anywhere in this vehicle.
     ScanMatch match(const VoxelMap& map, const cv::Mat& depth,
                     const DepthCamera& cam, const CamPose& guess) const;
 

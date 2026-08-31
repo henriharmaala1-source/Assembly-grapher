@@ -38,7 +38,7 @@ static void check(const char* what, bool ok, const std::string& detail = "") {
 static std::string f3(float v) { char b[64]; std::snprintf(b, sizeof b, "%.3f", v); return b; }
 
 // A box of `nyCells` length. Walls, floor and ceiling; nothing inside.
-static void makeBox(VoxelWorld& w, int nyCells) {
+static void makeBox(VoxelWorld& w, int nyCells, bool pillar = false) {
     const float c = 0.25f;
     const int nx = 40, nz = 24;
     w.init(c, 0.f, 0.f, 0.f, nx, nyCells, nz);
@@ -59,6 +59,12 @@ static void makeBox(VoxelWorld& w, int nyCells) {
             w.set(x, 0, z);          w.setTex(x, 0, z, 0.4f);
             w.set(x, nyCells-1, z);  w.setTex(x, nyCells-1, z, 0.4f);
         }
+    // One off-centre feature. Everything about whether heading is recoverable
+    // turns on having something like this in view.
+    if (pillar)
+        for (int x = 22; x <= 24; ++x)      // 0.75 m right of the flight line
+            for (int y = 16; y <= 18; ++y)  // and 2 m ahead: inside a 70 deg FoV
+                for (int z = zF; z <= zC; ++z) { w.set(x, y, z); w.setTex(x, y, z, 0.5f); }
 }
 
 int main() {
@@ -119,8 +125,8 @@ int main() {
     {
         cv::Mat d = cam.renderTruth(room, at);
         ScanMatch r = sm.match(Mr, d, cam, at);
-        std::printf("  [room] curvature  E %.4f  N %.4f  U %.4f   hit %.2f  pts %d\n",
-                    r.curv[0], r.curv[1], r.curv[2], r.hitFrac, r.points);
+        std::printf("  [room] curv E %.4f N %.4f U %.4f Y %.4f  dYaw %+.2f  hit %.2f  pts %d\n",
+                    r.curv[0], r.curv[1], r.curv[2], r.curv[3], r.dYawDeg, r.hitFrac, r.points);
         check("the map is dense enough to match against", r.points > 500,
               std::to_string(r.points) + " pts, hit " + f3(r.hitFrac));
         check("the unobservable lateral axis is reported unobserved",
@@ -139,6 +145,51 @@ int main() {
               f3(r.dN) + " vs " + f3(truth) + " m");
     }
 
+    // ---- YAW: implemented, measured, and NOT working ----------------------
+    // Gravity references roll and pitch absolutely and says nothing about
+    // heading, so yaw is the one attitude with no reference anywhere in the
+    // vehicle. The hope was that geometry could bound it. Measured, it cannot,
+    // for a reason that is arithmetic rather than tuning.
+    //
+    // A yaw error moves a point at range R sideways by R*theta, and the map
+    // only notices once that exceeds a cell:
+    //
+    //     theta_min ~ cell / R = 0.25 / 3 = 4.8 degrees
+    //
+    // Below that the points stay in the cells they were already in. A 1.5
+    // degree error against a pillar 2 m away produces 0.0046 of curvature
+    // where the best translation axis produces 0.52.
+    //
+    // So the search is off by default and these cases pin the REFUSAL, which is
+    // the behaviour that is actually correct: a heading it cannot resolve is
+    // one it must not claim. Bounding real gyro drift needs a finer map, far
+    // more range, or the compass the airframe already carries.
+    {
+        ScanMatchParams yp = sp; yp.yawRangeDeg = 8.f; yp.yawStepDeg = 1.f;
+        ScanMatcher ym; ym.init(yp);
+        VoxelWorld pr; makeBox(pr, 24, true);
+        VoxelMap Mp; build(pr, Mp, start, 6, 0.2f);
+        CamPose atp = start; atp.n += 0.2f * 5.f;
+
+        CamPose turned = atp; turned.yawDeg += 6.f;
+        cv::Mat d = cam.renderTruth(pr, turned);
+        ScanMatch r = ym.match(Mp, d, cam, atp);
+        std::printf("  [yaw] 6.0 deg of error, pillar in view: recovered %+.2f, curv %.4f\n",
+                    r.dYawDeg, r.curv[3]);
+        check("a heading error below what the map can resolve is REFUSED",
+              std::fabs(r.dYawDeg) < 0.01f, f3(r.dYawDeg) + " deg claimed");
+        check("and the heading axis does not report itself observed",
+              !r.axisObserved[3], "curvature " + f3(r.curv[3]));
+    }
+    {
+        // With the search off entirely -- the shipping default -- yaw is simply
+        // never touched, which is the same outcome by a shorter route.
+        cv::Mat d = cam.renderTruth(room, at);
+        ScanMatch r = sm.match(Mr, d, cam, at);
+        check("with the search off, heading is never claimed at all",
+              std::fabs(r.dYawDeg) < 1e-6f && !r.axisObserved[3]);
+    }
+
     // ---- the SAME box, stretched: a corridor -------------------------------
     // Slid along its own length it scores identically everywhere, so the
     // along-axis is unobservable however clean the fit looks on the other two.
@@ -151,8 +202,8 @@ int main() {
         CamPose atc = ch; atc.n += 0.2f * 5.f;
         cv::Mat d = cam.renderTruth(cor, atc);
         ScanMatch r = sm.match(Mc, d, cam, atc);
-        std::printf("  [corridor] curvature  E %.4f  N %.4f  U %.4f   hit %.2f\n",
-                    r.curv[0], r.curv[1], r.curv[2], r.hitFrac);
+        std::printf("  [corridor] curv E %.4f N %.4f U %.4f Y %.4f  dYaw %+.2f  hit %.2f\n",
+                    r.curv[0], r.curv[1], r.curv[2], r.curv[3], r.dYawDeg, r.hitFrac);
         check("along a corridor, the along-axis reads unobserved",
               !r.axisObserved[1], "N curvature " + f3(r.curv[1]));
         // In the room the end wall pinned N; stretching the box removes it, so

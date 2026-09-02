@@ -253,6 +253,7 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame) {
 
     // Re-locking from a zoomed-out search demands a STRONG match -- a coarse scan
     // over a large area would otherwise re-lock onto background.
+    //
     const float acceptConf = wide ? confLock() : confFloor();
     if (anyWeight > 0.f && conf_ >= acceptConf) {
         float sx = 0, sy = 0;

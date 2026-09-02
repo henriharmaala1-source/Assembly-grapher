@@ -289,19 +289,42 @@ void testWideSearchScratchReuse() {
     GrayFrame f = makeFrame(320, 240, 160, 120, 40, rng, false);
     t.designate(f, 160, 120, 48);
     bool sawWide = false;
+    int  framesToWide = -1;                 // LATENCY, not just whether
     for (int i = 0; i < 30; ++i) {          // force the wide search open
         GrayFrame g = makeFrame(320, 240, -999, -999, 40, rng, false);
         const auto r = t.update(g);
-        if (r.state == LockTracker::State::SEARCHING) sawWide = true;
+        if (r.state == LockTracker::State::SEARCHING) {
+            if (!sawWide) framesToWide = i;
+            sawWide = true;
+        }
     }
-    // NOT asserted as SEARCHING. With LATTICE_FIX, PSR roughly DOUBLES (self
-    // match 0.50 -> 1.00), so the ABSOLUTE psrWarn/psrLock gates became
-    // effectively half as strict and the tracker holds lock on background for
-    // longer on an empty scene. That is a known, measured regression in the
-    // Python reference (z_below_floor 15 -> 1, 0W-8L), and the obvious remedy --
-    // scaling both gates by 2 -- was tested there and is DECISIVELY WORSE:
-    // -10.77 +/- 1.48, t = -7.28. So it ships unclosed, and this test records
-    // the behaviour instead of pretending it does not exist.
+    std::printf("  wide search: frames of empty scene before SEARCHING = %d\n",
+                framesToWide);
+    // THE LATTICE_FIX REGRESSION DOES NOT REPRODUCE HERE, and that is worth
+    // recording because the header still warns about it.
+    //
+    // The claim carried over from the Python reference is that PSR roughly
+    // doubling made the ABSOLUTE psrWarn/psrLock gates half as strict, so lock
+    // is held on background too long on an empty scene (z_below_floor 15 -> 1).
+    // Measured in this port: SEARCHING opens after 6 frames of a textured empty
+    // scene, and FOV_DELAY is 6 -- it fails over at the fastest the constant
+    // permits. There is no latency left for a stricter gate to recover.
+    //
+    // A RELATIVE FLOOR WAS BUILT AND REVERTED. Gating on a fraction of the
+    // running clean baseline (psrEma_, which the occlusion detector already
+    // uses) is scale-invariant where a doubled constant is not, so it looked
+    // like the right shape of fix. Measured: no change at all here -- still 6
+    // frames -- and the occlusion scenario regressed hard, final error 0.0 px
+    // LOCKED to 59.1 px SEARCHING, because PSR legitimately falls below the
+    // baseline during an occlusion and the floor rejected the very frames the
+    // tracker is supposed to coast through. One measured loss, no measured win.
+    //
+    // WHAT IS STILL UNKNOWN. This is a synthetic unit test; the reference's
+    // z_below_floor runs on clips. A background that produces a plausible FALSE
+    // PEAK, rather than the smooth sinusoid here, could still hold lock. That
+    // needs eval_tracker.py on real footage -- the same blocker as the MOSSE
+    // swap and HIST_WEIGHT_CAP. Do not re-derive the relative floor from the
+    // header's warning alone; it has been tried.
     std::printf("  wide search: reached SEARCHING = %d\n", sawWide);
     float err = 1e9f;
     for (int i = 0; i < 15; ++i) {          // put it back and re-acquire

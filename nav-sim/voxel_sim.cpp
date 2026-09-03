@@ -101,6 +101,8 @@ int main(int argc, char** argv) {
     // no longer catch a mapping error: it is testing the planner and nothing
     // else. The normal path stays the one that answers "will this fly".
     bool voxelOnly = false;
+    int   mazeCells     = 6;
+    float mazeCorridorM = 4.0f;
     int steps = 600;
     float cell = 0.25f, dt = 0.1f;
     int   camW = 320, camH = 240;
@@ -212,6 +214,8 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--world")) world = next("forest");
         else if (!std::strcmp(argv[i], "--points")) pointsFile = next("");
         else if (!std::strcmp(argv[i], "--voxelonly")) voxelOnly = true;
+        else if (!std::strcmp(argv[i], "--mazecells")) mazeCells = std::atoi(next("8"));
+        else if (!std::strcmp(argv[i], "--mazewidth")) mazeCorridorM = float(std::atof(next("4")));
         else if (!std::strcmp(argv[i], "--steps")) steps = std::atoi(next("600"));
         else if (!std::strcmp(argv[i], "--cell")) { cell = float(std::atof(next("0.25"))); cellSet = true; }
         else if (!std::strcmp(argv[i], "--mixed")) mixed = true;
@@ -292,7 +296,23 @@ int main(int argc, char** argv) {
     bool loadedPoints = false;
     std::vector<Trail> trails;
     float px, py, pz;
-    if (world == "lidar" || world == "saved") {
+    if (world == "maze") {
+        // Corridor width is the parameter that matters: it must clear the
+        // aircraft's diameter with margin, or the maze is a collision test
+        // wearing a routing test's clothes. 4 m against a 0.6 m radius is
+        // deliberately generous -- the question here is whether it can ROUTE,
+        // not whether it can squeeze.
+        MazeParams mp2; mp2.cell = 0.25f; mp2.seed = unsigned(seed);
+        mp2.cellsX = mazeCells; mp2.cellsY = mazeCells;
+        mp2.corridorM = mazeCorridorM;
+        float sx = 0, sy = 0, gx = 0, gy = 0;
+        genMaze(W, mp2, &sx, &sy, &gx, &gy);
+        px = sx; py = sy; pz = 1.5f;
+        goalE = gx; goalN = gy; goalU = 1.5f;
+        std::printf("[maze] %dx%d cells, %.1f m corridors, start (%.1f, %.1f) "
+                    "-> goal (%.1f, %.1f)\n",
+                    mp2.cellsX, mp2.cellsY, mp2.corridorM, sx, sy, gx, gy);
+    } else if (world == "lidar" || world == "saved") {
         // A SPACE SAVED FROM REAL DATA. voxel_live writes one with 'p'; this
         // flies the planner through it, deterministically and as often as you
         // like. The point of the whole exercise: a walk becomes a fixture.

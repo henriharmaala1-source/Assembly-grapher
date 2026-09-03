@@ -744,4 +744,84 @@ void genRoad(VoxelWorld& w, const RoadParams& p) {
     }
 }
 
+// ---------------------------------------------------------------------------
+void genMaze(VoxelWorld& w, const MazeParams& p,
+             float* startX, float* startY, float* goalX, float* goalY) {
+    const int   cx = std::max(2, p.cellsX), cy = std::max(2, p.cellsY);
+    // One maze cell is a corridor plus the wall on its low side, so the world is
+    // cells*(corridor+wall) with one closing wall on each far edge.
+    const float pitch = p.corridorM + p.wallT;
+    const float sizeX = cx * pitch + p.wallT;
+    const float sizeY = cy * pitch + p.wallT;
+    const int nx = int(sizeX / p.cell) + 1;
+    const int ny = int(sizeY / p.cell) + 1;
+    const int nz = int((p.wallH + (p.ceiling ? p.wallT : 0.f) + 1.f) / p.cell) + 1;
+    w.init(p.cell, 0, 0, 0, nx, ny, nz);
+
+    fillBox(w, 0, 0, 0, sizeX, sizeY, p.cell * 0.99f, 0.55f);          // floor
+
+    // RANDOMISED DFS. Start from a full grid of walls and carve: the classic
+    // construction, and the reason it yields a PERFECT maze is that a cell is
+    // only ever entered once, so no second path to it can exist.
+    std::vector<uint8_t> visited(size_t(cx) * cy, 0);
+    // wallV[x][y] = wall on the LOW-x side of cell (x,y); wallH likewise low-y.
+    std::vector<uint8_t> wallV(size_t(cx + 1) * cy, 1), wallH(size_t(cx) * (cy + 1), 1);
+    auto vIdx = [&](int x, int y) { return size_t(x) * cy + y; };
+    auto hIdx = [&](int x, int y) { return size_t(x) * (cy + 1) + y; };
+
+    std::mt19937 rng(p.seed);
+    std::vector<std::pair<int,int>> stack;
+    stack.push_back({0, 0});
+    visited[vIdx(0, 0)] = 1;
+    while (!stack.empty()) {
+        auto [x, y] = stack.back();
+        int dirs[4] = {0, 1, 2, 3};
+        std::shuffle(dirs, dirs + 4, rng);
+        bool moved = false;
+        for (int k = 0; k < 4 && !moved; ++k) {
+            const int dx = (dirs[k] == 0) - (dirs[k] == 1);
+            const int dy = (dirs[k] == 2) - (dirs[k] == 3);
+            const int nxc = x + dx, nyc = y + dy;
+            if (nxc < 0 || nyc < 0 || nxc >= cx || nyc >= cy) continue;
+            if (visited[vIdx(nxc, nyc)]) continue;
+            // Knock out the wall BETWEEN the two cells.
+            if (dx == 1)       wallV[vIdx(x + 1, y)] = 0;
+            else if (dx == -1) wallV[vIdx(x,     y)] = 0;
+            else if (dy == 1)  wallH[hIdx(x, y + 1)] = 0;
+            else               wallH[hIdx(x, y    )] = 0;
+            visited[vIdx(nxc, nyc)] = 1;
+            stack.push_back({nxc, nyc});
+            moved = true;
+        }
+        if (!moved) stack.pop_back();
+    }
+
+    // Entry and exit: open the outer wall at opposite corners, so the route is
+    // forced through the whole maze rather than along one edge.
+    wallH[hIdx(0, 0)]           = 0;    // south face of (0,0)
+    wallH[hIdx(cx - 1, cy)]     = 0;    // north face of (cx-1, cy-1)
+
+    // --- realise the walls as geometry --------------------------------------
+    for (int x = 0; x <= cx; ++x)
+        for (int y = 0; y < cy; ++y)
+            if (wallV[vIdx(x, y)])
+                fillBox(w, x * pitch, y * pitch, 0,
+                        x * pitch + p.wallT, (y + 1) * pitch + p.wallT, p.wallH, p.tex);
+    for (int x = 0; x < cx; ++x)
+        for (int y = 0; y <= cy; ++y)
+            if (wallH[hIdx(x, y)])
+                fillBox(w, x * pitch, y * pitch, 0,
+                        (x + 1) * pitch + p.wallT, y * pitch + p.wallT, p.wallH, p.tex);
+
+    if (p.ceiling)
+        fillBox(w, 0, 0, p.wallH, sizeX, sizeY, p.wallH + p.wallT, p.tex * 0.8f);
+
+    // Centres of the entry and exit CORRIDORS, not of the maze cells' walls.
+    const float half = p.wallT + p.corridorM * 0.5f;
+    if (startX) *startX = half;
+    if (startY) *startY = half;
+    if (goalX)  *goalX  = (cx - 1) * pitch + half;
+    if (goalY)  *goalY  = (cy - 1) * pitch + half;
+}
+
 }  // namespace sim

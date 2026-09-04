@@ -346,6 +346,32 @@ public:
     // and they are different questions with different fixes. Rejected at the
     // very first rollout point means the aircraft is already boxed in; rejected
     // later means it simply cannot go far enough to earn any speed.
+    // PER-PRIMITIVE EVALUATION, recorded during plan() rather than recomputed.
+    //
+    // plan() returns only the winner, which is all a classical controller needs.
+    // A learned policy that RANKS primitives needs the losers too -- and it must
+    // see them through the same rollout, the same sphereClear and the same
+    // unknown rule the classical planner used, or the comparison between them
+    // is not a comparison. So this is a recording of that loop, not a second
+    // implementation of it.
+    struct PrimEval {
+        float freeM   = 0.f;    // CONFIRMED-FREE length; unknown earns nothing
+        float endAz   = 0.f, endEl = 0.f;
+        float goalErr = 0.f;    // normalised endpoint-vs-goal error
+        float clear   = 0.f;    // freeM / (vMax * horizonS)
+        float farOpen = 0.f;    // advisory only, never a veto
+        float speed = 0.f, yawRate = 0.f, climb = 0.f;
+        bool  admissible = false;
+        int   why = 0;          // 0 admissible, 1 occupied, 2 unknown
+    };
+    const std::vector<PrimEval>& evals() const { return evals_; }
+    // The command a given primitive would issue, so a caller that selects by
+    // index can fly it without going back through plan()'s argmax.
+    void primCommand(size_t i, float& speed, float& yawRate, float& climb) const {
+        if (i >= prims_.size()) { speed = yawRate = climb = 0.f; return; }
+        speed = prims_[i].speed; yawRate = prims_[i].yawRate; climb = prims_[i].climb;
+    }
+
     struct Reject {
         int occupied = 0;   // an OCCUPIED cell inside the robot ball
         int unknown  = 0;   // the centreline was not confirmed FREE
@@ -366,6 +392,7 @@ private:
     float lastAz_ = 0, lastEl_ = 0;
     bool  haveLast_ = false;
     Reject reject_;
+    std::vector<PrimEval> evals_;
 };
 
 }  // namespace sim

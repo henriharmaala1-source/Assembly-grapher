@@ -305,6 +305,18 @@ target_include_directories(flow_velocity_check PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(flow_velocity_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME flow_velocity_check COMMAND flow_velocity_check)
 
+add_executable(rl_env_check
+  test/rl_env_check.cpp
+  rl_env.cpp
+  voxel_traj.cpp
+  voxel_map.cpp
+  voxel_world.cpp
+  depth_camera.cpp
+  bearing_field.cpp)
+target_include_directories(rl_env_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(rl_env_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME rl_env_check COMMAND rl_env_check)
+
 add_executable(lookaround_check
   test/lookaround_check.cpp
   depth_camera.cpp

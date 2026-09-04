@@ -129,12 +129,16 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
     };
 
     reject_ = Reject();
+    evals_.assign(prims_.size(), PrimEval());
+    size_t evalIdx = 0;
     float best = -1e30f;
     const Prim* bestPrim = nullptr;
     float bestFree = 0;
     size_t bestClear = 0;
 
     for (const Prim& pr : prims_) {
+        PrimEval& ev = evals_[evalIdx++];
+        ev.speed = pr.speed; ev.yawRate = pr.yawRate; ev.climb = pr.climb;
         // How far along does the swept volume stay clear? Stop at the first
         // blocked sample; everything past it is unreachable, not merely costly.
         size_t nClear = 0;
@@ -146,7 +150,21 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
             // keeps whatever free length it earned up to here.
             if (p_.rollCapM > 0.f && freeLen >= p_.rollCapM) break;
             float wx, wy, wz; toWorld(pr.pts[i], wx, wy, wz);
-            if (!sphereClear(m, wx, wy, wz, p_.robotR, p_.coreFrac)) { why = 1; break; }
+            if (!sphereClear(m, wx, wy, wz, p_.robotR, p_.coreFrac)) {
+                // WHICH KIND of rejection, and they are not the same thing.
+                // sphereClear refuses an OCCUPIED cell anywhere in the ball and
+                // also a centre cell that is merely not CONFIRMED free -- so
+                // "blocked by a wall" and "have not looked there yet" both
+                // arrived here as why = 1. They want opposite responses: back
+                // off versus go and look, and a reject histogram that cannot
+                // tell them apart says "occupied 209 unknown 0" in a maze whose
+                // corridors are mostly unexplored.
+                //
+                // One stateAt on the break path only, so this costs a lookup
+                // per rejected primitive rather than per rollout point.
+                why = (m.stateAt(wx, wy, wz) == VoxelMap::OCCUPIED) ? 1 : 2;
+                break;
+            }
             // Only CONFIRMED-FREE length earns speed. Unknown space is
             // traversable but pays nothing, which is the rule that stopped this
             // aircraft flying into a tree at 1.5 m/s on perfect depth.
@@ -159,6 +177,7 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         if (nClear == 0) {
             if (why == 1) ++reject_.occupied; else ++reject_.unknown;
             ++reject_.atStart;
+            ev.why = why ? why : 2;
             continue;
         }
         if (why == 1) ++reject_.occupied; else if (why == 2) ++reject_.unknown;
@@ -173,6 +192,8 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
                  + std::fabs(endEl - goalElDeg) / 90.f * 0.5f;
         float clear = freeLen / std::max(0.1f, p_.vMax * p_.horizonS);
         float smooth = std::fabs(pr.yawRate) / std::max(1.f, p_.maxYawRate);
+        ev.freeM = freeLen; ev.endAz = endAz; ev.endEl = endEl;
+        ev.goalErr = gd; ev.clear = clear; ev.why = why;
 
         // Coarse-map openness along the bearing this primitive ends on. Reward
         // only -- it cannot veto, and it cannot raise the speed budget.
@@ -257,6 +278,13 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
                     + p_.farWeight * farOpen
                     - p_.climbPenalty * climbUp
                     - p_.descentPenalty * sinkDn;
+        ev.farOpen = farOpen;
+        // ADMISSIBLE means it survived the swept-volume veto and earned at
+        // least minFreeM of confirmed-free length -- exactly the test the
+        // classical planner applies before a primitive may be chosen. The
+        // action mask handed to a policy is this flag and nothing else, so the
+        // policy and the planner are choosing from the same set.
+        ev.admissible = (freeLen >= p_.minFreeM);
         if (score > best) {
             best = score; bestPrim = &pr; bestFree = freeLen; bestClear = nClear;
         }

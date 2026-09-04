@@ -1,0 +1,7 @@
+# The RL harness only. The C++ tree builds and tests without any of this.
+gymnasium>=1.0
+stable-baselines3>=2.5
+sb3-contrib>=2.5          # MaskablePPO: the action mask is not optional here
+numpy>=1.24
+pybind11>=2.12
+tensorboard

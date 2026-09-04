@@ -305,6 +305,24 @@ target_include_directories(flow_velocity_check PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(flow_velocity_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME flow_velocity_check COMMAND flow_velocity_check)
 
+# Python bindings, optional: the C++ tree builds and tests without them.
+# pybind11's newer CMake needs Python found with Development.Module first,
+# otherwise pybind11_add_module fails on an unknown python3_add_library.
+find_package(Python3 COMPONENTS Interpreter Development.Module QUIET)
+find_package(pybind11 QUIET)
+if(pybind11_FOUND)
+  pybind11_add_module(voxelenv
+    python/voxelenv_py.cpp
+    rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
+    depth_camera.cpp bearing_field.cpp)
+  target_include_directories(voxelenv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(voxelenv PRIVATE ${OpenCV_LIBS})
+  message(STATUS "nav_sim: pybind11 found - building the voxelenv python module")
+else()
+  message(STATUS "nav_sim: no pybind11 - skipping the voxelenv python module"
+                 " (pip install pybind11, then -Dpybind11_DIR=$(python3 -m pybind11 --cmakedir))")
+endif()
+
 add_executable(rl_env_check
   test/rl_env_check.cpp
   rl_env.cpp

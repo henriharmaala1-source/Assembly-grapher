@@ -265,3 +265,77 @@ comparison the RL policy has to win:
 
 If a learned policy cannot beat a classical global planner that is provably
 blocked by partial observability, it has not earned its place.
+
+
+---
+
+## 10. Forest baseline, measured
+
+Same protocol as the maze (§9): 1500 steps, path travelled in metres.
+
+| seed | OMPL RRTConnect + reactive | reactive only |
+|---|---|---|
+| 1 | 215.9 | 10.8 |
+| 2 | 242.5 | 20.7 |
+| 3 | 245.3 | 23.2 |
+| 4 | 112.4 | 46.2 |
+| mean | **204.0** | **25.2** |
+
+**8×**, against the maze's 3.7×, and the global planner wins 4 of 4 again. In
+open forest it is doing nearly all of the work.
+
+Together the two worlds bracket the problem: the maze is where the classical
+stack hits a hard exploration ceiling (§9), the forest is where it runs freely
+and any learned policy has a high bar to clear.
+
+---
+
+## 11. On CUDA — the earlier answer was too glib
+
+"The GPU will be idle and that is correct" is right about the POLICY and wrong
+as a general claim, so it is worth separating.
+
+**Why most RL uses GPUs**, and whether it applies here:
+
+| reason | applies? |
+|---|---|
+| Vision policies (CNN over pixels) | **No** — the observation is 1914 floats, not an image |
+| Large policies (transformers) | **No** — a 256×256 MLP is microseconds |
+| **GPU-resident physics** (Isaac Gym, Brax, MJX, Madrona) | **Yes, in principle** |
+
+The third is the real one, and it is where the 100–1000× numbers in the
+literature come from. And this environment is genuinely GPU-shaped: a 160×120
+depth render is 19,200 independent DDA raycasts, and 210 primitives × ~20 points
+× a 5³ sphere check is ~500,000 independent voxel lookups per step. Both are
+embarrassingly parallel.
+
+### But a full CUDA port is the wrong trade, for a specific reason
+
+`frame_source.hpp` states the discipline: the sim runs **the same code that
+flies**, so a bug seen on real data is a bug in the code that would fly. A CUDA
+`VoxelMap` and a CUDA `sphereClear` are a *second implementation* of the flight
+code. They would drift, and then the policy would be trained against a world
+model that is not the one deployed. That is Langostino's failure with the serial
+numbers filed off.
+
+### The version that is worth doing
+
+**Port only the depth renderer.** It is the right piece for three reasons:
+
+1. **It is the dominant cost.** `voxel_sim` reports it separately — 46.8 ms/step
+   in forest against ~14 ms of everything else, so roughly 75 % of a step.
+2. **It is purely functional**: world in, depth image out. No state, no
+   scattered writes, no atomics.
+3. **It is not flight code.** The tool labels it `[sim-only]` in its own output,
+   because the real aircraft gets depth from a D435i. A CUDA version forks
+   nothing that flies.
+
+Removing ~75 % of the step is roughly a 4× speedup, which takes a 10 M-step
+stereo run from 8–18 h to **2–5 h** on the same 16 workers — without touching a
+line of the code under test.
+
+### And measure the policy device rather than assuming
+
+`train.py --device cuda` exists so the claim can be checked. Expect CPU to win
+at a 256×256 MLP; if the per-primitive encoder is widened substantially, that
+flips, and the answer should come from a stopwatch either way.

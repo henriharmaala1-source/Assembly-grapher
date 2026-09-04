@@ -1,0 +1,222 @@
+# RL path-policy harness — plan
+
+Target hardware: **i5-13600K** (6 P-cores / 12 threads + 8 E-cores = 20 threads),
+**RTX 4070** 12 GB, **32 GB** RAM.
+
+The goal is not "add RL". It is to produce a learned planner that can be put in
+the same table as `--traj` and `--histogram`, on the same worlds and the same
+seeds, and be beaten or beat them on numbers this repo already trusts.
+
+---
+
+## 0. The two decisions that matter most
+
+Everything else is plumbing. These two are the design.
+
+### 0.1 Learn the RANKING, not the control
+
+The policy does **not** emit roll/pitch/yaw/throttle. It scores the primitives
+that `sphereClear` has **already admitted**, and picks one.
+
+- The hard veto stays geometric. The network can never grant permission — only
+  advise among options the geometry approved. That is this project's existing
+  authority asymmetry, obtained for free.
+- The action space is a discrete choice over ≤210 options rather than
+  continuous control: far easier to learn, and far easier to bound.
+- A bad policy picks a *worse admissible* primitive. It cannot pick an
+  inadmissible one. The Langostino failure mode — a learned model steering into
+  space nothing measured — is structurally unreachable.
+
+### 0.2 The observation must be able to say UNKNOWN
+
+A single scalar per direction cannot distinguish *clear* from *unmeasured*, and
+a policy trained where ground truth is complete will never discover the
+difference. Every spatial channel is therefore **two channels: a value and an
+observability mask.**
+
+This is the same rule as three-state occupancy, one level up. Getting it wrong
+is not a bug that shows up in training; it is a bug that shows up on hardware.
+
+---
+
+## 1. Observation
+
+Per-primitive features (the thing being ranked) plus a global context, so the
+network is a **shared per-item encoder + softmax over primitives**. Small,
+permutation-consistent, and cheap enough for the Pi at inference.
+
+**Per primitive `i` (210 × ~8 floats):**
+
+| feature | why |
+|---|---|
+| `freeM` along the rollout | how far it is confirmed clear |
+| min clearance over the swept ball | margin |
+| unknown fraction of the rollout | the observability channel |
+| endpoint az/el relative to the goal bearing | progress |
+| endpoint far-field openness | what the bearing field advises |
+| commanded speed, yaw rate, climb | the action itself |
+| endpoint visit count (see §2) | memory |
+
+**Global context (~24 floats):** goal bearing/elevation/range, current speed,
+attitude, fraction of primitives admitted, mean/max `freeM`, stopped-steps
+counter, and a coarse (36 az × 4 el) bearing-field summary with its own mask.
+
+---
+
+## 2. Memory, because the maze is a POMDP
+
+The measured failure in `--world maze` is not tuning: the reactive planner has
+**no record of which branches it rejected**, so it re-derives the same local
+preference every time it returns to a junction. No stateless score function can
+fix that.
+
+Two mechanisms, cheapest first:
+
+1. **Visit-count grid.** A coarse 2-D ego-centric grid (say 1 m cells, 32×32)
+   counting how often each cell has been occupied by the vehicle, decayed. Fed
+   as a channel, and sampled per primitive endpoint. This alone should enable
+   "do not go back down that corridor" and costs almost nothing.
+2. **Recurrence** (`RecurrentPPO` from sb3-contrib) if (1) is not enough.
+
+Start with (1). It is interpretable, and if it works the policy stays feed-forward
+and trivially cheap on the Pi.
+
+---
+
+## 3. Reward
+
+The user's requirement is longer runs with distance rewarded. **Raw distance
+travelled is reward-hackable** — a policy that orbits forever scores well — so
+the distance term is split:
+
+```
+r =  w_prog * Δ(range-to-goal)          progress, the main dense term
+   + w_cov  * (newly visited cells)     coverage, rewards exploring not orbiting
+   - w_time * dt                        finish sooner
+   - w_stop * (1 if speed < 0.1 else 0) stopping is the measured failure
+   - w_clear* max(0, d_min_target - minClearance)
+   + R_goal on arrival
+   - R_coll on collision (terminal)
+```
+
+`w_cov` on **newly visited** cells is what makes long runs pay without paying
+for circles. `w_stop` targets the specific pathology the sweep already measures.
+
+---
+
+## 4. Where the environment lives
+
+The sim is C++ and must stay that way — it is the flight code. So:
+
+- **pybind11 module** (`voxelenv`) wrapping a `VoxelEnv` class: `reset(world,
+  seed)`, `step(primitive_index)`, returning observation / reward / done / an
+  info dict carrying the scorecard fields.
+- **Gymnasium** wrapper over it, then SB3 **`SubprocVecEnv`**.
+
+No IPC per step, no serialising a depth image to Python — the observation is
+already a few thousand floats by the time it crosses the boundary.
+
+---
+
+## 5. Making use of the hardware
+
+### Thread budget (20 threads)
+
+| workers | assignment |
+|---|---|
+| 16 env workers | 8 E-cores + 8 P-threads |
+| 2–4 threads | learner, data collation, OS |
+
+E-cores are ~60–70 % of P-core IPC but env stepping is a **throughput** problem,
+not a latency one, so they are worth using. Pinning the learner to a P-core with
+`taskset` is an easy 10–20 % and worth doing once the rest works.
+
+### Throughput, measured from this repo's own numbers
+
+| mode | ms/step | 16 workers | 10 M steps |
+|---|---|---|---|
+| `--voxelonly` (no camera) | 3.5 | ~4,500 /s | **~37 min** |
+| `--truth` depth | ~15 | ~1,050 /s | **~2.6 h** |
+| stereo depth (real sensor model) | 45–130 | ~150–350 /s | **8–18 h** |
+
+So a full stereo run is an overnight job, and the cheap modes are minutes. That
+sets the curriculum in §6.
+
+### The GPU is nearly idle, and that is correct
+
+A `[64,128,64]`-class MLP at these batch sizes is **faster on CPU** than on the
+4070 — the PCIe round trip costs more than the arithmetic. Benchmark
+`device="cpu"` against `device="cuda"` before assuming otherwise; expect CPU to
+win until the per-item encoder gets much larger.
+
+The 4070 earns its place on other work in this project — learned stereo
+(fine-tuning HITNet/RAFT-Stereo, which *is* GPU work and is the only thing that
+moves `Z_max`), and any segmentation model. Do not size the RL plan around it.
+
+### RAM
+
+~80 MB per env (fine + mid + far maps, plus the world) × 16 ≈ 1.3 GB, plus
+rollout buffers. 32 GB is not a constraint.
+
+---
+
+## 6. Curriculum
+
+Staged because the expensive stage is 20–40× the cheap one, not because the task
+needs shaping.
+
+| stage | depth | worlds | steps | wall |
+|---|---|---|---|---|
+| 0 | `--voxelonly` | forest, maze | 1 M | minutes |
+| 1 | `--truth` | forest, lanes, city, road | 5 M | ~1.5 h |
+| 2 | **stereo** | same four | 10 M | 8–18 h |
+
+**Stage 0 is for plumbing and reward debugging only.** With the map complete
+from step 1 it trains a *known-map* planner, and partial observability is the
+entire problem — a policy that has never met an unknown cell will not survive
+one. Never report a stage-0 number as a result.
+
+Stage 2 must be stereo. The sensor model — dropout, texture dependence, `Z_max`,
+occlusion shadow — is what makes the policy transfer, and it is precisely the
+part Langostino's PyBullet training omitted.
+
+---
+
+## 7. Evaluation, and this is the point of the exercise
+
+**Reuse `sweep.sh`'s scorecard verbatim.** The comparison is worthless if the
+learned planner is scored on new metrics:
+
+```
+world  seed  outcome  travel  end-dist  minClr  falseFree
+```
+
+plus collisions, goals reached, stopped steps, and ms/step.
+
+- **Held out: `maze` and `culdesac`.** Train on forest / lanes / city / road only.
+  If it only works where it trained, it learned four worlds rather than
+  navigation — and the maze is the case that motivated memory in the first place.
+- **Held-out seeds** within the training worlds as well.
+- **Paired** against `--traj` and `--histogram` on identical seeds, reported with
+  |t| exactly as the existing sweeps do. Single-seed results are anecdotes; this
+  harness has been burned by that twice already.
+
+### The trap to instrument for
+
+The policy sees the **map**; collisions are scored against **`VoxelWorld`**. That
+separation is what makes reward hacking *detectable* — a policy exploiting a
+systematic map bias will show rising reward and flat-or-worse true clearance.
+Log both curves and watch them diverge.
+
+---
+
+## 8. Build order
+
+1. `--ompl` build and re-fly the maze. The forward planner ran 457 replans at
+   0.02 ms — that is the straight-line fallback, so **RRTConnect never ran**. The
+   maze may not need learning at all, and this is an afternoon.
+2. pybind11 `voxelenv` + a **random-action** agent. Proves the loop, the reward
+   plumbing and the vectorisation. These projects die here, not in the learning.
+3. Stage 0 run; confirm reward goes up and the eval script emits a sweep table.
+4. Stages 1–2.
+5. Paired comparison; write the result into `NOTES.md` whichever way it falls.

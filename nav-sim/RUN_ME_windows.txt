@@ -128,3 +128,24 @@ CPU. train.py --device cuda exists so you can measure that rather than take my
 word for it. See docs/RL_HARNESS_PLAN.md section 11 for where CUDA would
 actually pay (the depth renderer) and why the rest of the sim must stay on the
 CPU (it is the code that flies).
+
+CUDA (optional, and unverified)
+-------------------------------
+
+    cmake -B build -DNAVSIM_WITH_CUDA=ON
+    build\Release\cuda_depth_check.exe
+
+ONLY the depth renderer runs on the GPU. The map, the planner and the veto stay
+on the CPU because they are the code that flies -- a second GPU implementation
+of them would drift from what is deployed, and a policy would then be trained
+against a world model that is not the real one.
+
+THE KERNEL HAS NEVER BEEN COMPILED OR RUN by its author: it was written on a
+machine with no toolkit and no GPU. cuda_depth_check is the gate. It renders
+the same scene both ways and fails if they disagree by more than one voxel, and
+it fails hard if the GPU invents a surface the CPU did not see. Run it before
+trusting the GPU path; if it fails, build without CUDA and say so.
+
+Expected payoff if it passes: the render is ~75 % of a step (46.8 ms against
+~14 ms for everything else), so a 10 M-step stereo run should go from 8-18 h to
+roughly 2-5 h on the same 16 workers.

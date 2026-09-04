@@ -167,6 +167,7 @@ public:
     explicit DepthCamera(const CamParams& p = CamParams());
 
     float fpx() const { return fpx_; }
+    float fpy() const { return fy_; }
     float fy()  const { return fy_; }
     float ppx() const { return ppx_; }
     float ppy() const { return ppy_; }

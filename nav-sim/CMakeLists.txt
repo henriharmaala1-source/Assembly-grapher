@@ -323,6 +323,38 @@ else()
                  " (pip install pybind11, then -Dpybind11_DIR=$(python3 -m pybind11 --cmakedir))")
 endif()
 
+# ---------------------------------------------------------------------------
+# CUDA depth render. OFF by default and it must stay that way: the .cu kernel
+# has never been compiled by its author, and cuda_depth_check is the gate that
+# decides whether it may be trusted on a given machine.
+#
+# Only the RENDERER may leave the CPU. The map, the planner and the veto are
+# the code that flies (see frame_source.hpp) and a second GPU implementation of
+# them would drift from what is deployed.
+option(NAVSIM_WITH_CUDA "Build the CUDA depth renderer (needs a toolkit)" OFF)
+set(NAVSIM_DEPTH_CUDA_SRC depth_cuda.cpp)
+set(NAVSIM_CUDA_LIBS "")
+if(NAVSIM_WITH_CUDA)
+  include(CheckLanguage)
+  check_language(CUDA)
+  if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(NAVSIM_DEPTH_CUDA_SRC depth_cuda.cu)
+    add_compile_definitions(NAVSIM_HAVE_CUDA=1)
+    message(STATUS "nav_sim: CUDA depth renderer ENABLED - run cuda_depth_check before trusting it")
+  else()
+    message(WARNING "nav_sim: NAVSIM_WITH_CUDA=ON but no CUDA compiler found; using the CPU renderer")
+  endif()
+endif()
+
+add_executable(cuda_depth_check
+  test/cuda_depth_check.cpp
+  ${NAVSIM_DEPTH_CUDA_SRC}
+  depth_camera.cpp voxel_world.cpp)
+target_include_directories(cuda_depth_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(cuda_depth_check PRIVATE ${OpenCV_LIBS} ${NAVSIM_CUDA_LIBS})
+add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
+
 add_executable(rl_bench
   rl_bench.cpp
   rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp

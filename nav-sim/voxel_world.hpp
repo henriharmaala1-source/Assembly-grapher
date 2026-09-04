@@ -60,6 +60,12 @@ public:
     // that has to place a second grid over this one -- a loaded space does not
     // sit at the origin, and a map centred on the spawn instead of on the
     // GEOMETRY silently drops whatever falls outside it.
+    // Raw storage, for a renderer that has to hand this to a GPU. Read-only
+    // and deliberately unattractive to use: everything on the CPU side should
+    // go through solid()/texAt(), which bounds-check.
+    const std::vector<uint8_t>& bitsRef() const { return bits_; }
+    const std::vector<uint8_t>& texRef()  const { return tex_; }
+
     float ox() const { return ox_; }
     float oy() const { return oy_; }
     float oz() const { return oz_; }

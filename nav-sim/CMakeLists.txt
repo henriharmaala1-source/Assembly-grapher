@@ -323,6 +323,13 @@ else()
                  " (pip install pybind11, then -Dpybind11_DIR=$(python3 -m pybind11 --cmakedir))")
 endif()
 
+add_executable(rl_bench
+  rl_bench.cpp
+  rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
+  depth_camera.cpp bearing_field.cpp)
+target_include_directories(rl_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(rl_bench PRIVATE ${OpenCV_LIBS})
+
 add_executable(rl_env_check
   test/rl_env_check.cpp
   rl_env.cpp

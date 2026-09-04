@@ -130,13 +130,19 @@ EnvStep VoxelEnv::step(int action) {
                     && action < (int)mask_.size() && mask_[action];
     if (legal) I.traj.primCommand((size_t)action, speed, yawRate, climb);
 
+    // FLY THE ROLLOUT, not the nominal speed. The path sphereClear approved was
+    // integrated with the vehicle's first-order velocity lag, so applying the
+    // commanded speed directly travels further than what was checked -- and
+    // collides on a primitive the veto had passed.
     const float dt = cfg_.dt;
+    float bx = 0, by = 0, bz = 0;
+    if (legal) I.traj.primFirstStep((size_t)action, bx, by, bz);
+    const float ca = std::cos(I.yaw * sim::PI_F / 180.f);
+    const float sa = std::sin(I.yaw * sim::PI_F / 180.f);
+    const float nx = I.px + bx * ca + by * sa;
+    const float ny = I.py - bx * sa + by * ca;
+    const float nz = I.pz + bz;
     I.yaw += yawRate * dt;
-    const float s = std::sin(I.yaw * sim::PI_F / 180.f);
-    const float c = std::cos(I.yaw * sim::PI_F / 180.f);
-    const float nx = I.px + s * speed * dt;
-    const float ny = I.py + c * speed * dt;
-    const float nz = I.pz + climb * dt;
     const float moved = std::sqrt((nx-I.px)*(nx-I.px) + (ny-I.py)*(ny-I.py)
                                 + (nz-I.pz)*(nz-I.pz));
     I.px = nx; I.py = ny; I.pz = nz;

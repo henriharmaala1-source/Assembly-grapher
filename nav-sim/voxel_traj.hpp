@@ -365,6 +365,19 @@ public:
         int   why = 0;          // 0 admissible, 1 occupied, 2 unknown
     };
     const std::vector<PrimEval>& evals() const { return evals_; }
+    // The body-frame displacement one dt along primitive `i`.
+    //
+    // THIS IS WHAT AN ENV MUST FLY, not the primitive's nominal speed. The
+    // rollout sphereClear approved was integrated with the vehicle's own
+    // first-order velocity lag (tau), so a caller that instead applies the
+    // commanded speed directly moves further than the path that was checked --
+    // and then collides on a primitive the veto had passed. Measured: the
+    // classical score baseline collided on 3 of 3 maze seeds that way.
+    void primFirstStep(size_t i, float& bx, float& by, float& bz) const {
+        if (i >= prims_.size() || prims_[i].pts.empty()) { bx = by = bz = 0.f; return; }
+        bx = prims_[i].pts[0][0]; by = prims_[i].pts[0][1]; bz = prims_[i].pts[0][2];
+    }
+
     // The command a given primitive would issue, so a caller that selects by
     // index can fly it without going back through plan()'s argmax.
     void primCommand(size_t i, float& speed, float& yawRate, float& climb) const {

@@ -98,3 +98,33 @@ for the Hervanta / Tampere / Helsinki maps.
     --seed N  different generated world
     --csv F   per-step log for offline analysis
     --display live view
+
+
+RL PATH-POLICY HARNESS
+----------------------
+
+The point is a comparison, not a model: a learned planner scored in the SAME
+columns as the classical ones, on seeds it never trained on.
+
+Double-click  baselines.bat    the non-RL side. random / freeM / goal / the
+                               classical weighted score, all run through the
+                               same environment the policy uses, so the
+                               comparison is between planners and not between
+                               two harnesses. Start here -- these are the
+                               numbers a policy has to beat.
+
+Double-click  train.bat        train. 16 workers, 10 M steps, stereo depth.
+                               Expect 8-18 hours; it checkpoints as it goes,
+                               so a crash costs minutes rather than the run.
+
+Double-click  evaluate.bat     score a trained policy on held-out seeds.
+
+First time only:
+    pip install -r python\requirements.txt
+
+The GPU will look idle during training and that is correct, not a
+misconfiguration -- the bottleneck is environment steps, which are C++ on the
+CPU. train.py --device cuda exists so you can measure that rather than take my
+word for it. See docs/RL_HARNESS_PLAN.md section 11 for where CUDA would
+actually pay (the depth renderer) and why the rest of the sim must stay on the
+CPU (it is the code that flies).

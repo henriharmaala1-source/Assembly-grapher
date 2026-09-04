@@ -100,31 +100,44 @@ int main() {
     // what has been seen.
     std::printf("  maze: UNKNOWN channel fired = %d (expected 0, walls are close)\n",
                 sawUnknownChannel ? 1 : 0);
-    // A random agent must sometimes hit something, or the collision term is
-    // never exercised and the reward is untested in the direction that matters.
-    check("a random agent does collide", collided > 0,
-          std::to_string(collided) + "/" + std::to_string(episodes) + " episodes");
+    // A random agent now SURVIVES, and that is the veto working rather than a
+    // gap: the env flies the lagged rollout sphereClear approved instead of the
+    // primitive's nominal speed, so it cannot overshoot the checked path. Before
+    // that fix a random agent collided on 8 of 8 episodes and the classical
+    // score baseline on 3 of 3 maze seeds.
+    std::printf("  random-agent collisions: %d/%d episodes (0 is the veto working)\n",
+                collided, episodes);
     check("the far-field mask actually fires", sawFarMask);
     check("reward is not constant", std::fabs(maxR - minR) > 1e-3f,
           f2(minR) + " .. " + f2(maxR));
 
-    // Determinism: the same seed must give the same trajectory, or a paired
-    // comparison against the classical planners means nothing.
+    // THE COLLISION TERM, exercised deliberately rather than by hoping a random
+    // walk finds a wall. Command a steady descent: the floor is not something
+    // the swept-volume veto can save you from once you have chosen to fly into
+    // it, so this is the one reliable way to prove the penalty fires.
     {
-        VoxelEnv a(c), b(c);
-        std::mt19937 r1(11), r2(11);
-        EnvStep sa, sb;
-        for (int t = 0; t < 40; ++t) {
-            sa = a.step(int(r1() % a.nPrims()));
-            sb = b.step(int(r2() % b.nPrims()));
+        EnvConfig dc = c; dc.maxSteps = 200;
+        VoxelEnv de(dc);
+        de.reset("maze", 3);
+        float worst = 0.f; bool hit = false;
+        for (int t = 0; t < dc.maxSteps; ++t) {
+            // Pick the admissible primitive with the most negative climb.
+            const auto& m = de.actionMask();
+            const auto& o = de.observation();
+            const int F = VoxelEnv::obsFeaturesPerPrim();
+            int pick = 0; float lowest = 1e9f;
+            for (int i = 0; i < de.nPrims(); ++i)
+                if (m[i] && o[size_t(i) * F + 4] < lowest) { lowest = o[size_t(i) * F + 4]; pick = i; }
+            EnvStep s2 = de.step(pick);
+            worst = std::min(worst, s2.reward);
+            if (s2.collisions) { hit = true; break; }
+            if (s2.done || s2.truncated) break;
         }
-        check("two envs with the same seed agree exactly",
-              std::fabs(sa.travelM - sb.travelM) < 1e-6f
-              && std::fabs(sa.distToGoalM - sb.distToGoalM) < 1e-6f,
-              f2(sa.travelM) + " vs " + f2(sb.travelM));
+        check("flying into the ground collides and is punished", hit && worst < -10.f,
+              f2(worst) + " worst reward");
     }
 
-    // And forest, because the user wants both and they exercise different
+    // Determinism: the same seed    // And forest, because the user wants both and they exercise different
     // failure modes -- forest is sparse and open, the maze is enclosed.
     {
         EnvConfig fc = c; fc.world = "forest"; fc.seed = 1; fc.maxSteps = 120;

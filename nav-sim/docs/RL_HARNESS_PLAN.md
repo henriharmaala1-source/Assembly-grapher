@@ -339,3 +339,54 @@ line of the code under test.
 `train.py --device cuda` exists so the claim can be checked. Expect CPU to win
 at a 256×256 MLP; if the per-primitive encoder is widened substantially, that
 flips, and the answer should come from a stopwatch either way.
+
+
+---
+
+## 12. State, and what has actually been run
+
+Verified end to end on a 4-core container. Everything below was executed, not
+just written.
+
+| piece | state |
+|---|---|
+| `VoxelEnv` (C++) | **tested** — `rl_env_check`, 18/18 suite |
+| `voxelenv` pybind11 module | **tested** — loads, 210 prims, 1914-float obs |
+| `voxel_gym.py` | **tested** — resets, steps, masks |
+| `rl_bench` (baselines exe) | **tested** — 4 policies, real numbers |
+| `train.py` | **RUN** — 4096 steps, 4 workers, model saved |
+| `evaluate.py` | **RUN** — loads that model, emits the scorecard |
+| CUDA kernel | **never compiled.** `cuda_depth_check` is the gate |
+
+First actual training run, maze, truth depth:
+
+```
+4096 steps in 24 s, 163 steps/s on 4 workers (~41 /s/worker)
+ep_rew_mean -41.2   explained_variance 0.468   approx_kl 0.056
+```
+
+Gradients flow and the value function is learning something. That is all a
+4096-step run can show; it is a plumbing result, not a capability one.
+
+Round-tripping that model through `evaluate.py`: 8.2 m and 2.4 m travelled on
+two held-out maze seeds, no collisions, stopped on ~90 % of steps. **Worse than
+random** (25.6 m in `rl_bench`), which is exactly what an undertrained policy
+should look like — it has learned to stop rather than to move.
+
+### Extrapolating to a 13600K
+
+41 steps/s/worker on truth depth here. With 16 workers that is ~650 steps/s, so
+**10 M steps in ~4 h** on truth depth. Stereo is roughly 3× the render cost, so
+8–18 h as estimated in §5 — and the CUDA renderer, if its gate passes, should
+take that to 2–5 h.
+
+### What is not done
+
+- **No policy has been trained to convergence.** Nothing here says a learned
+  planner beats the classical one; the harness exists to answer that, and the
+  question is still open.
+- The CUDA kernel is unverified.
+- `rl_bench`'s `score` baseline is a re-derivation of the classical weighting on
+  normalised features, not a call into `TrajectoryPlanner`'s own argmax. It is
+  close but it is not identical, and a headline claim against "the classical
+  planner" should use `voxel_sim --traj` numbers rather than this one.

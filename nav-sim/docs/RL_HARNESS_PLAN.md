@@ -212,11 +212,56 @@ Log both curves and watch them diverge.
 
 ## 8. Build order
 
-1. `--ompl` build and re-fly the maze. The forward planner ran 457 replans at
-   0.02 ms — that is the straight-line fallback, so **RRTConnect never ran**. The
-   maze may not need learning at all, and this is an afternoon.
+1. ~~Build with OMPL and re-fly the maze.~~ **DONE — and it produced the
+   baseline this whole comparison needs.** See below.
 2. pybind11 `voxelenv` + a **random-action** agent. Proves the loop, the reward
    plumbing and the vectorisation. These projects die here, not in the learning.
 3. Stage 0 run; confirm reward goes up and the eval script emits a sweep table.
 4. Stages 1–2.
 5. Paired comparison; write the result into `NOTES.md` whichever way it falls.
+
+
+---
+
+## 9. The non-RL baseline, measured
+
+`find_package(ompl QUIET)` was missing a standard Ubuntu install (Debian puts
+`omplConfig.cmake` in `/usr/share/ompl/cmake`, off CMake's default path), so
+every maze result before this was the straight-line fallback. Fixed with HINTS;
+the tell was 0.02 ms per replan against RRTConnect's 1.0 ms.
+
+**Maze, 1500 steps, horizon 0.6 s, path travelled in metres:**
+
+| seed | OMPL RRTConnect + reactive | reactive only |
+|---|---|---|
+| 1 | 13.1 | 0.8 |
+| 2 | 18.5 | 14.6 |
+| 3 | 10.4 | 0.8 |
+| 4 | **20.5** | 0.8 |
+| mean | **15.6** | 4.3 |
+
+The global planner wins **4 of 4**, and reactive-only is wedged at the spawn on
+three of them. So the maze does need a global planner, and it is not a tuning
+problem.
+
+**But the global planner plateaus.** Seed 4 at 4000 steps travels the same
+20.5 m as at 1500 — closing 31.1 m to 17.1 m, about two thirds of the way — and
+is **stopped on 3837 of 4000 steps (96 %)**. More budget buys nothing.
+
+### Why this is the right baseline to put RL against
+
+RRTConnect plans through the **map**, and in a maze the map is mostly UNKNOWN
+because the corridors have not been looked down yet. Unknown is not free, so
+there is nothing to plan through, and the planner cannot route to a goal it has
+no observed corridor to. The maze is therefore an **exploration** problem
+wearing a path-planning problem's clothes.
+
+That is a clean, measured ceiling with a known cause, which makes it exactly the
+comparison the RL policy has to win:
+
+- beat **15.6 m mean** on held-out maze seeds, and
+- break the **20.5 m plateau**, which requires remembering which branches were
+  already refused — the thing §2's visit-count grid exists for.
+
+If a learned policy cannot beat a classical global planner that is provably
+blocked by partial observability, it has not earned its place.

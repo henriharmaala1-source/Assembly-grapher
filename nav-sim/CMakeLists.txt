@@ -110,11 +110,24 @@ target_link_libraries(bark_contrast PRIVATE ${OpenCV_LIBS})
 
 # Defined after the OMPL probe below, since it flies a real planned run.
 
-find_package(ompl QUIET)
+# Debian and Ubuntu install omplConfig.cmake to /usr/share/ompl/cmake, which is
+# NOT on CMake's default search path -- so `find_package(ompl QUIET)` reported
+# "no OMPL" on a machine where libompl-dev was installed, and the forward
+# planner silently fell back to a straight-line probe.
+#
+# That failure is quiet in exactly the wrong way. The run still completes and
+# still prints a forward-planner cost, so a sweep reads as "the global planner
+# did not help" when the global planner never ran: measured here at 0.02 ms per
+# replan against RRTConnect's 1.0 ms, which is the tell if anyone looks.
+#
+# HINTS rather than a hard path, so a source build or a different prefix still
+# wins. The status line now names which planner is actually compiled in.
+find_package(ompl QUIET HINTS /usr/share/ompl/cmake /usr/local/share/ompl/cmake)
 if(ompl_FOUND)
   message(STATUS "nav_sim: OMPL found - forward planner uses RRTConnect")
 else()
-  message(STATUS "nav_sim: no OMPL - forward planner falls back to a straight-line probe")
+  message(STATUS "nav_sim: no OMPL - forward planner falls back to a straight-line probe"
+                 " (Debian/Ubuntu: apt install libompl-dev libboost-serialization-dev)")
 endif()
 
 add_executable(voxel_sim

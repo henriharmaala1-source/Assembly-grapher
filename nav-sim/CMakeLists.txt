@@ -12,6 +12,7 @@ endif()
 
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(OpenCV QUIET COMPONENTS highgui)
+find_package(OpenCV QUIET OPTIONAL_COMPONENTS videoio)
 
 add_executable(nav_sim
   sim_main.cpp
@@ -354,6 +355,37 @@ add_executable(cuda_depth_check
 target_include_directories(cuda_depth_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(cuda_depth_check PRIVATE ${OpenCV_LIBS} ${NAVSIM_CUDA_LIBS})
 add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
+
+# ---------------------------------------------------------------------------
+# kestrel -- one binary over the three things this project can demonstrate.
+# It reaches into ../onboard for the tracker, which is the only place these two
+# trees are linked together; everything else stays separate on purpose.
+#
+# videoio is OPTIONAL, exactly as highgui already is. Without it `track` still
+# runs over an IMAGE SEQUENCE, which is deterministic and diffable where a video
+# decode is neither -- the better thing to regression-test against anyway.
+# NO second find_package here. Re-running it with a COMPONENTS list that the
+# install does not have FAILS HARD and clears OpenCV_LIBS for everything below,
+# so a missing videoio took the whole configure down with it. The find at the
+# top of this file already ran; just ask whether the target came out of it.
+add_executable(kestrel
+  kestrel.cpp
+  rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
+  depth_camera.cpp bearing_field.cpp
+  ../onboard/src/lock_tracker_fused.cpp
+  ../onboard/src/crop_filters.cpp
+  ../onboard/src/gray_frame.cpp
+  ../onboard/src/optical_flow.cpp)
+target_include_directories(kestrel PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
+  ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS})
+if(TARGET opencv_videoio)
+  target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_VIDEOIO=1)
+  message(STATUS "nav_sim: kestrel built WITH videoio - `track` accepts video files")
+else()
+  message(STATUS "nav_sim: kestrel built without videoio - `track` takes image sequences")
+endif()
 
 add_executable(rl_bench
   rl_bench.cpp

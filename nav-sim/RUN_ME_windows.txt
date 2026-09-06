@@ -1,3 +1,27 @@
+KESTREL - one binary for the three things this project can demonstrate
+=====================================================================
+
+Double-click  kestrel.exe        a menu over all three
+
+  kestrel track --box X Y SIZE --csv out.csv frames*.png
+        object lock over recorded frames or a video. --box designates the
+        target on the FIRST frame; without it the centre is used, which is
+        only right if that is where the target is. Prints lock rate and
+        writes a per-frame state timeline.
+
+  kestrel bench --worlds forest maze --seeds 101 108
+        the non-RL path-planner baselines, through the SAME environment a
+        learned policy uses. These are the numbers a policy has to beat.
+
+  kestrel sim      the live voxel sim   (spawns voxel_live)
+  kestrel train    RL training          (spawns python train.py)
+
+Video support is optional. Without OpenCV's videoio, `track` still runs over
+an IMAGE SEQUENCE -- deterministic and diffable where a video decode is
+neither, so it is the better thing to regression-test against.
+
+---------------------------------------------------------------------
+
 KESTREL VOXEL NAVIGATION SIM - Windows build
 
 Double-click  voxel_gui.exe      the simulator: fly a synthetic forest

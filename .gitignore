@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Model / torch hub cache
+*.pt
+*.pth
+*.onnx
+models/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+onboard/build/
+build/
+# any out-of-tree build dir (build-lr, build-vx, build-sb ...)
+build*/
+*/build*/

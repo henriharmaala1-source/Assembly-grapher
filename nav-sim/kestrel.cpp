@@ -1,0 +1,523 @@
+// kestrel -- one binary for the three things this project can actually do.
+//
+//   kestrel                       an interactive menu
+//   kestrel track  <frames...>    object lock over video or an image sequence
+//   kestrel bench  [--worlds ...] the non-RL path-planner baselines
+//   kestrel sim    [args...]      the live voxel sim, in this process
+//   kestrel train  [args...]      RL training         (runs python train.py)
+//   kestrel gui                   the window (also what a double-click gets)
+//   kestrel menu                  the text menu, for a headless box
+//
+// THIS IS THE ONLY EXECUTABLE THE DEFAULT BUILD PRODUCES. The tracker, the
+// planner baselines and the live sim are all compiled in; `sim` calls
+// voxelLiveMain() directly rather than starting a second program, so there is
+// no second binary to ship, find, or keep in step with this one.
+//
+// TRAINING IS THE ONE EXCEPTION and it is not a packaging failure. The trainer
+// is PyTorch and stable-baselines3 driving the C++ environment through the
+// voxelenv extension module. Embedding libpython here would not remove that
+// dependency -- it would pin the exe to one interpreter's ABI and turn a
+// missing package into a link error instead of a message naming the pip
+// command. cmdTrain checks the imports first and then runs python3.
+//
+// VIDEO IS OPTIONAL, exactly as highgui already is in this tree. A build without
+// OpenCV's videoio can still run `track` over an IMAGE SEQUENCE, which is what a
+// frame dump or a set of extracted stills gives you. That is not a lesser mode:
+// a sequence is deterministic and diffable where a video decode is neither, so
+// it is the better thing to regression-test against.
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+// Where to send a probe's output so it does not clutter the console.
+#ifdef _WIN32
+#define NULLDEV "NUL"
+#else
+#define NULLDEV "/dev/null"
+#endif
+
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#if KESTREL_HAVE_VIDEOIO
+#include <opencv2/videoio.hpp>
+#endif
+
+#include "kestrel_gui.hpp"
+#include "kestrel_python.hpp"
+#include "lock_tracker_fused.hpp"
+#include "rl_env.hpp"
+
+// The live sim is LINKED IN, not spawned: voxel_live.cpp is compiled into this
+// binary with VOXEL_LIVE_NO_MAIN so its entry point is an ordinary function.
+// That is the difference between one program and a launcher for three.
+int voxelLiveMain(int argc, char** argv);
+
+using namespace sim;
+
+namespace {
+
+// ---------------------------------------------------------------------- util
+std::string join(const std::vector<std::string>& v, const char* sep) {
+    std::string s;
+    for (size_t i = 0; i < v.size(); ++i) { if (i) s += sep; s += v[i]; }
+    return s;
+}
+
+int spawn(const std::string& exe, const std::vector<std::string>& args) {
+    std::string cmd = "\"" + exe + "\"";
+    for (const std::string& a : args) cmd += " " + a;
+    std::printf("[kestrel] %s\n", cmd.c_str());
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0)
+        std::fprintf(stderr,
+                     "[kestrel] '%s' exited %d. If it was not found, build it first "
+                     "(cmake --build build) or pass its path explicitly.\n",
+                     exe.c_str(), rc);
+    return rc;
+}
+
+// ------------------------------------------------------------------- tracking
+// BGR/gray -> the tracker's plane layout. The tracker is deliberately
+// OpenCV-free (it has to run on a Pi and later an MCU), so the conversion lives
+// at the caller, which is here.
+track::GrayFrame toGray(const cv::Mat& bgr, std::vector<float>& d,
+                        std::vector<float>& u, std::vector<float>& v) {
+    cv::Mat yuv;
+    if (bgr.channels() == 3) cv::cvtColor(bgr, yuv, cv::COLOR_BGR2YUV);
+    else                     cv::cvtColor(bgr, yuv, cv::COLOR_GRAY2BGR), 
+                             cv::cvtColor(yuv, yuv, cv::COLOR_BGR2YUV);
+    const int w = yuv.cols, h = yuv.rows;
+    d.resize(size_t(w) * h); u.resize(size_t(w) * h); v.resize(size_t(w) * h);
+    for (int y = 0; y < h; ++y) {
+        const cv::Vec3b* row = yuv.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < w; ++x) {
+            const size_t i = size_t(y) * w + x;
+            d[i] = float(row[x][0]);
+            u[i] = float(row[x][1]) - 128.f;
+            v[i] = float(row[x][2]) - 128.f;
+        }
+    }
+    track::GrayFrame f;
+    f.w = w; f.h = h; f.d = d.data(); f.cu = u.data(); f.cv = v.data();
+    return f;
+}
+
+struct Source {
+    std::vector<std::string> files;      // image-sequence mode
+#if KESTREL_HAVE_VIDEOIO
+    cv::VideoCapture cap;
+#endif
+    bool isVideo = false;
+    size_t idx = 0;
+
+    bool next(cv::Mat& out) {
+#if KESTREL_HAVE_VIDEOIO
+        if (isVideo) return cap.read(out) && !out.empty();
+#endif
+        while (idx < files.size()) {
+            out = cv::imread(files[idx++], cv::IMREAD_COLOR);
+            if (!out.empty()) return true;
+            std::fprintf(stderr, "[kestrel] skipping unreadable %s\n",
+                         files[idx - 1].c_str());
+        }
+        return false;
+    }
+};
+
+int cmdTrack(std::vector<std::string> args) {
+    Source src;
+    float bx = -1, by = -1, bsize = 64.f;
+    int limit = 0;
+    std::string csv;
+
+    for (size_t i = 0; i < args.size(); ++i) {
+        auto next = [&](const char* d) { return (i + 1 < args.size()) ? args[++i] : std::string(d); };
+        if (args[i] == "--box") {
+            bx = std::stof(next("0")); by = std::stof(next("0")); bsize = std::stof(next("64"));
+        } else if (args[i] == "--frames") limit = std::stoi(next("0"));
+        else if (args[i] == "--csv")      csv = next("");
+        else src.files.push_back(args[i]);
+    }
+    if (src.files.empty()) {
+        std::fprintf(stderr,
+            "usage: kestrel track [--box X Y SIZE] [--frames N] [--csv OUT] <video|frame...>\n"
+            "  --box designates the target on the FIRST frame. Without it the centre\n"
+            "  of the frame is used, which is only right if that is where it is.\n");
+        return 2;
+    }
+#if KESTREL_HAVE_VIDEOIO
+    if (src.files.size() == 1 && src.files[0].find('.') != std::string::npos) {
+        src.cap.open(src.files[0]);
+        src.isVideo = src.cap.isOpened();
+    }
+#else
+    if (src.files.size() == 1)
+        std::fprintf(stderr, "[kestrel] built without videoio: treating '%s' as an "
+                             "image, not a video. Pass a frame sequence instead.\n",
+                     src.files[0].c_str());
+#endif
+
+    track::LockTracker trk;
+    std::vector<float> d, u, v;
+    cv::Mat frame;
+    std::FILE* out = csv.empty() ? nullptr : std::fopen(csv.c_str(), "w");
+    if (out) std::fprintf(out, "frame,state,x,y,w,h,conf\n");
+
+    int n = 0, locked = 0, coasting = 0, searching = 0, lost = 0;
+    while (src.next(frame)) {
+        track::GrayFrame g = toGray(frame, d, u, v);
+        if (n == 0) {
+            if (bx < 0) { bx = frame.cols * 0.5f; by = frame.rows * 0.5f; }
+            trk.designate(g, bx, by, bsize);
+            std::printf("[track] designated (%.0f, %.0f) size %.0f in %dx%d\n",
+                        bx, by, bsize, frame.cols, frame.rows);
+        }
+        const track::LockTracker::Result r = trk.update(g);
+        switch (r.state) {
+            case track::LockTracker::State::LOCKED:    ++locked; break;
+            case track::LockTracker::State::COASTING:  ++coasting; break;
+            case track::LockTracker::State::SEARCHING: ++searching; break;
+            case track::LockTracker::State::LOST:      ++lost; break;
+            default: break;
+        }
+        if (out)
+            std::fprintf(out, "%d,%s,%d,%d,%d,%d,%.3f\n", n,
+                         track::LockTracker::stateName(r.state),
+                         r.x, r.y, r.w, r.h, r.conf);
+        ++n;
+        if (limit && n >= limit) break;
+    }
+    if (out) std::fclose(out);
+
+    if (!n) { std::fprintf(stderr, "[kestrel] no frames read\n"); return 1; }
+    // LOCK RATE IS THE HEADLINE and the other states are printed beside it,
+    // because "not locked" splits into three situations that want different
+    // fixes: coasting is a brief miss, searching is a re-acquire in progress,
+    // and lost is a give-up.
+    std::printf("[track] %d frames: LOCKED %d (%.0f%%)  COASTING %d  SEARCHING %d  LOST %d\n",
+                n, locked, 100.0 * locked / n, coasting, searching, lost);
+    if (!csv.empty()) std::printf("[track] per-frame states -> %s\n", csv.c_str());
+    return 0;
+}
+
+// ------------------------------------------------------------------ baselines
+enum class Pol { Random, FreeM, Goal, Score };
+const char* polName(Pol p) {
+    switch (p) { case Pol::Random: return "random"; case Pol::FreeM: return "freeM";
+                 case Pol::Goal: return "goal"; default: return "score"; }
+}
+
+int choose(Pol pol, const std::vector<float>& obs, const std::vector<uint8_t>& mask,
+           int nPrims, unsigned& rng) {
+    const int F = VoxelEnv::obsFeaturesPerPrim();
+    std::vector<int> legal;
+    for (int i = 0; i < nPrims; ++i) if (mask[i]) legal.push_back(i);
+    if (legal.empty()) return 0;
+    if (pol == Pol::Random) { rng = rng * 1664525u + 1013904223u; return legal[rng % legal.size()]; }
+    int best = legal[0]; float bestV = -1e30f;
+    for (int i : legal) {
+        const float* o = &obs[size_t(i) * F];
+        float vv = (pol == Pol::FreeM) ? o[0]
+                 : (pol == Pol::Goal)  ? -o[3]
+                 : 0.7f * o[1] - 1.0f * o[3] - 0.25f * std::fabs(o[6])
+                   + 0.5f * o[2] - 2.0f * std::max(0.f, o[4]);
+        if (vv > bestV) { bestV = vv; best = i; }
+    }
+    return best;
+}
+
+int cmdBench(std::vector<std::string> args) {
+    std::vector<std::string> worlds = {"forest", "maze"};
+    int s0 = 101, s1 = 104, maxSteps = 600;
+    bool stereo = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        auto next = [&](const char* d) { return (i + 1 < args.size()) ? args[++i] : std::string(d); };
+        if (args[i] == "--worlds") {
+            worlds.clear();
+            while (i + 1 < args.size() && args[i + 1][0] != '-') worlds.push_back(args[++i]);
+        } else if (args[i] == "--seeds") {
+            // `--seeds 101 108` is the range; `--seeds 5` is that ONE seed.
+            // It used to fall through to the default upper bound, so a single
+            // number quietly asked for 1..104 -- four hundred forest runs that
+            // print nothing for ten minutes and look like a hang.
+            s0 = s1 = std::stoi(next("101"));
+            if (i + 1 < args.size() && args[i + 1][0] != '-') s1 = std::stoi(args[++i]);
+        }
+        else if (args[i] == "--steps")   maxSteps = std::stoi(next("600"));
+        else if (args[i] == "--stereo")  stereo = true;
+    }
+    std::printf("baselines through VoxelEnv -- the same harness a learned policy uses\n");
+    std::printf("%-8s %-8s %-5s %-16s %9s %9s %9s\n",
+                "policy", "world", "seed", "outcome", "travel", "end-dist", "minClr");
+    for (Pol pol : {Pol::Random, Pol::FreeM, Pol::Goal, Pol::Score}) {
+        double sum = 0; int runs = 0, coll = 0, reach = 0;
+        for (const std::string& w : worlds)
+            for (int s = s0; s <= s1; ++s) {
+                EnvConfig c;
+                c.world = w; c.seed = unsigned(s); c.maxSteps = maxSteps;
+                c.truthDepth = !stereo;
+                c.horizonS = (w == "maze") ? 0.6f : 2.0f;
+                VoxelEnv env(c);
+                unsigned rng = unsigned(s) * 7919u + unsigned(pol) * 104729u;
+                EnvStep st;
+                for (int t = 0; t < maxSteps; ++t) {
+                    st = env.step(choose(pol, env.observation(), env.actionMask(),
+                                         env.nPrims(), rng));
+                    if (st.done || st.truncated) break;
+                }
+                const char* oc = st.reachedGoal ? "reached goal"
+                               : st.collisions  ? "COLLIDED" : "ran out of steps";
+                std::printf("%-8s %-8s %-5d %-16s %9.1f %9.1f %9.2f\n",
+                            polName(pol), w.c_str(), s, oc, st.travelM,
+                            st.distToGoalM, st.minClearM);
+                std::fflush(stdout);
+                sum += st.travelM; ++runs;
+                coll += st.collisions ? 1 : 0; reach += st.reachedGoal ? 1 : 0;
+            }
+        std::printf("  -> %-8s runs %d  collisions %d  goals %d  mean travel %.1f m\n\n",
+                    polName(pol), runs, coll, reach, sum / std::max(1, runs));
+    }
+    return 0;
+}
+
+// -------------------------------------------------------------------- training
+// PREFLIGHT BEFORE SPAWNING. Training is the one command whose dependencies
+// live outside this binary, and a missing one otherwise surfaces as a Python
+// traceback several screens long -- which for a double-click workflow reads as
+// "it is broken" rather than "run one pip command". Check first, and say the
+// command rather than the symptom.
+//
+// WHICH PYTHON is the hard part, not whether one exists; see kestrel_python.hpp.
+// Everything here names an interpreter by ABSOLUTE PATH, because on a machine
+// with several, "python" is exactly the ambiguity that made pip install into
+// one interpreter and the import fail in another.
+
+// Where the python half might be, most specific first. Returns "" if nowhere.
+//
+// dir + "/../python" holds in the build tree (build/ -> nav-sim/python) and
+// nowhere else. From a top-level exe it escapes the package entirely, which is
+// how the error came to name a requirements.txt one level ABOVE the folder
+// that had been unzipped -- a path that could not exist.
+std::string findPy(const std::string& dir, const char* name) {
+    const std::string cands[] = {
+        dir + "/python/" + name,        // release zip: python/ beside the exe
+        dir + "/../python/" + name,     // build tree: build/ -> nav-sim/python
+        std::string("python/") + name,  // run from nav-sim/
+        std::string("../python/") + name,
+    };
+    std::error_code ec;
+    for (const std::string& c : cands)
+        if (std::filesystem::exists(c, ec)) return c;
+    return "";
+}
+
+int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
+    std::vector<std::string> args;
+    bool doInstall = false;
+    for (const std::string& r : rest) {
+        if (r == "--install") doInstall = true;
+        else args.push_back(r);
+    }
+
+    const std::string script = findPy(dir, "train.py");
+    const std::string reqs   = findPy(dir, "requirements.txt");
+    std::vector<kpy::Py> pys = kpy::discover(dir);
+    const kpy::Py* py = kpy::best(pys);
+
+    if (script.empty()) {
+        std::fprintf(stderr,
+            "[kestrel] train.py is not in this download.\n"
+            "          Looked beside the exe (%s), one level up, and in the\n"
+            "          working directory. The other three commands are\n"
+            "          self-contained and work from here; training also needs\n"
+            "          the python half of the tree:\n"
+            "            git clone https://github.com/henriharmaala1-source/Assembly-grapher\n",
+            dir.c_str());
+        return 3;
+    }
+
+    // No interpreter can load voxelenv. Say which of the two reasons it is --
+    // they need completely different fixes and look identical from Python.
+    if (!py) {
+        kpy::report(pys, dir);
+        return 3;
+    }
+
+    if (doInstall) {
+        std::printf("[kestrel] installing into the interpreter that can load voxelenv:\n"
+                    "          %s  (CPython %d.%d)\n",
+                    py->exe.c_str(), py->major, py->minor);
+        const int rc = kpy::install(*py, reqs);
+        if (rc != 0) { std::fprintf(stderr, "[kestrel] pip exited %d\n", rc); return rc; }
+        // Re-probe rather than assume: pip can report success and still leave
+        // an import broken, and that is worth catching here rather than three
+        // screens into a traceback.
+        //
+        // The re-probe REPLACES pys rather than filling a second vector. It
+        // used to land in a local that died at the end of this block, with py
+        // left pointing into it -- and then a `static` to paper over that,
+        // which is worse: a static local initialises once, so a second install
+        // in the same process (the window can do exactly that) would have gone
+        // on using the first probe's answer.
+        pys = kpy::discover(dir);
+        py = kpy::best(pys);
+        if (!py || !py->rl) {
+            std::fprintf(stderr, "[kestrel] pip succeeded but the imports still fail.\n");
+            kpy::report(pys, dir);
+            return 3;
+        }
+        std::printf("[kestrel] the RL stack is installed. Starting training.\n");
+    }
+
+    if (!py->rl) {
+        std::fprintf(stderr,
+            "[kestrel] the RL stack is not installed for the interpreter that can\n"
+            "          load voxelenv:\n"
+            "            %s  (CPython %d.%d)\n\n"
+            "          Install into THAT one -- not whatever `python` means on\n"
+            "          your PATH, which on this machine may be a different\n"
+            "          interpreter entirely:\n\n"
+            "            kestrel train --install\n\n"
+            "          or by hand:\n"
+            "            \"%s\" -m pip install %s%s%s\n\n"
+            "          `kestrel python` lists every interpreter found here.\n",
+            py->exe.c_str(), py->major, py->minor, py->exe.c_str(),
+            reqs.empty() ? "gymnasium stable-baselines3 sb3-contrib numpy tensorboard" : "-r \"",
+            reqs.empty() ? "" : reqs.c_str(), reqs.empty() ? "" : "\"");
+        return 3;
+    }
+
+    // TELL train.py WHERE THE MODULE IS rather than letting it guess. It used
+    // to look in "../build" relative to itself, which is true in the build tree
+    // and false in the release package -- so this preflight could pass (it
+    // probes the exe's own directory, which is right) while the run that
+    // followed failed on "No module named voxelenv". A probe that can disagree
+    // with the thing it is probing is worse than no probe.
+#ifdef _WIN32
+    _putenv_s("KESTREL_MODULE_DIR", dir.c_str());
+#else
+    setenv("KESTREL_MODULE_DIR", dir.c_str(), 1);
+#endif
+    std::vector<std::string> a{script};
+    for (const std::string& r : args) a.push_back(r);
+    return spawn(py->exe, a);
+}
+
+// ------------------------------------------------------------------ live sim
+// ONE PATH INTO THE SIM, used by the CLI, the window and the text menu alike.
+// voxelLiveMain wants a mutable argv, so the strings are rebuilt here rather
+// than in each of the three callers.
+int cmdSim(std::vector<std::string> args) {
+    std::vector<char*> a;
+    std::string self = "kestrel-sim";
+    a.push_back(self.data());
+    for (std::string& r : args) a.push_back(r.data());
+    return voxelLiveMain(int(a.size()), a.data());
+}
+
+// ------------------------------------------------------------------ text menu
+std::string exeDir(const char* argv0) {
+    std::string p(argv0 ? argv0 : "");
+    const size_t c = p.find_last_of("/\\");
+    return (c == std::string::npos) ? std::string(".") : p.substr(0, c);
+}
+
+int menu(const std::string& dir) {
+    for (;;) {
+        std::printf(
+            "\n  KESTREL\n"
+            "  1  object lock over recorded frames   (track)\n"
+            "  2  path-planner baselines            (bench)\n"
+            "  3  live voxel sim                    (in this process)\n"
+            "  4  RL training                       (runs python train.py)\n"
+            "  q  quit\n"
+            "  > ");
+        std::fflush(stdout);
+        char line[64] = {0};
+        if (!std::fgets(line, sizeof line, stdin)) return 0;
+        switch (line[0]) {
+            case '1': {
+                std::printf("  frames (space-separated) or a video path: ");
+                std::fflush(stdout);
+                char buf[1024] = {0};
+                if (!std::fgets(buf, sizeof buf, stdin)) break;
+                std::vector<std::string> a;
+                for (char* t = std::strtok(buf, " \t\r\n"); t; t = std::strtok(nullptr, " \t\r\n"))
+                    a.push_back(t);
+                if (a.empty()) { std::printf("  nothing given\n"); break; }
+                cmdTrack(a);
+                break;
+            }
+            case '2': cmdBench({}); break;
+            case '3': cmdSim({}); break;
+            case '4': cmdTrain(dir, {"--workers", "8"}); break;
+            case 'q': case 'Q': return 0;
+            default:  std::printf("  ?\n");
+        }
+    }
+}
+
+// The window drives the SAME four functions the command line does -- it builds
+// argument vectors and hands them over, so it cannot grow behaviour the CLI
+// does not have. Returns -1 when this build has no highgui.
+int gui(const std::string& dir) {
+    kgui::Actions a;
+    a.track = [](std::vector<std::string> v) { return cmdTrack(std::move(v)); };
+    a.bench = [](std::vector<std::string> v) { return cmdBench(std::move(v)); };
+    a.sim   = [](std::vector<std::string> v) { return cmdSim(std::move(v)); };
+    a.train = [dir](std::vector<std::string> v) { return cmdTrain(dir, v); };
+    return kgui::run(a, dir);
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    const std::string dir = exeDir(argc ? argv[0] : "");
+    // A DOUBLE-CLICK GETS THE WINDOW. It falls back to the text menu rather
+    // than failing, because a build without highgui is a supported build and
+    // the two commands that matter in CI do not need a window at all.
+    if (argc < 2) { const int rc = gui(dir); return rc < 0 ? menu(dir) : rc; }
+
+    std::vector<std::string> rest;
+    for (int i = 2; i < argc; ++i) rest.push_back(argv[i]);
+    const std::string cmd = argv[1];
+
+    if (cmd == "track") return cmdTrack(rest);
+    if (cmd == "bench") return cmdBench(rest);
+    if (cmd == "sim")  return cmdSim(rest);
+    if (cmd == "train") return cmdTrain(dir, rest);
+    if (cmd == "gui") {
+        // --shot renders the panels to PNG with no display attached. The
+        // window is the only thing in this binary that cannot be checked over
+        // ssh, so it gets a headless render like the sim's layout already has.
+        if (rest.size() >= 1 && rest[0] == "--check") return kgui::check() ? 1 : 0;
+        if (rest.size() >= 1 && rest[0] == "--shot") {
+            const std::string pre = rest.size() > 1 ? rest[1] : std::string("kestrel_gui");
+            return kgui::shot(dir, pre) ? 0 : 1;
+        }
+        const int rc = gui(dir);
+        return rc < 0 ? menu(dir) : rc;
+    }
+    if (cmd == "menu")  return menu(dir);
+    if (cmd == "python") { kpy::report(kpy::discover(dir), dir); return 0; }
+    if (cmd == "--help" || cmd == "-h" || cmd == "help") {
+        std::printf(
+            "kestrel [track|bench|sim|train|gui|menu|python] ...\n"
+            "  no arguments opens the window; `menu` is the text one, for a\n"
+            "  headless box or over ssh. Every button in the window prints the\n"
+            "  command it runs, so anything you can click you can also type.\n"
+            "\n"
+            "  train --install   pip the RL stack into the interpreter that can\n"
+            "                    load voxelenv, named by absolute path\n"
+            "  python            list every python found here and say which one\n"
+            "                    training will use, and why\n");
+        return 0;
+    }
+    std::fprintf(stderr, "unknown command '%s' -- try --help\n", cmd.c_str());
+    return 2;
+}

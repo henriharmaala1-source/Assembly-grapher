@@ -1,0 +1,149 @@
+name: build nav-sim (Windows exe)
+
+# Builds every nav-sim .exe on a Windows runner and uploads a ready-to-run zip
+# — no local toolchain, no vcpkg, no compiler, nothing to install.
+# Repo -> Actions tab -> this workflow -> latest run -> Artifacts ->
+# "kestrel-voxel-sim-windows-x64". Unzip, double-click kestrel.exe.
+#
+# The zip carries ONE executable, kestrel.exe -- the object-lock tracker, the
+# planner baselines and the live voxel sim are all compiled into it -- plus the
+# OpenCV DLLs, worlds/*.txt for the Finnish city maps, python/ and
+# voxelenv.pyd for `kestrel train`, and RUN_ME.txt. Double-click kestrel.exe
+# and a window opens.
+#
+# LIVE CAMERA WORKS FROM THIS ZIP even though the runner has no RealSense SDK.
+# It used to not: librealsense was a BUILD-time dependency behind an #ifdef, the
+# runner obviously has no SDK, so every downloaded exe had the LIVE button
+# permanently disabled -- and it said "this build has no RealSense SDK", which
+# is true of the RUNNER and reads as a statement about the machine running it.
+# librealsense is loaded at RUN time now (nav-sim/realsense_dyn.hpp), so the
+# same exe enables LIVE on any machine where realsense2.dll is findable.
+#
+# Uses the official PREBUILT OpenCV release (a ~2-3 min download+extract) rather
+# than compiling OpenCV from source (which took ~40 min via vcpkg). The prebuilt
+# is MSVC (vc16) and links fine with the runner's VS2022 (ABI-compatible).
+
+on:
+  push:
+    paths:
+      - 'nav-sim/**'
+      - '.github/workflows/nav-sim-windows.yml'
+  workflow_dispatch: {}
+
+env:
+  OPENCV_VERSION: "4.10.0"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # A hard ceiling on the whole job. A hung test once held this build for
+    # 17 minutes with no output, which reads as "CI is slow today" rather than
+    # "something is stuck" -- and the exe you were waiting for never arrived.
+    # The ARTIFACT is finished about four minutes in; everything after that is
+    # the test suite. 25 minutes was not enough for it on this runner, so the
+    # last three runs were killed mid-ctest and every one of them shows as
+    # "cancelled" -- which reads as a failed build even though the zip had
+    # already uploaded. More headroom, and the suite below is parallel now.
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: nav-sim
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      # PINNED, and it has to be. A compiled extension module is tied to the
+      # exact CPython minor version it was built against, so voxelenv.pyd built
+      # on whatever the runner happened to ship would fail to import on the
+      # machine that downloads it -- with an error about a missing module,
+      # which is the least informative way for a version mismatch to appear.
+      # 3.11 is stated in RUN_ME.txt so the download and the user agree.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: pybind11 (builds the voxelenv module the trainer steps)
+        # Without this find_package(pybind11) misses, voxelenv is silently not
+        # built, and `kestrel train` in the zip fails on a module that was never
+        # going to be there.
+        run: python -m pip install --quiet pybind11 numpy
+
+      - name: Download prebuilt OpenCV
+        run: |
+          $url = "https://github.com/opencv/opencv/releases/download/$env:OPENCV_VERSION/opencv-$env:OPENCV_VERSION-windows.exe"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile opencv-installer.exe
+          # self-extracting 7z: drops an 'opencv' folder into C:\ocv
+          Start-Process -FilePath .\opencv-installer.exe -ArgumentList '-oC:\ocv','-y' -Wait -NoNewWindow
+          if (-not (Test-Path 'C:\ocv\opencv\build\OpenCVConfig.cmake')) { throw 'OpenCV extract failed' }
+
+      - name: Configure
+        # BUILD_TESTS=ON so CI actually runs the suite. Cheap, and it now covers
+        # the live-camera code path too: that used to sit behind an #ifdef the
+        # runner never defined, so it was never compiled here and a Python-only
+        # API call survived in C++ for as long as it took someone with a camera
+        # to try building it.
+        #
+        # Point at the vc16 (VS2019) config directly, NOT the top-level one:
+        # the runner's MSVC is newer than any vcXX folder the prebuilt ships, so
+        # the auto-detecting top-level config finds "no compatible binaries". The
+        # vc16 libs are ABI-compatible with newer MSVC, so this links fine.
+        run: |
+          $pb = python -m pybind11 --cmakedir
+          cmake -B build -DBUILD_TESTS=ON -DOpenCV_DIR="C:/ocv/opencv/build/x64/vc16/lib" -Dpybind11_DIR="$pb"
+
+      - name: Build
+        run: cmake --build build --config Release -j 4
+
+      - name: Generate the Finnish city worlds
+        # voxel_gui's Hervanta / Tampere / Helsinki buttons read these footprint
+        # files at runtime. Without them those three menu entries show an error
+        # screen, so they have to travel in the zip.
+        run: python worlds/make_fi_cities.py
+
+      - name: Package (one exe + what it needs at runtime)
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          # ONE EXE. The build tree has a dozen -- the checks, the older
+          # front ends -- and shipping them all made the download a folder of
+          # programs with nothing to say which one to open. kestrel has the
+          # tracker, the baselines and the live sim compiled in.
+          Copy-Item build/Release/kestrel.exe dist/
+          Copy-Item "C:/ocv/opencv/build/x64/vc16/bin/opencv_*.dll" dist/ -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force dist/worlds | Out-Null
+          Copy-Item worlds/*.txt dist/worlds/ -ErrorAction SilentlyContinue
+          # THE PYTHON HALF TRAVELS TOO. It did not before, so `kestrel train`
+          # in the zip pointed at ..\python -- outside the unzipped folder --
+          # and named a requirements.txt that was never in the download.
+          New-Item -ItemType Directory -Force dist/python | Out-Null
+          Copy-Item python/*.py dist/python/ -ErrorAction SilentlyContinue
+          Copy-Item python/requirements.txt dist/python/
+          # voxelenv is the C++ environment the trainer steps. It goes BESIDE
+          # the exe because that is the directory train.py puts on sys.path.
+          Copy-Item build/Release/voxelenv*.pyd dist/ -ErrorAction SilentlyContinue
+          Copy-Item build/voxelenv*.pyd dist/ -ErrorAction SilentlyContinue
+          if (-not (Get-ChildItem dist/voxelenv*.pyd -ErrorAction SilentlyContinue)) {
+            Write-Warning "voxelenv.pyd was not built - `kestrel train` will not run from this zip"
+          }
+          Copy-Item RUN_ME_windows.txt dist/RUN_ME.txt
+          Get-ChildItem dist -Recurse | Select-Object FullName
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kestrel-voxel-sim-windows-x64
+          path: nav-sim/dist
+          if-no-files-found: error
+
+
+      - name: Test
+        # continue-on-error, deliberately. THE ARTIFACT IS THE PRODUCT: a
+        # failing or hanging test must not be able to deny you a working exe,
+        # because then a test problem and a build problem look identical from
+        # the download page. The result is still visible as a red step.
+        continue-on-error: true
+        # -j 4 because these are independent processes and the runner has the
+        # cores; serially the suite ran past the job ceiling. --timeout 90 per
+        # test: without a cap ctest waits forever, and one stuck child then
+        # takes the whole job.
+        run: |
+          ctest --test-dir build -C Release --output-on-failure --timeout 90 -j 4

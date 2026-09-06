@@ -1,0 +1,437 @@
+import time
+import threading
+from .core import State
+
+
+class SharedState:
+    """
+    Thread-safe hand-off between the capture, inference and display threads.
+
+    - Capture thread writes the latest frame (old frames are dropped).
+    - Inference thread reads the latest frame and writes the latest result.
+    - Display thread (main) reads both for rendering.
+    Control signals (reset) flow from the display thread to the inference thread.
+    """
+
+    def __init__(self):
+        self._flock  = threading.Lock()
+        self._frame  = None
+        self._fseq   = 0
+
+        self._rlock  = threading.Lock()
+        self._result = None
+
+        self._reset  = threading.Event()
+
+    # --- frames -------------------------------------------------------------
+
+    def set_frame(self, frame):
+        with self._flock:
+            self._frame = frame
+            self._fseq += 1
+
+    def get_frame(self):
+        """Returns (frame_or_None, seq)."""
+        with self._flock:
+            return self._frame, self._fseq
+
+    # --- results ------------------------------------------------------------
+
+    def set_result(self, result: dict):
+        with self._rlock:
+            self._result = result
+
+    def get_result(self):
+        with self._rlock:
+            return self._result
+
+    # --- control ------------------------------------------------------------
+
+    def request_reset(self):
+        self._reset.set()
+
+    def take_reset(self) -> bool:
+        if self._reset.is_set():
+            self._reset.clear()
+            return True
+        return False
+
+
+def capture_loop(cap, shared: SharedState, stop: threading.Event, settings=None):
+    """Continuously grab frames; only the newest is kept. When `settings` is
+    given, each frame is run through the FramePreprocessor (digital zoom +
+    appearance filters) here — before either the inference or display thread
+    sees it — so the whole pipeline operates on one consistent frame."""
+    prep = None
+    if settings is not None:
+        from .preprocess import FramePreprocessor
+        prep = FramePreprocessor(settings)
+    while not stop.is_set():
+        ok, frame = cap.read()
+        if not ok:
+            print("Camera read failed — stopping.")
+            stop.set()
+            break
+        if prep is not None:
+            frame = prep.process(frame, shared.get_result())
+        shared.set_frame(frame)
+
+
+def _compute_attention(embedder, frame, bbox, settings):
+    x, y, w, h = bbox
+    fh, fw = frame.shape[:2]
+    crop = frame[max(0, y):min(fh, y + h), max(0, x):min(fw, x + w)]
+    if crop.size == 0:
+        return None
+    attn, _ = embedder.get_attention_map(crop, threshold=settings.attn_threshold)
+    return attn
+
+
+def _switch_engine(manager, want, active_name, tracker, embedder, frame, shared):
+    """Swap to engine `want`. On failure keep the current engine and revert the
+    setting so we don't retry every frame. Returns (tracker, embedder, name)."""
+    # Tell the display a (possibly slow) load is happening.
+    shared.set_result(dict(state=tracker.state, bbox=getattr(tracker, "bbox", None),
+                           sim=0.0, engine_loading=want))
+    try:
+        new_tracker, new_embedder = manager.get(want)
+    except Exception as e:
+        print(f"[engine] could not load '{want}': {e}")
+        manager.settings.tracking_engine = active_name      # revert dropdown intent
+        shared.set_result(dict(state=tracker.state, engine_error=str(e)))
+        return tracker, embedder, active_name
+
+    carry = tracker.bbox if tracker.state == State.LOCKED else None
+    new_tracker.reset()
+    if carry is not None:
+        try:
+            new_tracker.init(frame, carry)                  # re-prompt, no re-draw
+        except Exception:
+            pass
+    print(f"[engine] switched to '{want}'")
+    return new_tracker, new_embedder, want
+
+
+def _make_seg_result(mask, point, backend):
+    return dict(mask=mask, point=point, backend=backend) if mask is not None else None
+
+
+def _start_sam2_continuous(manager, settings, current_tracker, point, frame, shared):
+    """Switch the tracking engine to SAM 2 and init it with a point prompt."""
+    want = "sam2"
+    try:
+        new_tracker, _ = manager.get(want)
+    except Exception as e:
+        print(f"[segmenter] SAM 2 continuous unavailable: {e}")
+        return
+    new_tracker.reset()
+    ok = new_tracker.init_from_point(frame, point)
+    if not ok:
+        print("[segmenter] SAM 2 point prompt returned empty mask")
+        return
+    settings.tracking_engine = want
+
+
+def cpu_inference_loop(settings, mouse, shared: SharedState,
+                       stop: threading.Event):
+    """CPU-only pipeline — depth nav + drone-mode CV tracking, no GPU engines.
+
+    Used when CUDA isn't available. DINOv2 and SAM 2 need a GPU; the depth model
+    (OpenCV DNN) and the CSRT / KCF / Optical-Flow trackers are pure CPU, so this
+    loop runs the same workload a Pi 5 / companion computer would. Clicks (or a
+    drag box) designate a fixed-box target; the depth overlay rides on top.
+    """
+    from .drone import DroneTracker
+    from .depth_nav import DepthNav
+
+    drone_tracker = DroneTracker()
+    depth_nav     = DepthNav()
+    depth_loaded  = False
+    depth_age     = 0
+    last_seq      = -1
+    inf_fps       = 30.0
+    t_prev        = time.perf_counter()
+
+    # No DINOv2 / SAM 2 on CPU — drone-style click-to-lock is the only tracker.
+    settings.drone_mode = True
+
+    while not stop.is_set():
+        frame, seq = shared.get_frame()
+        if frame is None or seq == last_seq:
+            time.sleep(0.001)
+            continue
+        last_seq = seq
+
+        if shared.take_reset():
+            drone_tracker.reset()
+            mouse.pending_point = None
+            mouse.pending_bbox  = None
+
+        # --- click or drag designates the target box ----------------------
+        pt = None
+        if mouse.pending_point is not None:
+            pt = mouse.pending_point
+            mouse.pending_point = None
+        elif mouse.pending_bbox is not None:
+            x, y, w, h = mouse.pending_bbox
+            pt = (x + w // 2, y + h // 2)
+            mouse.pending_bbox = None
+        if pt is not None:
+            drone_tracker.init(frame, pt,
+                               backend=settings.drone_backend,
+                               box_size=settings.drone_box_size)
+
+        # --- depth navigation (every N frames) ----------------------------
+        if settings.depth_on and settings.depth_model and not depth_loaded:
+            depth_loaded = depth_nav.init(settings.depth_model,
+                                          settings.depth_backend)
+        depth_snap = None
+        if settings.depth_on and depth_nav.is_ready():
+            depth_age += 1
+            if depth_age >= max(1, settings.depth_interval):
+                depth_age = 0
+                depth_nav.update(frame)
+            depth_snap = depth_nav.snapshot()
+
+        # --- drone tracker (every frame once designated) ------------------
+        if drone_tracker.bbox is not None:
+            drone_tracker.update(frame)
+            drone_result = dict(
+                bbox         = drone_tracker.bbox,
+                locked       = drone_tracker.locked,
+                age          = drone_tracker.age,
+                loss_frames  = drone_tracker.loss_frames,
+                total_losses = drone_tracker.total_losses,
+            )
+        else:
+            drone_result = {}
+
+        t_now   = time.perf_counter()
+        inf_fps = 0.9 * inf_fps + 0.1 / max(t_now - t_prev, 1e-9)
+        t_prev  = t_now
+
+        shared.set_result(dict(
+            state=State.IDLE, bbox=None, sim=0.0, inf_fps=inf_fps,
+            drone_result=drone_result, depth_snap=depth_snap,
+        ))
+
+
+def inference_loop(manager, segmenter, settings, mouse, shared: SharedState,
+                   stop: threading.Event):
+    """Run the active engine on the newest frame; publish results for display.
+
+    The engine (DINOv2 hybrid / SAM 2) can be switched live from the settings
+    window; the swap happens here on the inference thread, carrying over the
+    current lock box so tracking continues without re-drawing.
+
+    A ClickSegmenter runs alongside: a single mouse click triggers a one-shot
+    point-prompt segmentation (independent of tracking).
+
+    In drone mode, clicks bypass the segmenter and instead initialize a
+    DroneTracker (CSRT/KCF/Optical Flow) on a fixed-size box.  No DINOv2,
+    no SAM 2 — identical workload to what Pi 5 / RK3588 hardware would run.
+    """
+    from .motion_detect import MotionDetector
+    from .drone import DroneTracker
+    from .drone_detect import DroneDetector
+    from .depth_nav import DepthNav
+    detector        = MotionDetector()
+    drone_tracker   = DroneTracker()
+    drone_detector  = DroneDetector(device=manager.device)
+    depth_nav       = DepthNav()
+    depth_loaded    = False
+    depth_age       = 0
+    drone_det_age   = 0
+    drone_dets      = []
+
+    active_name = settings.tracking_engine
+    tracker, embedder = manager.get(active_name)
+    last_seq      = -1
+    attn_map      = None
+    attn_age      = 0
+    seg_result    = None    # last click-to-segment result, shown until next click
+    motion_blobs  = None
+    motion_mask   = None
+    motion_age    = 0       # subsampling counter for MOG2
+    inf_fps       = 30.0
+    t_prev        = time.perf_counter()
+
+    while not stop.is_set():
+        frame, seq = shared.get_frame()
+        if frame is None or seq == last_seq:
+            time.sleep(0.001)        # nothing new yet
+            continue
+        last_seq = seq
+
+        # --- upload frame to GPU once (enables embed_boxes fast path) --------
+        if embedder is not None:
+            embedder.cache_frame(frame)
+
+        # --- live engine switch -------------------------------------------
+        want = settings.tracking_engine
+        if want != active_name:
+            tracker, embedder, active_name = _switch_engine(
+                manager, want, active_name, tracker, embedder, frame, shared)
+            attn_map = None
+            attn_age = 0
+
+        if shared.take_reset():
+            tracker.reset()
+            drone_tracker.reset()
+            mouse.pending_bbox  = None
+            mouse.pending_point = None
+            segmenter.stop_continuous()
+            detector.reset_persist()
+            seg_result   = None
+            motion_blobs = None
+            motion_mask  = None
+            attn_map     = None
+            attn_age     = 0
+
+        # --- blob motion detection (auto-acquire when idle) ---------------
+        motion_blobs, motion_mask = None, None
+        idle = (tracker.state == State.IDLE and not segmenter.is_continuous
+                and mouse.pending_point is None and mouse.pending_bbox is None
+                and not settings.drone_mode)
+        if settings.motion_detect and idle:
+            # Run MOG2 every 2 frames — halves morphology + contour cost when idle.
+            motion_age += 1
+            if motion_age >= 2:
+                motion_age = 0
+                detector.set_threshold(settings.motion_threshold)
+                motion_mask, motion_blobs = detector.detect(
+                    frame, settings.motion_min_area)
+            if settings.motion_auto_segment and motion_blobs:
+                if detector.confirm(motion_blobs[0]):
+                    x, y, w, h, _ = motion_blobs[0]
+                    detector.reset_persist()
+                    # Hand the blob to the better model via the existing path.
+                    if settings.segment_backend == "SAM 2" or settings.seg_continuous:
+                        mouse.pending_point = (x + w // 2, y + h // 2)
+                    else:
+                        mouse.pending_bbox = (x, y, w, h)
+        elif not idle:
+            detector.reset_persist()
+
+        # --- click-to-segment or drone designation ---------------------------
+        if mouse.pending_point is not None:
+            pt = mouse.pending_point
+            mouse.pending_point = None
+
+            if settings.drone_mode:
+                # Drone mode: drop any active segmentation then init the box tracker
+                segmenter.stop_continuous()
+                seg_result = None
+                drone_tracker.init(frame, pt,
+                                   backend=settings.drone_backend,
+                                   box_size=settings.drone_box_size)
+            elif settings.seg_continuous:
+                # SAM 2 continuous: hand off to the SAM2Tracker engine
+                if settings.segment_backend == "SAM 2":
+                    _start_sam2_continuous(
+                        manager, settings, tracker, pt, frame, shared)
+                    active_name = settings.tracking_engine   # may have switched
+                    tracker, embedder = manager.get(active_name)
+                    seg_result = None   # tracking engine now owns the mask
+                else:
+                    mask = segmenter.start_continuous(frame, pt)
+                    seg_result = _make_seg_result(mask, pt, settings.segment_backend)
+            else:
+                segmenter.stop_continuous()
+                mask = segmenter.segment(frame, pt)
+                seg_result = _make_seg_result(mask, pt, settings.segment_backend)
+
+        # Continuous update (MobileSAM / FastSAM backends) — skip in drone mode
+        elif segmenter.is_continuous and not settings.drone_mode:
+            mask = segmenter.update(frame)
+            if mask is None:
+                segmenter.stop_continuous()   # backend failed — stop retrying
+            elif seg_result is not None:
+                seg_result = _make_seg_result(mask, seg_result.get("point"),
+                                              settings.segment_backend)
+
+        if mouse.pending_bbox is not None and tracker.state == State.IDLE:
+            tracker.init(frame, mouse.pending_bbox)
+            mouse.pending_bbox = None
+            attn_map = None
+            attn_age = 0
+
+        state, bbox, sim = tracker.update(frame)
+
+        if settings.show_mask and state == State.LOCKED and bbox is not None:
+            if getattr(tracker, "provides_mask", False):
+                # SAM 2 already produced a pixel-accurate mask this frame.
+                attn_map = tracker.mask_crop()
+            else:
+                attn_age += 1
+                if attn_map is None or attn_age >= settings.attn_interval:
+                    attn_map = _compute_attention(embedder, frame, bbox, settings)
+                    attn_age = 0
+        else:
+            attn_map = None
+            attn_age = 0
+
+        motion_trail = tracker.center_trail() if settings.show_motion_vector else None
+        predicted    = tracker.predicted_center if settings.show_motion_vector else None
+
+        # --- drone detection (runs on interval when enabled) ------------------
+        if settings.drone_detect:
+            drone_det_age += 1
+            if drone_det_age >= settings.drone_detect_interval:
+                drone_det_age = 0
+                try:
+                    drone_dets = drone_detector.detect(
+                        frame,
+                        preset=settings.drone_detect_preset,
+                        conf=settings.drone_detect_conf,
+                    )
+                except Exception as exc:
+                    print(f"[drone-detect] {exc}")
+                    drone_dets = []
+                    settings.drone_detect = False
+        else:
+            drone_dets = []
+
+        # --- depth navigation (runs every N frames when enabled) --------------
+        if settings.depth_on and settings.depth_model and not depth_loaded:
+            depth_loaded = depth_nav.init(settings.depth_model,
+                                          settings.depth_backend)
+        depth_snap = None
+        if settings.depth_on and depth_nav.is_ready():
+            depth_age += 1
+            if depth_age >= max(1, settings.depth_interval):
+                depth_age = 0
+                depth_nav.update(frame)
+            depth_snap = depth_nav.snapshot()
+
+        # --- drone tracker (runs every frame when mode is active) -------------
+        drone_result = None
+        if settings.drone_mode:
+            if drone_tracker.bbox is not None:
+                drone_tracker.update(frame)
+                drone_result = dict(
+                    bbox         = drone_tracker.bbox,
+                    locked       = drone_tracker.locked,
+                    age          = drone_tracker.age,
+                    loss_frames  = drone_tracker.loss_frames,
+                    total_losses = drone_tracker.total_losses,
+                )
+            else:
+                drone_result = {}   # mode active, no target designated yet
+
+        t_now   = time.perf_counter()
+        inf_fps = 0.9 * inf_fps + 0.1 / max(t_now - t_prev, 1e-9)
+        t_prev  = t_now
+
+        shared.set_result(dict(
+            state=state, bbox=bbox, sim=sim or 0.0,
+            attn_map=attn_map, motion_trail=motion_trail,
+            predicted=predicted, inf_fps=inf_fps,
+            seg_result=seg_result,
+            motion_blobs=motion_blobs,
+            motion_mask=motion_mask if settings.show_motion_mask else None,
+            drone_result=drone_result,
+            drone_detections=drone_dets,
+            drone_detect_preset=settings.drone_detect_preset,
+            depth_snap=depth_snap,
+        ))

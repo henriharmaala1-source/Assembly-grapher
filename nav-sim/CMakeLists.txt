@@ -371,6 +371,7 @@ add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
 add_executable(kestrel
   kestrel.cpp
   kestrel_gui.cpp
+  kestrel_python.cpp
   # The live sim, compiled IN rather than spawned. VOXEL_LIVE_NO_MAIN drops its
   # own main() so kestrel keeps the only entry point in the binary.
   voxel_live.cpp

@@ -7,6 +7,7 @@
 // A screenshot of this window is a reproducible run; a screenshot of a GUI that
 // hides its arguments is not.
 #include "kestrel_gui.hpp"
+#include "kestrel_python.hpp"
 
 #include <cstdio>
 
@@ -174,6 +175,23 @@ std::vector<std::string> findRecordings(const std::string& exeDir) {
     return v;
 }
 
+// --------------------------------------------------------------- python state
+// WHICH PYTHON, shown on the train panel. Discovery starts several
+// interpreters, so it runs once when the window opens and again after anything
+// that could change the answer -- never per frame.
+struct PyState {
+    std::vector<kpy::Py> pys;
+    std::string abi;
+    bool probed = false;
+};
+PyState g_py;
+
+void refreshPy(const std::string& dir) {
+    g_py.pys = kpy::discover(dir);
+    g_py.abi = kpy::moduleAbi(dir);
+    g_py.probed = true;
+}
+
 // ----------------------------------------------------------------- settings
 enum Mode { TRACK = 0, BENCH, SIM, TRAIN, NMODES };
 const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train"};
@@ -278,7 +296,7 @@ enum {
     ID_SIM_SRC = 300,     // +0..2
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
-    ID_TRAIN_STEREO, ID_TRAIN_CUDA,
+    ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -410,16 +428,42 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x, 320, 250, 38),
                   c.trainStereo ? "Simulated stereo" : "Perfect depth",
                   ID_TRAIN_STEREO, c.trainStereo});
-    txt(im, "stereo is the honest setting and about 3x slower", x, 376, 0.42, DIM);
+    txt(im, "stereo is the honest setting, about 3x slower", x + 266, 344, 0.42, DIM);
 
     bs.push_back({cv::Rect(x, 404, 250, 38), c.cuda ? "device: cuda" : "device: cpu",
                   ID_TRAIN_CUDA, c.cuda});
-    txt(im, "The GPU WILL look idle and that is correct: the bottleneck is", x, 462, 0.42, DIM);
-    txt(im, "environment steps, which are C++ on the CPU. cuda is here so you", x, 482, 0.42, DIM);
-    txt(im, "can measure that rather than take the claim on trust.", x, 502, 0.42, DIM);
+    txt(im, "The GPU WILL look idle: the bottleneck is environment steps,", x + 266, 420, 0.42, DIM);
+    txt(im, "which are C++ on the CPU. cuda is here so you can measure", x + 266, 438, 0.42, DIM);
+    txt(im, "that rather than take the claim on trust.", x + 266, 456, 0.42, DIM);
 
-    txt(im, "First time: pip install -r python/requirements.txt", x, 528, 0.44, DIM);
-    txt(im, "Progress prints in the console, not here.", x, 550, 0.42, DIM);
+    // WHICH INTERPRETER, by absolute path. "python" is ambiguous on a machine
+    // with several, and installing into the wrong one SUCCEEDS -- leaving the
+    // packages present and the import still failing, which is the most
+    // confusing state available. Naming the path removes the question.
+    const kpy::Py* b = g_py.probed ? kpy::best(g_py.pys) : nullptr;
+    txt(im, "python", x, 480, 0.5, DIM);
+    if (!g_py.probed) {
+        txt(im, "not checked yet", x, 508, 0.44, DIM);
+    } else if (b && b->rl) {
+        txt(im, fit("ready: " + b->exe, 700, 0.44, false), x, 508, 0.44, INK);
+        txt(im, "CPython " + std::to_string(b->major) + "." + std::to_string(b->minor) +
+                " -- the one that can load voxelenv", x, 528, 0.42, DIM);
+    } else if (b) {
+        txt(im, fit("needs the RL stack: " + b->exe, 700, 0.44, false), x, 508, 0.44, INK);
+        txt(im, "Install installs into THAT interpreter, not whatever", x, 528, 0.42, DIM);
+        txt(im, "'python' happens to mean on your PATH.", x, 546, 0.42, DIM);
+    } else if (!g_py.abi.empty()) {
+        txt(im, "no python here can load voxelenv (it needs CPython " + g_py.abi + ")",
+            x, 508, 0.44, INK);
+        txt(im, "a version mismatch, not a missing file -- `kestrel python` lists them",
+            x, 528, 0.42, DIM);
+    } else {
+        txt(im, "voxelenv is not beside this exe, so training cannot start",
+            x, 508, 0.44, INK);
+        txt(im, "it is the C++ environment the trainer steps", x, 528, 0.42, DIM);
+    }
+    bs.push_back({cv::Rect(x + 266, 480, 230, 38), "Install the RL stack",
+                  ID_TRAIN_INSTALL, b && !b->rl});
 }
 
 // ------------------------------------------------------------------- compose
@@ -573,6 +617,7 @@ int run(const Actions& act, const std::string& exeDir) {
     std::vector<std::string> recs = findRecordings(exeDir);
     if (!inputs.empty()) c.input = 0;
     if (!recs.empty())   c.replay = 0;
+    refreshPy(exeDir);
 
     cv::namedWindow(WIN, cv::WINDOW_AUTOSIZE);
     cv::setMouseCallback(WIN, onMouse);
@@ -592,14 +637,18 @@ int run(const Actions& act, const std::string& exeDir) {
         for (const Btn& b : bs)
             if (b.r.contains({g_mouse.x, g_mouse.y})) { hit = b.id; break; }
         if (hit < 0) continue;
-        if (hit != ID_RUN) { apply(hit, c, inputs, recs); continue; }
-        if (!why.empty()) continue;
+        const bool isInstall = (hit == ID_TRAIN_INSTALL);
+        if (hit != ID_RUN && !isInstall) { apply(hit, c, inputs, recs); continue; }
+        if (!isInstall && !why.empty()) continue;
 
-        std::vector<std::string> args = buildArgs(c, inputs, recs);
+        // Install is dispatched through train, so there is exactly one place
+        // that decides which interpreter is meant.
+        std::vector<std::string> args =
+            isInstall ? std::vector<std::string>{"--install"} : buildArgs(c, inputs, recs);
 
         // Designating happens IN this window, before it is torn down, because
         // it needs the first frame on screen and a click on it.
-        if (c.mode == TRACK && c.designate && c.input >= 0) {
+        if (!isInstall && c.mode == TRACK && c.designate && c.input >= 0) {
             float bx = 0, by = 0;
             if (clickTarget(inputs[c.input].args.front(), bx, by)) {
                 std::vector<std::string> box{"--box", std::to_string(int(bx)),
@@ -607,7 +656,7 @@ int run(const Actions& act, const std::string& exeDir) {
                                              std::to_string(c.boxSize)};
                 args.insert(args.begin(), box.begin(), box.end());
             }
-        } else if (c.mode == TRACK) {
+        } else if (!isInstall && c.mode == TRACK) {
             args.insert(args.begin(), {"--box", "-1", "-1", std::to_string(c.boxSize)});
         }
 
@@ -623,7 +672,8 @@ int run(const Actions& act, const std::string& exeDir) {
         std::fflush(stdout);
 
         int rc = 0;
-        switch (c.mode) {
+        if (isInstall) rc = act.train(args);
+        else switch (c.mode) {
             case TRACK: rc = act.track(args); break;
             case BENCH: rc = act.bench(args); break;
             case SIM:   rc = act.sim(args);   break;
@@ -637,6 +687,7 @@ int run(const Actions& act, const std::string& exeDir) {
         // filled in the meantime.
         inputs = findTrackInputs(exeDir);
         recs = findRecordings(exeDir);
+        refreshPy(exeDir);
         if (c.input >= int(inputs.size())) c.input = inputs.empty() ? -1 : 0;
         if (c.replay >= int(recs.size()))  c.replay = recs.empty() ? -1 : 0;
 
@@ -716,6 +767,7 @@ int check() {
 int shot(const std::string& exeDir, const std::string& prefix) {
     const std::vector<TrackInput> inputs = findTrackInputs(exeDir);
     const std::vector<std::string> recs = findRecordings(exeDir);
+    refreshPy(exeDir);
     int n = 0;
     for (int m = 0; m < NMODES; ++m) {
         Cfg c;

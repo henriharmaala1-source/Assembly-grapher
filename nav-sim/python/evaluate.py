@@ -19,8 +19,21 @@ import sys
 
 import numpy as np
 
-sys.path[:0] = [os.path.join(os.path.dirname(__file__), "..", "build"),
-                os.path.dirname(__file__)]
+# WHERE voxelenv IS depends on how you got here, and guessing "../build" was
+# a build-tree assumption that silently fails everywhere else. In the release
+# package python/ sits beside the exe and the module sits beside it too, so
+# "../build" resolves to a directory that does not exist -- and the failure
+# reads as "No module named voxelenv", which looks like a missing dependency
+# rather than a wrong path.
+#
+# kestrel sets KESTREL_MODULE_DIR to the directory it found the module in, so
+# when it launches this script the two cannot disagree. The rest are for
+# running this file by hand.
+_here = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
+                            os.path.join(_here, "..", "build"),
+                            os.path.join(_here, ".."),
+                            _here) if p]
 
 from voxel_gym import VoxelNavEnv
 

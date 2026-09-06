@@ -48,6 +48,7 @@
 #endif
 
 #include "kestrel_gui.hpp"
+#include "kestrel_python.hpp"
 #include "lock_tracker_fused.hpp"
 #include "rl_env.hpp"
 
@@ -291,39 +292,17 @@ int cmdBench(std::vector<std::string> args) {
 // "it is broken" rather than "run one pip command". Check first, and say the
 // command rather than the symptom.
 //
-// THREE THINGS GO WRONG HERE AND THEY USED TO LOOK IDENTICAL:
-//
-// (1) THE INTERPRETER IS NOT CALLED python3 ON WINDOWS. There, `python3` is
-//     usually a Microsoft Store stub that opens the Store instead of running
-//     anything, so every probe failed for a reason that had nothing to do with
-//     what it was probing. `python` is tried first on Windows for that reason.
-//
-// (2) train.py IS NOT ALWAYS ONE DIRECTORY UP. dir + "/../python" holds in the
-//     build tree (build/ -> nav-sim/python) and nowhere else. In the release
-//     zip the exe sits at the top level, so "../python" points OUTSIDE the
-//     unzipped folder -- which is how the error came to name
-//     "...\kestrel-voxel-sim-windows-x64\..\python\requirements.txt", a path
-//     that cannot exist. Several layouts are searched now.
-//
-// (3) THE MESSAGE NAMED A PATH IT HAD NEVER LOOKED FOR. If a file is missing
-//     the message now says where it actually looked, and if requirements.txt
-//     is not in this download it names the packages instead of a dead path.
-std::string pyExe() {
-    static const char* const cands[] = {
-#ifdef _WIN32
-        "python", "py", "python3",
-#else
-        "python3", "python",
-#endif
-    };
-    for (const char* c : cands) {
-        const std::string probe = std::string(c) + " -c \"import sys\" > " NULLDEV " 2>&1";
-        if (std::system(probe.c_str()) == 0) return c;
-    }
-    return "";
-}
+// WHICH PYTHON is the hard part, not whether one exists; see kestrel_python.hpp.
+// Everything here names an interpreter by ABSOLUTE PATH, because on a machine
+// with several, "python" is exactly the ambiguity that made pip install into
+// one interpreter and the import fail in another.
 
 // Where the python half might be, most specific first. Returns "" if nowhere.
+//
+// dir + "/../python" holds in the build tree (build/ -> nav-sim/python) and
+// nowhere else. From a top-level exe it escapes the package entirely, which is
+// how the error came to name a requirements.txt one level ABOVE the folder
+// that had been unzipped -- a path that could not exist.
 std::string findPy(const std::string& dir, const char* name) {
     const std::string cands[] = {
         dir + "/python/" + name,        // release zip: python/ beside the exe
@@ -338,65 +317,91 @@ std::string findPy(const std::string& dir, const char* name) {
 }
 
 int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
-    const std::string py = pyExe();
-    if (py.empty()) {
-        std::fprintf(stderr,
-            "[kestrel] no working python on PATH. Training is the one command that\n"
-            "          needs one -- the trainer is PyTorch and stable-baselines3.\n"
-            "          Install Python 3.11 and tick \"Add python.exe to PATH\".\n");
-        return 3;
+    std::vector<std::string> args;
+    bool doInstall = false;
+    for (const std::string& r : rest) {
+        if (r == "--install") doInstall = true;
+        else args.push_back(r);
     }
 
     const std::string script = findPy(dir, "train.py");
     const std::string reqs   = findPy(dir, "requirements.txt");
+    const std::vector<kpy::Py> pys = kpy::discover(dir);
+    const kpy::Py* py = kpy::best(pys);
+
     if (script.empty()) {
         std::fprintf(stderr,
             "[kestrel] train.py is not in this download.\n"
-            "          Looked in %s\\python, %s\\..\\python, .\\python and ..\\python.\n"
-            "          The other three commands are self-contained and work from\n"
-            "          here; training also needs the python half of the tree:\n"
-            "            git clone https://github.com/henriharmaala1-source/Assembly-grapher\n"
-            "            cd Assembly-grapher/nav-sim\n",
-            dir.c_str(), dir.c_str());
+            "          Looked beside the exe (%s), one level up, and in the\n"
+            "          working directory. The other three commands are\n"
+            "          self-contained and work from here; training also needs\n"
+            "          the python half of the tree:\n"
+            "            git clone https://github.com/henriharmaala1-source/Assembly-grapher\n",
+            dir.c_str());
         return 3;
     }
 
-    const std::string probe =
-        py + " -c \"import gymnasium, stable_baselines3, sb3_contrib\" > " NULLDEV " 2>&1";
-    if (std::system(probe.c_str()) != 0) {
-        std::fprintf(stderr, "[kestrel] the RL stack is not installed for %s.\n", py.c_str());
-        if (!reqs.empty())
-            std::fprintf(stderr, "          %s -m pip install -r \"%s\"\n",
-                         py.c_str(), reqs.c_str());
-        else
-            // No requirements.txt here, so naming one would send you after a
-            // file this download does not contain. Name the packages instead.
-            std::fprintf(stderr,
-                "          %s -m pip install gymnasium stable-baselines3 sb3-contrib "
-                "numpy tensorboard\n", py.c_str());
+    // No interpreter can load voxelenv. Say which of the two reasons it is --
+    // they need completely different fixes and look identical from Python.
+    if (!py) {
+        kpy::report(pys, dir);
         return 3;
     }
 
-    // The extension module is the C++ environment. train.py adds the exe's own
-    // directory to sys.path, so a miss here means the build did not produce it.
-    const std::string probe2 =
-        py + " -c \"import sys; sys.path.insert(0, r'" + dir + "'); import voxelenv\" "
-        "> " NULLDEV " 2>&1";
-    if (std::system(probe2.c_str()) != 0) {
+    if (doInstall) {
+        std::printf("[kestrel] installing into the interpreter that can load voxelenv:\n"
+                    "          %s  (CPython %d.%d)\n",
+                    py->exe.c_str(), py->major, py->minor);
+        const int rc = kpy::install(*py, reqs);
+        if (rc != 0) { std::fprintf(stderr, "[kestrel] pip exited %d\n", rc); return rc; }
+        // Re-probe rather than assume: pip can report success and still leave
+        // an import broken, and that is worth catching here rather than three
+        // screens into a traceback.
+        const std::vector<kpy::Py> again = kpy::discover(dir);
+        const kpy::Py* p2 = kpy::best(again);
+        if (!p2 || !p2->rl) {
+            std::fprintf(stderr, "[kestrel] pip succeeded but the imports still fail.\n");
+            kpy::report(again, dir);
+            return 3;
+        }
+        std::printf("[kestrel] the RL stack is installed. Starting training.\n");
+        py = nullptr;
+        static std::vector<kpy::Py> keep = again;   // outlives the pointer below
+        for (const kpy::Py& q : keep) if (q.voxelenv) { py = &q; break; }
+    }
+
+    if (!py->rl) {
         std::fprintf(stderr,
-            "[kestrel] the voxelenv extension module is not beside this exe (%s).\n"
-            "          It is the C++ environment the trainer steps, so training\n"
-            "          cannot start without it. Build it:\n"
-            "            %s -m pip install pybind11\n"
-            "            cmake -B build -Dpybind11_DIR=$(%s -m pybind11 --cmakedir)\n"
-            "            cmake --build build --target voxelenv\n",
-            dir.c_str(), py.c_str(), py.c_str());
+            "[kestrel] the RL stack is not installed for the interpreter that can\n"
+            "          load voxelenv:\n"
+            "            %s  (CPython %d.%d)\n\n"
+            "          Install into THAT one -- not whatever `python` means on\n"
+            "          your PATH, which on this machine may be a different\n"
+            "          interpreter entirely:\n\n"
+            "            kestrel train --install\n\n"
+            "          or by hand:\n"
+            "            \"%s\" -m pip install %s%s%s\n\n"
+            "          `kestrel python` lists every interpreter found here.\n",
+            py->exe.c_str(), py->major, py->minor, py->exe.c_str(),
+            reqs.empty() ? "gymnasium stable-baselines3 sb3-contrib numpy tensorboard" : "-r \"",
+            reqs.empty() ? "" : reqs.c_str(), reqs.empty() ? "" : "\"");
         return 3;
     }
 
+    // TELL train.py WHERE THE MODULE IS rather than letting it guess. It used
+    // to look in "../build" relative to itself, which is true in the build tree
+    // and false in the release package -- so this preflight could pass (it
+    // probes the exe's own directory, which is right) while the run that
+    // followed failed on "No module named voxelenv". A probe that can disagree
+    // with the thing it is probing is worse than no probe.
+#ifdef _WIN32
+    _putenv_s("KESTREL_MODULE_DIR", dir.c_str());
+#else
+    setenv("KESTREL_MODULE_DIR", dir.c_str(), 1);
+#endif
     std::vector<std::string> a{script};
-    for (const std::string& r : rest) a.push_back(r);
-    return spawn(py, a);
+    for (const std::string& r : args) a.push_back(r);
+    return spawn(py->exe, a);
 }
 
 // ------------------------------------------------------------------ live sim
@@ -495,12 +500,18 @@ int main(int argc, char** argv) {
         return rc < 0 ? menu(dir) : rc;
     }
     if (cmd == "menu")  return menu(dir);
+    if (cmd == "python") { kpy::report(kpy::discover(dir), dir); return 0; }
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf(
-            "kestrel [track|bench|sim|train|gui|menu] ...\n"
+            "kestrel [track|bench|sim|train|gui|menu|python] ...\n"
             "  no arguments opens the window; `menu` is the text one, for a\n"
             "  headless box or over ssh. Every button in the window prints the\n"
-            "  command it runs, so anything you can click you can also type.\n");
+            "  command it runs, so anything you can click you can also type.\n"
+            "\n"
+            "  train --install   pip the RL stack into the interpreter that can\n"
+            "                    load voxelenv, named by absolute path\n"
+            "  python            list every python found here and say which one\n"
+            "                    training will use, and why\n");
         return 0;
     }
     std::fprintf(stderr, "unknown command '%s' -- try --help\n", cmd.c_str());

@@ -39,7 +39,12 @@ jobs:
     # A hard ceiling on the whole job. A hung test once held this build for
     # 17 minutes with no output, which reads as "CI is slow today" rather than
     # "something is stuck" -- and the exe you were waiting for never arrived.
-    timeout-minutes: 25
+    # The ARTIFACT is finished about four minutes in; everything after that is
+    # the test suite. 25 minutes was not enough for it on this runner, so the
+    # last three runs were killed mid-ctest and every one of them shows as
+    # "cancelled" -- which reads as a failed build even though the zip had
+    # already uploaded. More headroom, and the suite below is parallel now.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: nav-sim
@@ -136,7 +141,9 @@ jobs:
         # because then a test problem and a build problem look identical from
         # the download page. The result is still visible as a red step.
         continue-on-error: true
-        # --timeout 120 per test. Without it one stuck child takes the job, and
-        # ctest waits forever by default.
+        # -j 4 because these are independent processes and the runner has the
+        # cores; serially the suite ran past the job ceiling. --timeout 90 per
+        # test: without a cap ctest waits forever, and one stuck child then
+        # takes the whole job.
         run: |
-          ctest --test-dir build -C Release --output-on-failure --timeout 120
+          ctest --test-dir build -C Release --output-on-failure --timeout 90 -j 4

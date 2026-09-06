@@ -326,7 +326,7 @@ int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
 
     const std::string script = findPy(dir, "train.py");
     const std::string reqs   = findPy(dir, "requirements.txt");
-    const std::vector<kpy::Py> pys = kpy::discover(dir);
+    std::vector<kpy::Py> pys = kpy::discover(dir);
     const kpy::Py* py = kpy::best(pys);
 
     if (script.empty()) {
@@ -357,17 +357,21 @@ int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
         // Re-probe rather than assume: pip can report success and still leave
         // an import broken, and that is worth catching here rather than three
         // screens into a traceback.
-        const std::vector<kpy::Py> again = kpy::discover(dir);
-        const kpy::Py* p2 = kpy::best(again);
-        if (!p2 || !p2->rl) {
+        //
+        // The re-probe REPLACES pys rather than filling a second vector. It
+        // used to land in a local that died at the end of this block, with py
+        // left pointing into it -- and then a `static` to paper over that,
+        // which is worse: a static local initialises once, so a second install
+        // in the same process (the window can do exactly that) would have gone
+        // on using the first probe's answer.
+        pys = kpy::discover(dir);
+        py = kpy::best(pys);
+        if (!py || !py->rl) {
             std::fprintf(stderr, "[kestrel] pip succeeded but the imports still fail.\n");
-            kpy::report(again, dir);
+            kpy::report(pys, dir);
             return 3;
         }
         std::printf("[kestrel] the RL stack is installed. Starting training.\n");
-        py = nullptr;
-        static std::vector<kpy::Py> keep = again;   // outlives the pointer below
-        for (const kpy::Py& q : keep) if (q.voxelenv) { py = &q; break; }
     }
 
     if (!py->rl) {

@@ -35,7 +35,14 @@ std::string shell(const std::string& cmd) {
 #endif
 }
 
-std::string quoted(const std::string& p) { return "\"" + p + "\""; }
+// NOT called `quoted`. It was, and MSVC rejected it: the argument is a
+// std::string, so ADL adds std::quoted (declared transitively via <sstream>)
+// to the overload set, and MSVC resolved the call to the stream manipulator --
+// the error named the argument it built as std::_Quote_in rather than a
+// string. GCC prefers this non-template over the std template and compiles the
+// same code happily, so the two toolchains genuinely disagree here. The name
+// is simply not worth arguing about.
+std::string dq(const std::string& p) { return "\"" + p + "\""; }
 
 // Runs a command and returns its stdout, trimmed. Empty on failure -- for a
 // version probe "produced nothing" and "did not run" are the same answer.
@@ -56,26 +63,38 @@ bool quiet(const std::string& cmd) {
     return std::system(shell(cmd + " > " NULLDEV " 2>&1").c_str()) == 0;
 }
 
-// The commands that MIGHT start an interpreter. Each is only a way in: what is
-// recorded is the sys.executable it reports, so two spellings of the same
-// install collapse to one entry.
+// ONE LIST FOR EVERY PLATFORM, not an #ifdef per platform. Each entry is only
+// a way IN: it is tried, and what gets recorded is the sys.executable it
+// reports, so a name that does not exist here simply produces nothing and is
+// skipped. `py` is a Windows launcher and `python3.11` is a POSIX convention,
+// and each is harmlessly absent on the other.
+//
+// THE ORDER MATTERS ON WINDOWS: `python` comes before `python3` because
+// `python3` there is usually a Microsoft Store stub, and invoking it pops the
+// Store open. The probe would reject it anyway -- it prints nothing -- but
+// only after putting a shop window on the user's screen.
 std::vector<std::pair<std::string, std::string>> seeds() {
-#ifdef _WIN32
-    return {{"py -3.11", "py -3.11"},
-            {"py -3",    "py launcher"},
-            {"python",   "PATH"},
-            {"python3",  "PATH"}};
-#else
-    return {{"python3.11", "PATH"}, {"python3", "PATH"}, {"python", "PATH"}};
-#endif
+    return {{"py -3.11",   "py -3.11"},
+            {"py -3",      "py launcher"},
+            {"python3.11", "PATH"},
+            {"python",     "PATH"},
+            {"python3",    "PATH"}};
 }
 
-// Interpreters that are installed but not on PATH and not the launcher default.
-// On Windows `py -0p` lists them with their paths, which is the only way to see
+// Interpreters that are installed but not on PATH and not the launcher
+// default. `py -0p` lists them with their paths, which is the only way to see
 // a python nothing points at -- and on a machine with several, that is usually
 // where the one you need is hiding.
+//
+// NOT INSIDE AN #ifdef, though only Windows has the launcher. The body is
+// plain string and filesystem code, and elsewhere `py -0p` is simply not a
+// command, so capture() returns nothing and the loop does not run: the same
+// behaviour, without a block that the machine this is written on never
+// compiles. That distinction is not academic -- the previous version put this
+// body behind #ifdef _WIN32, so a type error on the push_back below survived
+// every local build and clean test run, and was found only by the Windows
+// runner. Code that is never compiled is never checked.
 void addRegistered(std::vector<std::pair<std::string, std::string>>& out) {
-#ifdef _WIN32
     std::istringstream ls(capture("py -0p"));
     std::string line;
     while (std::getline(ls, line)) {
@@ -84,11 +103,8 @@ void addRegistered(std::vector<std::pair<std::string, std::string>>& out) {
         std::string path = line.substr(c - 1);
         while (!path.empty() && (path.back() == '\r' || path.back() == ' ')) path.pop_back();
         std::error_code ec;
-        if (fs::exists(path, ec)) out.push_back({quoted(path), "py -0p"});
+        if (fs::exists(path, ec)) out.push_back({dq(path), "py -0p"});
     }
-#else
-    (void)out;
-#endif
 }
 
 // Is this a source checkout or an unzipped release? The two need OPPOSITE
@@ -160,11 +176,11 @@ std::vector<Py> discover(const std::string& exeDir) {
         p.exe = key;
         p.origin = c.second;
         p.runs = true;
-        std::istringstream(capture(quoted(real) +
+        std::istringstream(capture(dq(real) +
             " -c \"import sys;print('%d %d'%sys.version_info[:2])\"")) >> p.major >> p.minor;
-        p.voxelenv = quiet(quoted(real) + " -c \"import sys;sys.path.insert(0,r'" +
+        p.voxelenv = quiet(dq(real) + " -c \"import sys;sys.path.insert(0,r'" +
                            exeDir + "');import voxelenv\"");
-        p.rl = quiet(quoted(real) +
+        p.rl = quiet(dq(real) +
                      " -c \"import gymnasium,stable_baselines3,sb3_contrib\"");
         out.push_back(p);
     }
@@ -185,10 +201,10 @@ const Py* best(const std::vector<Py>& v) {
 }
 
 int install(const Py& p, const std::string& reqs) {
-    std::string cmd = quoted(p.exe) + " -m pip install ";
+    std::string cmd = dq(p.exe) + " -m pip install ";
     cmd += reqs.empty()
          ? "gymnasium stable-baselines3 sb3-contrib numpy tensorboard"
-         : "-r " + quoted(reqs);
+         : "-r " + dq(reqs);
     // THE FULL PATH IS PRINTED, not "python". On a machine with several that
     // difference is the whole point: the line is unambiguous about which
     // interpreter is being changed, and can be pasted to repeat it by hand.

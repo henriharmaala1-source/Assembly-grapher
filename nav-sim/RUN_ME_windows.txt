@@ -1,7 +1,25 @@
 KESTREL - one binary for the three things this project can demonstrate
 =====================================================================
 
-Double-click  kestrel.exe        a menu over all three
+BUILDING IT
+    cmake -B build -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --config Release
+
+That produces exactly ONE executable: build\Release\kestrel.exe. The live
+sim, the object-lock tracker and the planner baselines are all compiled into
+it -- there is no voxel_live.exe or voxel_sim.exe to keep beside it any more.
+
+If the configure step fails it will be on OpenCV, which is the only hard
+dependency. Point CMake at your install and try again:
+
+    cmake -B build -DOpenCV_DIR=C:/opencv/build -DCMAKE_BUILD_TYPE=Release
+
+Only core, imgproc and imgcodecs are required. highgui (windows) and videoio
+(video files) are each optional and each prints a status line saying whether
+it was found; without them the sim is headless and `track` takes an image
+sequence instead of a video, which is the better regression input anyway.
+
+Double-click  kestrel.exe        a menu over all of it
 
   kestrel track --box X Y SIZE --csv out.csv frames*.png
         object lock over recorded frames or a video. --box designates the
@@ -13,8 +31,17 @@ Double-click  kestrel.exe        a menu over all three
         the non-RL path-planner baselines, through the SAME environment a
         learned policy uses. These are the numbers a policy has to beat.
 
-  kestrel sim      the live voxel sim   (spawns voxel_live)
-  kestrel train    RL training          (spawns python train.py)
+  kestrel sim [args...]
+        the live voxel sim, running IN this process. Takes voxel_live's
+        flags unchanged: --replay FILE.kdr, --live, --rs-check, --sim.
+
+  kestrel train [args...]
+        RL training. This is the one command that leaves the process, and
+        that is not a packaging failure: the trainer is PyTorch and
+        stable-baselines3 driving the C++ environment through the voxelenv
+        module. Embedding libpython would not remove that dependency, it
+        would pin the exe to one interpreter's ABI. kestrel checks the
+        imports first and names the pip command if one is missing.
 
 Video support is optional. Without OpenCV's videoio, `track` still runs over
 an IMAGE SEQUENCE -- deterministic and diffable where a video decode is
@@ -22,10 +49,23 @@ neither, so it is the better thing to regression-test against.
 
 ---------------------------------------------------------------------
 
-KESTREL VOXEL NAVIGATION SIM - Windows build
+THE OTHER TOOLS - not built by default
+======================================
 
-Double-click  voxel_gui.exe      the simulator: fly a synthetic forest
-Double-click  voxel_live.exe     REAL depth: a connected D435i, or a recording
+Everything below is still in the tree and still builds; it is simply off the
+default target, so a plain build leaves you with one exe instead of a folder
+of them. To get them:
+
+    cmake -B build -DNAV_SIM_ALL_TARGETS=ON     the tools
+    cmake -B build -DBUILD_TESTS=ON             the tools and the ctest suite
+    cmake --build build --target voxel_gui      or just the one you want
+
+  voxel_gui.exe    point-and-click front end: fly a synthetic forest
+  voxel_sim.exe    the scriptable batch version of the same sim
+  voxel_live.exe   the standalone build of what `kestrel sim` now runs
+
+VOXEL_LIVE - the real map and planner over real depth
+(`kestrel sim` and voxel_live.exe are the same code and the same flags)
 
 
 VOXEL_LIVE - the real map and planner over real depth
@@ -40,7 +80,7 @@ needs realsense2.dll to be findable when you RUN it, which it is if you have
 installed the RealSense SDK or the Viewer.
 
   To check, with no camera plugged in, open PowerShell here and run:
-      .\voxel_live.exe --rs-check
+      .\kestrel.exe sim --rs-check
 
   -> "librealsense 2.58.3 (realsense2.dll)"   good, LIVE will be enabled
   -> "could not load librealsense. Tried: ..."  copy realsense2.dll next to
@@ -115,6 +155,7 @@ for the Hervanta / Tampere / Helsinki maps.
     voxel_sim.exe is the scriptable version. One run you watched is an anecdote;
     sweep.sh runs every world x every seed and prints a table. Useful flags:
 
+      cmake --build build --target voxel_sim
       voxel_sim.exe --world forest --seed 3 --truth --csv run.csv
       voxel_sim.exe --world osm --buildings worlds\helsinki_centre.txt --cell 0.5
 
@@ -156,7 +197,8 @@ CPU (it is the code that flies).
 CUDA (optional, and unverified)
 -------------------------------
 
-    cmake -B build -DNAVSIM_WITH_CUDA=ON
+    cmake -B build -DNAVSIM_WITH_CUDA=ON -DNAV_SIM_ALL_TARGETS=ON
+    cmake --build build --target cuda_depth_check
     build\Release\cuda_depth_check.exe
 
 ONLY the depth renderer runs on the GPU. The map, the planner and the veto stay

@@ -370,6 +370,11 @@ add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
 # top of this file already ran; just ask whether the target came out of it.
 add_executable(kestrel
   kestrel.cpp
+  # The live sim, compiled IN rather than spawned. VOXEL_LIVE_NO_MAIN drops its
+  # own main() so kestrel keeps the only entry point in the binary.
+  voxel_live.cpp
+  scan_match.cpp frame_source.cpp realsense_dyn.cpp depth_record.cpp
+  voxel_planner.cpp
   rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
   depth_camera.cpp bearing_field.cpp
   ../onboard/src/lock_tracker_fused.cpp
@@ -379,7 +384,18 @@ add_executable(kestrel
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
   ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS})
+target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
+target_compile_definitions(kestrel PRIVATE VOXEL_LIVE_NO_MAIN=1)
+# TRAINING IS THE ONE COMMAND THAT LEAVES THE PROCESS, and embedding CPython
+# would not change that. The trainer is PyTorch and stable-baselines3: linking
+# libpython in still requires that exact interpreter, its ABI and its
+# site-packages to be present, so the dependency is identical and the failure
+# modes are worse -- a version mismatch becomes a link error or a crash instead
+# of a message naming the pip command. So kestrel calls python3 for `train` and
+# checks the imports first (see cmdTrain), and does everything else itself.
+if(SIM_HAVE_HIGHGUI_FOUND OR OpenCV_highgui_FOUND)
+  target_compile_definitions(kestrel PRIVATE SIM_HAVE_HIGHGUI=1)
+endif()
 if(TARGET opencv_videoio)
   target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_VIDEOIO=1)
   message(STATUS "nav_sim: kestrel built WITH videoio - `track` accepts video files")
@@ -472,4 +488,36 @@ target_include_directories(chase_turn_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} 
 target_link_libraries(chase_turn_check PRIVATE ${OpenCV_LIBS})
 if(BUILD_TESTS)
   add_test(NAME chase_turn_check COMMAND chase_turn_check)
+endif()
+
+# ---------------------------------------------------------------------------
+# ONE EXECUTABLE. Everything above this line is a target, and a plain
+# `cmake --build build` used to drop a dozen binaries next to each other --
+# voxel_live, voxel_sim, rl_bench, gui_preview and ten *_check programs. That is
+# a directory of executables, not a deliverable, and it is impossible to tell
+# from the outside which one a reviewer is supposed to run.
+#
+# So the default build produces exactly ONE: kestrel. It has the live sim, the
+# tracker and the planner baselines compiled into it, so nothing that was
+# reachable before became unreachable -- the entry point moved from a filename
+# to a subcommand.
+#
+# The rest are not deleted, they are taken off the `all` target. Each is still
+# buildable by name (`cmake --build build --target scan_match_check`), and the
+# test suite still builds all of them, because ctest depends on the binaries:
+#   -DBUILD_TESTS=ON   builds and registers everything
+#   -DNAV_SIM_ALL_TARGETS=ON  builds everything without turning on ctest
+option(NAV_SIM_ALL_TARGETS "Build every tool and check, not just kestrel" OFF)
+if(NOT NAV_SIM_ALL_TARGETS AND NOT BUILD_TESTS)
+  get_property(_nav_sim_targets DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+               PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(_t IN LISTS _nav_sim_targets)
+    # voxelenv is the python extension `kestrel train` imports; it is part of
+    # the deliverable even though it is not an executable.
+    if(NOT _t STREQUAL "kestrel" AND NOT _t STREQUAL "voxelenv")
+      set_target_properties(${_t} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
+  endforeach()
+  message(STATUS "nav_sim: default build produces ONE executable (kestrel);"
+                 " -DNAV_SIM_ALL_TARGETS=ON or -DBUILD_TESTS=ON for the rest")
 endif()

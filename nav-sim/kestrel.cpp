@@ -3,14 +3,20 @@
 //   kestrel                       an interactive menu
 //   kestrel track  <frames...>    object lock over video or an image sequence
 //   kestrel bench  [--worlds ...] the non-RL path-planner baselines
-//   kestrel sim    [args...]      the live voxel sim  (spawns voxel_live)
-//   kestrel train  [args...]      RL training         (spawns python train.py)
+//   kestrel sim    [args...]      the live voxel sim, in this process
+//   kestrel train  [args...]      RL training         (runs python train.py)
 //
-// WHY A LAUNCHER AND NOT ONE MONOLITH. Two of these already have a main() and a
-// large argument surface of their own, and duplicating that here would create a
-// second place for flags to drift out of sync. The two that do NOT have a home
-// -- object lock over recorded frames, and the planner baselines -- are built in
-// directly, because they are the ones a reviewer actually needs to run.
+// THIS IS THE ONLY EXECUTABLE THE DEFAULT BUILD PRODUCES. The tracker, the
+// planner baselines and the live sim are all compiled in; `sim` calls
+// voxelLiveMain() directly rather than starting a second program, so there is
+// no second binary to ship, find, or keep in step with this one.
+//
+// TRAINING IS THE ONE EXCEPTION and it is not a packaging failure. The trainer
+// is PyTorch and stable-baselines3 driving the C++ environment through the
+// voxelenv extension module. Embedding libpython here would not remove that
+// dependency -- it would pin the exe to one interpreter's ABI and turn a
+// missing package into a link error instead of a message naming the pip
+// command. cmdTrain checks the imports first and then runs python3.
 //
 // VIDEO IS OPTIONAL, exactly as highgui already is in this tree. A build without
 // OpenCV's videoio can still run `track` over an IMAGE SEQUENCE, which is what a
@@ -40,6 +46,11 @@
 
 #include "lock_tracker_fused.hpp"
 #include "rl_env.hpp"
+
+// The live sim is LINKED IN, not spawned: voxel_live.cpp is compiled into this
+// binary with VOXEL_LIVE_NO_MAIN so its entry point is an ordinary function.
+// That is the difference between one program and a launcher for three.
+int voxelLiveMain(int argc, char** argv);
 
 using namespace sim;
 
@@ -224,7 +235,14 @@ int cmdBench(std::vector<std::string> args) {
         if (args[i] == "--worlds") {
             worlds.clear();
             while (i + 1 < args.size() && args[i + 1][0] != '-') worlds.push_back(args[++i]);
-        } else if (args[i] == "--seeds") { s0 = std::stoi(next("101")); s1 = std::stoi(next("104")); }
+        } else if (args[i] == "--seeds") {
+            // `--seeds 101 108` is the range; `--seeds 5` is that ONE seed.
+            // It used to fall through to the default upper bound, so a single
+            // number quietly asked for 1..104 -- four hundred forest runs that
+            // print nothing for ten minutes and look like a hang.
+            s0 = s1 = std::stoi(next("101"));
+            if (i + 1 < args.size() && args[i + 1][0] != '-') s1 = std::stoi(args[++i]);
+        }
         else if (args[i] == "--steps")   maxSteps = std::stoi(next("600"));
         else if (args[i] == "--stereo")  stereo = true;
     }
@@ -312,8 +330,8 @@ int menu(const std::string& dir) {
             "\n  KESTREL\n"
             "  1  object lock over recorded frames   (track)\n"
             "  2  path-planner baselines            (bench)\n"
-            "  3  live voxel sim                    (spawns voxel_live)\n"
-            "  4  RL training                       (spawns python train.py)\n"
+            "  3  live voxel sim                    (in this process)\n"
+            "  4  RL training                       (runs python train.py)\n"
             "  q  quit\n"
             "  > ");
         std::fflush(stdout);
@@ -333,7 +351,12 @@ int menu(const std::string& dir) {
                 break;
             }
             case '2': cmdBench({}); break;
-            case '3': spawn(dir + "/voxel_live", {}); break;
+            case '3': {
+                std::string self = "kestrel-sim";
+                char* a[1] = {self.data()};
+                voxelLiveMain(1, a);
+                break;
+            }
             case '4': cmdTrain(dir, {"--workers", "8"}); break;
             case 'q': case 'Q': return 0;
             default:  std::printf("  ?\n");
@@ -353,7 +376,15 @@ int main(int argc, char** argv) {
 
     if (cmd == "track") return cmdTrack(rest);
     if (cmd == "bench") return cmdBench(rest);
-    if (cmd == "sim")   return spawn(dir + "/voxel_live", rest);
+    if (cmd == "sim") {
+        // Rebuild an argv for the linked-in entry point. argv[0] is kept so its
+        // own usage text and relative paths still make sense.
+        std::vector<char*> a;
+        std::string self = "kestrel-sim";
+        a.push_back(self.data());
+        for (std::string& r : rest) a.push_back(r.data());
+        return voxelLiveMain(int(a.size()), a.data());
+    }
     if (cmd == "train") return cmdTrain(dir, rest);
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf("kestrel [track|bench|sim|train] ...   (no args: menu)\n");

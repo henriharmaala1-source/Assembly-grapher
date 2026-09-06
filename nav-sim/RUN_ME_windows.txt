@@ -19,7 +19,21 @@ Only core, imgproc and imgcodecs are required. highgui (windows) and videoio
 it was found; without them the sim is headless and `track` takes an image
 sequence instead of a video, which is the better regression input anyway.
 
-Double-click  kestrel.exe        a menu over all of it
+Double-click  kestrel.exe        THE WINDOW. Pick track / bench / sim / train
+                                down the left, set it up on the right, RUN.
+
+Every panel prints the exact command it is about to run along the bottom, so
+the window is a way to find the CLI rather than a substitute for it -- anything
+you can click you can also type, and a screenshot of the window is a
+reproducible run.
+
+    kestrel gui              the same window, explicitly
+    kestrel menu             the text menu, for a headless box or over ssh
+    kestrel gui --shot out   render the panels to out_*.png with no display
+    kestrel gui --check      assert the layout has not broken (runs in ctest)
+
+With no display -- ssh without -X -- a bare `kestrel` says so and drops to the
+text menu rather than dying. A build without OpenCV highgui does the same.
 
   kestrel track --box X Y SIZE --csv out.csv frames*.png
         object lock over recorded frames or a video. --box designates the

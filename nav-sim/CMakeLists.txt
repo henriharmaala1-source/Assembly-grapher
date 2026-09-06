@@ -370,6 +370,7 @@ add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
 # top of this file already ran; just ask whether the target came out of it.
 add_executable(kestrel
   kestrel.cpp
+  kestrel_gui.cpp
   # The live sim, compiled IN rather than spawned. VOXEL_LIVE_NO_MAIN drops its
   # own main() so kestrel keeps the only entry point in the binary.
   voxel_live.cpp
@@ -393,9 +394,22 @@ target_compile_definitions(kestrel PRIVATE VOXEL_LIVE_NO_MAIN=1)
 # modes are worse -- a version mismatch becomes a link error or a crash instead
 # of a message naming the pip command. So kestrel calls python3 for `train` and
 # checks the imports first (see cmdTrain), and does everything else itself.
-if(SIM_HAVE_HIGHGUI_FOUND OR OpenCV_highgui_FOUND)
+# highgui gates the WINDOW only. Without it kestrel still runs every command;
+# `gui` and a bare double-click fall back to the text menu and say why.
+if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
   target_compile_definitions(kestrel PRIVATE SIM_HAVE_HIGHGUI=1)
+  message(STATUS "nav_sim: kestrel built WITH highgui - the window is available")
+else()
+  message(STATUS "nav_sim: kestrel built without highgui - text menu only")
 endif()
+# The window is the one thing in this binary that cannot be inspected over ssh,
+# so it gets a headless layout check the way the sim's flight view already has
+# gui_preview. `kestrel gui --shot PREFIX` writes the panels to PNG; --check
+# asserts nothing overlaps, runs off the canvas, or is squeezed unreadable.
+if(BUILD_TESTS AND (OpenCV_highgui_FOUND OR TARGET opencv_highgui))
+  add_test(NAME kestrel_gui_check COMMAND kestrel gui --check)
+endif()
+
 if(TARGET opencv_videoio)
   target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_VIDEOIO=1)
   message(STATUS "nav_sim: kestrel built WITH videoio - `track` accepts video files")

@@ -5,6 +5,8 @@
 //   kestrel bench  [--worlds ...] the non-RL path-planner baselines
 //   kestrel sim    [args...]      the live voxel sim, in this process
 //   kestrel train  [args...]      RL training         (runs python train.py)
+//   kestrel gui                   the window (also what a double-click gets)
+//   kestrel menu                  the text menu, for a headless box
 //
 // THIS IS THE ONLY EXECUTABLE THE DEFAULT BUILD PRODUCES. The tracker, the
 // planner baselines and the live sim are all compiled in; `sim` calls
@@ -44,6 +46,7 @@
 #include <opencv2/videoio.hpp>
 #endif
 
+#include "kestrel_gui.hpp"
 #include "lock_tracker_fused.hpp"
 #include "rl_env.hpp"
 
@@ -317,7 +320,19 @@ int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
     return spawn("python3", a);
 }
 
-// ----------------------------------------------------------------------- menu
+// ------------------------------------------------------------------ live sim
+// ONE PATH INTO THE SIM, used by the CLI, the window and the text menu alike.
+// voxelLiveMain wants a mutable argv, so the strings are rebuilt here rather
+// than in each of the three callers.
+int cmdSim(std::vector<std::string> args) {
+    std::vector<char*> a;
+    std::string self = "kestrel-sim";
+    a.push_back(self.data());
+    for (std::string& r : args) a.push_back(r.data());
+    return voxelLiveMain(int(a.size()), a.data());
+}
+
+// ------------------------------------------------------------------ text menu
 std::string exeDir(const char* argv0) {
     std::string p(argv0 ? argv0 : "");
     const size_t c = p.find_last_of("/\\");
@@ -351,12 +366,7 @@ int menu(const std::string& dir) {
                 break;
             }
             case '2': cmdBench({}); break;
-            case '3': {
-                std::string self = "kestrel-sim";
-                char* a[1] = {self.data()};
-                voxelLiveMain(1, a);
-                break;
-            }
+            case '3': cmdSim({}); break;
             case '4': cmdTrain(dir, {"--workers", "8"}); break;
             case 'q': case 'Q': return 0;
             default:  std::printf("  ?\n");
@@ -364,11 +374,26 @@ int menu(const std::string& dir) {
     }
 }
 
+// The window drives the SAME four functions the command line does -- it builds
+// argument vectors and hands them over, so it cannot grow behaviour the CLI
+// does not have. Returns -1 when this build has no highgui.
+int gui(const std::string& dir) {
+    kgui::Actions a;
+    a.track = [](std::vector<std::string> v) { return cmdTrack(std::move(v)); };
+    a.bench = [](std::vector<std::string> v) { return cmdBench(std::move(v)); };
+    a.sim   = [](std::vector<std::string> v) { return cmdSim(std::move(v)); };
+    a.train = [dir](std::vector<std::string> v) { return cmdTrain(dir, v); };
+    return kgui::run(a, dir);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     const std::string dir = exeDir(argc ? argv[0] : "");
-    if (argc < 2) return menu(dir);
+    // A DOUBLE-CLICK GETS THE WINDOW. It falls back to the text menu rather
+    // than failing, because a build without highgui is a supported build and
+    // the two commands that matter in CI do not need a window at all.
+    if (argc < 2) { const int rc = gui(dir); return rc < 0 ? menu(dir) : rc; }
 
     std::vector<std::string> rest;
     for (int i = 2; i < argc; ++i) rest.push_back(argv[i]);
@@ -376,18 +401,27 @@ int main(int argc, char** argv) {
 
     if (cmd == "track") return cmdTrack(rest);
     if (cmd == "bench") return cmdBench(rest);
-    if (cmd == "sim") {
-        // Rebuild an argv for the linked-in entry point. argv[0] is kept so its
-        // own usage text and relative paths still make sense.
-        std::vector<char*> a;
-        std::string self = "kestrel-sim";
-        a.push_back(self.data());
-        for (std::string& r : rest) a.push_back(r.data());
-        return voxelLiveMain(int(a.size()), a.data());
-    }
+    if (cmd == "sim")  return cmdSim(rest);
     if (cmd == "train") return cmdTrain(dir, rest);
+    if (cmd == "gui") {
+        // --shot renders the panels to PNG with no display attached. The
+        // window is the only thing in this binary that cannot be checked over
+        // ssh, so it gets a headless render like the sim's layout already has.
+        if (rest.size() >= 1 && rest[0] == "--check") return kgui::check() ? 1 : 0;
+        if (rest.size() >= 1 && rest[0] == "--shot") {
+            const std::string pre = rest.size() > 1 ? rest[1] : std::string("kestrel_gui");
+            return kgui::shot(dir, pre) ? 0 : 1;
+        }
+        const int rc = gui(dir);
+        return rc < 0 ? menu(dir) : rc;
+    }
+    if (cmd == "menu")  return menu(dir);
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
-        std::printf("kestrel [track|bench|sim|train] ...   (no args: menu)\n");
+        std::printf(
+            "kestrel [track|bench|sim|train|gui|menu] ...\n"
+            "  no arguments opens the window; `menu` is the text one, for a\n"
+            "  headless box or over ssh. Every button in the window prints the\n"
+            "  command it runs, so anything you can click you can also type.\n");
         return 0;
     }
     std::fprintf(stderr, "unknown command '%s' -- try --help\n", cmd.c_str());

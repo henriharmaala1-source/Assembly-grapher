@@ -25,6 +25,13 @@
 #include <string>
 #include <vector>
 
+// Where to send a probe's output so it does not clutter the console.
+#ifdef _WIN32
+#define NULLDEV "NUL"
+#else
+#define NULLDEV "/dev/null"
+#endif
+
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #if KESTREL_HAVE_VIDEOIO
@@ -255,6 +262,43 @@ int cmdBench(std::vector<std::string> args) {
     return 0;
 }
 
+// -------------------------------------------------------------------- training
+// PREFLIGHT BEFORE SPAWNING. Training is the one command whose dependencies
+// live outside this binary, and a missing one otherwise surfaces as a Python
+// traceback several screens long -- which for a double-click workflow reads as
+// "it is broken" rather than "run one pip command". Check first, and say the
+// command rather than the symptom.
+int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
+    const std::string script = dir + "/../python/train.py";
+    const std::string probe =
+        "python3 -c \"import gymnasium, stable_baselines3, sb3_contrib\" "
+        "> " NULLDEV " 2>&1";
+    if (std::system(probe.c_str()) != 0) {
+        std::fprintf(stderr,
+            "[kestrel] the RL stack is not installed for this python.\n"
+            "          pip install -r \"%s/../python/requirements.txt\"\n",
+            dir.c_str());
+        return 3;
+    }
+    // The extension module is built beside this exe; train.py adds that
+    // directory to sys.path itself, so a missing module here means the build
+    // did not produce it rather than a path problem.
+    const std::string probe2 =
+        "python3 -c \"import sys; sys.path.insert(0, r'" + dir + "'); import voxelenv\" "
+        "> " NULLDEV " 2>&1";
+    if (std::system(probe2.c_str()) != 0) {
+        std::fprintf(stderr,
+            "[kestrel] the voxelenv extension module is missing from %s.\n"
+            "          Build it: cmake --build build --target voxelenv\n"
+            "          (it needs pybind11: pip install pybind11, then re-run cmake)\n",
+            dir.c_str());
+        return 3;
+    }
+    std::vector<std::string> a{script};
+    for (const std::string& r : rest) a.push_back(r);
+    return spawn("python3", a);
+}
+
 // ----------------------------------------------------------------------- menu
 std::string exeDir(const char* argv0) {
     std::string p(argv0 ? argv0 : "");
@@ -290,7 +334,7 @@ int menu(const std::string& dir) {
             }
             case '2': cmdBench({}); break;
             case '3': spawn(dir + "/voxel_live", {}); break;
-            case '4': spawn("python3", {dir + "/../python/train.py", "--workers", "8"}); break;
+            case '4': cmdTrain(dir, {"--workers", "8"}); break;
             case 'q': case 'Q': return 0;
             default:  std::printf("  ?\n");
         }
@@ -310,11 +354,7 @@ int main(int argc, char** argv) {
     if (cmd == "track") return cmdTrack(rest);
     if (cmd == "bench") return cmdBench(rest);
     if (cmd == "sim")   return spawn(dir + "/voxel_live", rest);
-    if (cmd == "train") {
-        std::vector<std::string> a{dir + "/../python/train.py"};
-        for (const std::string& r : rest) a.push_back(r);
-        return spawn("python3", a);
-    }
+    if (cmd == "train") return cmdTrain(dir, rest);
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf("kestrel [track|bench|sim|train] ...   (no args: menu)\n");
         return 0;

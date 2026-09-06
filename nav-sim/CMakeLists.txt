@@ -394,6 +394,13 @@ add_executable(rl_bench
 target_include_directories(rl_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(rl_bench PRIVATE ${OpenCV_LIBS})
 
+add_executable(loop_closure_check
+  test/loop_closure_check.cpp
+  place_descriptor.cpp voxel_map.cpp voxel_world.cpp depth_camera.cpp)
+target_include_directories(loop_closure_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(loop_closure_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME loop_closure_check COMMAND loop_closure_check)
+
 add_executable(rl_env_check
   test/rl_env_check.cpp
   rl_env.cpp

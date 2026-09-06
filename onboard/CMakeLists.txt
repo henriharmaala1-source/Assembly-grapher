@@ -182,4 +182,9 @@ if(BUILD_TESTS)
   target_include_directories(test_lock_tracker_fused PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME lock_tracker_fused COMMAND test_lock_tracker_fused)
+
+  # The OLD tracker -- the one perception.hpp still instantiates, and so the
+  # one that actually flies. It had no test at all until a review found the
+  # template scale-convention bug this pins.
+  kestrel_test(test_lock_tracker_reacquire src/lock_tracker.cpp src/kalman_center.cpp)
 endif()

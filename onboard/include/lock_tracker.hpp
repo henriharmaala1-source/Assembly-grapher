@@ -87,6 +87,17 @@ private:
 
     KalmanCenter kalman_;
     cv::Mat      tmpl_;         // grayscale template for re-detection
+    // THE SIZE THE TEMPLATE WAS TAKEN FROM, which is not the template's own
+    // size once the 96 px cap bites. Two consumers read tmpl_ and they had
+    // opposite conventions: computeNCC resizes the candidate ROI to
+    // tmpl_.size() and is therefore scale-normalised, while templateSearch slid
+    // tmpl_ over the frame at NATIVE resolution and so assumed 1:1. For any box
+    // over 96 px those disagree, and nothing reconciled them.
+    //
+    // Keeping the source dimensions makes the convention explicit and lets
+    // templateSearch scale the search region to match, and return a box the
+    // size of the TARGET rather than the size of the capped template.
+    int          tmplBoxW_    = 0, tmplBoxH_ = 0;
     int          tmplAge_     = 0;
 
     cv::Rect bbox_;

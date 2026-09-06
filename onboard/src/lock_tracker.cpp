@@ -146,6 +146,10 @@ void LockOnTracker::saveTemplate(const cv::Mat& frame, const cv::Rect& box) {
     const int tw = std::min(roi.width,  96);
     const int th = std::min(roi.height, 96);
     cv::resize(gray, tmpl_, {tw, th}, 0, 0, cv::INTER_LINEAR);
+    // Remember what it was taken FROM. Past 96 px the template is a downscaled
+    // rendition, and every consumer has to know that or it will match at the
+    // wrong scale. See the note in the header.
+    tmplBoxW_ = roi.width; tmplBoxH_ = roi.height;
     tmplAge_ = 0;
 }
 
@@ -200,12 +204,31 @@ cv::Rect LockOnTracker::templateSearch(const cv::Mat& frame,
                  (int)(rad * 2),      (int)(rad * 2)),
         frame.size());
 
-    // Search region must be larger than the template.
-    if (sroi.width <= tmpl_.cols || sroi.height <= tmpl_.rows) return {};
+    // MATCH AT THE TEMPLATE'S OWN SCALE. tmpl_ is capped at 96 px, so for a
+    // larger box it is a DOWNSCALED rendition of the target -- and sliding it
+    // over a native-resolution frame looks for something the size the target
+    // is not. computeNCC has always honoured this by resizing the candidate to
+    // tmpl_.size(); this function did not, and the two shared one member with
+    // two conventions.
+    //
+    // Reachable without touching a flag: the box has no upper bound, and the
+    // flow backend grows it by up to 1.18x per frame as the target closes, so
+    // an 80 px default passes 96 in two frames.
+    const float sc = (tmplBoxW_ > 0)
+                   ? float(tmpl_.cols) / float(tmplBoxW_) : 1.f;
 
-    cv::Mat gray, result;
+    cv::Mat gray, scaled, result;
     cv::cvtColor(frame(sroi), gray, cv::COLOR_BGR2GRAY);
-    cv::matchTemplate(gray, tmpl_, result, cv::TM_CCOEFF_NORMED);
+    if (sc < 0.999f)
+        cv::resize(gray, scaled, {}, sc, sc, cv::INTER_LINEAR);
+    else
+        scaled = gray;
+
+    // Re-check AFTER scaling: the search region shrank too, and matchTemplate
+    // requires image > template. Checking before would pass a case that then
+    // throws.
+    if (scaled.cols <= tmpl_.cols || scaled.rows <= tmpl_.rows) return {};
+    cv::matchTemplate(scaled, tmpl_, result, cv::TM_CCOEFF_NORMED);
 
     double   maxVal;
     cv::Point maxLoc;
@@ -214,9 +237,15 @@ cv::Rect LockOnTracker::templateSearch(const cv::Mat& frame,
 
     if (outScore < REACQUIRE_THRESH) return {};
 
-    // Translate template-match location back to frame coordinates.
-    return cv::Rect(sroi.x + maxLoc.x, sroi.y + maxLoc.y,
-                    tmpl_.cols, tmpl_.rows);
+    // Back to frame coordinates, and at the TARGET's size rather than the
+    // capped template's. Returning tmpl_.cols x tmpl_.rows silently reset the
+    // tracked box to <=96 px on every successful re-acquire, and reinitBackend
+    // then re-initialised the backend on a box smaller than the target.
+    const float inv = (sc > 1e-6f) ? 1.f / sc : 1.f;
+    return cv::Rect(sroi.x + int(std::lround(maxLoc.x * inv)),
+                    sroi.y + int(std::lround(maxLoc.y * inv)),
+                    tmplBoxW_ > 0 ? tmplBoxW_ : tmpl_.cols,
+                    tmplBoxH_ > 0 ? tmplBoxH_ : tmpl_.rows);
 }
 
 // ---- backend management ----------------------------------------------------

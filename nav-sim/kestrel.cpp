@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -289,35 +290,113 @@ int cmdBench(std::vector<std::string> args) {
 // traceback several screens long -- which for a double-click workflow reads as
 // "it is broken" rather than "run one pip command". Check first, and say the
 // command rather than the symptom.
+//
+// THREE THINGS GO WRONG HERE AND THEY USED TO LOOK IDENTICAL:
+//
+// (1) THE INTERPRETER IS NOT CALLED python3 ON WINDOWS. There, `python3` is
+//     usually a Microsoft Store stub that opens the Store instead of running
+//     anything, so every probe failed for a reason that had nothing to do with
+//     what it was probing. `python` is tried first on Windows for that reason.
+//
+// (2) train.py IS NOT ALWAYS ONE DIRECTORY UP. dir + "/../python" holds in the
+//     build tree (build/ -> nav-sim/python) and nowhere else. In the release
+//     zip the exe sits at the top level, so "../python" points OUTSIDE the
+//     unzipped folder -- which is how the error came to name
+//     "...\kestrel-voxel-sim-windows-x64\..\python\requirements.txt", a path
+//     that cannot exist. Several layouts are searched now.
+//
+// (3) THE MESSAGE NAMED A PATH IT HAD NEVER LOOKED FOR. If a file is missing
+//     the message now says where it actually looked, and if requirements.txt
+//     is not in this download it names the packages instead of a dead path.
+std::string pyExe() {
+    static const char* const cands[] = {
+#ifdef _WIN32
+        "python", "py", "python3",
+#else
+        "python3", "python",
+#endif
+    };
+    for (const char* c : cands) {
+        const std::string probe = std::string(c) + " -c \"import sys\" > " NULLDEV " 2>&1";
+        if (std::system(probe.c_str()) == 0) return c;
+    }
+    return "";
+}
+
+// Where the python half might be, most specific first. Returns "" if nowhere.
+std::string findPy(const std::string& dir, const char* name) {
+    const std::string cands[] = {
+        dir + "/python/" + name,        // release zip: python/ beside the exe
+        dir + "/../python/" + name,     // build tree: build/ -> nav-sim/python
+        std::string("python/") + name,  // run from nav-sim/
+        std::string("../python/") + name,
+    };
+    std::error_code ec;
+    for (const std::string& c : cands)
+        if (std::filesystem::exists(c, ec)) return c;
+    return "";
+}
+
 int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
-    const std::string script = dir + "/../python/train.py";
-    const std::string probe =
-        "python3 -c \"import gymnasium, stable_baselines3, sb3_contrib\" "
-        "> " NULLDEV " 2>&1";
-    if (std::system(probe.c_str()) != 0) {
+    const std::string py = pyExe();
+    if (py.empty()) {
         std::fprintf(stderr,
-            "[kestrel] the RL stack is not installed for this python.\n"
-            "          pip install -r \"%s/../python/requirements.txt\"\n",
-            dir.c_str());
+            "[kestrel] no working python on PATH. Training is the one command that\n"
+            "          needs one -- the trainer is PyTorch and stable-baselines3.\n"
+            "          Install Python 3.11 and tick \"Add python.exe to PATH\".\n");
         return 3;
     }
-    // The extension module is built beside this exe; train.py adds that
-    // directory to sys.path itself, so a missing module here means the build
-    // did not produce it rather than a path problem.
+
+    const std::string script = findPy(dir, "train.py");
+    const std::string reqs   = findPy(dir, "requirements.txt");
+    if (script.empty()) {
+        std::fprintf(stderr,
+            "[kestrel] train.py is not in this download.\n"
+            "          Looked in %s\\python, %s\\..\\python, .\\python and ..\\python.\n"
+            "          The other three commands are self-contained and work from\n"
+            "          here; training also needs the python half of the tree:\n"
+            "            git clone https://github.com/henriharmaala1-source/Assembly-grapher\n"
+            "            cd Assembly-grapher/nav-sim\n",
+            dir.c_str(), dir.c_str());
+        return 3;
+    }
+
+    const std::string probe =
+        py + " -c \"import gymnasium, stable_baselines3, sb3_contrib\" > " NULLDEV " 2>&1";
+    if (std::system(probe.c_str()) != 0) {
+        std::fprintf(stderr, "[kestrel] the RL stack is not installed for %s.\n", py.c_str());
+        if (!reqs.empty())
+            std::fprintf(stderr, "          %s -m pip install -r \"%s\"\n",
+                         py.c_str(), reqs.c_str());
+        else
+            // No requirements.txt here, so naming one would send you after a
+            // file this download does not contain. Name the packages instead.
+            std::fprintf(stderr,
+                "          %s -m pip install gymnasium stable-baselines3 sb3-contrib "
+                "numpy tensorboard\n", py.c_str());
+        return 3;
+    }
+
+    // The extension module is the C++ environment. train.py adds the exe's own
+    // directory to sys.path, so a miss here means the build did not produce it.
     const std::string probe2 =
-        "python3 -c \"import sys; sys.path.insert(0, r'" + dir + "'); import voxelenv\" "
+        py + " -c \"import sys; sys.path.insert(0, r'" + dir + "'); import voxelenv\" "
         "> " NULLDEV " 2>&1";
     if (std::system(probe2.c_str()) != 0) {
         std::fprintf(stderr,
-            "[kestrel] the voxelenv extension module is missing from %s.\n"
-            "          Build it: cmake --build build --target voxelenv\n"
-            "          (it needs pybind11: pip install pybind11, then re-run cmake)\n",
-            dir.c_str());
+            "[kestrel] the voxelenv extension module is not beside this exe (%s).\n"
+            "          It is the C++ environment the trainer steps, so training\n"
+            "          cannot start without it. Build it:\n"
+            "            %s -m pip install pybind11\n"
+            "            cmake -B build -Dpybind11_DIR=$(%s -m pybind11 --cmakedir)\n"
+            "            cmake --build build --target voxelenv\n",
+            dir.c_str(), py.c_str(), py.c_str());
         return 3;
     }
+
     std::vector<std::string> a{script};
     for (const std::string& r : rest) a.push_back(r);
-    return spawn("python3", a);
+    return spawn(py, a);
 }
 
 // ------------------------------------------------------------------ live sim

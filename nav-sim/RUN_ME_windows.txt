@@ -185,21 +185,31 @@ RL PATH-POLICY HARNESS
 The point is a comparison, not a model: a learned planner scored in the SAME
 columns as the classical ones, on seeds it never trained on.
 
-Double-click  baselines.bat    the non-RL side. random / freeM / goal / the
-                               classical weighted score, all run through the
-                               same environment the policy uses, so the
-                               comparison is between planners and not between
-                               two harnesses. Start here -- these are the
-                               numbers a policy has to beat.
+    kestrel bench    the non-RL side. random / freeM / goal / the classical
+                     weighted score, all through the same environment the
+                     policy uses, so the comparison is between planners and
+                     not between two harnesses. START HERE -- these are the
+                     numbers a policy has to beat. Needs nothing installed.
 
-Double-click  train.bat        train. 16 workers, 10 M steps, stereo depth.
-                               Expect 8-18 hours; it checkpoints as it goes,
-                               so a crash costs minutes rather than the run.
+    kestrel train    train. Expect 8-18 hours at 10 M steps with stereo; it
+                     checkpoints as it goes, so a crash costs minutes rather
+                     than the run.
 
-Double-click  evaluate.bat     score a trained policy on held-out seeds.
+Or click `bench` / `train` in the window and press RUN.
 
-First time only:
-    pip install -r python\requirements.txt
+BEFORE THE FIRST TRAINING RUN
+    python -m pip install -r python\requirements.txt
+
+USE PYTHON 3.11. voxelenv.pyd in this zip is a compiled extension built
+against CPython 3.11, and a compiled extension only loads into the minor
+version it was built for. On 3.12 or 3.10 it will not import, and the error
+says the module is missing rather than that the version is wrong.
+
+    python --version          should say 3.11.x
+
+`kestrel bench`, `kestrel track` and `kestrel sim` need NONE of this. Training
+is the only command that runs python, because the trainer is PyTorch and
+stable-baselines3; the environment it steps is the C++ in this exe.
 
 The GPU will look idle during training and that is correct, not a
 misconfiguration -- the bottleneck is environment steps, which are C++ on the

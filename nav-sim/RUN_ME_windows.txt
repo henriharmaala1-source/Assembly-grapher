@@ -195,9 +195,25 @@ columns as the classical ones, on seeds it never trained on.
                      not between two harnesses. START HERE -- these are the
                      numbers a policy has to beat. Needs nothing installed.
 
-    kestrel train    train. Expect 8-18 hours at 10 M steps with stereo; it
-                     checkpoints as it goes, so a crash costs minutes rather
-                     than the run.
+    kestrel train    train. Expect 8-18 hours at 10 M steps with stereo.
+
+                     WHERE THE POLICY GOES: --out, default runs\ppo_voxel,
+                     relative to the folder you run from. It prints the
+                     absolute path on the first line so you never have to
+                     guess. Inside you get ppo_<n>_steps.zip every ~50 k
+                     steps, final.zip at the end, and tb\ for TensorBoard.
+
+                     IT STARTS FROM SCRATCH UNLESS YOU SAY OTHERWISE:
+
+                       kestrel train --resume            newest checkpoint
+                       kestrel train --resume PATH.zip   a specific one
+
+                     or the "start from scratch / resume from newest" button
+                     on the train panel. Scratch is right for a clean
+                     comparison; resume is right after an interrupted
+                     overnight run. Resuming continues the step counter, so
+                     the TensorBoard curve carries on instead of restarting
+                     and looking like a policy that learned instantly.
 
     kestrel watch    WATCH IT FLY WHILE IT TRAINS. A grid of live panes, one
                      episode each, in the first-person voxel view -- what the

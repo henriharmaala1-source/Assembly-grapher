@@ -9,6 +9,10 @@ measured is unreachable rather than merely unlikely.
 """
 from __future__ import annotations
 
+import glob
+import os
+import re
+
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -93,3 +97,28 @@ def make_env(rank: int, worlds=TRAIN_WORLDS, **kw):
         env.reset(seed=1000 + rank)
         return env
     return _init
+
+
+def newest_checkpoint(run_dir):
+    """(path, trained_steps) of the furthest-along checkpoint, or (None, 0).
+
+    BY STEP COUNT IN THE NAME, not by mtime. The trainer writes
+    ppo_<n>_steps.zip as it goes and final.zip at the end, so picking the most
+    recently modified file would happily resume a 10 M-step run from a
+    final.zip that a short earlier run left in the directory -- silently
+    throwing the long run away. The step count is the only ordering that means
+    what it says.
+
+    Shared by train.py (to resume) and watch.py (to follow along) so the two
+    cannot disagree about which checkpoint is current.
+    """
+    best, best_n = None, -1
+    for f in glob.glob(os.path.join(run_dir, "ppo_*_steps.zip")):
+        m = re.search(r"_(\d+)_steps\.zip$", f)
+        if m and int(m.group(1)) > best_n:
+            best, best_n = f, int(m.group(1))
+    if best is None:
+        f = os.path.join(run_dir, "final.zip")
+        if os.path.exists(f):
+            return f, 0
+    return best, max(best_n, 0)

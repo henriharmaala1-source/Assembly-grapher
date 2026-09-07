@@ -41,7 +41,7 @@ from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 
-from voxel_gym import TRAIN_WORLDS, make_env
+from voxel_gym import TRAIN_WORLDS, make_env, newest_checkpoint
 
 
 def main() -> int:
@@ -58,19 +58,59 @@ def main() -> int:
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--out", default="runs/ppo_voxel")
     ap.add_argument("--n-steps", type=int, default=256, help="rollout per worker")
+    ap.add_argument("--resume", nargs="?", const="auto", default="",
+                    metavar="CHECKPOINT",
+                    help="continue from a checkpoint instead of starting over. "
+                         "Bare --resume takes the furthest-along one in --out. "
+                         "Without this a run ALWAYS starts from scratch, which "
+                         "is what you want for a clean comparison and not what "
+                         "you want after an interrupted overnight run.")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
+    # SAY WHERE THE POLICY IS GOING, as an absolute path. --out is relative to
+    # the working directory, which for a double-clicked exe is the folder it
+    # sits in and for a shell is wherever you happened to be -- so "runs/..."
+    # alone does not answer "where did my weekend of training go".
+    out_abs = os.path.abspath(args.out)
+    print(f"[train] checkpoints and final policy -> {out_abs}", flush=True)
     kw = dict(worlds=tuple(args.worlds), max_steps=args.max_steps,
               truth_depth=not args.stereo, cam=tuple(args.cam))
     venv = VecMonitor(SubprocVecEnv([make_env(i, **kw) for i in range(args.workers)]))
 
-    model = MaskablePPO(
-        "MlpPolicy", venv, device=args.device, verbose=1,
-        n_steps=args.n_steps, batch_size=args.workers * args.n_steps // 4,
-        learning_rate=3e-4, ent_coef=0.01, gamma=0.995, gae_lambda=0.95,
-        policy_kwargs=dict(net_arch=[256, 256]),
-        tensorboard_log=os.path.join(args.out, "tb"))
+    # RESUMING, OR NOT, IS AN EXPLICIT CHOICE. It used to be neither: a fresh
+    # model was constructed every run and the checkpoints were written but
+    # never read, so an interrupted 10 M-step run could only be started again
+    # from zero. The weights were on disk the whole time with nothing able to
+    # load them.
+    resume_from, resume_at = None, 0
+    if args.resume:
+        if args.resume == "auto":
+            resume_from, resume_at = newest_checkpoint(args.out)
+            if resume_from is None:
+                print(f"[train] --resume: nothing in {out_abs} to resume from, "
+                      f"starting fresh", flush=True)
+        else:
+            resume_from = args.resume
+            if not os.path.exists(resume_from):
+                return f"[train] --resume: no such checkpoint: {resume_from}"
+
+    if resume_from:
+        model = MaskablePPO.load(resume_from, env=venv, device=args.device,
+                                 tensorboard_log=os.path.join(args.out, "tb"))
+        # final.zip carries no step count in its name, so say so rather than
+        # printing "at 0 trained steps", which reads as "it lost everything".
+        where = (f"at {resume_at} trained steps" if resume_at
+                 else "(final.zip does not record its step count)")
+        print(f"[train] resumed {os.path.basename(resume_from)} {where}",
+              flush=True)
+    else:
+        model = MaskablePPO(
+            "MlpPolicy", venv, device=args.device, verbose=1,
+            n_steps=args.n_steps, batch_size=args.workers * args.n_steps // 4,
+            learning_rate=3e-4, ent_coef=0.01, gamma=0.995, gae_lambda=0.95,
+            policy_kwargs=dict(net_arch=[256, 256]),
+            tensorboard_log=os.path.join(args.out, "tb"))
 
     # Checkpoint OFTEN. A crash at hour 40 with nothing on disk is the classic
     # way to lose a weekend, and this is an unattended run by design.
@@ -78,8 +118,13 @@ def main() -> int:
                               save_path=args.out, name_prefix="ppo")
 
     t0 = time.time()
-    model.learn(total_timesteps=args.steps, callback=ckpt, progress_bar=True)
+    # reset_num_timesteps=False on a resume, so the step counter and the
+    # TensorBoard curves continue the old run instead of restarting the x axis
+    # and making a continued run look like a new one that learned instantly.
+    model.learn(total_timesteps=args.steps, callback=ckpt, progress_bar=True,
+                reset_num_timesteps=not resume_from)
     model.save(os.path.join(args.out, "final"))
+    print(f"[train] final policy -> {os.path.join(out_abs, 'final.zip')}", flush=True)
     dt = time.time() - t0
     print(f"trained {args.steps} steps in {dt/3600:.2f} h "
           f"({args.steps/max(1e-9, dt):.0f} steps/s, {args.workers} workers)")

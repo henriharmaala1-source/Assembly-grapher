@@ -17,9 +17,7 @@ RENDERING IS CPU, and so is training: the bottleneck in both is environment
 steps, which are C++. Running this alongside costs roughly one worker.
 """
 import argparse
-import glob
 import os
-import re
 import sys
 import time
 
@@ -31,7 +29,8 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
                             os.path.join(_here, ".."),
                             _here) if p]
 
-import voxelenv  # noqa: E402
+import voxelenv  # noqa: E402,F401
+from voxel_gym import newest_checkpoint  # noqa: E402
 
 try:
     import cv2
@@ -42,25 +41,6 @@ except ImportError:
     # succeeds, leaving the package present and the import still failing.
     sys.exit("watch needs opencv-python. Install it into THIS interpreter:\n"
              f'    "{sys.executable}" -m pip install opencv-python')
-
-
-def newest_checkpoint(run_dir):
-    """The most recently TRAINED checkpoint, by step count in the name.
-
-    By step count and not by mtime: the trainer writes ppo_<n>_steps.zip and a
-    final.zip, and picking the newest file would jump backwards to final.zip
-    from a previous run if one is lying in the directory.
-    """
-    best, best_n = None, -1
-    for f in glob.glob(os.path.join(run_dir, "ppo_*_steps.zip")):
-        m = re.search(r"_(\d+)_steps\.zip$", f)
-        if m and int(m.group(1)) > best_n:
-            best, best_n = f, int(m.group(1))
-    if best is None:
-        f = os.path.join(run_dir, "final.zip")
-        if os.path.exists(f):
-            return f, 0
-    return best, max(best_n, 0)
 
 
 def load(path):

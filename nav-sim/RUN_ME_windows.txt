@@ -195,7 +195,33 @@ columns as the classical ones, on seeds it never trained on.
                      checkpoints as it goes, so a crash costs minutes rather
                      than the run.
 
+    kestrel watch    WATCH IT FLY WHILE IT TRAINS. A grid of live panes, one
+                     episode each, in the first-person voxel view -- what the
+                     aircraft believes it can see, the same picture the sim
+                     labels "VOXEL FPV". It reloads the newest checkpoint as
+                     training writes them, on seeds training never uses, so you
+                     are watching the policy improve rather than replaying it.
+                     Run it in a second window alongside `kestrel train`.
+
+                       kestrel watch --panes 4 --worlds maze forest
+                       kestrel watch --layout top      plan view instead
+                       kestrel watch --shot grid.png   one PNG, no display
+
+                     PALE IS UNKNOWN, drawn as fog and never as air. In a
+                     forest an early episode looks mostly empty and that is
+                     correct, not a broken renderer: at 0.25 m voxels the map
+                     can only honestly mark obstacles to about 3.5 m, so
+                     everything past that is genuinely not yet known. The
+                     corner inset is the plan view, because through fog a
+                     policy hovering and a policy crossing a clearing look
+                     identical.
+
 Or click `bench` / `train` in the window and press RUN.
+
+GRAPHS WHILE IT TRAINS
+    python -m tensorboard.main --logdir runs
+    then open localhost:6006 -- reward, episode length, explained variance.
+    The trainer already writes these; nothing to enable.
 
 BEFORE THE FIRST TRAINING RUN
     python -m pip install -r python\requirements.txt

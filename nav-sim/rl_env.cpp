@@ -1,5 +1,9 @@
 #include "rl_env.hpp"
 
+#include <cstring>
+
+#include <opencv2/imgproc.hpp>
+
 #include <cmath>
 #include <cstdio>
 #include <unordered_map>
@@ -44,6 +48,10 @@ struct VoxelEnv::Impl {
     // failure is a planner re-deriving the same local preference at a junction
     // it has already left once.
     std::unordered_map<long long, float> visits;
+    // The flown path, world metres. Kept only for the watch view -- nothing in
+    // the observation or the reward reads it, so recording it cannot change
+    // what the policy learns.
+    std::vector<cv::Point2f> trail;
 
     Impl(const TrajParams& tp) : traj(tp) {}
 
@@ -71,6 +79,8 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     Impl& I = *im_;
     I.world = VoxelWorld();
     I.visits.clear();
+    I.trail.clear();
+    I.trail.push_back(cv::Point2f(I.px, I.py));
 
     if (world == "maze") {
         MazeParams m; m.cell = cfg_.cell; m.seed = seed;
@@ -146,6 +156,7 @@ EnvStep VoxelEnv::step(int action) {
     const float moved = std::sqrt((nx-I.px)*(nx-I.px) + (ny-I.py)*(ny-I.py)
                                 + (nz-I.pz)*(nz-I.pz));
     I.px = nx; I.py = ny; I.pz = nz;
+    I.trail.push_back(cv::Point2f(I.px, I.py));
     I.travel += moved;
     ++I.steps;
     if (speed < 0.1f) ++I.stopped;
@@ -265,6 +276,90 @@ void VoxelEnv::buildObservation() {
         g[10 + k * 2]     = (rr < 0.f) ? 0.f : std::min(1.f, rr / 20.f);
         g[10 + k * 2 + 1] = (rr < 0.f) ? 0.f : 1.f;      // the mask
     }
+}
+
+
+
+// --------------------------------------------------------------------- watch
+// THE FPV VIEW, from inside the map the aircraft has built -- the same
+// renderLadder the sim labels "VOXEL FPV (what it believes)". Not a top-down
+// slice: a slice shows a plan, and what you want while a policy trains is what
+// the policy is looking at. Pale is UNKNOWN, drawn as fog and never as air,
+// which is the whole point -- where the map is wrong the aircraft flies into
+// haze, and that is visible here and invisible in a reward curve.
+//
+// One layer, not three. The env keeps a single map at one cell size, so the
+// ladder that voxel_live builds across fine/mid/far collapses to its one rung.
+// The 1.15 inflation on the outer edge is kept for the same reason it exists
+// there: it covers cells marked slightly beyond maxIntegM before the aircraft
+// moved, which otherwise render as a round blind spot.
+std::vector<uint8_t> VoxelEnv::renderFrame(int w, int h, bool topDown) const {
+    const Impl& I = *im_;
+    w = std::max(80, std::min(1600, w));
+    h = std::max(60, std::min(1200, h));
+
+    cv::Mat img;
+    if (topDown) {
+        img = I.map.sliceImage(I.pz, std::min(w, h));
+        const VoxelMapParams& mp = I.map.params();
+        const int px = img.cols;
+        auto toPx = [&](float wx, float wy) {
+            int cx, cy, cz;
+            I.map.worldToCell(wx, wy, I.pz, cx, cy, cz);
+            return cv::Point(int((cx + 0.5f) * float(px) / float(mp.nx)),
+                             int((mp.ny - 1 - cy + 0.5f) * float(px) / float(mp.ny)));
+        };
+        // The goal is usually OFF this frame -- the map is a local grid and the
+        // goal often a hundred metres past its edge -- so clamped to the border
+        // it still reads as a direction instead of being silently absent.
+        cv::Point g = toPx(I.goalE, I.goalN);
+        const bool off = g.x < 0 || g.y < 0 || g.x >= px || g.y >= px;
+        g.x = std::max(6, std::min(px - 7, g.x));
+        g.y = std::max(6, std::min(px - 7, g.y));
+        cv::drawMarker(img, g, cv::Scalar(60, 200, 60),
+                       off ? cv::MARKER_TRIANGLE_UP : cv::MARKER_TILTED_CROSS,
+                       std::max(8, px / 22), 2, cv::LINE_AA);
+        for (size_t i = 1; i < I.trail.size(); ++i)
+            cv::line(img, toPx(I.trail[i-1].x, I.trail[i-1].y),
+                          toPx(I.trail[i].x,   I.trail[i].y),
+                     cv::Scalar(40, 90, 220), 2, cv::LINE_AA);
+        const cv::Point a = toPx(I.px, I.py);
+        const float yr = I.yaw * sim::PI_F / 180.f;
+        const float lead = std::max(6.f, px / 16.f);
+        cv::line(img, a, cv::Point(a.x + int(std::sin(yr) * lead),
+                                   a.y - int(std::cos(yr) * lead)),
+                 cv::Scalar(255, 210, 90), 2, cv::LINE_AA);
+        cv::circle(img, a, std::max(3, px / 60), cv::Scalar(255, 210, 90), -1, cv::LINE_AA);
+        if (img.cols != w || img.rows != h) cv::resize(img, img, cv::Size(w, h), 0, 0, cv::INTER_NEAREST);
+    } else {
+        std::vector<VoxelMap::Layer> ladder;
+        ladder.push_back({&I.map, 0.f, I.mp.maxIntegM * 1.15f});
+        img = VoxelMap::renderLadder(ladder, I.px, I.py, I.pz, I.yaw, 0.f,
+                                     w, h, I.cp.hfovDeg);
+        if (img.empty()) img = cv::Mat(h, w, CV_8UC3, cv::Scalar(30, 30, 36));
+
+        // A heading tape, because an FPV view of fog looks the same at every
+        // yaw and a policy that is spinning would otherwise be indistinguishable
+        // from one that is flying straight.
+        const float bearing = std::atan2(I.goalE - I.px, I.goalN - I.py) * 180.f / sim::PI_F;
+        float rel = bearing - I.yaw;
+        while (rel > 180.f) rel -= 360.f;
+        while (rel < -180.f) rel += 360.f;
+        const int gx = int(w * 0.5f + (rel / (I.cp.hfovDeg * 0.5f)) * (w * 0.5f));
+        if (gx >= 0 && gx < w)
+            cv::drawMarker(img, cv::Point(gx, 14), cv::Scalar(60, 220, 60),
+                           cv::MARKER_TRIANGLE_DOWN, 12, 2, cv::LINE_AA);
+        else
+            cv::putText(img, rel < 0 ? "<goal" : "goal>",
+                        cv::Point(rel < 0 ? 4 : w - 46, 18),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(60, 220, 60), 1, cv::LINE_AA);
+    }
+
+    std::vector<uint8_t> out(size_t(img.rows) * img.cols * 3);
+    if (img.isContinuous()) std::memcpy(out.data(), img.data, out.size());
+    else for (int y = 0; y < img.rows; ++y)
+        std::memcpy(out.data() + size_t(y) * img.cols * 3, img.ptr(y), size_t(img.cols) * 3);
+    return out;
 }
 
 }  // namespace sim

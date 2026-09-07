@@ -98,6 +98,21 @@ public:
     const EnvStep& last() const { return last_; }
     const EnvConfig& config() const { return cfg_; }
 
+    // --- watching a run -----------------------------------------------------
+    // One small pane of what the aircraft BELIEVES: by default the first-person
+    // voxel view, the same renderLadder the sim labels "VOXEL FPV". The map and
+    // not the world on purpose -- what the policy steers on is what is worth
+    // looking at, and a picture of the true world would hide exactly the
+    // mistakes worth seeing (pale is UNKNOWN, and unknown is not free).
+    //
+    // Returns tightly packed BGR bytes, w*h*3, so the caller needs no OpenCV
+    // type in its interface -- this header stays free of cv::Mat and the python
+    // binding can hand numpy a buffer without a copy through a Mat.
+    // topDown swaps the FPV for the plan view, which is the better picture for
+    // judging whether a run actually went anywhere.
+    std::vector<uint8_t> renderFrame(int w = 320, int h = 240,
+                                     bool topDown = false) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> im_;

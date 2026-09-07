@@ -8,6 +8,9 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 
+#include <cmath>
+#include <cstring>
+
 #include "rl_env.hpp"
 
 namespace py = pybind11;
@@ -66,6 +69,20 @@ PYBIND11_MODULE(voxelenv, m) {
             for (py::ssize_t i = 0; i < (py::ssize_t)mk.size(); ++i) v(i) = mk[i] != 0;
             return a;
         })
+        // One small BGR pane of the map the aircraft has built, for watching a
+        // run. Shaped (px, px, 3) so it goes straight into cv2.imshow.
+        .def("render_frame", [](const VoxelEnv& e, int w, int h, bool top_down) {
+            std::vector<uint8_t> buf = e.renderFrame(w, h, top_down);
+            // The renderer clamps its own bounds, so the shape is read back
+            // from what it returned rather than from what was asked for --
+            // otherwise a clamped request would reshape a short buffer.
+            const py::ssize_t n = py::ssize_t(buf.size());
+            py::ssize_t hh = h, ww = w;
+            if (n != py::ssize_t(w) * h * 3) { hh = n / (3 * py::ssize_t(w)); }
+            py::array_t<uint8_t> a({hh, ww, py::ssize_t(3)});
+            std::memcpy(a.mutable_data(), buf.data(), size_t(n));
+            return a;
+        }, py::arg("w") = 320, py::arg("h") = 240, py::arg("top_down") = false)
         .def_property_readonly("n_prims", &VoxelEnv::nPrims)
         .def_property_readonly("obs_size", &VoxelEnv::obsSize)
         .def_static("features_per_prim", &VoxelEnv::obsFeaturesPerPrim)

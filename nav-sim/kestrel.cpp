@@ -345,20 +345,24 @@ int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
         else args.push_back(r);
     }
 
-    const std::string script = findPy(dir, "train.py");
+    // --script lets `watch` reuse this whole preflight; see cmdWatch.
+    std::string which = "train.py";
+    for (size_t i = 0; i + 1 < args.size(); ++i)
+        if (args[i] == "--script") { which = args[i + 1]; args.erase(args.begin() + i, args.begin() + i + 2); break; }
+    const std::string script = findPy(dir, which.c_str());
     const std::string reqs   = findPy(dir, "requirements.txt");
     std::vector<kpy::Py> pys = kpy::discover(dir);
     const kpy::Py* py = kpy::best(pys);
 
     if (script.empty()) {
         std::fprintf(stderr,
-            "[kestrel] train.py is not in this download.\n"
+            "[kestrel] %s is not in this download.\n"
             "          Looked beside the exe (%s), one level up, and in the\n"
             "          working directory. The other three commands are\n"
             "          self-contained and work from here; training also needs\n"
             "          the python half of the tree:\n"
             "            git clone https://github.com/henriharmaala1-source/Assembly-grapher\n",
-            dir.c_str());
+            which.c_str(), dir.c_str());
         return 3;
     }
 
@@ -427,6 +431,16 @@ int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
     std::vector<std::string> a{script};
     for (const std::string& r : args) a.push_back(r);
     return spawn(py->exe, a);
+}
+
+// ----------------------------------------------------------------------- watch
+// Watching reuses cmdTrain's preflight wholesale: it is the same interpreter,
+// the same voxelenv module and the same "which python" problem, and having two
+// copies of that reasoning would let them drift. Only the script differs.
+int cmdWatch(const std::string& dir, const std::vector<std::string>& rest) {
+    std::vector<std::string> a{"--script", "watch.py"};
+    for (const std::string& r : rest) a.push_back(r);
+    return cmdTrain(dir, a);
 }
 
 // ------------------------------------------------------------------ live sim
@@ -512,6 +526,7 @@ int main(int argc, char** argv) {
     if (cmd == "bench") return cmdBench(rest);
     if (cmd == "sim")  return cmdSim(rest);
     if (cmd == "train") return cmdTrain(dir, rest);
+    if (cmd == "watch") return cmdWatch(dir, rest);
     if (cmd == "gui") {
         // --shot renders the panels to PNG with no display attached. The
         // window is the only thing in this binary that cannot be checked over
@@ -528,7 +543,7 @@ int main(int argc, char** argv) {
     if (cmd == "python") { kpy::report(kpy::discover(dir), dir); return 0; }
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf(
-            "kestrel [track|bench|sim|train|gui|menu|python] ...\n"
+            "kestrel [track|bench|sim|train|watch|gui|menu|python] ...\n"
             "  no arguments opens the window; `menu` is the text one, for a\n"
             "  headless box or over ssh. Every button in the window prints the\n"
             "  command it runs, so anything you can click you can also type.\n"
@@ -536,7 +551,9 @@ int main(int argc, char** argv) {
             "  train --install   pip the RL stack into the interpreter that can\n"
             "                    load voxelenv, named by absolute path\n"
             "  python            list every python found here and say which one\n"
-            "                    training will use, and why\n");
+            "                    training will use, and why\n"
+            "  watch             a grid of live panes: the policy flying while it\n"
+            "                    trains, reloaded from the newest checkpoint\n");
         return 0;
     }
     std::fprintf(stderr, "unknown command '%s' -- try --help\n", cmd.c_str());

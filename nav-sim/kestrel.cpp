@@ -68,11 +68,32 @@ std::string join(const std::vector<std::string>& v, const char* sep) {
     return s;
 }
 
+// QUOTE THE ARGUMENTS, NOT JUST THE EXECUTABLE. This quoted the exe and left
+// every argument bare, so the first path containing a space was cut in half by
+// the shell: a package unzipped to "kestrel-voxel-sim-windows-x64 (1)" -- the
+// name a browser gives a second download -- handed python
+// "...windows-x64" as the script and it reported "can't find '__main__'
+// module", which reads as a broken install rather than a quoting bug.
+// Parentheses are separately special to cmd.exe, and "(1)" has those too.
+bool needsQuoting(const std::string& a) {
+    return a.empty() || a.find_first_of(" \t\"()&|<>^") != std::string::npos;
+}
+
 int spawn(const std::string& exe, const std::vector<std::string>& args) {
     std::string cmd = "\"" + exe + "\"";
-    for (const std::string& a : args) cmd += " " + a;
+    for (const std::string& a : args)
+        cmd += needsQuoting(a) ? " \"" + a + "\"" : " " + a;
     std::printf("[kestrel] %s\n", cmd.c_str());
-    const int rc = std::system(cmd.c_str());
+#ifdef _WIN32
+    // cmd.exe strips the first and last quote when the line begins with one.
+    // Quoting a trailing argument made the line both start and end with a
+    // quote, so the fix above would have broken the exe path instead. Wrapping
+    // the whole line in one more pair is the documented way round it.
+    const std::string line = "\"" + cmd + "\"";
+#else
+    const std::string& line = cmd;
+#endif
+    const int rc = std::system(line.c_str());
     if (rc != 0)
         std::fprintf(stderr,
                      "[kestrel] '%s' exited %d. If it was not found, build it first "

@@ -36,8 +36,12 @@ import voxelenv  # noqa: E402
 try:
     import cv2
 except ImportError:
-    sys.exit("watch needs opencv-python:\n"
-             "    python -m pip install opencv-python")
+    # sys.executable, not "python". kestrel launched this script with the ONE
+    # interpreter that can load voxelenv, which on a machine with several is
+    # rarely the one "python" means -- and pip installing into the wrong one
+    # succeeds, leaving the package present and the import still failing.
+    sys.exit("watch needs opencv-python. Install it into THIS interpreter:\n"
+             f'    "{sys.executable}" -m pip install opencv-python')
 
 
 def newest_checkpoint(run_dir):

@@ -179,11 +179,13 @@ jobs:
         # had uploaded cleanly twenty minutes earlier. Now the suite is cut off,
         # the step goes red, and the run reports what actually happened.
         timeout-minutes: 10
-        # continue-on-error, deliberately. THE ARTIFACT IS THE PRODUCT: a
-        # failing or hanging test must not be able to deny you a working exe,
-        # because then a test problem and a build problem look identical from
-        # the download page. The result is still visible as a red step.
-        continue-on-error: true
+        # NO continue-on-error any more. It was here so a failing test could
+        # not deny anyone a working exe -- but the artifact is uploaded four
+        # steps ABOVE this one, so that protection comes from the order of the
+        # steps and always did. What the flag actually bought was silence:
+        # sixteen tests failed to start for months and every run still reported
+        # success. The suite passes 20/20 here now, so it can hold the line it
+        # was always supposed to hold.
         # THE PATH LINE IS WHAT MAKES THE SUITE RUN AT ALL. ctest launches the
         # exes from build/Release, where no OpenCV DLL has ever been, so every
         # test that calls into OpenCV died at load time. The prebuilt OpenCV

@@ -19,8 +19,12 @@ Only core, imgproc and imgcodecs are required. highgui (windows) and videoio
 it was found; without them the sim is headless and `track` takes an image
 sequence instead of a video, which is the better regression input anyway.
 
-Double-click  kestrel.exe        THE WINDOW. Pick track / bench / sim / train
-                                down the left, set it up on the right, RUN.
+Double-click  kestrel.exe        THE WINDOW. Pick track / bench / sim / train /
+                                watch down the left, set it up on the right,
+                                RUN. Every command is reachable from here --
+                                the train panel also has buttons to install the
+                                RL stack into the right interpreter and to list
+                                every python on the machine.
 
 Every panel prints the exact command it is about to run along the bottom, so
 the window is a way to find the CLI rather than a substitute for it -- anything

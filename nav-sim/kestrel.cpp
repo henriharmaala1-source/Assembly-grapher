@@ -506,6 +506,8 @@ int gui(const std::string& dir) {
     a.bench = [](std::vector<std::string> v) { return cmdBench(std::move(v)); };
     a.sim   = [](std::vector<std::string> v) { return cmdSim(std::move(v)); };
     a.train = [dir](std::vector<std::string> v) { return cmdTrain(dir, v); };
+    a.watch = [dir](std::vector<std::string> v) { return cmdWatch(dir, v); };
+    a.pythons = [dir]() { kpy::report(kpy::discover(dir), dir); return 0; };
     return kgui::run(a, dir);
 }
 

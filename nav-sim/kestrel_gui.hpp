@@ -18,6 +18,9 @@ struct Actions {
     std::function<int(std::vector<std::string>)> bench;
     std::function<int(std::vector<std::string>)> sim;
     std::function<int(std::vector<std::string>)> train;
+    std::function<int(std::vector<std::string>)> watch;
+    // The interpreter listing. No arguments -- it reports, it does not act.
+    std::function<int()> pythons;
 };
 
 // Runs the window until the user quits. Returns a process exit code, or -1 if

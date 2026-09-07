@@ -62,9 +62,22 @@ void onMouse(int ev, int x, int y, int, void*) {
     if (ev == cv::EVENT_LBUTTONDOWN) g_mouse.clicked = true;
 }
 
+// WHAT THE LAYOUT CHECK CAN SEE. It compared buttons against buttons and
+// nothing else, so a paragraph running underneath a button passed cleanly --
+// which is exactly what the python status line did when the fifth mode arrived.
+// Every txt() records its box here while checking, so text-over-button is now
+// a violation too. Null in normal drawing; drawBtn suppresses it, since a
+// button's own label is meant to be inside it.
+std::vector<cv::Rect>* g_textBoxes = nullptr;
+
 void txt(cv::Mat& im, const std::string& s, int x, int y, double sc,
          const cv::Scalar& c, int th = 1) {
     cv::putText(im, s, {x, y}, cv::FONT_HERSHEY_SIMPLEX, sc, c, th, cv::LINE_AA);
+    if (g_textBoxes && !s.empty()) {
+        int base = 0;
+        const cv::Size ts = cv::getTextSize(s, cv::FONT_HERSHEY_SIMPLEX, sc, th, &base);
+        g_textBoxes->push_back(cv::Rect(x, y - ts.height, ts.width, ts.height + base));
+    }
 }
 
 // Truncate to fit maxPx, keeping the TAIL. Paths are what overflow here and
@@ -84,6 +97,10 @@ std::string fit(const std::string& s, int maxPx, double sc, bool keepTail = true
 }
 
 void drawBtn(cv::Mat& im, const Btn& b) {
+    std::vector<cv::Rect>* keep = g_textBoxes;
+    g_textBoxes = nullptr;                       // a label belongs in its button
+    struct Restore { std::vector<cv::Rect>*& g; std::vector<cv::Rect>* v;
+                     ~Restore() { g = v; } } restore{g_textBoxes, keep};
     cv::rectangle(im, b.r, b.go ? GO : (b.on ? ONB : OFFB), cv::FILLED);
     cv::rectangle(im, b.r, EDGE, 1);
     const double sc = b.go ? 0.62 : 0.52;
@@ -193,8 +210,8 @@ void refreshPy(const std::string& dir) {
 }
 
 // ----------------------------------------------------------------- settings
-enum Mode { TRACK = 0, BENCH, SIM, TRAIN, NMODES };
-const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train"};
+enum Mode { TRACK = 0, BENCH, SIM, TRAIN, WATCH, NMODES };
+const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train", "watch"};
 
 const int TRAIN_STEPS[] = {50000, 200000, 1000000, 5000000, 10000000, 20000000};
 const int NTRAIN_STEPS = int(sizeof TRAIN_STEPS / sizeof *TRAIN_STEPS);
@@ -222,7 +239,15 @@ struct Cfg {
     int   workers = 8, stepsIdx = 4;
     bool  trainStereo = true;
     bool  cuda = false;
+
+    // watch
+    int   panes = 4, paneIdx = 1, layout = 0;   // layout 0 both, 1 fpv, 2 top
+    bool  wForest = true, wMaze = true;
 };
+
+const int PANE_PX[] = {240, 320, 420, 520};
+const int NPANE_PX = int(sizeof PANE_PX / sizeof *PANE_PX);
+const char* LAYOUT_NAME[3] = {"both", "fpv", "top"};
 
 std::string humanSteps(int n) {
     if (n >= 1000000) return std::to_string(n / 1000000) + " M";
@@ -258,6 +283,14 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 a.push_back("--replay"); a.push_back(recs[c.replay]);
             }
             break;
+        case WATCH:
+            a.push_back("--panes");  a.push_back(std::to_string(c.panes));
+            a.push_back("--px");     a.push_back(std::to_string(PANE_PX[c.paneIdx]));
+            a.push_back("--layout"); a.push_back(LAYOUT_NAME[c.layout]);
+            a.push_back("--worlds");
+            if (c.wForest) a.push_back("forest");
+            if (c.wMaze)   a.push_back("maze");
+            break;
         case TRAIN:
             a.push_back("--workers"); a.push_back(std::to_string(c.workers));
             a.push_back("--steps");   a.push_back(std::to_string(TRAIN_STEPS[c.stepsIdx]));
@@ -277,6 +310,7 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
              ? "no frames or video found - put a folder of images beside this exe"
              : "pick an input first";
     if (c.mode == BENCH && !c.forest && !c.maze) return "pick at least one world";
+    if (c.mode == WATCH && !c.wForest && !c.wMaze) return "pick at least one world";
     if (c.mode == SIM && c.simSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     return "";
@@ -296,7 +330,9 @@ enum {
     ID_SIM_SRC = 300,     // +0..2
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
-    ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL,
+    ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
+    ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
+    ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -441,29 +477,74 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // packages present and the import still failing, which is the most
     // confusing state available. Naming the path removes the question.
     const kpy::Py* b = g_py.probed ? kpy::best(g_py.pys) : nullptr;
+    // The buttons to the right start at x+266, so this column is 250 px wide.
+    // Fitting to it rather than trusting the text to be short is the fix for a
+    // status line that ran straight under "Install the RL stack".
+    const int col = 250;
     txt(im, "python", x, 480, 0.5, DIM);
     if (!g_py.probed) {
-        txt(im, "not checked yet", x, 508, 0.44, DIM);
+        txt(im, fit("not checked yet", col, 0.44, false), x, 508, 0.44, DIM);
     } else if (b && b->rl) {
-        txt(im, fit("ready: " + b->exe, 700, 0.44, false), x, 508, 0.44, INK);
-        txt(im, "CPython " + std::to_string(b->major) + "." + std::to_string(b->minor) +
-                " -- the one that can load voxelenv", x, 528, 0.42, DIM);
+        txt(im, fit("ready: " + b->exe, col, 0.44), x, 508, 0.44, INK);
+        txt(im, fit("CPython " + std::to_string(b->major) + "." +
+                    std::to_string(b->minor) + " loads voxelenv", col, 0.42, false),
+        x, 528, 0.42, DIM);
     } else if (b) {
-        txt(im, fit("needs the RL stack: " + b->exe, 700, 0.44, false), x, 508, 0.44, INK);
-        txt(im, "Install installs into THAT interpreter, not whatever", x, 528, 0.42, DIM);
-        txt(im, "'python' happens to mean on your PATH.", x, 546, 0.42, DIM);
+        txt(im, fit("needs the RL stack: " + b->exe, col, 0.44), x, 508, 0.44, INK);
+        txt(im, fit("Install targets THAT interpreter,", col, 0.42, false), x, 528, 0.42, DIM);
+        txt(im, fit("not whatever 'python' means.", col, 0.42, false), x, 546, 0.42, DIM);
     } else if (!g_py.abi.empty()) {
-        txt(im, "no python here can load voxelenv (it needs CPython " + g_py.abi + ")",
+        txt(im, fit("none can load voxelenv (needs " + g_py.abi + ")", col, 0.44, false),
             x, 508, 0.44, INK);
-        txt(im, "a version mismatch, not a missing file -- `kestrel python` lists them",
+        txt(im, fit("a version mismatch, not a missing file", col, 0.42, false),
             x, 528, 0.42, DIM);
     } else {
-        txt(im, "voxelenv is not beside this exe, so training cannot start",
-            x, 508, 0.44, INK);
-        txt(im, "it is the C++ environment the trainer steps", x, 528, 0.42, DIM);
+        txt(im, fit("voxelenv is not beside this exe", col, 0.44, false), x, 508, 0.44, INK);
+        txt(im, fit("the C++ env the trainer steps", col, 0.42, false), x, 528, 0.42, DIM);
     }
     bs.push_back({cv::Rect(x + 266, 480, 230, 38), "Install the RL stack",
                   ID_TRAIN_INSTALL, b && !b->rl});
+    // The full listing, for when the one line above is not enough -- which is
+    // whenever the machine has several pythons and the wrong one is winning.
+    bs.push_back({cv::Rect(x + 266, 524, 230, 32), "List every python",
+                  ID_TRAIN_PYTHONS, false});
+}
+
+void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
+    const int x = 266;
+    txt(im, "watch the policy fly while it trains", x, 112, 0.62, INK, 1);
+    txt(im, "A grid of live episodes in the FIRST-PERSON VOXEL VIEW -- what the",
+        x, 136, 0.44, DIM);
+    txt(im, "aircraft believes it can see. Run this beside a training run.",
+        x, 156, 0.44, DIM);
+
+    txt(im, "worlds", x, 196, 0.5, DIM);
+    bs.push_back({cv::Rect(x, 208, 140, 36), "Forest", ID_W_FOREST, c.wForest});
+    bs.push_back({cv::Rect(x + 156, 208, 140, 36), "Maze", ID_W_MAZE, c.wMaze});
+
+    stepper(im, bs, x, 300, "panes", std::to_string(c.panes),
+            ID_W_PANES_M, ID_W_PANES_P, "one episode each");
+    stepper(im, bs, x + 220, 300, "pane px", std::to_string(PANE_PX[c.paneIdx]),
+            ID_W_PX_M, ID_W_PX_P, "bigger costs more CPU");
+
+    bs.push_back({cv::Rect(x + 440, 300, 230, 36),
+                  c.layout == 0 ? "fpv + plan inset"
+                : c.layout == 1 ? "fpv only" : "plan view only",
+                  ID_W_LAYOUT, true});
+    txt(im, "click to cycle", x + 440, 354, 0.42, DIM);
+
+    txt(im, "PALE IS UNKNOWN, drawn as fog and never as air. Early in a forest a",
+        x, 404, 0.42, DIM);
+    txt(im, "pane is mostly empty and that is correct: at 0.25 m voxels the map",
+        x, 422, 0.42, DIM);
+    txt(im, "can only honestly mark obstacles to about 3.5 m. The maze fills in",
+        x, 440, 0.42, DIM);
+    txt(im, "quickly because its walls are close.", x, 458, 0.42, DIM);
+
+    txt(im, "It reloads the newest checkpoint as training writes them, on seeds", x, 492, 0.42, DIM);
+    txt(im, "training never uses. Before the first one it flies random-legal --", x, 510, 0.42, DIM);
+    txt(im, "the same baseline `bench` reports, so pane one is a fair 'before'.", x, 528, 0.42, DIM);
+    txt(im, "q in the watch window closes it and comes back here.", x, 552, 0.42, DIM);
 }
 
 // ------------------------------------------------------------------- compose
@@ -488,14 +569,19 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
         case TRACK: panelTrack(im, bs, c, inputs); break;
         case BENCH: panelBench(im, bs, c); break;
         case SIM:   panelSim(im, bs, c, recs); break;
+        case WATCH: panelWatch(im, bs, c); break;
         default:    panelTrain(im, bs, c); break;
     }
 
     const std::string why = blocker(c, inputs, recs);
-    Btn runBtn{cv::Rect(28, 336, 210, 58), "RUN", ID_RUN};
+    // Below the LAST mode button, computed rather than a constant: adding the
+    // fifth mode put a button straight through RUN, and `gui --check` caught it
+    // on the first run. Derive it and it cannot happen again.
+    const int runY = 100 + NMODES * 54 + 16;
+    Btn runBtn{cv::Rect(28, runY, 210, 58), "RUN", ID_RUN};
     runBtn.go = why.empty();
     bs.push_back(runBtn);
-    if (!why.empty()) txt(im, why, 28, 414, 0.4, DIM);
+    if (!why.empty()) txt(im, why, 28, runY + 78, 0.4, DIM);
     txt(im, "q or esc  quit", 28, H - 26, 0.44, DIM);
 
     // The command strip. Not decoration: it is what RUN executes.
@@ -549,6 +635,14 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_SP:     c.stepsIdx = std::min(NTRAIN_STEPS - 1, c.stepsIdx + 1); break;
         case ID_TRAIN_STEREO: c.trainStereo = !c.trainStereo; break;
         case ID_TRAIN_CUDA:   c.cuda = !c.cuda; break;
+
+        case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
+        case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;
+        case ID_W_PX_M:    c.paneIdx = std::max(0, c.paneIdx - 1); break;
+        case ID_W_PX_P:    c.paneIdx = std::min(NPANE_PX - 1, c.paneIdx + 1); break;
+        case ID_W_FOREST:  c.wForest = !c.wForest; break;
+        case ID_W_MAZE:    c.wMaze = !c.wMaze; break;
+        case ID_W_LAYOUT:  c.layout = (c.layout + 1) % 3; break;
         default: break;
     }
     (void)inputs; (void)recs;
@@ -637,18 +731,27 @@ int run(const Actions& act, const std::string& exeDir) {
         for (const Btn& b : bs)
             if (b.r.contains({g_mouse.x, g_mouse.y})) { hit = b.id; break; }
         if (hit < 0) continue;
+        // Two buttons act rather than set: install, and the interpreter
+        // listing. Both go through the same hand-the-screen-over path as RUN so
+        // their output lands in the console in the same place.
         const bool isInstall = (hit == ID_TRAIN_INSTALL);
-        if (hit != ID_RUN && !isInstall) { apply(hit, c, inputs, recs); continue; }
-        if (!isInstall && !why.empty()) continue;
+        const bool isPythons = (hit == ID_TRAIN_PYTHONS);
+        if (hit != ID_RUN && !isInstall && !isPythons) {
+            apply(hit, c, inputs, recs);
+            continue;
+        }
+        if (hit == ID_RUN && !why.empty()) continue;
 
         // Install is dispatched through train, so there is exactly one place
         // that decides which interpreter is meant.
         std::vector<std::string> args =
-            isInstall ? std::vector<std::string>{"--install"} : buildArgs(c, inputs, recs);
+            isInstall ? std::vector<std::string>{"--install"}
+          : isPythons ? std::vector<std::string>{}
+                      : buildArgs(c, inputs, recs);
 
         // Designating happens IN this window, before it is torn down, because
         // it needs the first frame on screen and a click on it.
-        if (!isInstall && c.mode == TRACK && c.designate && c.input >= 0) {
+        if (!isInstall && !isPythons && c.mode == TRACK && c.designate && c.input >= 0) {
             float bx = 0, by = 0;
             if (clickTarget(inputs[c.input].args.front(), bx, by)) {
                 std::vector<std::string> box{"--box", std::to_string(int(bx)),
@@ -656,7 +759,7 @@ int run(const Actions& act, const std::string& exeDir) {
                                              std::to_string(c.boxSize)};
                 args.insert(args.begin(), box.begin(), box.end());
             }
-        } else if (!isInstall && c.mode == TRACK) {
+        } else if (!isInstall && !isPythons && c.mode == TRACK) {
             args.insert(args.begin(), {"--box", "-1", "-1", std::to_string(c.boxSize)});
         }
 
@@ -666,18 +769,28 @@ int run(const Actions& act, const std::string& exeDir) {
         // when the command returns.
         cv::destroyWindow(WIN);
         cv::waitKey(1);
-        std::printf("\n[kestrel] %s", MODE_NAME[c.mode]);
+        std::printf("\n[kestrel] %s",
+                    isPythons ? "python" : isInstall ? "train" : MODE_NAME[c.mode]);
         for (const std::string& a : args) std::printf(" %s", a.c_str());
         std::printf("\n");
         std::fflush(stdout);
 
         int rc = 0;
-        if (isInstall) rc = act.train(args);
+        if (isPythons)      rc = act.pythons();
+        else if (isInstall) rc = act.train(args);
         else switch (c.mode) {
             case TRACK: rc = act.track(args); break;
             case BENCH: rc = act.bench(args); break;
             case SIM:   rc = act.sim(args);   break;
+            case WATCH: rc = act.watch(args); break;
             default:    rc = act.train(args); break;
+        }
+        // The listing is read in the terminal, so hold the window closed until
+        // it has been: reopening instantly would put it back over the output.
+        if (isPythons) {
+            std::printf("\n[kestrel] press Enter to return to the window ");
+            std::fflush(stdout);
+            int ch; while ((ch = std::getchar()) != '\n' && ch != EOF) {}
         }
         if (rc != 0) std::printf("[kestrel] %s exited %d\n", MODE_NAME[c.mode], rc);
         std::fflush(stdout);
@@ -723,10 +836,43 @@ int check() {
             c.frameLimit = variant * 50;
             c.stepsIdx = variant;
 
+            // A SYNTHETIC PYTHON STATE, and a different one per variant. The
+            // check ran with g_py unprobed, so panelTrain always drew its short
+            // "not checked yet" branch and the long interpreter paths -- the
+            // ones that actually overflowed -- were never laid out at all. A
+            // check that only ever sees the empty state is not checking the
+            // panel, it is checking a placeholder.
+            const PyState saved = g_py;
+            kpy::Py fake;
+            fake.exe = "C:\\Users\\Somebody\\AppData\\Local\\Programs\\"
+                       "Python\\Python311\\python.exe";
+            fake.major = 3; fake.minor = 11; fake.runs = true;
+            fake.origin = "PATH, py -3.11";
+            fake.voxelenv = (variant != 2);
+            fake.rl = (variant == 0);
+            g_py.probed = true;
+            g_py.pys = {fake};
+            g_py.abi = "3.11";
+
             std::vector<Btn> bs;
+            std::vector<cv::Rect> texts;
+            g_textBoxes = &texts;
             const cv::Mat im = compose(c, inputs, recs, bs);
+            g_textBoxes = nullptr;
             const std::string tag =
                 std::string(MODE_NAME[m]) + "/" + std::to_string(variant);
+
+            // Text running underneath a button. This is the case the check was
+            // blind to: it compared buttons against buttons, so a paragraph
+            // drawn straight through "Install the RL stack" passed clean.
+            for (const cv::Rect& t : texts)
+                for (const Btn& b : bs)
+                    if ((t & b.r).area() > 0) {
+                        std::printf("%s: text overlaps button '%s'\n",
+                                    tag.c_str(), b.label.c_str());
+                        ++bad;
+                    }
+            g_py = saved;
 
             for (size_t i = 0; i < bs.size(); ++i) {
                 const Btn& a = bs[i];

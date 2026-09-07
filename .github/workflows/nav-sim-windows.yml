@@ -135,7 +135,40 @@ jobs:
           if-no-files-found: error
 
 
+      # WHY ELEVEN TESTS TIME OUT ON WINDOWS AND THREE DO NOT. They have never
+      # passed on this runner -- every one stops at exactly the ctest timeout,
+      # producing no output, while test_nav, sideslip_check and attitude_check
+      # pass in milliseconds. A missing OpenCV DLL was the obvious guess and it
+      # is wrong: test_nav links OpenCV too and starts fine, and Windows
+      # resolves imports at load time for every exe or none.
+      #
+      # So this runs ONE of them directly, with the output redirected to a file
+      # so it survives being killed, and reports whether it is stuck or exiting.
+      # ctest swallows the distinction: a load failure, a crash behind a Windows
+      # Error Reporting dialog and a genuine hang all read as "Timeout".
+      - name: Diagnose the hanging tests
+        continue-on-error: true
+        run: |
+          $exe = "build/Release/bearing_field_check.exe"
+          if (-not (Test-Path $exe)) { Write-Host "not built: $exe"; exit 0 }
+          $p = Start-Process -FilePath $exe -NoNewWindow -PassThru `
+                 -RedirectStandardOutput diag_out.txt -RedirectStandardError diag_err.txt
+          if ($p.WaitForExit(60000)) {
+            Write-Host "exited with $($p.ExitCode)"
+          } else {
+            Write-Host "STILL RUNNING after 60s - it is hung, not slow"
+            $p.Kill()
+          }
+          Write-Host "--- stdout ---"; Get-Content diag_out.txt -ErrorAction SilentlyContinue | Select-Object -First 40
+          Write-Host "--- stderr ---"; Get-Content diag_err.txt -ErrorAction SilentlyContinue | Select-Object -First 40
+
       - name: Test
+        # A CEILING ON THE STEP, not just the job. Without it ctest ate the
+        # whole 40 minutes and the job was killed mid-suite, so every run showed
+        # as "cancelled" -- which reads as a broken build even though the zip
+        # had uploaded cleanly twenty minutes earlier. Now the suite is cut off,
+        # the step goes red, and the run reports what actually happened.
+        timeout-minutes: 10
         # continue-on-error, deliberately. THE ARTIFACT IS THE PRODUCT: a
         # failing or hanging test must not be able to deny you a working exe,
         # because then a test problem and a build problem look identical from

@@ -135,26 +135,36 @@ jobs:
           if-no-files-found: error
 
 
-      # WHY ELEVEN TESTS TIME OUT ON WINDOWS AND THREE DO NOT. They have never
-      # passed on this runner -- every one stops at exactly the ctest timeout,
-      # producing no output, while test_nav, sideslip_check and attitude_check
-      # pass in milliseconds. A missing OpenCV DLL was the obvious guess and it
-      # is wrong: test_nav links OpenCV too and starts fine, and Windows
-      # resolves imports at load time for every exe or none.
+      # THE TESTS COULD NOT FIND THE OPENCV DLLs and had never once run here.
+      # Sixteen of twenty stopped at exactly the ctest timeout having printed
+      # nothing; run directly, one exited immediately with -1073741515, which is
+      # 0xC0000135, STATUS_DLL_NOT_FOUND. The DLLs were only ever copied into
+      # dist/, never next to build/Release/*.exe, and nothing put them on PATH.
       #
-      # So this runs ONE of them directly, with the output redirected to a file
-      # so it survives being killed, and reports whether it is stuck or exiting.
-      # ctest swallows the distinction: a load failure, a crash behind a Windows
-      # Error Reporting dialog and a genuine hang all read as "Timeout".
-      - name: Diagnose the hanging tests
+      # WHY IT LOOKED LIKE A HANG AND NOT A LOAD FAILURE: Windows Error
+      # Reporting holds the failing process open, so ctest saw 90 seconds of
+      # silence and called it a Timeout. The exit code is only visible if you
+      # wait on the process yourself, which is what the check below does.
+      #
+      # WHY FOUR TESTS PASSED AND MISLED THE DIAGNOSIS: an exe depends on a DLL
+      # only if it REFERENCES an exported symbol from it. test_nav,
+      # sideslip_check, attitude_check and imu_odometry_check link OpenCV but
+      # call nothing exported from it, so they carry no dependency on
+      # opencv_world and load fine. "It links OpenCV and starts, so the DLL must
+      # be present" is simply not a valid inference on Windows.
+      - name: Check an OpenCV-using test can start
         continue-on-error: true
         run: |
+          $env:PATH = "C:\ocv\opencv\build\x64\vc16\bin;$env:PATH"
           $exe = "build/Release/bearing_field_check.exe"
           if (-not (Test-Path $exe)) { Write-Host "not built: $exe"; exit 0 }
           $p = Start-Process -FilePath $exe -NoNewWindow -PassThru `
                  -RedirectStandardOutput diag_out.txt -RedirectStandardError diag_err.txt
           if ($p.WaitForExit(60000)) {
             Write-Host "exited with $($p.ExitCode)"
+            if ($p.ExitCode -eq -1073741515) {
+              Write-Host "0xC0000135 STATUS_DLL_NOT_FOUND - the OpenCV DLLs are not on PATH"
+            }
           } else {
             Write-Host "STILL RUNNING after 60s - it is hung, not slow"
             $p.Kill()
@@ -174,9 +184,16 @@ jobs:
         # because then a test problem and a build problem look identical from
         # the download page. The result is still visible as a red step.
         continue-on-error: true
+        # THE PATH LINE IS WHAT MAKES THE SUITE RUN AT ALL. ctest launches the
+        # exes from build/Release, where no OpenCV DLL has ever been, so every
+        # test that calls into OpenCV died at load time. The prebuilt OpenCV
+        # keeps its DLLs beside its import libraries; adding that directory is
+        # the whole fix.
+        #
         # -j 4 because these are independent processes and the runner has the
         # cores; serially the suite ran past the job ceiling. --timeout 90 per
         # test: without a cap ctest waits forever, and one stuck child then
         # takes the whole job.
         run: |
+          $env:PATH = "C:\ocv\opencv\build\x64\vc16\bin;$env:PATH"
           ctest --test-dir build -C Release --output-on-failure --timeout 90 -j 4

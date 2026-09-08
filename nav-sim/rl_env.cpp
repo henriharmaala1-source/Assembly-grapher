@@ -95,6 +95,41 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
         I.px = 15.f; I.py = 10.f; I.pz = 6.f;
         I.goalE = 120.f; I.goalN = 150.f; I.goalU = 8.f;
     }
+    // THE SPAWN WAS NEVER CHECKED AGAINST THE WORLD IT LANDED IN. The forest
+    // start was hardcoded at (15, 10, 6) whatever the trees did, so on 4 of 20
+    // seeds the aircraft began with LESS clearance than its own radius: 0.19 m,
+    // 0.38 m, 0.43 m, 0.17 m against robotR 0.6. Those episodes are lost before
+    // the first action -- the run either scores an immediate collision or sits
+    // still for the whole budget -- and every planner suffers it equally: on
+    // forest seed 103 the random baseline also travelled 0.1 m in 600 steps.
+    //
+    // For training that is worse than a bad benchmark. Roughly a fifth of
+    // forest episodes handed the policy -50 for a state no action could have
+    // avoided, which teaches that the opening position is catastrophic rather
+    // than teaching anything about flying.
+    //
+    // The maze never had this because genMaze returns a corridor start. The
+    // forest now gets the same courtesy: nudge outward until there is room.
+    {
+        const float want = cfg_.robotR * 1.6f;
+        if (trueClearance(I.world, I.px, I.py, I.pz, want + 0.5f) < want) {
+            const float sx = I.px, sy = I.py;
+            bool found = false;
+            for (float r = 1.f; r <= 12.f && !found; r += 1.f)
+                for (int a = 0; a < 24 && !found; ++a) {
+                    const float th = a * 2.f * sim::PI_F / 24.f;
+                    const float x = sx + r * std::cos(th), y = sy + r * std::sin(th);
+                    if (trueClearance(I.world, x, y, I.pz, want + 0.5f) >= want) {
+                        I.px = x; I.py = y; found = true;
+                    }
+                }
+            // Nothing within 12 m: climb instead. A forest is open above the
+            // canopy, so this always terminates somewhere flyable, and leaving
+            // the aircraft inside a trunk is not an option worth preserving.
+            if (!found) I.pz += 4.f;
+        }
+    }
+
     I.yaw = std::atan2(I.goalE - I.px, I.goalN - I.py) * 180.f / sim::PI_F;
 
     // Camera and map exactly as voxel_sim derives them, so a policy trained

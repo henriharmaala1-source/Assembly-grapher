@@ -50,6 +50,33 @@ a specific failure worth chasing rather than a general "needs more steps".
 That was already written down as a known open problem and this confirms it is
 not an artefact of the classical planners.
 
+## A bug the pilot found, which invalidates the forest column above
+
+Chasing "forest seed 103 collides after 0.1 m" turned out not to be a policy
+problem at all. On that seed the RANDOM baseline also travels 0.1 m in 600
+steps, and the hand-tuned one collides at 0.1 m. The aircraft was starting
+inside a tree.
+
+The forest spawn was hardcoded at (15, 10, 6) regardless of where the trees
+landed. Across seeds 101-120, **four of twenty started with less clearance
+than the robot's own radius** -- 0.19, 0.38, 0.43 and 0.17 m against a 0.6 m
+radius. Seed 103's 0.63 m is why it behaved differently for every planner:
+it sat one voxel from the threshold. The maze never had this, because
+genMaze returns a corridor start; the forest is now nudged outward until it
+has room, and all twenty seeds spawn clear.
+
+This matters more for TRAINING than for the table. About a fifth of forest
+episodes handed the policy -50 for a state no action could avoid, from step
+zero -- teaching that the opening position is catastrophic rather than
+teaching anything about flying. **The pilot policy was trained with that
+defect present**, so its forest behaviour cannot be cleanly attributed to
+too-few-steps until it is retrained without it.
+
+Re-evaluated after the fix, the same checkpoint still collides in 3 of 4
+forest runs (24.8 m). So the spawn bug was not the whole story -- but the
+forest numbers above were measured on a broken start and should not be
+quoted until a policy is retrained.
+
 ## What this says
 
 Reward went up by 76 points and the scorecard did not move. Either the reward

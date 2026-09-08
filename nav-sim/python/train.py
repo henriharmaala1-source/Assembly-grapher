@@ -178,12 +178,17 @@ def main() -> int:
             # cannot see a device reports a version string and still fails,
             # which is a driver or a machine problem, not a pip problem.
             if torch.version.cuda is None:
+                # ONE LINE, no continuation character. This printed a
+                # trailing backslash to wrap it, which is bash syntax -- pasted
+                # into PowerShell, where the continuation is a backtick, the
+                # command breaks in half and fails. The audience for this
+                # message is on Windows by definition.
                 why = ("this is the CPU-ONLY torch wheel, which is what plain "
                        "`pip install torch` gives on Windows.\n"
-                       "        Install the CUDA build into THIS interpreter:\n"
+                       "        Install the CUDA build into THIS interpreter "
+                       "(one line):\n"
                        f'          "{sys.executable}" -m pip install '
-                       "--force-reinstall \\\n"
-                       "            --index-url "
+                       "--force-reinstall --index-url "
                        "https://download.pytorch.org/whl/cu124 torch")
             else:
                 why = (f"this torch IS a CUDA build (cuda {torch.version.cuda}) "

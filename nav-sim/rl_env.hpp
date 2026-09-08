@@ -215,6 +215,14 @@ public:
     std::vector<uint8_t> renderFrame(int w = 320, int h = 240,
                                      bool topDown = false) const;
 
+    // WHAT THE CAMERA RETURNED this step, colourised the way the sim's DEPTH
+    // pane does it: near warm, far cool, and GREY MEANS NO RETURN rather than
+    // far away. Worth having beside the FPV view because the FPV is mostly fog
+    // in an open world and correctly so -- at 0.25 m voxels the map can only
+    // honestly mark obstacles to about 3.5 m, so watching it alone tells you
+    // very little about whether the sensor is seeing anything at all.
+    std::vector<uint8_t> renderDepth(int w = 320, int h = 240) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> im_;

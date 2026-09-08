@@ -257,7 +257,11 @@ struct Cfg {
 
 const int PANE_PX[] = {240, 320, 420, 520};
 const int NPANE_PX = int(sizeof PANE_PX / sizeof *PANE_PX);
-const char* LAYOUT_NAME[3] = {"both", "fpv", "top"};
+// Matches watch.py --layout. "all" first because it is the default and
+// the only one that shows depth, which is what an open world needs: the
+// fpv there is mostly fog and correctly so.
+const char* LAYOUT_NAME[5] = {"all", "both", "fpv", "top", "depth"};
+const int NLAYOUT = 5;
 
 std::string humanSteps(int n) {
     if (n >= 1000000) return std::to_string(n / 1000000) + " M";
@@ -601,9 +605,11 @@ void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     stepper(im, bs, x + 220, 300, "pane px", std::to_string(PANE_PX[c.paneIdx]),
             ID_W_PX_M, ID_W_PX_P, "bigger costs more CPU");
 
-    bs.push_back({cv::Rect(x + 440, 300, 230, 36),
-                  c.layout == 0 ? "fpv + plan inset"
-                : c.layout == 1 ? "fpv only" : "plan view only",
+    bs.push_back({cv::Rect(x + 440, 300, 240, 36),
+                  c.layout == 0 ? "fpv + plan + DEPTH"
+                : c.layout == 1 ? "fpv + plan inset"
+                : c.layout == 2 ? "fpv only"
+                : c.layout == 3 ? "plan view only" : "depth only",
                   ID_W_LAYOUT, true});
     txt(im, "click to cycle", x + 440, 354, 0.42, DIM);
 
@@ -614,13 +620,13 @@ void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                          : "sample (see what training does)",
                   ID_W_DET, c.wDet});
 
-    txt(im, "PALE IS UNKNOWN, drawn as fog and never as air. Early in a forest a",
+    txt(im, "PALE IS UNKNOWN, drawn as fog and never as air. In an open world a",
         x, 404, 0.42, DIM);
-    txt(im, "pane is mostly empty and that is correct: at 0.25 m voxels the map",
+    txt(im, "pane is mostly WHITE and that is correct: at 0.25 m voxels the map",
         x, 422, 0.42, DIM);
-    txt(im, "can only honestly mark obstacles to about 3.5 m. The maze fills in",
+    txt(im, "only marks obstacles to about 3.5 m. The DEPTH strip is what shows",
         x, 440, 0.42, DIM);
-    txt(im, "quickly because its walls are close.", x, 458, 0.42, DIM);
+    txt(im, "the sensor is returning anything at all.", x, 458, 0.42, DIM);
 
     txt(im, "It reloads the newest checkpoint as training writes them, on seeds", x, 492, 0.42, DIM);
     txt(im, "training never uses. Before the first one it flies random-legal --", x, 510, 0.42, DIM);
@@ -788,7 +794,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_W_PX_P:    c.paneIdx = std::min(NPANE_PX - 1, c.paneIdx + 1); break;
         case ID_W_FOREST:  c.wForest = !c.wForest; break;
         case ID_W_MAZE:    c.wMaze = !c.wMaze; break;
-        case ID_W_LAYOUT:  c.layout = (c.layout + 1) % 3; break;
+        case ID_W_LAYOUT:  c.layout = (c.layout + 1) % NLAYOUT; break;
         case ID_W_DET:     c.wDet = !c.wDet; break;
 
         case ID_E_FOREST: c.eForest = !c.eForest; break;

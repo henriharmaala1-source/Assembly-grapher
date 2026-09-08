@@ -123,6 +123,16 @@ PYBIND11_MODULE(voxelenv, m) {
             std::memcpy(a.mutable_data(), buf.data(), size_t(n));
             return a;
         }, py::arg("w") = 320, py::arg("h") = 240, py::arg("top_down") = false)
+        // What the camera returned this step. Grey is NO RETURN, not far away.
+        .def("render_depth", [](const VoxelEnv& e, int w, int h) {
+            std::vector<uint8_t> buf = e.renderDepth(w, h);
+            const py::ssize_t n = py::ssize_t(buf.size());
+            py::ssize_t hh = h, ww = w;
+            if (n != py::ssize_t(w) * h * 3) hh = n / (3 * py::ssize_t(w));
+            py::array_t<uint8_t> a({hh, ww, py::ssize_t(3)});
+            std::memcpy(a.mutable_data(), buf.data(), size_t(n));
+            return a;
+        }, py::arg("w") = 320, py::arg("h") = 240)
         .def_property_readonly("n_prims", &VoxelEnv::nPrims)
         .def_property_readonly("obs_size", &VoxelEnv::obsSize)
         .def_static("features_per_prim", &VoxelEnv::obsFeaturesPerPrim)

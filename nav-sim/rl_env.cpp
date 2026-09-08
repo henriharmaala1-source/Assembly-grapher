@@ -56,6 +56,8 @@ struct VoxelEnv::Impl {
     // the observation or the reward reads it, so recording it cannot change
     // what the policy learns.
     std::vector<cv::Point2f> trail;
+    // The last depth image, kept only so it can be looked at.
+    cv::Mat lastDepth;
 
     Impl(const TrajParams& tp) : traj(tp) {}
 
@@ -343,6 +345,7 @@ EnvStep VoxelEnv::step(int action) {
     CamPose pose; pose.e = I.px; pose.n = I.py; pose.u = I.pz; pose.yawDeg = I.yaw;
     cv::Mat d = cfg_.truthDepth ? I.cam->renderTruth(I.world, pose)
                                 : I.cam->renderStereo(I.world, pose, nullptr);
+    I.lastDepth = d.clone();
     I.map.integrate(d, *I.cam, pose);
     I.map.recentre(I.px, I.py, I.pz);
     I.bfield.update(d, *I.cam, pose, 1);
@@ -486,6 +489,35 @@ void VoxelEnv::buildObservation() {
 // The 1.15 inflation on the outer edge is kept for the same reason it exists
 // there: it covers cells marked slightly beyond maxIntegM before the aircraft
 // moved, which otherwise render as a round blind spot.
+std::vector<uint8_t> VoxelEnv::renderDepth(int w, int h) const {
+    const Impl& I = *im_;
+    w = std::max(80, std::min(1600, w));
+    h = std::max(60, std::min(1200, h));
+    cv::Mat out(h, w, CV_8UC3, cv::Scalar(60, 60, 60));
+    if (!I.lastDepth.empty()) {
+        // Same ramp as the sim's DEPTH pane, so the two cannot disagree about
+        // what a colour means. Grey stays grey: no stereo match is not "far".
+        cv::Mat dv(I.lastDepth.rows, I.lastDepth.cols, CV_8UC3,
+                   cv::Scalar(60, 60, 60));
+        for (int y = 0; y < I.lastDepth.rows; ++y)
+            for (int x = 0; x < I.lastDepth.cols; ++x) {
+                const float r = I.lastDepth.at<float>(y, x);
+                if (!(r > 0.f)) continue;
+                const float f = std::min(1.f, r / I.cp.maxRangeM);
+                dv.at<cv::Vec3b>(y, x) = cv::Vec3b(uchar(255 * (1 - f)),
+                                                   uchar(80 + 100 * f),
+                                                   uchar(255 * f));
+            }
+        cv::resize(dv, out, cv::Size(w, h), 0, 0, cv::INTER_NEAREST);
+    }
+    std::vector<uint8_t> buf(size_t(out.rows) * out.cols * 3);
+    if (out.isContinuous()) std::memcpy(buf.data(), out.data, buf.size());
+    else for (int y = 0; y < out.rows; ++y)
+        std::memcpy(buf.data() + size_t(y) * out.cols * 3, out.ptr(y),
+                    size_t(out.cols) * 3);
+    return buf;
+}
+
 std::vector<uint8_t> VoxelEnv::renderFrame(int w, int h, bool topDown) const {
     const Impl& I = *im_;
     w = std::max(80, std::min(1600, w));

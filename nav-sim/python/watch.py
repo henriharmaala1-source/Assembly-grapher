@@ -61,10 +61,15 @@ def main():
     ap.add_argument("--worlds", nargs="+", default=["forest", "maze"])
     ap.add_argument("--panes", type=int, default=4)
     ap.add_argument("--px", type=int, default=320, help="pane width")
-    ap.add_argument("--layout", default="both", choices=["fpv", "top", "both"],
-                    help="fpv: what the aircraft believes it can see. "
-                         "top: the plan view, better for judging whether a run "
-                         "went anywhere. both: fpv with a top-down inset.")
+    ap.add_argument("--layout", default="all",
+                    choices=["fpv", "top", "depth", "both", "all"],
+                    help="all (default): fpv with a plan inset and a DEPTH "
+                         "strip below. The fpv alone is mostly white in an open "
+                         "world and correctly so -- unknown is fog and at "
+                         "0.25 m voxels the map only marks obstacles to about "
+                         "3.5 m -- so depth is what tells you the sensor is "
+                         "seeing anything at all. fpv / top / depth show one "
+                         "each; both is fpv with the plan inset only.")
     ap.add_argument("--max-steps", type=int, default=1500)
     ap.add_argument("--fps", type=float, default=20.0)
     ap.add_argument("--stereo", action="store_true")
@@ -101,6 +106,13 @@ def main():
         e.reset(w, s)
     steps = [0] * args.panes
     outcome = [""] * args.panes
+    # How long the finished-episode banner stays up. Without it the outcome is
+    # gone on the next frame and a run that ended is indistinguishable from one
+    # that never started.
+    flash = [0] * args.panes
+    eps = [0] * args.panes
+    hits = [0] * args.panes
+    goals = [0] * args.panes
 
     policy, at_steps, ckpt = None, -1, None
     cols = int(np.ceil(np.sqrt(args.panes)))
@@ -144,9 +156,11 @@ def main():
             h = int(w * 3 / 4)
             if args.layout == "top":
                 img = np.ascontiguousarray(e.render_frame(w, h, True))
+            elif args.layout == "depth":
+                img = np.ascontiguousarray(e.render_depth(w, h))
             else:
                 img = np.ascontiguousarray(e.render_frame(w, h, False))
-                if args.layout == "both":
+                if args.layout in ("both", "all"):
                     # A small plan view in the corner. The FPV alone cannot say
                     # whether the aircraft is making ground -- a policy hovering
                     # in a clearing and one crossing it look identical through
@@ -156,11 +170,32 @@ def main():
                     img[h - ins.shape[0]:h, w - ins.shape[1]:w] = ins
                     cv2.rectangle(img, (w - ins.shape[1], h - ins.shape[0]),
                                   (w - 1, h - 1), (90, 90, 100), 1)
+                if args.layout == "all":
+                    # WHAT THE CAMERA RETURNED, under what the map believes.
+                    # Grey is NO RETURN, not far away -- the two panes disagreeing
+                    # is the interesting case: sensor sees it, map has not marked
+                    # it yet.
+                    dep = np.ascontiguousarray(e.render_depth(w, h // 2))
+                    cv2.putText(dep, "DEPTH", (6, 14), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.4, (240, 240, 240), 1, cv2.LINE_AA)
+                    img = np.vstack([img, dep])
             if st.done or st.truncated:
                 outcome[i] = ("reached goal" if st.reached_goal
                               else "COLLIDED" if st.collisions else "out of steps")
+                flash[i] = 30
+                eps[i] += 1
+                hits[i] += 1 if st.collisions else 0
+                goals[i] += 1 if st.reached_goal else 0
+            elif flash[i] > 0:
+                flash[i] -= 1
+                if flash[i] == 0:
+                    outcome[i] = ""      # STALE LABELS WERE THE BUG: this was
+                                         # never cleared, so one collision left
+                                         # every later frame reading COLLIDED
+                                         # while a new episode flew underneath.
             label(img, f"{worlds[i]} s{seeds[i]}  {st.travel_m:5.1f}m  "
-                       f"d{st.dist_to_goal_m:5.1f}m  {outcome[i]}",
+                       f"d{st.dist_to_goal_m:5.1f}m  ep{eps[i]} "
+                       f"x{hits[i]} g{goals[i]}  {outcome[i]}",
                   (90, 230, 90) if st.reached_goal else
                   (90, 90, 240) if st.collisions else (235, 235, 240))
             tiles.append(img)

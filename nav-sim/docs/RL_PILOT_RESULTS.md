@@ -1,5 +1,32 @@
 # RL pilots
 
+# The learned policy does not survive a long run
+
+Scored at 3000 steps instead of 600, forest, same checkpoint (pilot 3, which
+was TRAINED on 1500-step episodes):
+
+| planner | mean travel | collisions | best closest approach |
+|---------|-------------|------------|-----------------------|
+| freeM   | **285.3 m** | **0/2**    | **9.7 m**             |
+| score   | 146.4 m     | 0/2        | 79.9 m                |
+| policy  | 139.0 m     | **2/2**    | -                     |
+| random  | 111.4 m     | 0/2        | 144.6 m               |
+| goal    |  88.6 m     | 1/2        | 98.0 m                |
+
+At 600 steps this policy was the best collision-free planner in the forest.
+At 3000 it collides in **every** run and is the least reliable thing on the
+list -- worse than random, which never hits anything.
+
+That is the answer to "we need long reliable navigation": it is currently
+neither trained for nor, until now, tested for. The policy was trained on
+1500-step episodes and evaluated on 600, and it is safe over roughly the
+horizon it saw and not beyond it. Nothing about 600-step numbers predicts
+3000-step behaviour, and the earlier table in this document should be read as
+short-range results.
+
+freeM is the long-range planner to beat: 285 m, no collisions, and the only
+one that has come within 10 m of a goal.
+
 # Why nothing has ever reached a goal: the episode ended first
 
 The forest goal is 175 m from the spawn. Training and evaluation both used

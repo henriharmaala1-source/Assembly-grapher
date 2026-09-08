@@ -77,6 +77,53 @@ forest runs (24.8 m). So the spawn bug was not the whole story -- but the
 forest numbers above were measured on a broken start and should not be
 quoted until a policy is retrained.
 
+## A second pilot, on the fixed spawn: higher reward, worse flying
+
+Same budget, same seeds, same everything except the spawn fix.
+
+| checkpoint                     | final ep_rew_mean | maze         | forest       |
+|--------------------------------|-------------------|--------------|--------------|
+| pilot 1, spawn bug present     | 33.2              | 38.1   0/4   | 24.8   3/4   |
+| pilot 2, spawn fixed           | **36.4**          | 26.3   3/4   | 22.3   3/4   |
+
+The retrain scored HIGHER on the objective it was optimising and flew WORSE
+on every column of the scorecard, in both worlds. It went from no maze
+collisions to three out of four.
+
+That is the clearest evidence yet that the gap is **reward against metric**,
+not training budget: more reward bought fewer metres and more crashes. Adding
+steps optimises harder for the thing that is already pointing the wrong way.
+
+Read it with the obvious caveat: one training run per condition, four seeds
+each. RL run-to-run variance is large and this is not a controlled experiment.
+What it does not support is the comfortable reading -- that fixing the spawn
+would improve the policy. It did not.
+
+Also worth knowing when reading maze numbers: every maze seed shares the same
+spawn corridor and goal corner, so the opening view is byte-identical across
+seeds and a run that dies early cannot distinguish them. The mazes do diverge
+-- a fixed policy ends 24.1 / 27.6 / 22.3 / 25.0 m from goal on 101-104 -- but
+four maze seeds are less independent than four numbers suggest.
+
+## The forest baselines moved too
+
+The spawn bug was penalising the classical planners, not just the policy:
+
+| forest planner | before fix   | after fix      |
+|----------------|--------------|----------------|
+| random         | 25.2   1/4   | 34.3   1/4     |
+| freeM          | 56.8   0/4   | 57.2   0/4     |
+| goal           | 23.2   0/4   | 24.8   0/4     |
+| score          | 33.2   1/4   | **46.4   0/4** |
+
+The hand-tuned planner gains 40 % of its distance and loses its collision.
+freeM is unchanged because it was already escaping the bad start. So the
+earlier reading of this table -- "the hand-tuned planner is worst and hits
+something every run" -- was mostly an artefact of spawning inside trees.
+
+Against the corrected baselines the learned policy is clearly behind in the
+forest: 22.3 m with three collisions against score's 46.4 m with none.
+
 ## What this says
 
 Reward went up by 76 points and the scorecard did not move. Either the reward

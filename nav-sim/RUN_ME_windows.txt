@@ -209,7 +209,21 @@ columns as the classical ones, on seeds it never trained on.
                        kestrel train --resume PATH.zip   a specific one
 
                      or the "start from scratch / resume from newest" button
-                     on the train panel. Scratch is right for a clean
+                     on the train panel.
+
+                     LEARNING BY CRASHING:  kestrel train --no-veto
+                     Normally the geometric veto hides every primitive that
+                     flies into something the map has seen, so the policy
+                     picks among options already approved and CANNOT collide
+                     by choosing. --no-veto hands it everything, so it hits
+                     walls, takes the -50, and has to learn avoidance itself.
+                     Measured with a random policy in the forest: 10 of 12
+                     runs collide without the veto against 4 of 12 with it,
+                     and mean travel drops from 17.1 m to 8.1 m.
+                     Note the 4: the veto only rejects what the map has
+                     CONFIRMED, and at 0.25 m voxels that is about 3.5 m
+                     ahead, so it reduces collisions rather than abolishing
+                     them. Watch one with  kestrel watch --no-veto . Scratch is right for a clean
                      comparison; resume is right after an interrupted
                      overnight run. Resuming continues the step counter, so
                      the TensorBoard curve carries on instead of restarting

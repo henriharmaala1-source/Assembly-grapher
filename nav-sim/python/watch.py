@@ -68,6 +68,9 @@ def main():
     ap.add_argument("--max-steps", type=int, default=1500)
     ap.add_argument("--fps", type=float, default=20.0)
     ap.add_argument("--stereo", action="store_true")
+    ap.add_argument("--no-veto", action="store_true",
+                    help="watch a run with the safety mask off, to see the "
+                         "collisions a --no-veto policy is learning from")
     ap.add_argument("--shot", default="", metavar="FILE",
                     help="fly --shot-steps steps, write one grid PNG, exit. "
                          "No display needed, so the layout is checkable over "
@@ -78,6 +81,7 @@ def main():
     cfg = voxelenv.EnvConfig()
     cfg.max_steps = args.max_steps
     cfg.truth_depth = not args.stereo
+    cfg.mask_unsafe = not args.no_veto
 
     envs = [voxelenv.VoxelEnv(cfg) for _ in range(args.panes)]
     worlds = [args.worlds[i % len(args.worlds)] for i in range(args.panes)]

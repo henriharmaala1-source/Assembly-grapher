@@ -31,7 +31,8 @@ class VoxelNavEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, worlds=TRAIN_WORLDS, seeds=range(1, 65), max_steps=1500,
-                 truth_depth=False, cam=(160, 120), horizons=None):
+                 truth_depth=False, cam=(160, 120), horizons=None,
+                 mask_unsafe=True):
         super().__init__()
         self.worlds = tuple(worlds)
         self.seeds = list(seeds)
@@ -45,6 +46,9 @@ class VoxelNavEnv(gym.Env):
         self._cfg.cam_w, self._cfg.cam_h = cam
         self._cfg.world = self.worlds[0]
         self._cfg.horizon_s = self.horizons[self.worlds[0]]
+        # False = the policy may pick primitives the geometry rejected, so it
+        # can fly into things and must learn avoidance from the consequence.
+        self._cfg.mask_unsafe = mask_unsafe
         self._env = voxelenv.VoxelEnv(self._cfg)
 
         n = self._env.n_prims

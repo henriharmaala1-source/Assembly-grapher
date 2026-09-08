@@ -64,6 +64,27 @@ struct EnvConfig {
     float rGoal       = 50.f;
     float rCollide    = 50.f;
     float goalTolM    = 3.0f;
+
+    // THE VETO, AS AN EXPERIMENT RATHER THAN AN ASSUMPTION.
+    //
+    // Normally sphereClear marks a primitive inadmissible and the action mask
+    // hides it, so the policy never even offers an action that flies into
+    // something it can see. It learns PREFERENCE among options geometry has
+    // already approved, and it cannot collide by choosing -- which is the whole
+    // safety argument of this architecture, and also the reason a trained
+    // policy here has never once hit a wall on purpose.
+    //
+    // With maskUnsafe=false every primitive is selectable. The policy can fly
+    // straight into a trunk, take -rCollide, end the episode, and has to learn
+    // avoidance from the consequence instead of being handed it. That is the
+    // "train from zero, hit walls, work it out" experiment.
+    //
+    // It is a MEASUREMENT, not a deployment mode. The point of running it is to
+    // put a number on what the veto is worth: if a policy that had to learn
+    // avoidance matches one that was given it, the mask is buying nothing but
+    // sample efficiency; if it does not, the gap is the argument for keeping a
+    // hard geometric veto under a learned planner.
+    bool  maskUnsafe  = true;
 };
 
 struct EnvStep {

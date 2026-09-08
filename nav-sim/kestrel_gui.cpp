@@ -240,6 +240,7 @@ struct Cfg {
     bool  trainStereo = true;
     bool  cuda = false;
     bool  resume = false;
+    bool  noVeto = false;
 
     // watch
     int   panes = 4, paneIdx = 1, layout = 0;   // layout 0 both, 1 fpv, 2 top
@@ -298,6 +299,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.trainStereo) a.push_back("--stereo");
             if (c.cuda) { a.push_back("--device"); a.push_back("cuda"); }
             if (c.resume) a.push_back("--resume");
+            if (c.noVeto) a.push_back("--no-veto");
             break;
     }
     return a;
@@ -333,7 +335,7 @@ enum {
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
-    ID_TRAIN_RESUME,
+    ID_TRAIN_RESUME, ID_TRAIN_NOVETO,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
 };
@@ -467,7 +469,9 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x, 320, 250, 38),
                   c.trainStereo ? "Simulated stereo" : "Perfect depth",
                   ID_TRAIN_STEREO, c.trainStereo});
-    txt(im, "stereo is the honest setting, about 3x slower", x, 376, 0.42, DIM);
+    // Kept inside its column: the veto button sits at x+266 and the long form
+    // of this line ran under it.
+    txt(im, "the honest setting, ~3x slower", x, 376, 0.42, DIM);
 
     bs.push_back({cv::Rect(x, 404, 250, 38), c.cuda ? "device: cuda" : "device: cpu",
                   ID_TRAIN_CUDA, c.cuda});
@@ -477,6 +481,14 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x + 266, 320, 250, 38),
                   c.resume ? "resume from newest" : "start from scratch",
                   ID_TRAIN_RESUME, c.resume});
+    // THE SAFETY MASK, AS A SWITCH. On, the policy chooses among primitives the
+    // geometry already approved and cannot collide by choosing -- that is the
+    // architecture's safety argument. Off, it can fly into things and must
+    // learn avoidance from the -50: a measurement of what the veto is worth,
+    // not a way to fly.
+    bs.push_back({cv::Rect(x + 266, 362, 250, 36),
+                  c.noVeto ? "NO veto: learn by crashing" : "geometric veto on",
+                  ID_TRAIN_NOVETO, c.noVeto});
     txt(im, "The GPU WILL look idle: the bottleneck is environment steps,", x + 266, 420, 0.42, DIM);
     txt(im, "which are C++ on the CPU. cuda is here so you can measure", x + 266, 438, 0.42, DIM);
     txt(im, "that rather than take the claim on trust.", x + 266, 456, 0.42, DIM);
@@ -645,6 +657,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_STEREO: c.trainStereo = !c.trainStereo; break;
         case ID_TRAIN_CUDA:   c.cuda = !c.cuda; break;
         case ID_TRAIN_RESUME: c.resume = !c.resume; break;
+        case ID_TRAIN_NOVETO: c.noVeto = !c.noVeto; break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;

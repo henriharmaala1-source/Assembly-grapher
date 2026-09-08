@@ -251,7 +251,12 @@ void VoxelEnv::buildObservation() {
         auto it = I.visits.find(I.visitKey(ex, ey, cfg_.visitCellM));
         o[8] = (it == I.visits.end()) ? 0.f : std::min(1.f, it->second / 20.f);
 
-        if (e.admissible) { mask_[i] = 1; ++nAdm; }
+        // maskUnsafe=false hands the policy every primitive, including the
+        // ones that end inside something. nAdm still counts what geometry
+        // WOULD have approved, so the observation and the logging do not change
+        // meaning between the two modes -- only what is selectable does.
+        if (e.admissible) ++nAdm;
+        if (e.admissible || !cfg_.maskUnsafe) mask_[i] = 1;
         sumFree += e.freeM; maxFree = std::max(maxFree, e.freeM);
     }
 

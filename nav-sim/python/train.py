@@ -58,6 +58,14 @@ def main() -> int:
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--out", default="runs/ppo_voxel")
     ap.add_argument("--n-steps", type=int, default=256, help="rollout per worker")
+    ap.add_argument("--no-veto", action="store_true",
+                    help="TRAIN FROM ZERO WITH NO SAFETY MASK. Normally the "
+                         "geometric veto hides primitives that fly into "
+                         "something, so the policy picks among options already "
+                         "approved and cannot collide by choosing. With this it "
+                         "can pick anything, hit walls, take the -50, and has to "
+                         "learn avoidance itself. A measurement of what the veto "
+                         "is worth -- not a deployment mode.")
     ap.add_argument("--resume", nargs="?", const="auto", default="",
                     metavar="CHECKPOINT",
                     help="continue from a checkpoint instead of starting over. "
@@ -75,7 +83,13 @@ def main() -> int:
     out_abs = os.path.abspath(args.out)
     print(f"[train] checkpoints and final policy -> {out_abs}", flush=True)
     kw = dict(worlds=tuple(args.worlds), max_steps=args.max_steps,
-              truth_depth=not args.stereo, cam=tuple(args.cam))
+              truth_depth=not args.stereo, cam=tuple(args.cam),
+              mask_unsafe=not args.no_veto)
+    if args.no_veto:
+        print("[train] NO VETO: every primitive is selectable, including ones "
+              "that fly into things.\n"
+              "        Expect early collisions and a slower start -- that is "
+              "the experiment.", flush=True)
     venv = VecMonitor(SubprocVecEnv([make_env(i, **kw) for i in range(args.workers)]))
 
     # RESUMING, OR NOT, IS AN EXPLICIT CHOICE. It used to be neither: a fresh

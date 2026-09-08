@@ -35,7 +35,10 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("w_stop", &EnvConfig::wStop)
         .def_readwrite("w_clear", &EnvConfig::wClear)
         .def_readwrite("r_goal", &EnvConfig::rGoal)
-        .def_readwrite("r_collide", &EnvConfig::rCollide);
+        .def_readwrite("r_collide", &EnvConfig::rCollide)
+        // False lets the policy select primitives the geometry rejected, so it
+        // can collide and must learn avoidance rather than being handed it.
+        .def_readwrite("mask_unsafe", &EnvConfig::maskUnsafe);
 
     py::class_<EnvStep>(m, "EnvStep")
         .def_readonly("reward", &EnvStep::reward)

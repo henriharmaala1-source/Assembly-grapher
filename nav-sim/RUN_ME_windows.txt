@@ -250,7 +250,13 @@ columns as the classical ones, on seeds it never trained on.
                      policy hovering and a policy crossing a clearing look
                      identical.
 
-Or click `bench` / `train` in the window and press RUN.
+    kestrel evaluate  score a trained policy in the SAME columns `bench`
+                      reports the classical planners in, on seeds held out
+                      from training. Takes the newest checkpoint in
+                      runs\ppo_voxel unless you pass --model or --run.
+                      --random scores the floor instead.
+
+Or click `bench` / `train` / `evaluate` in the window and press RUN.
 
 GRAPHS WHILE IT TRAINS
     python -m tensorboard.main --logdir runs

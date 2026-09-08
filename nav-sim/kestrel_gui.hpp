@@ -19,6 +19,7 @@ struct Actions {
     std::function<int(std::vector<std::string>)> sim;
     std::function<int(std::vector<std::string>)> train;
     std::function<int(std::vector<std::string>)> watch;
+    std::function<int(std::vector<std::string>)> eval;
     // The interpreter listing. No arguments -- it reports, it does not act.
     std::function<int()> pythons;
 };

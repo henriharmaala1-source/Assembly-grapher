@@ -35,7 +35,7 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
                             os.path.join(_here, ".."),
                             _here) if p]
 
-from voxel_gym import VoxelNavEnv
+from voxel_gym import VoxelNavEnv, newest_checkpoint
 
 
 def run_episode(env, model, rng, world, seed):
@@ -62,7 +62,11 @@ def run_episode(env, model, rng, world, seed):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=None)
+    ap.add_argument("--model", default=None,
+                    help="a specific checkpoint. Without it the newest one in "
+                         "--run is used.")
+    ap.add_argument("--run", default="runs/ppo_voxel",
+                    help="where to look for a checkpoint when --model is not given")
     ap.add_argument("--random", action="store_true", help="the floor: uniform over admissible")
     ap.add_argument("--worlds", nargs="+", default=["forest", "maze"])
     ap.add_argument("--seeds", type=int, nargs="+", default=list(range(101, 109)),
@@ -71,10 +75,28 @@ def main() -> int:
     ap.add_argument("--stereo", action="store_true")
     args = ap.parse_args()
 
+    # RESOLVE THE POLICY, OR SAY SO. With no --model this used to leave model
+    # as None and quietly score the RANDOM FLOOR while the caller believed it
+    # was scoring a trained policy -- the two print identical tables. Anything
+    # driving this from a menu would have reported the floor as the result.
     model = None
-    if args.model and not args.random:
+    if not args.random:
+        path = args.model
+        if not path:
+            path, trained = newest_checkpoint(args.run)
+            if not path:
+                return (f"[evaluate] no checkpoint in {os.path.abspath(args.run)}.\n"
+                        f"           Train one first, name one with --model, or\n"
+                        f"           pass --random to score the floor deliberately.")
+            print(f"[evaluate] policy: {path}"
+                  + (f"  ({trained} trained steps)" if trained else ""), flush=True)
+        else:
+            print(f"[evaluate] policy: {path}", flush=True)
         from sb3_contrib import MaskablePPO
-        model = MaskablePPO.load(args.model, device="cpu")
+        model = MaskablePPO.load(path, device="cpu")
+    else:
+        print("[evaluate] RANDOM over admissible primitives -- the floor, not a "
+              "policy", flush=True)
 
     env = VoxelNavEnv(worlds=tuple(args.worlds), seeds=args.seeds,
                       max_steps=args.max_steps, truth_depth=not args.stereo)

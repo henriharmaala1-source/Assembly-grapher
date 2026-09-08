@@ -443,6 +443,13 @@ int cmdWatch(const std::string& dir, const std::vector<std::string>& rest) {
     return cmdTrain(dir, a);
 }
 
+// Scoring a trained policy. Same preflight again, same reasoning as watch.
+int cmdEval(const std::string& dir, const std::vector<std::string>& rest) {
+    std::vector<std::string> a{"--script", "evaluate.py"};
+    for (const std::string& r : rest) a.push_back(r);
+    return cmdTrain(dir, a);
+}
+
 // ------------------------------------------------------------------ live sim
 // ONE PATH INTO THE SIM, used by the CLI, the window and the text menu alike.
 // voxelLiveMain wants a mutable argv, so the strings are rebuilt here rather
@@ -507,6 +514,7 @@ int gui(const std::string& dir) {
     a.sim   = [](std::vector<std::string> v) { return cmdSim(std::move(v)); };
     a.train = [dir](std::vector<std::string> v) { return cmdTrain(dir, v); };
     a.watch = [dir](std::vector<std::string> v) { return cmdWatch(dir, v); };
+    a.eval  = [dir](std::vector<std::string> v) { return cmdEval(dir, v); };
     a.pythons = [dir]() { kpy::report(kpy::discover(dir), dir); return 0; };
     return kgui::run(a, dir);
 }
@@ -529,6 +537,7 @@ int main(int argc, char** argv) {
     if (cmd == "sim")  return cmdSim(rest);
     if (cmd == "train") return cmdTrain(dir, rest);
     if (cmd == "watch") return cmdWatch(dir, rest);
+    if (cmd == "evaluate" || cmd == "eval") return cmdEval(dir, rest);
     if (cmd == "gui") {
         // --shot renders the panels to PNG with no display attached. The
         // window is the only thing in this binary that cannot be checked over
@@ -545,7 +554,7 @@ int main(int argc, char** argv) {
     if (cmd == "python") { kpy::report(kpy::discover(dir), dir); return 0; }
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf(
-            "kestrel [track|bench|sim|train|watch|gui|menu|python] ...\n"
+            "kestrel [track|bench|sim|train|watch|evaluate|gui|menu|python] ...\n"
             "  no arguments opens the window; `menu` is the text one, for a\n"
             "  headless box or over ssh. Every button in the window prints the\n"
             "  command it runs, so anything you can click you can also type.\n"
@@ -555,7 +564,9 @@ int main(int argc, char** argv) {
             "  python            list every python found here and say which one\n"
             "                    training will use, and why\n"
             "  watch             a grid of live panes: the policy flying while it\n"
-            "                    trains, reloaded from the newest checkpoint\n");
+            "                    trains, reloaded from the newest checkpoint\n"
+            "  evaluate          score a trained policy on held-out seeds, in the\n"
+            "                    same columns `bench` reports the classical ones\n");
         return 0;
     }
     std::fprintf(stderr, "unknown command '%s' -- try --help\n", cmd.c_str());

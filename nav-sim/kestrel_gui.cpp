@@ -210,8 +210,8 @@ void refreshPy(const std::string& dir) {
 }
 
 // ----------------------------------------------------------------- settings
-enum Mode { TRACK = 0, BENCH, SIM, TRAIN, WATCH, NMODES };
-const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train", "watch"};
+enum Mode { TRACK = 0, BENCH, SIM, TRAIN, WATCH, EVAL, NMODES };
+const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train", "watch", "evaluate"};
 
 const int TRAIN_STEPS[] = {50000, 200000, 1000000, 5000000, 10000000, 20000000};
 const int NTRAIN_STEPS = int(sizeof TRAIN_STEPS / sizeof *TRAIN_STEPS);
@@ -245,6 +245,10 @@ struct Cfg {
     // watch
     int   panes = 4, paneIdx = 1, layout = 0;   // layout 0 both, 1 fpv, 2 top
     bool  wForest = true, wMaze = true;
+
+    // evaluate
+    bool  eForest = true, eMaze = true, eRandom = false, eStereo = false;
+    int   eSeed0 = 101, eSeed1 = 108, eSteps = 600;
 };
 
 const int PANE_PX[] = {240, 320, 420, 520};
@@ -285,6 +289,18 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 a.push_back("--replay"); a.push_back(recs[c.replay]);
             }
             break;
+        case EVAL:
+            // No --model: evaluate.py takes the newest checkpoint itself when
+            // one is not named, which is what you want right after training.
+            if (c.eRandom) a.push_back("--random");
+            a.push_back("--worlds");
+            if (c.eForest) a.push_back("forest");
+            if (c.eMaze)   a.push_back("maze");
+            a.push_back("--seeds");
+            for (int sd = c.eSeed0; sd <= c.eSeed1; ++sd) a.push_back(std::to_string(sd));
+            a.push_back("--max-steps"); a.push_back(std::to_string(c.eSteps));
+            if (c.eStereo) a.push_back("--stereo");
+            break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
             a.push_back("--px");     a.push_back(std::to_string(PANE_PX[c.paneIdx]));
@@ -315,6 +331,7 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
              : "pick an input first";
     if (c.mode == BENCH && !c.forest && !c.maze) return "pick at least one world";
     if (c.mode == WATCH && !c.wForest && !c.wMaze) return "pick at least one world";
+    if (c.mode == EVAL && !c.eForest && !c.eMaze) return "pick at least one world";
     if (c.mode == SIM && c.simSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     return "";
@@ -338,6 +355,8 @@ enum {
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
+    ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
+    ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -568,6 +587,42 @@ void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     txt(im, "q in the watch window closes it and comes back here.", x, 552, 0.42, DIM);
 }
 
+void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
+    const int x = 266;
+    txt(im, "score a trained policy", x, 112, 0.62, INK, 1);
+    txt(im, "The SAME columns `bench` reports the classical planners in, on",
+        x, 136, 0.44, DIM);
+    txt(im, "seeds held out from training. A comparison on new metrics is worth",
+        x, 156, 0.44, DIM);
+    txt(im, "nothing, so the scorecard is deliberately identical.", x, 176, 0.44, DIM);
+
+    txt(im, "worlds", x, 216, 0.5, DIM);
+    bs.push_back({cv::Rect(x, 228, 140, 36), "Forest", ID_E_FOREST, c.eForest});
+    bs.push_back({cv::Rect(x + 156, 228, 140, 36), "Maze", ID_E_MAZE, c.eMaze});
+
+    stepper(im, bs, x, 320, "first seed", std::to_string(c.eSeed0),
+            ID_E_S0M, ID_E_S0P);
+    stepper(im, bs, x + 220, 320, "last seed", std::to_string(c.eSeed1),
+            ID_E_S1M, ID_E_S1P);
+    stepper(im, bs, x + 440, 320, "steps/run", std::to_string(c.eSteps),
+            ID_E_STM, ID_E_STP);
+
+    bs.push_back({cv::Rect(x, 420, 250, 36),
+                  c.eRandom ? "random (the floor)" : "the trained policy",
+                  ID_E_RANDOM, c.eRandom});
+    bs.push_back({cv::Rect(x + 266, 420, 250, 36),
+                  c.eStereo ? "Simulated stereo" : "Perfect depth",
+                  ID_E_STEREO, c.eStereo});
+    txt(im, "score the floor too: a policy that cannot beat", x, 476, 0.42, DIM);
+    txt(im, "uniform-over-admissible has learned nothing.", x, 494, 0.42, DIM);
+    txt(im, "match whatever the policy trained on", x + 266, 476, 0.42, DIM);
+
+    txt(im, "It takes the newest checkpoint in runs/ppo_voxel unless you pass",
+        x, 530, 0.42, DIM);
+    txt(im, "--model. Results print in the console, not in this window.",
+        x, 548, 0.42, DIM);
+}
+
 // ------------------------------------------------------------------- compose
 // ONE FUNCTION DRAWS THE WHOLE WINDOW and hands back the buttons it drew, so
 // hit-testing cannot disagree with what is on screen. It also means the layout
@@ -591,6 +646,7 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
         case BENCH: panelBench(im, bs, c); break;
         case SIM:   panelSim(im, bs, c, recs); break;
         case WATCH: panelWatch(im, bs, c); break;
+        case EVAL:  panelEval(im, bs, c); break;
         default:    panelTrain(im, bs, c); break;
     }
 
@@ -666,6 +722,19 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_W_FOREST:  c.wForest = !c.wForest; break;
         case ID_W_MAZE:    c.wMaze = !c.wMaze; break;
         case ID_W_LAYOUT:  c.layout = (c.layout + 1) % 3; break;
+
+        case ID_E_FOREST: c.eForest = !c.eForest; break;
+        case ID_E_MAZE:   c.eMaze = !c.eMaze; break;
+        case ID_E_S0M:    c.eSeed0 = std::max(1, c.eSeed0 - 1);
+                          c.eSeed1 = std::max(c.eSeed0, c.eSeed1); break;
+        case ID_E_S0P:    c.eSeed0 = std::min(999, c.eSeed0 + 1);
+                          c.eSeed1 = std::max(c.eSeed0, c.eSeed1); break;
+        case ID_E_S1M:    c.eSeed1 = std::max(c.eSeed0, c.eSeed1 - 1); break;
+        case ID_E_S1P:    c.eSeed1 = std::min(999, c.eSeed1 + 1); break;
+        case ID_E_STM:    c.eSteps = std::max(100, c.eSteps - 100); break;
+        case ID_E_STP:    c.eSteps = std::min(5000, c.eSteps + 100); break;
+        case ID_E_RANDOM: c.eRandom = !c.eRandom; break;
+        case ID_E_STEREO: c.eStereo = !c.eStereo; break;
         default: break;
     }
     (void)inputs; (void)recs;
@@ -806,6 +875,7 @@ int run(const Actions& act, const std::string& exeDir) {
             case BENCH: rc = act.bench(args); break;
             case SIM:   rc = act.sim(args);   break;
             case WATCH: rc = act.watch(args); break;
+            case EVAL:  rc = act.eval(args);  break;
             default:    rc = act.train(args); break;
         }
         // The listing is read in the terminal, so hold the window closed until

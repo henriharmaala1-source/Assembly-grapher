@@ -33,6 +33,14 @@ float trueClearance(const VoxelWorld& w, float x, float y, float z, float maxR) 
 struct VoxelEnv::Impl {
     VoxelWorld  world;
     VoxelMap    map;
+    // THE LADDER, as voxel_live and voxel_sim run it. One 0.25 m map is honest
+    // to about 3.5 m and blind past it, so a planner marching it alone rejects
+    // everything further out as UNCONFIRMED -- not because anything is there,
+    // but because nothing has been measured. The coarser levels buy range at
+    // the cost of resolution, and the planner queries the FINEST level whose
+    // honest range still covers the distance being marched.
+    VoxelMap    mapMid, mapFar;
+    VoxelMapParams mpMid, mpFar;
     BearingField bfield;
     std::unique_ptr<DepthCamera> cam;
     TrajectoryPlanner traj;
@@ -285,6 +293,30 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
                                / I.cp.subpixelPx) * 0.75f;
     I.map.init(I.mp, I.px, I.py, I.pz);
     I.map.seedFree(I.px, I.py, I.pz, cfg_.robotR * 1.5f);
+
+    // Same numbers voxel_sim uses, so a policy trained here meets the same
+    // ladder the sim and the live tool fly. maxIntegM is the honest marking
+    // range for that cell size: sqrt(cell * f * B / sigma) * 0.75.
+    const float fpx = I.cam->fpx();
+    I.mpMid = VoxelMapParams();
+    I.mpMid.cell = 1.0f; I.mpMid.nx = 128; I.mpMid.ny = 128; I.mpMid.nz = 40;
+    I.mpMid.maxIntegM = std::sqrt(I.mpMid.cell * fpx * I.cp.baselineM
+                                  / I.cp.subpixelPx) * 0.75f;
+    I.mpMid.maxCarveM = 25.f;
+    I.mpMid.integrateStride = 2;      // a quarter of the rays
+    I.mpMid.depthSigCoef = I.mp.depthSigCoef;
+    I.mpMid.carveWinPx = 0;           // the min-filter is a fine-scale guard
+    I.mapMid.init(I.mpMid, I.px, I.py, I.pz);
+
+    I.mpFar = VoxelMapParams();
+    I.mpFar.cell = 2.0f; I.mpFar.nx = 128; I.mpFar.ny = 128; I.mpFar.nz = 42;
+    I.mpFar.maxIntegM = std::sqrt(I.mpFar.cell * fpx * I.cp.baselineM
+                                  / I.cp.subpixelPx) * 0.75f;
+    I.mpFar.maxCarveM = 40.f;
+    I.mpFar.integrateStride = 4;      // a sixteenth of the rays
+    I.mpFar.depthSigCoef = I.mp.depthSigCoef;
+    I.mpFar.carveWinPx = 0;
+    I.mapFar.init(I.mpFar, I.px, I.py, I.pz);
     I.bfield = BearingField();
     // init() is not optional -- rangeAt() on a default-constructed field is a
     // segfault, and the planner queries it on the very first observation.
@@ -348,6 +380,10 @@ EnvStep VoxelEnv::step(int action) {
     I.lastDepth = d.clone();
     I.map.integrate(d, *I.cam, pose);
     I.map.recentre(I.px, I.py, I.pz);
+    I.mapMid.integrate(d, *I.cam, pose);
+    I.mapMid.recentre(I.px, I.py, I.pz);
+    I.mapFar.integrate(d, *I.cam, pose);
+    I.mapFar.recentre(I.px, I.py, I.pz);
     I.bfield.update(d, *I.cam, pose, 1);
 
     // --- reward ------------------------------------------------------------
@@ -415,7 +451,15 @@ void VoxelEnv::buildObservation() {
                                  std::hypot(I.goalE - I.px, I.goalN - I.py))
                     * 180.f / sim::PI_F;
     TrajectoryPlanner::FarBearings fb{&I.bfield, 20.f};
-    I.traj.plan(I.map, I.px, I.py, I.pz, I.yaw, gAz, gEl, {}, &fb);
+    // The ladder was empty here, so every rollout past ~3.5 m marched into
+    // unmeasured space and came back "unconfirmed". The policy saw a wall of
+    // why==2 on anything far and had no way to tell unexplored from blocked
+    // beyond the fine map's honest range.
+    const std::vector<TrajectoryPlanner::CoarseLevel> coarse = {
+        {&I.mapMid, I.mpMid.maxIntegM},
+        {&I.mapFar, I.mpFar.maxIntegM},
+    };
+    I.traj.plan(I.map, I.px, I.py, I.pz, I.yaw, gAz, gEl, coarse, &fb);
 
     const auto& ev = I.traj.evals();
     const float reach = std::max(0.1f, 3.f * cfg_.horizonS);
@@ -557,8 +601,14 @@ std::vector<uint8_t> VoxelEnv::renderFrame(int w, int h, bool topDown) const {
         cv::circle(img, a, std::max(3, px / 60), cv::Scalar(255, 210, 90), -1, cv::LINE_AA);
         if (img.cols != w || img.rows != h) cv::resize(img, img, cv::Size(w, h), 0, 0, cv::INTER_NEAREST);
     } else {
+        // All three rungs, as the sim draws them. The 1.15 inflation belongs
+        // only on the OUTERMOST edge: on an internal handover it creates a
+        // shell one layer owns and has no data for, which renders as a round
+        // blind spot.
         std::vector<VoxelMap::Layer> ladder;
-        ladder.push_back({&I.map, 0.f, I.mp.maxIntegM * 1.15f});
+        ladder.push_back({&I.map,    0.f,               I.mp.maxIntegM});
+        ladder.push_back({&I.mapMid, I.mp.maxIntegM,    I.mpMid.maxIntegM});
+        ladder.push_back({&I.mapFar, I.mpMid.maxIntegM, I.mpFar.maxIntegM * 1.15f});
         img = VoxelMap::renderLadder(ladder, I.px, I.py, I.pz, I.yaw, 0.f,
                                      w, h, I.cp.hfovDeg);
         if (img.empty()) img = cv::Mat(h, w, CV_8UC3, cv::Scalar(30, 30, 36));

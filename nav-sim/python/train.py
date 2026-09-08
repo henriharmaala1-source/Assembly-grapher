@@ -16,6 +16,7 @@ to win until the per-primitive encoder gets much wider.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -223,6 +224,27 @@ def main() -> int:
     # alone does not answer "where did my weekend of training go".
     out_abs = os.path.abspath(args.out)
     print(f"[train] checkpoints and final policy -> {out_abs}", flush=True)
+
+    # WHAT THIS RUN WAS, written beside its weights. A checkpoint records the
+    # network and nothing about the conditions that produced it, so a folder of
+    # .zip files cannot answer "was this the from-zero one or the normal one" --
+    # and those two are the whole point of the comparison. evaluate reads this
+    # back and labels the row with it, instead of calling every policy "policy".
+    manifest = {
+        "kind": "no-veto (learned avoidance from scratch)" if args.no_veto
+                else "veto on (geometry vetoes unsafe primitives)",
+        "no_veto": bool(args.no_veto),
+        "vary_goal": bool(args.vary_goal),
+        "stereo": bool(args.stereo),
+        "worlds": list(args.worlds),
+        "steps": int(args.steps),
+        "max_steps": int(args.max_steps),
+        "workers": int(args.workers),
+        "device": args.device,
+        "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    with open(os.path.join(args.out, "run.json"), "w") as fh:
+        json.dump(manifest, fh, indent=2)
     kw = dict(worlds=tuple(args.worlds), max_steps=args.max_steps,
               truth_depth=not args.stereo, cam=tuple(args.cam),
               mask_unsafe=not args.no_veto, vary_goal=args.vary_goal)

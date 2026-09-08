@@ -35,9 +35,31 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
                             os.path.join(_here, ".."),
                             _here) if p]
 
+import json
+
 import voxelenv
 from voxel_gym import (VoxelNavEnv, all_checkpoints, newest_checkpoint,
                        newest_run_dir, run_root)
+
+
+LEGEND = {
+    "random": "uniform over the primitives geometry admits -- the floor",
+    "freeM":  "steer where the map has confirmed the most free space",
+    "goal":   "steer most directly at the goal, ignoring what is in the way",
+    "score":  "hand-tuned: 0.7*clear - goalErr - 0.25*|yaw| + 0.5*farOpen - 2*climb",
+}
+
+
+def learned_desc(man):
+    """One line describing how the learned policy was trained, from run.json."""
+    if not man:
+        return "the trained policy (training conditions unknown -- no run.json)"
+    return ("trained " + ("WITHOUT the geometric veto, learning avoidance from "
+                          "collisions" if man.get("no_veto") else
+                          "with the geometric veto: it chooses among primitives "
+                          "geometry approved")
+            + f"; {man.get('steps', 0) // 1000}k steps over "
+            + f"{len(man.get('worlds', []))} worlds")
 
 
 def run_episode(env, model, rng, world, seed, baseline=None):
@@ -128,6 +150,31 @@ def main() -> int:
         args.run = newest_run_dir(run_root()) or run_root()
         print(f"[evaluate] run: {args.run}", flush=True)
 
+    # WHICH POLICY THIS IS. train writes run.json beside the weights; without it
+    # every learned row was just called "policy", and a from-zero no-veto run
+    # and an ordinary one were indistinguishable in the table that exists to
+    # compare them.
+    learned_label = "learned"
+    man = {}
+    mpath = os.path.join(args.run, "run.json")
+    if os.path.exists(mpath):
+        try:
+            with open(mpath) as fh:
+                man = json.load(fh)
+            learned_label = "no-veto" if man.get("no_veto") else "veto-on"
+            bits = [f"{man.get('steps', 0) // 1000}k steps",
+                    f"{len(man.get('worlds', []))} worlds",
+                    "veto OFF" if man.get("no_veto") else "veto on",
+                    "varied goals" if man.get("vary_goal") else "fixed journey",
+                    "stereo" if man.get("stereo") else "perfect depth"]
+            print(f"[evaluate] this run: {', '.join(bits)}", flush=True)
+        except Exception as exc:
+            print(f"[evaluate] run.json unreadable ({exc})", flush=True)
+    elif not args.random:
+        print("[evaluate] no run.json beside the weights, so the training "
+              "conditions are unknown -- the row is labelled 'learned' only.",
+              flush=True)
+
     model = None
     if not args.random and not args.progress:
         path = args.model
@@ -199,16 +246,22 @@ def main() -> int:
             print(f"--- {os.path.basename(path)} ---", flush=True)
             rows.append(score(f"{n//1000}k", MaskablePPO.load(path, device="cpu"), None))
     else:
-        rows = [score("policy" if model else "random", model, None)]
+        rows = [score(learned_label, model, None)]
     if args.baselines:
         for b in (voxelenv.Baseline.random, voxelenv.Baseline.freeM,
                   voxelenv.Baseline.goal, voxelenv.Baseline.score):
             rows.append(score(str(b).split(".")[-1], None, b))
 
     print("---")
-    print(f"{'planner':<8} {'runs':>5} {'collisions':>11} {'goals':>6} {'mean travel':>12}")
+    print(f"{'planner':<9} {'kind':<10} {'runs':>5} {'collisions':>11} "
+          f"{'goals':>6} {'mean travel':>12}")
     for label, tot, hits, reach, mt in rows:
-        print(f"{label:<8} {tot:>5} {hits:>11} {reach:>6} {mt:>11.1f} m")
+        kind = "classical" if label in LEGEND else "LEARNED"
+        print(f"{label:<9} {kind:<10} {tot:>5} {hits:>11} {reach:>6} "
+              f"{mt:>11.1f} m")
+    print()
+    for label, *_ in rows:
+        print(f"  {label:<9} {LEGEND.get(label, learned_desc(man))}")
     return 0
 
 

@@ -1,5 +1,44 @@
 # RL pilots
 
+# Why nothing has ever reached a goal: the episode ended first
+
+The forest goal is 175 m from the spawn. Training and evaluation both used
+1500-step episodes. Measured with the best classical planner, at truth depth:
+
+| planner | max steps | travel  | end-dist | closest | at step |
+|---------|-----------|---------|----------|---------|---------|
+| freeM   | 1500      | 143.0 m |  74.5 m  | 74.5 m  | 1500    |
+| freeM   | 4000      | 380.7 m |  52.4 m  |  9.7 m  | 2464    |
+| score   | 4000      | 187.6 m | 141.2 m  | 141.2 m |  439    |
+| goal    | 4000      |  79.1 m |  98.0 m  |  98.0 m | 1833    |
+
+At 1500 steps freeM is **still closing when the episode is cut off**. It needs
+about 2500 steps to get within 10 m. Every training episode was therefore
+truncated before arrival was even possible: the goal bonus was unreachable
+dead code, no policy has ever experienced arriving, and "nobody reaches the
+goal" was a property of the episode budget rather than of the planners.
+
+Defaults are now 3000 steps for both training and evaluation.
+
+Two things this also exposed:
+
+**Closest approach is now reported.** freeM reaches 9.7 m at step 2464 and
+ends 52.4 m away -- it arrives and then wanders off. The final distance alone
+calls that a navigation failure when it is a termination failure, and those
+want opposite fixes. `evaluate` and `bench` both print closest and the step it
+happened.
+
+**Goal tolerance is 3.0 m and the best planner only manages 9.7 m.** Nothing
+has yet demonstrated it can close the last ten metres, so arrival is still
+unproven -- just no longer impossible by construction.
+
+A hypothesis this killed, recorded because it was wrong and expensive:
+the voxel map is 60 m across and centred on the aircraft, so a 175 m journey
+looked like it must run off the edge of the map. It does not. rl_env calls
+VoxelMap::recentre every step, the grid scrolls with the vehicle, and a 380 m
+run completed with zero collisions.
+
+
 **Everything below the "revamped reward" section is measured against the OLD
 reward and is historical.** It is kept because the reasoning that led to the
 change is the useful part.

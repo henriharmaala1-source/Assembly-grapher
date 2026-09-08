@@ -43,6 +43,7 @@ struct VoxelEnv::Impl {
     float goalE = 0, goalN = 0, goalU = 0;
     float startDist = 1.f, prevDist = 1.f;
     float travel = 0.f, minClear = 1e9f;
+    float minGoalDist = 1e9f; int minGoalStep = 0;
     // Episode totals per reward term. EnvStep is built fresh every step, so
     // these have to live with the episode or they accumulate nothing.
     float aProgress = 0, aCoverage = 0, aTime = 0, aStop = 0, aClear = 0, aTerm = 0;
@@ -193,6 +194,7 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     I.startDist = std::hypot(I.goalE - I.px, I.goalN - I.py);
     I.prevDist = I.startDist;
     I.travel = 0.f; I.minClear = 1e9f;
+    I.minGoalDist = I.startDist; I.minGoalStep = 0;
     I.steps = 0; I.stopped = 0; I.collisions = 0;
 
     last_ = EnvStep();
@@ -250,6 +252,7 @@ EnvStep VoxelEnv::step(int action) {
 
     // --- reward ------------------------------------------------------------
     const float dist = std::hypot(I.goalE - I.px, I.goalN - I.py);
+    if (dist < I.minGoalDist) { I.minGoalDist = dist; I.minGoalStep = I.steps; }
     const float progress = I.prevDist - dist;
     I.prevDist = dist;
 
@@ -283,6 +286,7 @@ EnvStep VoxelEnv::step(int action) {
     out.truncated = !out.done && I.steps >= cfg_.maxSteps;
     out.reward = r;
     out.travelM = I.travel; out.distToGoalM = dist; out.minClearM = I.minClear;
+    out.minDistToGoalM = I.minGoalDist; out.minDistStep = I.minGoalStep;
     out.rProgress = I.aProgress; out.rCoverage = I.aCoverage; out.rTime = I.aTime;
     out.rStop = I.aStop; out.rClear = I.aClear; out.rTerminal = I.aTerm;
     out.collisions = I.collisions; out.stoppedSteps = I.stopped; out.steps = I.steps;

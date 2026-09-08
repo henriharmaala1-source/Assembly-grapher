@@ -114,6 +114,13 @@ struct EnvStep {
     // Scorecard fields, so evaluation can emit the SAME columns sweep.sh does.
     // A comparison against the classical planners on new metrics is worthless.
     float travelM = 0.f, distToGoalM = 0.f, minClearM = 0.f;
+    // CLOSEST APPROACH, and when. Final distance alone cannot tell "never got
+    // there" from "got there and drifted off", and those are different
+    // failures: one is navigation, the other is termination. A run that
+    // reached 10.7 m at step 2400 and ended 52 m out reads as a failure to
+    // navigate if you only look at the last number.
+    float minDistToGoalM = 0.f;
+    int   minDistStep = 0;
     int   collisions = 0, stoppedSteps = 0, steps = 0;
     bool  reachedGoal = false;
 

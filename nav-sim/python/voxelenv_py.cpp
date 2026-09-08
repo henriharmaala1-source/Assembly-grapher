@@ -49,6 +49,10 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readonly("travel_m", &EnvStep::travelM)
         .def_readonly("dist_to_goal_m", &EnvStep::distToGoalM)
         .def_readonly("min_clear_m", &EnvStep::minClearM)
+        // Closest approach and when: "never got there" and "got there and
+        // drifted off" are different failures and the final distance hides it.
+        .def_readonly("min_dist_to_goal_m", &EnvStep::minDistToGoalM)
+        .def_readonly("min_dist_step", &EnvStep::minDistStep)
         .def_readonly("collisions", &EnvStep::collisions)
         .def_readonly("stopped_steps", &EnvStep::stoppedSteps)
         .def_readonly("steps", &EnvStep::steps)

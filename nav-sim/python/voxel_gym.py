@@ -88,7 +88,9 @@ class VoxelNavEnv(gym.Env):
         self._last = st
         info = {
             "travel_m": st.travel_m, "dist_to_goal_m": st.dist_to_goal_m,
-            "min_clear_m": st.min_clear_m, "collisions": st.collisions,
+            "min_clear_m": st.min_clear_m,
+            "min_dist_to_goal_m": st.min_dist_to_goal_m,
+            "min_dist_step": st.min_dist_step, "collisions": st.collisions,
             "stopped_steps": st.stopped_steps, "steps": st.steps,
             "reached_goal": st.reached_goal,
             # Episode totals per reward term. A scalar return says a policy

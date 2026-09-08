@@ -49,7 +49,15 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=10_000_000)
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--worlds", nargs="+", default=list(TRAIN_WORLDS))
-    ap.add_argument("--max-steps", type=int, default=1500)
+    ap.add_argument("--max-steps", type=int, default=3000,
+                    help="steps per episode. THE GOAL MUST BE REACHABLE INSIDE "
+                         "THIS. At 1500 the forest goal was not: the best "
+                         "classical planner is still closing when the episode "
+                         "is cut off (74.5 m out at 1500) and needs ~2500 steps "
+                         "to get within 10 m. Every training episode was "
+                         "therefore truncated before arrival was possible, "
+                         "which made the goal bonus unreachable dead code and "
+                         "is why no run in this project has ever reached a goal.")
     ap.add_argument("--stereo", action="store_true",
                     help="real sensor model. SLOWER and the only honest setting "
                          "for a final run -- dropout, Z_max and occlusion are "

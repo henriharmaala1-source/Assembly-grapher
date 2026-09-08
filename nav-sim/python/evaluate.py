@@ -78,7 +78,10 @@ def main() -> int:
     ap.add_argument("--worlds", nargs="+", default=["forest", "maze"])
     ap.add_argument("--seeds", type=int, nargs="+", default=list(range(101, 109)),
                     help="HELD OUT from training by default")
-    ap.add_argument("--max-steps", type=int, default=1500)
+    ap.add_argument("--max-steps", type=int, default=3000,
+                    help="the forest goal needs ~2500 steps to reach; scoring "
+                         "at 1500 measures who is fastest over the first half "
+                         "of the journey, not who arrives")
     ap.add_argument("--stereo", action="store_true")
     ap.add_argument("--baselines", action="store_true",
                     help="score the four classical planners on the SAME seeds "
@@ -122,7 +125,7 @@ def main() -> int:
     rng = np.random.default_rng(0)
 
     hdr = (f"{'planner':<8} {'world':<8} {'seed':<5} {'outcome':<16} {'travel':>9} "
-           f"{'end-dist':>9} {'minClr':>9} {'stopped':>8}")
+           f"{'end-dist':>9} {'closest':>8} {'@step':>6} {'minClr':>9} {'stopped':>8}")
     if args.reward:
         hdr += (f" {'total':>8} {'progress':>9} {'coverage':>9} {'clear':>7} "
                 f"{'stop':>7} {'terminal':>9}")
@@ -139,6 +142,7 @@ def main() -> int:
                 outcome, i = run_episode(env, mdl, rng, w, s, baseline)
                 row = (f"{label:<8} {w:<8} {s:<5} {outcome:<16} "
                        f"{i['travel_m']:>9.1f} {i['dist_to_goal_m']:>9.1f} "
+                       f"{i['min_dist_to_goal_m']:>8.1f} {i['min_dist_step']:>6} "
                        f"{i['min_clear_m']:>9.2f} {i['stopped_steps']:>8}")
                 if args.reward:
                     # NOT named tot: that is the run counter in this scope, and

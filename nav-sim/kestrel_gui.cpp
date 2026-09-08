@@ -236,7 +236,7 @@ struct Cfg {
     int   replay = -1;
 
     // train
-    int   workers = 8, stepsIdx = 4;
+    int   workers = 8, stepsIdx = 4, epLen = 3000;
     bool  trainStereo = true;
     bool  cuda = false;
     bool  resume = false;
@@ -319,6 +319,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.cuda) { a.push_back("--device"); a.push_back("cuda"); }
             if (c.resume) a.push_back("--resume");
             if (c.noVeto) a.push_back("--no-veto");
+            a.push_back("--max-steps"); a.push_back(std::to_string(c.epLen));
             break;
     }
     return a;
@@ -355,7 +356,7 @@ enum {
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
-    ID_TRAIN_RESUME, ID_TRAIN_NOVETO,
+    ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
     ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
@@ -487,6 +488,11 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
             ID_TRAIN_WM, ID_TRAIN_WP, "parallel environments");
     stepper(im, bs, x + 220, 220, "steps", humanSteps(TRAIN_STEPS[c.stepsIdx]),
             ID_TRAIN_SM, ID_TRAIN_SP, "checkpointed as it goes");
+    // THE GOAL HAS TO FIT INSIDE AN EPISODE. At 1500 it did not: the forest
+    // goal needs ~2500 steps, so every episode was cut off before arrival was
+    // possible and the goal bonus was unreachable.
+    stepper(im, bs, x + 440, 220, "steps/episode", std::to_string(c.epLen),
+            ID_TRAIN_EPM, ID_TRAIN_EPP, "the goal must fit in this");
 
     bs.push_back({cv::Rect(x, 320, 250, 38),
                   c.trainStereo ? "Simulated stereo" : "Perfect depth",
@@ -721,6 +727,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_CUDA:   c.cuda = !c.cuda; break;
         case ID_TRAIN_RESUME: c.resume = !c.resume; break;
         case ID_TRAIN_NOVETO: c.noVeto = !c.noVeto; break;
+        case ID_TRAIN_EPM:    c.epLen = std::max(500, c.epLen - 500); break;
+        case ID_TRAIN_EPP:    c.epLen = std::min(10000, c.epLen + 500); break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;

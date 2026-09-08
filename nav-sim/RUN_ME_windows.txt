@@ -263,6 +263,15 @@ columns as the classical ones, on seeds it never trained on.
                       Takes the newest checkpoint in runs\ppo_voxel unless
                       you pass --model or --run.
 
+                      LONG RUNS ARE THE POINT. The forest goal is 175 m out
+                      and needs about 2500 steps; episodes were capped at
+                      1500, so nothing could ever arrive. Both training and
+                      evaluation now default to 3000 steps per episode, and
+                      the scorecard reports CLOSEST approach and the step it
+                      happened -- because "never got there" and "got there
+                      and drifted off" are different failures and the final
+                      distance cannot tell them apart.
+
                       FOR A REAL COMPARISON USE MORE SEEDS. Four is enough to
                       see a bug and not enough to rank planners; the pilot
                       differences in docs\RL_PILOT_RESULTS.md are inside the

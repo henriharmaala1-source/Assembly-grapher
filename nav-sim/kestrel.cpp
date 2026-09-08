@@ -239,7 +239,7 @@ inline int choose(Pol pol, const std::vector<float>& obs,
 
 int cmdBench(std::vector<std::string> args) {
     std::vector<std::string> worlds = {"forest", "maze"};
-    int s0 = 101, s1 = 104, maxSteps = 600;
+    int s0 = 101, s1 = 104, maxSteps = 3000;   // the forest goal needs ~2500
     bool stereo = false;
     for (size_t i = 0; i < args.size(); ++i) {
         auto next = [&](const char* d) { return (i + 1 < args.size()) ? args[++i] : std::string(d); };
@@ -258,8 +258,9 @@ int cmdBench(std::vector<std::string> args) {
         else if (args[i] == "--stereo")  stereo = true;
     }
     std::printf("baselines through VoxelEnv -- the same harness a learned policy uses\n");
-    std::printf("%-8s %-8s %-5s %-16s %9s %9s %9s\n",
-                "policy", "world", "seed", "outcome", "travel", "end-dist", "minClr");
+    std::printf("%-8s %-8s %-5s %-16s %9s %9s %8s %6s %9s\n",
+                "policy", "world", "seed", "outcome", "travel", "end-dist",
+                "closest", "@step", "minClr");
     for (Pol pol : {Pol::Random, Pol::FreeM, Pol::Goal, Pol::Score}) {
         double sum = 0; int runs = 0, coll = 0, reach = 0;
         for (const std::string& w : worlds)
@@ -278,9 +279,10 @@ int cmdBench(std::vector<std::string> args) {
                 }
                 const char* oc = st.reachedGoal ? "reached goal"
                                : st.collisions  ? "COLLIDED" : "ran out of steps";
-                std::printf("%-8s %-8s %-5d %-16s %9.1f %9.1f %9.2f\n",
+                std::printf("%-8s %-8s %-5d %-16s %9.1f %9.1f %8.1f %6d %9.2f\n",
                             polName(pol), w.c_str(), s, oc, st.travelM,
-                            st.distToGoalM, st.minClearM);
+                            st.distToGoalM, st.minDistToGoalM, st.minDistStep,
+                            st.minClearM);
                 std::fflush(stdout);
                 sum += st.travelM; ++runs;
                 coll += st.collisions ? 1 : 0; reach += st.reachedGoal ? 1 : 0;

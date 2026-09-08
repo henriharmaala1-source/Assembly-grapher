@@ -1,3 +1,47 @@
+# RL pilots
+
+**Everything below the "revamped reward" section is measured against the OLD
+reward and is historical.** It is kept because the reasoning that led to the
+change is the useful part.
+
+# Pilot 3: the revamped reward fixes the forest and breaks the maze
+
+wProgress 1.0 -> 2.0, and terminals scaled to (start distance x wProgress)
+so a crash cannot be bought with metres. 150 k steps, same budget as before.
+
+| world  | policy              | mean travel | collisions |
+|--------|---------------------|-------------|------------|
+| forest | RL, old reward      | 22.3 m      | 3/4        |
+| forest | **RL, new reward**  | **49.9 m**  | **0/4**    |
+| forest | score (hand-tuned)  | 46.4 m      | 0/4        |
+| forest | freeM               | 57.2 m      | 0/4        |
+| forest | random              | 34.3 m      | 1/4        |
+| maze   | RL, old reward      | 26.3 m      | 3/4        |
+| maze   | **RL, new reward**  | **25.0 m**  | **4/4**    |
+| maze   | random              | 37.8 m      | 0/4        |
+| maze   | score (hand-tuned)  | 26.2 m      | 4/4        |
+
+**The forest is fixed.** Zero collisions, more than double the distance, and
+it now edges the hand-tuned planner (49.9 m against 46.4 m) with only freeM
+further ahead. That is the first time the learned planner has beaten a
+classical one on anything.
+
+**The maze got worse**, from three collisions to four. The mechanism is
+visible in the decomposition: on maze 102 and 103 it reaches 10-11 m from the
+goal, having banked 42 of progress, and then clips a wall. Doubling wProgress
+doubled the pull toward the goal; in open forest that is free distance, in a
+4 m corridor it is aggression with nothing opposing it.
+
+Nothing opposes it because the clearance term is now tiny by comparison: over
+a whole maze episode it totals -1.6 to -3.3, against progress paying 40+.
+wClear was tuned against a progress weight half this size and was not scaled
+with it.
+
+Training curve, for the record: ep_rew_mean -71.8 -> -54.9, ep_len 831 ->
+1230. The absolute reward is lower than the old pilots' simply because a
+crash now costs 10x more; comparing reward across different reward functions
+is meaningless, which is why the table above compares the scorecard instead.
+
 # First pilot: does the learned planner beat the classical ones?
 
 Not yet. This records the first end-to-end run of the harness, because a

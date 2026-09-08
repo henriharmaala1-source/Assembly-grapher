@@ -83,6 +83,12 @@ def main() -> int:
                          "at 1500 measures who is fastest over the first half "
                          "of the journey, not who arrives")
     ap.add_argument("--stereo", action="store_true")
+    ap.add_argument("--no-veto", action="store_true",
+                    help="score with the safety mask OFF. A policy trained "
+                         "with --no-veto learned avoidance itself; scoring it "
+                         "with the veto on measures it in an easier world than "
+                         "it trained in, and scoring a veto-trained policy "
+                         "without one measures it in a harder one. Say which.")
     ap.add_argument("--progress", action="store_true",
                     help="score EVERY checkpoint in --run, in training order, "
                          "and print one row each. Answers 'is it getting "
@@ -127,7 +133,10 @@ def main() -> int:
               "policy", flush=True)
 
     env = VoxelNavEnv(worlds=tuple(args.worlds), seeds=args.seeds,
-                      max_steps=args.max_steps, truth_depth=not args.stereo)
+                      max_steps=args.max_steps, truth_depth=not args.stereo,
+                      mask_unsafe=not args.no_veto)
+    print(f"[evaluate] veto {'OFF - every primitive selectable' if args.no_veto else 'on'}",
+          flush=True)
     rng = np.random.default_rng(0)
 
     hdr = (f"{'planner':<8} {'world':<8} {'seed':<5} {'outcome':<16} {'travel':>9} "

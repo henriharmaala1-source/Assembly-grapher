@@ -248,7 +248,7 @@ struct Cfg {
 
     // evaluate
     bool  eForest = true, eMaze = true, eRandom = false, eStereo = false;
-    bool  eBaselines = true, eReward = false, eProgress = false;
+    bool  eBaselines = true, eReward = false, eProgress = false, eNoVeto = false;
     int   eSeed0 = 101, eSeed1 = 108, eSteps = 600;
 };
 
@@ -304,6 +304,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.eBaselines) a.push_back("--baselines");
             if (c.eReward) a.push_back("--reward");
             if (c.eProgress) a.push_back("--progress");
+            if (c.eNoVeto) a.push_back("--no-veto");
             break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
@@ -362,7 +363,7 @@ enum {
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
     ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
     ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
-    ID_E_PROGRESS,
+    ID_E_PROGRESS, ID_E_NOVETO,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -632,9 +633,13 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   c.eReward ? "show reward per term" : "scorecard only",
                   ID_E_REWARD, c.eReward});
 
-    bs.push_back({cv::Rect(x, 516, 516, 32),
-                  c.eProgress ? "EVERY checkpoint, in training order"
-                              : "the newest checkpoint only",
+    // Which world the policy is being scored in. A --no-veto policy scored
+    // with the veto on is measured in an easier world than it trained in.
+    bs.push_back({cv::Rect(x + 266, 516, 250, 32),
+                  c.eNoVeto ? "veto OFF while scoring" : "veto on while scoring",
+                  ID_E_NOVETO, c.eNoVeto});
+    bs.push_back({cv::Rect(x, 516, 250, 32),
+                  c.eProgress ? "EVERY checkpoint" : "newest checkpoint",
                   ID_E_PROGRESS, c.eProgress});
 
     txt(im, "It takes the newest checkpoint in runs/ppo_voxel unless you pass",
@@ -760,6 +765,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_E_BASE:   c.eBaselines = !c.eBaselines; break;
         case ID_E_REWARD: c.eReward = !c.eReward; break;
         case ID_E_PROGRESS: c.eProgress = !c.eProgress; break;
+        case ID_E_NOVETO:   c.eNoVeto = !c.eNoVeto; break;
         default: break;
     }
     (void)inputs; (void)recs;

@@ -1,5 +1,45 @@
 # RL pilots
 
+# Open worlds were paying more for the same flying
+
+With six world styles in the training mix, the risk is that the big open ones
+set the weights and the tight ones become noise. Progress telescopes to
+(start - end) distance, so in raw metres a 340 m city journey pays far more
+than a 30 m maze for identical quality of flying. Measured, same planner,
+same settings, mean episode return per world:
+
+| world    | start dist | return BEFORE | return AFTER |
+|----------|-----------:|--------------:|-------------:|
+| road     |     145 m  |     **66.3**  |      44.7    |
+| city     |     340 m  |       29.2    |      15.8    |
+| culdesac |     151 m  |       28.6    |      26.0    |
+| forest   |      78 m  |       10.0    |      19.2    |
+| maze     |      30 m  |        9.7    |      24.4    |
+| corridor |      97 m  |      **8.7**  |       9.5    |
+
+Progress is now paid as a FRACTION OF THE JOURNEY rather than in metres, so
+the most an episode can earn from it is the same number in every world.
+
+  spread, biggest/smallest return   7.6x  ->  4.7x
+  correlation of world SIZE with return   +0.37  ->  -0.10
+  city (the largest world) by return      2nd of 6  ->  5th of 6
+
+The correlation is the number that matters. Before, a bigger world meant a
+bigger return, which is the poisoning mechanism: PPO normalises advantages
+per batch, but a world contributing systematically larger advantages still
+steers the update. After, size does not predict return at all, and the
+largest world pays less than the smallest.
+
+The residual 4.7x is DIFFICULTY, not scale -- road is open and the planner
+does well there, corridor is tight and it does badly. A world where the
+policy genuinely flies better should return more; that is the signal, not the
+bias.
+
+The terminals follow the same rule: rCollide and rGoal scale against
+(wProgress * progressScaleM), which is now world-independent, so a crash
+costs the same relative to the best possible episode wherever it happens.
+
+
 # Trained from zero with no safety veto
 
 300 k steps, 3000-step episodes, the geometric veto OFF so the policy can

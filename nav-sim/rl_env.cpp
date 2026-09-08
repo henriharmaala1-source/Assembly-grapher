@@ -360,7 +360,9 @@ EnvStep VoxelEnv::step(int action) {
     const float novelty = (it == I.visits.end()) ? 1.f : 0.f;
     I.visits[key] = (it == I.visits.end()) ? 1.f : it->second + 1.f;
 
-    const float tProgress = cfg_.wProgress * progress;
+    // Fraction of the journey, not metres -- see EnvConfig::progressScaleM.
+    const float tProgress = cfg_.wProgress * progress
+                          * (cfg_.progressScaleM / std::max(1.f, I.startDist));
     const float tCoverage = cfg_.wCoverage * novelty;
     const float tTime     = -cfg_.wTime * dt;
     const float tStop     = -cfg_.wStop * (speed < 0.1f ? 1.f : 0.f)
@@ -373,7 +375,9 @@ EnvStep VoxelEnv::step(int action) {
     out.reachedGoal = dist <= cfg_.goalTolM;
     // Scaled against the most progress this episode could ever have paid, so a
     // crash cannot be bought with metres in a big world -- see EnvConfig.
-    const float maxProgress = I.startDist * cfg_.wProgress;
+    // The same in every world now, which is the point: a collision costs the
+    // same relative to the best possible episode wherever it happens.
+    const float maxProgress = cfg_.wProgress * cfg_.progressScaleM;
     const float goalR    = std::max(cfg_.rGoal,    cfg_.goalScale    * maxProgress);
     const float collideR = std::max(cfg_.rCollide, cfg_.collideScale * maxProgress);
     if (out.reachedGoal) { r += goalR;    I.aTerm += goalR; }

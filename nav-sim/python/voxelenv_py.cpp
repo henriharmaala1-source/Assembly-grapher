@@ -30,6 +30,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("horizon_s", &EnvConfig::horizonS)
         .def_readwrite("robot_r", &EnvConfig::robotR)
         .def_readwrite("w_progress", &EnvConfig::wProgress)
+        .def_readwrite("progress_scale_m", &EnvConfig::progressScaleM)
         .def_readwrite("w_coverage", &EnvConfig::wCoverage)
         .def_readwrite("w_time", &EnvConfig::wTime)
         .def_readwrite("w_stop", &EnvConfig::wStop)

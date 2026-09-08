@@ -55,11 +55,27 @@ struct EnvConfig {
     float visitDecay  = 0.999f;
     // Reward weights. Distance is split into PROGRESS and COVERAGE on purpose:
     // rewarding raw distance travelled pays a policy that orbits forever.
-    // METRES TOWARD THE GOAL ARE THE POINT, so they pay double what they did.
-    // Coverage stays a seasoning rather than a second objective: rewarding raw
-    // distance travelled pays a policy that orbits, which is why this is split
-    // into progress and coverage at all.
+    // METRES TOWARD THE GOAL ARE THE POINT -- but as a FRACTION OF THE JOURNEY,
+    // not as raw metres, or the big worlds drown the small ones.
+    //
+    // Progress telescopes to (start distance - end distance). In raw metres a
+    // 340 m city journey therefore pays an order of magnitude more than a 30 m
+    // maze for the same quality of flying, and measurement across the six
+    // worlds put the spread of mean episode return at 7.6x: road 66.3 against
+    // corridor 8.7. PPO normalises advantages per batch, but a world
+    // contributing 7x larger advantages still dominates the update -- so the
+    // open worlds would set the weights and the tight ones would be noise.
+    // That is "open maps poisoning the policy", and it is arithmetic rather
+    // than bad luck.
+    //
+    // Each step now pays wProgress * closed / startDist * progressScaleM, so
+    // every world pays the same for closing the same FRACTION of its journey
+    // and the maximum an episode can earn from progress is the same
+    // everywhere: wProgress * progressScaleM. The scale is in metres purely so
+    // the numbers stay in a familiar range -- a full journey pays what a 100 m
+    // one used to.
     float wProgress   = 2.0f;
+    float progressScaleM = 100.f;
     float wCoverage   = 0.15f;
     float wTime       = 0.01f;
     float wStop       = 0.05f;
@@ -79,9 +95,10 @@ struct EnvConfig {
     // happening to be close enough.
     float rGoal       = 50.f;
     float rCollide    = 50.f;
-    // Multiples of (start distance * wProgress), the most progress an episode
-    // can earn. 1.5 for collision so it can never be bought; 0.5 for arrival so
-    // reaching the goal keeps a clear edge over merely getting near it.
+    // Multiples of (wProgress * progressScaleM), the most progress an episode
+    // can earn -- which is now the same number in every world, so these are too.
+    // 1.5 for collision so it can never be bought; 0.5 for arrival so reaching
+    // the goal keeps a clear edge over merely getting near it.
     float collideScale = 1.5f;
     float goalScale    = 0.5f;
     float goalTolM    = 3.0f;

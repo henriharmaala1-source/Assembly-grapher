@@ -36,7 +36,8 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
                             _here) if p]
 
 import voxelenv
-from voxel_gym import VoxelNavEnv, newest_checkpoint, all_checkpoints
+from voxel_gym import (VoxelNavEnv, all_checkpoints, newest_checkpoint,
+                       newest_run_dir, run_root)
 
 
 def run_episode(env, model, rng, world, seed, baseline=None):
@@ -72,8 +73,9 @@ def main() -> int:
     ap.add_argument("--model", default=None,
                     help="a specific checkpoint. Without it the newest one in "
                          "--run is used.")
-    ap.add_argument("--run", default="runs/ppo_voxel",
-                    help="where to look for a checkpoint when --model is not given")
+    ap.add_argument("--run", default="",
+                    help="which run folder to score. Default: the newest one "
+                         "in kestrel-runs on your Desktop.")
     ap.add_argument("--random", action="store_true", help="the floor: uniform over admissible")
     ap.add_argument("--worlds", nargs="+", default=["forest", "maze"])
     ap.add_argument("--seeds", type=int, nargs="+", default=list(range(101, 109)),
@@ -122,6 +124,10 @@ def main() -> int:
     # as None and quietly score the RANDOM FLOOR while the caller believed it
     # was scoring a trained policy -- the two print identical tables. Anything
     # driving this from a menu would have reported the floor as the result.
+    if not args.run:
+        args.run = newest_run_dir(run_root()) or run_root()
+        print(f"[evaluate] run: {args.run}", flush=True)
+
     model = None
     if not args.random and not args.progress:
         path = args.model

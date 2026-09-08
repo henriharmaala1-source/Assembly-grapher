@@ -87,6 +87,10 @@ class VoxelNavEnv(gym.Env):
             self._rng = np.random.default_rng(seed)
         world = self.worlds[int(self._rng.integers(len(self.worlds)))]
         s = int(self._rng.choice(self.seeds))
+        # Kept so every STEP's info can name its world. A training callback
+        # cannot bucket a result by world it cannot see, and "mean travel" over
+        # a 30 m maze and a 340 m city mixed together says nothing about either.
+        self._world, self._seed = world, s
         self._cfg.horizon_s = self.horizons[world]
         # horizon_s is read at construction, so a world with a different horizon
         # needs a fresh env rather than a reset.
@@ -105,6 +109,8 @@ class VoxelNavEnv(gym.Env):
             "min_dist_step": st.min_dist_step, "collisions": st.collisions,
             "stopped_steps": st.stopped_steps, "steps": st.steps,
             "reached_goal": st.reached_goal,
+            "world": getattr(self, "_world", self.worlds[0]),
+            "seed": getattr(self, "_seed", 0),
             # Episode totals per reward term. A scalar return says a policy
             # improved and cannot say WHICH term it improved, which is the only
             # question worth asking when reward rises while the scorecard falls.
@@ -161,3 +167,33 @@ def all_checkpoints(run_dir):
         if m:
             out.append((int(m.group(1)), f))
     return sorted(out)
+
+
+def run_root():
+    """Where runs go by default: a `kestrel-runs` folder on the Desktop.
+
+    OneDrive is checked because a Windows Desktop is very often redirected
+    into it, and writing to the literal %USERPROFILE%\\Desktop then puts the
+    run somewhere the user does not see. Falls back to ./runs when there is no
+    Desktop at all, which is the normal case on a server.
+    """
+    home = os.path.expanduser("~")
+    for cand in (os.path.join(home, "OneDrive", "Desktop"),
+                 os.path.join(home, "Desktop")):
+        if os.path.isdir(cand):
+            return os.path.join(cand, "kestrel-runs")
+    return os.path.abspath("runs")
+
+
+def newest_run_dir(root):
+    """The most recently written run folder under root, or None.
+
+    By mtime here, unlike checkpoints within a run: these are separate runs
+    rather than steps of one, so "the one I was just working on" is what is
+    meant and there is no step count to order by.
+    """
+    if not os.path.isdir(root):
+        return None
+    subs = [os.path.join(root, d) for d in os.listdir(root)
+            if os.path.isdir(os.path.join(root, d))]
+    return max(subs, key=os.path.getmtime) if subs else None

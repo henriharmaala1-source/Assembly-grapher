@@ -197,11 +197,36 @@ columns as the classical ones, on seeds it never trained on.
 
     kestrel train    train. Expect 8-18 hours at 10 M steps with stereo.
 
-                     WHERE THE POLICY GOES: --out, default runs\ppo_voxel,
-                     relative to the folder you run from. It prints the
-                     absolute path on the first line so you never have to
-                     guess. Inside you get ppo_<n>_steps.zip every ~50 k
-                     steps, final.zip at the end, and tb\ for TensorBoard.
+                     WHERE THE POLICY GOES: a dated folder inside
+                     kestrel-runs on your DESKTOP, e.g.
+                     Desktop\kestrel-runs\run-20260908-1543. A OneDrive
+                     Desktop is found too, which is where Windows usually
+                     redirects it. --name labels a run instead of dating it,
+                     --out puts it anywhere you like, and the absolute path
+                     is printed on the first line either way.
+
+                     One folder PER RUN on purpose: sharing a directory would
+                     let a short run's ppo_50000 sit beside a long run's
+                     ppo_9000000, and --resume picks by step count, so the
+                     short run would silently inherit the long one's weights.
+                     Bare --resume continues the NEWEST run rather than
+                     starting an empty one.
+
+                     Inside: ppo_<n>_steps.zip every ~50 k steps, final.zip at
+                     the end, and tb\ for TensorBoard.
+
+                     LIVE STATS WHILE IT TRAINS, headless, no window. Every
+                     rollout prints a per-world scorecard beside SB3's usual
+                     reward table:
+
+                       world       eps    travel   closest   crash   goals
+                       maze          6     18.8m     19.2m     17%       0
+                       corridor      1     24.6m     40.6m      0%       0
+
+                     Per world because the average over a 30 m maze and a
+                     340 m city describes neither, and over a rolling window
+                     so it shows what the policy does NOW. The same numbers
+                     go to TensorBoard under score/<world>/.
 
                      IT STARTS FROM SCRATCH UNLESS YOU SAY OTHERWISE:
 

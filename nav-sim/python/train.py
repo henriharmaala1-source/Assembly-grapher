@@ -38,13 +38,77 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
 
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.evaluation import evaluate_policy
-from stable_baselines3.common.callbacks import CheckpointCallback
+from collections import deque
+
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 
 import numpy as np
 
 from voxel_gym import (TRAIN_WORLDS, VoxelNavEnv, make_env,
-                       newest_checkpoint)
+                       newest_checkpoint, newest_run_dir, run_root)
+
+
+class Scorecard(BaseCallback):
+    """Live per-world scorecard, printed each rollout and logged to TensorBoard.
+
+    SB3 already prints ep_rew_mean and ep_len_mean. Neither answers the
+    questions this project is judged on -- how far does it get, does it crash,
+    does it arrive -- and reward has already disagreed with those once here: a
+    retrain scored higher on its objective and flew worse on every column. So
+    the training log now carries the scorecard alongside the reward, headless,
+    with no window and no separate evaluation run.
+
+    Per world, because the average over a 30 m maze and a 340 m city describes
+    neither. Over a rolling window rather than the whole run, so what is shown
+    is what the policy does NOW and not what it did an hour ago.
+    """
+
+    def __init__(self, window=60):
+        super().__init__()
+        self.window = window
+        self.ep = {}                     # world -> deque of finished episodes
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", []):
+            # Monitor puts "episode" in the info of the step that ended one.
+            if "episode" not in info or "world" not in info:
+                continue
+            d = self.ep.setdefault(info["world"], deque(maxlen=self.window))
+            d.append((info.get("travel_m", 0.0),
+                      info.get("min_dist_to_goal_m", 0.0),
+                      1 if info.get("collisions") else 0,
+                      1 if info.get("reached_goal") else 0))
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if not self.ep:
+            return
+        tot = [0, 0, 0]
+        print(f"\n  {'world':10} {'eps':>4} {'travel':>9} {'closest':>9} "
+              f"{'crash':>7} {'goals':>7}", flush=True)
+        for w in sorted(self.ep):
+            e = self.ep[w]
+            if not e:
+                continue
+            trav = sum(x[0] for x in e) / len(e)
+            clos = min(x[1] for x in e)
+            crash = sum(x[2] for x in e)
+            goals = sum(x[3] for x in e)
+            tot[0] += len(e); tot[1] += crash; tot[2] += goals
+            print(f"  {w:10} {len(e):>4} {trav:>8.1f}m {clos:>8.1f}m "
+                  f"{100.0*crash/len(e):>6.0f}% {goals:>7}", flush=True)
+            # Per world in TensorBoard too, so the curves can be compared
+            # rather than averaged into one uninformative line.
+            self.logger.record(f"score/{w}/travel_m", trav)
+            self.logger.record(f"score/{w}/collision_rate", crash / len(e))
+            self.logger.record(f"score/{w}/goal_rate", goals / len(e))
+            self.logger.record(f"score/{w}/best_closest_m", clos)
+        if tot[0]:
+            print(f"  {'ALL':10} {tot[0]:>4} {'':>9} {'':>9} "
+                  f"{100.0*tot[1]/tot[0]:>6.0f}% {tot[2]:>7}", flush=True)
+            self.logger.record("score/collision_rate", tot[1] / tot[0])
+            self.logger.record("score/goal_rate", tot[2] / tot[0])
 
 
 def main() -> int:
@@ -67,7 +131,13 @@ def main() -> int:
                          "what make a policy transfer.")
     ap.add_argument("--cam", type=int, nargs=2, default=(160, 120))
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    ap.add_argument("--out", default="runs/ppo_voxel")
+    ap.add_argument("--out", default="",
+                    help="where the run goes. Default: a dated folder inside "
+                         "kestrel-runs on your Desktop, so a run is somewhere "
+                         "you can find it and two runs never mix their "
+                         "checkpoints.")
+    ap.add_argument("--name", default="",
+                    help="name this run's folder instead of dating it")
     ap.add_argument("--n-steps", type=int, default=256, help="rollout per worker")
     ap.add_argument("--vary-goal", action="store_true",
                     help="sample start and goal every episode instead of "
@@ -127,6 +197,19 @@ def main() -> int:
                     "bottleneck wants anyway: environment\n"
                     "        steps are C++ on the CPU and the policy is small.")
         print(f"[train] cuda: {torch.cuda.get_device_name(0)}", flush=True)
+
+    # A DATED FOLDER PER RUN. One shared directory would let a short run's
+    # ppo_50000 sit beside a long run's ppo_9000000, and --resume picks by step
+    # count -- so the short run would silently inherit the long one's weights.
+    if not args.out:
+        root = run_root()
+        # Resuming without naming a directory means "carry on with what I was
+        # doing", which is the newest run rather than a fresh empty folder.
+        if args.resume == "auto" and newest_run_dir(root):
+            args.out = newest_run_dir(root)
+        else:
+            args.out = os.path.join(
+                root, args.name or time.strftime("run-%Y%m%d-%H%M%S"))
 
     os.makedirs(args.out, exist_ok=True)
     # SAY WHERE THE POLICY IS GOING, as an absolute path. --out is relative to
@@ -188,7 +271,7 @@ def main() -> int:
     # reset_num_timesteps=False on a resume, so the step counter and the
     # TensorBoard curves continue the old run instead of restarting the x axis
     # and making a continued run look like a new one that learned instantly.
-    model.learn(total_timesteps=args.steps, callback=ckpt, progress_bar=True,
+    model.learn(total_timesteps=args.steps, callback=[ckpt, Scorecard()], progress_bar=True,
                 reset_num_timesteps=not resume_from)
     model.save(os.path.join(args.out, "final"))
     print(f"[train] final policy -> {os.path.join(out_abs, 'final.zip')}", flush=True)

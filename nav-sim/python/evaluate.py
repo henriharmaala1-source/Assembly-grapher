@@ -73,6 +73,12 @@ def main() -> int:
                     help="HELD OUT from training by default")
     ap.add_argument("--max-steps", type=int, default=1500)
     ap.add_argument("--stereo", action="store_true")
+    ap.add_argument("--reward", action="store_true",
+                    help="also print where the reward went, per term. Produced "
+                         "by THIS code path rather than a side script, because "
+                         "an ad-hoc harness that sets the per-world rollout "
+                         "horizon differently silently measures a different "
+                         "aircraft.")
     args = ap.parse_args()
 
     # RESOLVE THE POLICY, OR SAY SO. With no --model this used to leave model
@@ -102,16 +108,29 @@ def main() -> int:
                       max_steps=args.max_steps, truth_depth=not args.stereo)
     rng = np.random.default_rng(0)
 
-    print(f"{'world':<8} {'seed':<5} {'outcome':<16} {'travel':>9} "
-          f"{'end-dist':>9} {'minClr':>9} {'stopped':>8}")
+    hdr = (f"{'world':<8} {'seed':<5} {'outcome':<16} {'travel':>9} "
+           f"{'end-dist':>9} {'minClr':>9} {'stopped':>8}")
+    if args.reward:
+        hdr += (f" {'total':>8} {'progress':>9} {'coverage':>9} {'clear':>7} "
+                f"{'stop':>7} {'terminal':>9}")
+    print(hdr)
     tot = hits = reach = 0
     travels = []
     for w in args.worlds:
         for s in args.seeds:
             outcome, i = run_episode(env, model, rng, w, s)
-            print(f"{w:<8} {s:<5} {outcome:<16} {i['travel_m']:>9.1f} "
-                  f"{i['dist_to_goal_m']:>9.1f} {i['min_clear_m']:>9.2f} "
-                  f"{i['stopped_steps']:>8}")
+            row = (f"{w:<8} {s:<5} {outcome:<16} {i['travel_m']:>9.1f} "
+                   f"{i['dist_to_goal_m']:>9.1f} {i['min_clear_m']:>9.2f} "
+                   f"{i['stopped_steps']:>8}")
+            if args.reward:
+                # NOT named tot: that is the run counter three lines below,
+                # and shadowing it printed "runs -91.7" in the summary.
+                rtot = (i["r_progress"] + i["r_coverage"] + i["r_time"]
+                        + i["r_stop"] + i["r_clear"] + i["r_terminal"])
+                row += (f" {rtot:>8.1f} {i['r_progress']:>9.1f} "
+                        f"{i['r_coverage']:>9.1f} {i['r_clear']:>7.1f} "
+                        f"{i['r_stop']:>7.1f} {i['r_terminal']:>9.1f}")
+            print(row)
             tot += 1
             hits += 1 if i["collisions"] else 0
             reach += 1 if i["reached_goal"] else 0

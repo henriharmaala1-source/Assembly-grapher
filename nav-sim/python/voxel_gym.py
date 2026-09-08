@@ -91,6 +91,12 @@ class VoxelNavEnv(gym.Env):
             "min_clear_m": st.min_clear_m, "collisions": st.collisions,
             "stopped_steps": st.stopped_steps, "steps": st.steps,
             "reached_goal": st.reached_goal,
+            # Episode totals per reward term. A scalar return says a policy
+            # improved and cannot say WHICH term it improved, which is the only
+            # question worth asking when reward rises while the scorecard falls.
+            "r_progress": st.r_progress, "r_coverage": st.r_coverage,
+            "r_time": st.r_time, "r_stop": st.r_stop,
+            "r_clear": st.r_clear, "r_terminal": st.r_terminal,
         }
         return self._env.observation(), float(st.reward), bool(st.done), bool(st.truncated), info
 

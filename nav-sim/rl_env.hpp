@@ -55,14 +55,35 @@ struct EnvConfig {
     float visitDecay  = 0.999f;
     // Reward weights. Distance is split into PROGRESS and COVERAGE on purpose:
     // rewarding raw distance travelled pays a policy that orbits forever.
-    float wProgress   = 1.0f;
+    // METRES TOWARD THE GOAL ARE THE POINT, so they pay double what they did.
+    // Coverage stays a seasoning rather than a second objective: rewarding raw
+    // distance travelled pays a policy that orbits, which is why this is split
+    // into progress and coverage at all.
+    float wProgress   = 2.0f;
     float wCoverage   = 0.15f;
     float wTime       = 0.01f;
     float wStop       = 0.05f;
     float wClear      = 0.20f;
     float clearTarget = 0.8f;
+    // TERMINALS ARE A FLOOR, NOT THE VALUE. A fixed penalty cannot punish hard
+    // in worlds of different size, and measurement said so plainly: progress
+    // telescopes to (start - end) distance, so in the 175 m forest a policy
+    // banked +47 before hitting a tree and still finished the episode POSITIVE
+    // at +5.6, while the same -50 in the 35 m maze scored -48.7. One number
+    // meant "barely a scratch" in one world and "catastrophe" in the other.
+    //
+    // The effective penalty is now whichever is larger: this floor, or a
+    // multiple of every metre the episode could possibly have earned. That
+    // makes crashing strictly worse than any amount of progress, in any world,
+    // whatever wProgress is set to -- rather than depending on the goal
+    // happening to be close enough.
     float rGoal       = 50.f;
     float rCollide    = 50.f;
+    // Multiples of (start distance * wProgress), the most progress an episode
+    // can earn. 1.5 for collision so it can never be bought; 0.5 for arrival so
+    // reaching the goal keeps a clear edge over merely getting near it.
+    float collideScale = 1.5f;
+    float goalScale    = 0.5f;
     float goalTolM    = 3.0f;
 
     // THE VETO, AS AN EXPERIMENT RATHER THAN AN ASSUMPTION.

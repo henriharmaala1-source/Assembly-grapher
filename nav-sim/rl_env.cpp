@@ -237,8 +237,13 @@ EnvStep VoxelEnv::step(int action) {
     I.aStop += tStop;         I.aClear += tClear;
 
     out.reachedGoal = dist <= cfg_.goalTolM;
-    if (out.reachedGoal) { r += cfg_.rGoal;     I.aTerm += cfg_.rGoal; }
-    if (hit)             { r -= cfg_.rCollide; I.aTerm -= cfg_.rCollide; }
+    // Scaled against the most progress this episode could ever have paid, so a
+    // crash cannot be bought with metres in a big world -- see EnvConfig.
+    const float maxProgress = I.startDist * cfg_.wProgress;
+    const float goalR    = std::max(cfg_.rGoal,    cfg_.goalScale    * maxProgress);
+    const float collideR = std::max(cfg_.rCollide, cfg_.collideScale * maxProgress);
+    if (out.reachedGoal) { r += goalR;    I.aTerm += goalR; }
+    if (hit)             { r -= collideR; I.aTerm -= collideR; }
 
     out.done      = out.reachedGoal || hit;
     out.truncated = !out.done && I.steps >= cfg_.maxSteps;

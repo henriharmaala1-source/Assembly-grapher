@@ -382,6 +382,29 @@ the same scene both ways and fails if they disagree by more than one voxel, and
 it fails hard if the GPU invents a surface the CPU did not see. Run it before
 trusting the GPU path; if it fails, build without CUDA and say so.
 
-Expected payoff if it passes: the render is ~75 % of a step (46.8 ms against
-~14 ms for everything else), so a 10 M-step stereo run should go from 8-18 h to
-roughly 2-5 h on the same 16 workers.
+Expected payoff, MEASURED rather than estimated, and smaller than this file
+used to claim. Step time against camera resolution at 160x120 truth depth:
+
+    40x30    7.25 ms      160x120   15.19 ms
+    80x60    9.42 ms      320x240   37.88 ms
+
+That fits ~6.8 ms of FIXED cost plus ~4.05 us per pixel. At the 160x120
+training default only about half the step scales with pixels, not the three
+quarters previously claimed -- and that half is not all render: map.integrate
+walks rays per pixel too, now across three map levels. So moving the render
+alone to the GPU is worth roughly 1.3-1.5x, not 3-4x.
+
+THE LEVER THAT ACTUALLY WORKS TODAY IS RESOLUTION, and it needs no toolkit:
+
+    kestrel train --cam 80 60      about 1.6x faster than 160x120
+
+The cost is honest -- fewer pixels means shorter effective stereo range and
+more dropout, so it is a fidelity trade rather than free speed.
+
+AND CUDA CANNOT GIVE YOU MORE PARALLEL ENVIRONMENTS. Each env is
+single-threaded CPU: the map, the 210 primitive rollouts, the veto. Workers
+saturate at about the thread count and then plateau. Massively more parallel
+envs would mean putting the environment itself on the GPU, which is a rewrite
+and collides with the rule above -- the map, the planner and the veto are the
+code that flies, and a second GPU implementation would drift from what is
+deployed.

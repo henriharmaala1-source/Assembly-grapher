@@ -106,6 +106,19 @@ struct EnvConfig {
     // sample efficiency; if it does not, the gap is the argument for keeping a
     // hard geometric veto under a learned planner.
     bool  maskUnsafe  = true;
+
+    // VARY THE JOURNEY, not just the obstacles. Every episode used a fixed
+    // start and a fixed goal: forest was always 175 m away on a bearing of
+    // 36.9 deg, maze always 31.8 m at 45 deg, on every seed. Only the trees and
+    // walls moved. A policy can score well on that by learning a compass
+    // heading and never using the goal channels at all, and nothing in the
+    // scorecard would notice -- so "it navigates" was never actually tested.
+    //
+    // With this, start and goal are sampled per episode (deterministically from
+    // the seed) with real clearance and a minimum separation. It makes the task
+    // strictly harder and the numbers not comparable with fixed-geometry runs,
+    // which is why it is opt-in rather than the new default.
+    bool  varyGoal    = false;
 };
 
 struct EnvStep {

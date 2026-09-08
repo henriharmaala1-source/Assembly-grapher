@@ -83,6 +83,15 @@ def main() -> int:
                          "at 1500 measures who is fastest over the first half "
                          "of the journey, not who arrives")
     ap.add_argument("--stereo", action="store_true")
+    ap.add_argument("--vary-goal", action="store_true",
+                    help="sample start and goal every episode instead of "
+                         "flying one fixed journey. Every episode used to have "
+                         "the SAME geometry -- forest 175 m at 36.9 deg, maze "
+                         "31.8 m at 45 deg, on every seed, with only the trees "
+                         "and walls moving. A policy can score well on that by "
+                         "learning a compass heading and never reading the goal "
+                         "channels. Harder, and not comparable with "
+                         "fixed-geometry numbers.")
     ap.add_argument("--no-veto", action="store_true",
                     help="score with the safety mask OFF. A policy trained "
                          "with --no-veto learned avoidance itself; scoring it "
@@ -134,7 +143,7 @@ def main() -> int:
 
     env = VoxelNavEnv(worlds=tuple(args.worlds), seeds=args.seeds,
                       max_steps=args.max_steps, truth_depth=not args.stereo,
-                      mask_unsafe=not args.no_veto)
+                      mask_unsafe=not args.no_veto, vary_goal=args.vary_goal)
     print(f"[evaluate] veto {'OFF - every primitive selectable' if args.no_veto else 'on'}",
           flush=True)
     rng = np.random.default_rng(0)

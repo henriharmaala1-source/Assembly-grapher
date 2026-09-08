@@ -240,7 +240,7 @@ struct Cfg {
     bool  trainStereo = true;
     bool  cuda = false;
     bool  resume = false;
-    bool  noVeto = false;
+    bool  noVeto = false, varyGoal = false;
 
     // watch
     int   panes = 4, paneIdx = 1, layout = 0;   // layout 0 both, 1 fpv, 2 top
@@ -249,6 +249,7 @@ struct Cfg {
     // evaluate
     bool  eForest = true, eMaze = true, eRandom = false, eStereo = false;
     bool  eBaselines = true, eReward = false, eProgress = false, eNoVeto = false;
+    bool  eVary = false;
     int   eSeed0 = 101, eSeed1 = 108, eSteps = 600;
 };
 
@@ -305,6 +306,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.eReward) a.push_back("--reward");
             if (c.eProgress) a.push_back("--progress");
             if (c.eNoVeto) a.push_back("--no-veto");
+            if (c.eVary) a.push_back("--vary-goal");
             break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
@@ -322,6 +324,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.resume) a.push_back("--resume");
             if (c.noVeto) a.push_back("--no-veto");
             a.push_back("--max-steps"); a.push_back(std::to_string(c.epLen));
+            if (c.varyGoal) a.push_back("--vary-goal");
             break;
     }
     return a;
@@ -358,12 +361,12 @@ enum {
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
-    ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP,
+    ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
     ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
     ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
-    ID_E_PROGRESS, ID_E_NOVETO,
+    ID_E_PROGRESS, ID_E_NOVETO, ID_E_VARY,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -504,7 +507,7 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // of this line ran under it.
     txt(im, "the honest setting, ~3x slower", x, 376, 0.42, DIM);
 
-    bs.push_back({cv::Rect(x, 404, 250, 38), c.cuda ? "device: cuda" : "device: cpu",
+    bs.push_back({cv::Rect(x + 532, 320, 180, 36), c.cuda ? "device: cuda" : "device: cpu",
                   ID_TRAIN_CUDA, c.cuda});
     // WITHOUT THIS A RUN ALWAYS STARTS FROM ZERO. The trainer checkpoints as it
     // goes but had no way to read one back, so an interrupted overnight run
@@ -520,6 +523,11 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x + 266, 362, 250, 36),
                   c.noVeto ? "NO veto: learn by crashing" : "geometric veto on",
                   ID_TRAIN_NOVETO, c.noVeto});
+    // Every episode used one fixed journey, so a compass heading scored as
+    // well as navigating. This samples start and goal per episode.
+    bs.push_back({cv::Rect(x, 404, 250, 36),
+                  c.varyGoal ? "varied start and goal" : "one fixed journey",
+                  ID_TRAIN_VARY, c.varyGoal});
     txt(im, "The GPU WILL look idle: the bottleneck is environment steps,", x + 266, 420, 0.42, DIM);
     txt(im, "which are C++ on the CPU. cuda is here so you can measure", x + 266, 438, 0.42, DIM);
     txt(im, "that rather than take the claim on trust.", x + 266, 456, 0.42, DIM);
@@ -641,10 +649,16 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x, 516, 250, 32),
                   c.eProgress ? "EVERY checkpoint" : "newest checkpoint",
                   ID_E_PROGRESS, c.eProgress});
+    // Third column, not a fourth row: a row at 556 reaches y=588 and the
+    // command strip's text starts at 582.
+    bs.push_back({cv::Rect(x + 532, 516, 210, 32),
+                  c.eVary ? "varied journey" : "fixed journey",
+                  ID_E_VARY, c.eVary});
 
-    txt(im, "It takes the newest checkpoint in runs/ppo_voxel unless you pass",
+    // Fitted to the column: the toggle beside it starts at x+266.
+    txt(im, fit("newest checkpoint unless --model", 250, 0.42, false),
         x, 566, 0.42, DIM);
-    txt(im, "--model. Results print in the console, not in this window.",
+    txt(im, fit("results print in the console", 250, 0.42, false),
         x, 584, 0.42, DIM);
 }
 
@@ -741,6 +755,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_NOVETO: c.noVeto = !c.noVeto; break;
         case ID_TRAIN_EPM:    c.epLen = std::max(500, c.epLen - 500); break;
         case ID_TRAIN_EPP:    c.epLen = std::min(10000, c.epLen + 500); break;
+        case ID_TRAIN_VARY:   c.varyGoal = !c.varyGoal; break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;
@@ -766,6 +781,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_E_REWARD: c.eReward = !c.eReward; break;
         case ID_E_PROGRESS: c.eProgress = !c.eProgress; break;
         case ID_E_NOVETO:   c.eNoVeto = !c.eNoVeto; break;
+        case ID_E_VARY:     c.eVary = !c.eVary; break;
         default: break;
     }
     (void)inputs; (void)recs;

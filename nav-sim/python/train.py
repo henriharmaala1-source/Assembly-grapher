@@ -66,6 +66,15 @@ def main() -> int:
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     ap.add_argument("--out", default="runs/ppo_voxel")
     ap.add_argument("--n-steps", type=int, default=256, help="rollout per worker")
+    ap.add_argument("--vary-goal", action="store_true",
+                    help="sample start and goal every episode instead of "
+                         "flying one fixed journey. Every episode used to have "
+                         "the SAME geometry -- forest 175 m at 36.9 deg, maze "
+                         "31.8 m at 45 deg, on every seed, with only the trees "
+                         "and walls moving. A policy can score well on that by "
+                         "learning a compass heading and never reading the goal "
+                         "channels. Harder, and not comparable with "
+                         "fixed-geometry numbers.")
     ap.add_argument("--no-veto", action="store_true",
                     help="TRAIN FROM ZERO WITH NO SAFETY MASK. Normally the "
                          "geometric veto hides primitives that fly into "
@@ -92,7 +101,7 @@ def main() -> int:
     print(f"[train] checkpoints and final policy -> {out_abs}", flush=True)
     kw = dict(worlds=tuple(args.worlds), max_steps=args.max_steps,
               truth_depth=not args.stereo, cam=tuple(args.cam),
-              mask_unsafe=not args.no_veto)
+              mask_unsafe=not args.no_veto, vary_goal=args.vary_goal)
     if args.no_veto:
         print("[train] NO VETO: every primitive is selectable, including ones "
               "that fly into things.\n"

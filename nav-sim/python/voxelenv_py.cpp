@@ -38,7 +38,10 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("r_collide", &EnvConfig::rCollide)
         // False lets the policy select primitives the geometry rejected, so it
         // can collide and must learn avoidance rather than being handed it.
-        .def_readwrite("mask_unsafe", &EnvConfig::maskUnsafe);
+        .def_readwrite("mask_unsafe", &EnvConfig::maskUnsafe)
+        // Sample start and goal per episode instead of using one fixed
+        // journey, so the goal channels have to be used.
+        .def_readwrite("vary_goal", &EnvConfig::varyGoal);
 
     py::class_<EnvStep>(m, "EnvStep")
         .def_readonly("reward", &EnvStep::reward)

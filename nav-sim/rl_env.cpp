@@ -134,6 +134,47 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
         I.px = 15.f; I.py = 10.f; I.pz = 6.f;
         I.goalE = 120.f; I.goalN = 150.f; I.goalU = 8.f;
     }
+    // VARIED START AND GOAL, deterministic in the seed so a run is still
+    // reproducible. See EnvConfig::varyGoal for why fixed geometry was a
+    // problem: a policy could pass every test here by learning one bearing.
+    if (cfg_.varyGoal) {
+        unsigned rs = seed * 2654435761u + 1013904223u;
+        auto urand = [&rs]() {
+            rs = rs * 1664525u + 1013904223u;
+            return float(rs >> 8) * (1.0f / 16777216.0f);
+        };
+        // The box the world actually occupies. For the maze the two corners
+        // genMaze handed back ARE its extent; for the forest it is the plot
+        // inset far enough that a goal is never outside the trees.
+        float x0, x1, y0, y1, minSep;
+        if (world == "maze") {
+            x0 = std::min(I.px, I.goalE); x1 = std::max(I.px, I.goalE);
+            y0 = std::min(I.py, I.goalN); y1 = std::max(I.py, I.goalN);
+            minSep = 0.6f * std::hypot(x1 - x0, y1 - y0);
+        } else {
+            x0 = 15.f; x1 = 185.f; y0 = 15.f; y1 = 185.f;
+            minSep = 110.f;
+        }
+        const float want = cfg_.robotR * 1.6f;
+        auto sampleClear = [&](float& ox, float& oy, float z,
+                               float fromX, float fromY, float sep) {
+            for (int i = 0; i < 200; ++i) {
+                const float x = x0 + urand() * (x1 - x0);
+                const float y = y0 + urand() * (y1 - y0);
+                if (sep > 0.f && std::hypot(x - fromX, y - fromY) < sep) continue;
+                if (trueClearance(I.world, x, y, z, want + 0.5f) >= want) {
+                    ox = x; oy = y; return true;
+                }
+            }
+            return false;                      // keep the nominal one
+        };
+        float sx = I.px, sy = I.py, gx = I.goalE, gy = I.goalN;
+        if (sampleClear(sx, sy, I.pz, 0.f, 0.f, 0.f)) { I.px = sx; I.py = sy; }
+        if (sampleClear(gx, gy, I.goalU, I.px, I.py, minSep)) {
+            I.goalE = gx; I.goalN = gy;
+        }
+    }
+
     // THE SPAWN WAS NEVER CHECKED AGAINST THE WORLD IT LANDED IN. The forest
     // start was hardcoded at (15, 10, 6) whatever the trees did, so on 4 of 20
     // seeds the aircraft began with LESS clearance than its own radius: 0.19 m,

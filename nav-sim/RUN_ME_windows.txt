@@ -263,6 +263,18 @@ columns as the classical ones, on seeds it never trained on.
                       Takes the newest checkpoint in runs\ppo_voxel unless
                       you pass --model or --run.
 
+                      VARY THE JOURNEY:  --vary-goal
+                      Every episode used to fly the SAME route -- forest
+                      175 m on a bearing of 36.9 deg, maze 31.8 m at 45 deg,
+                      on every seed, with only the trees and walls moving. A
+                      policy can score well on that by learning one compass
+                      heading and never reading the goal channels at all, and
+                      nothing in the scorecard would notice. --vary-goal
+                      samples start and goal per episode, both with real
+                      clearance and a minimum separation. Pass it to train
+                      AND to evaluate, and expect worse numbers: it is a
+                      harder task and not comparable with fixed-geometry runs.
+
                       LONG RUNS ARE THE POINT. The forest goal is 175 m out
                       and needs about 2500 steps; episodes were capped at
                       1500, so nothing could ever arrive. Both training and

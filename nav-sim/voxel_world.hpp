@@ -348,6 +348,37 @@ void genCulDeSac(VoxelWorld& w, const CulDeSacParams& p);
 // Walls are WELL TEXTURED for the same reason genCulDeSac's are: this is a
 // planning test, and walls that are hard to see would silently make it a
 // perception test with a different answer.
+// RANDOM-SHAPE CORRIDORS -- the maze's topology without its grid.
+//
+// A generated maze is rectilinear: every corridor is axis-aligned, every
+// junction is a right angle, and every corridor is the same width. A policy
+// can do well there by learning "follow the axis, turn 90 deg at a wall",
+// which is a rule about mazes rather than about corridors. These are carved by
+// walking random polylines through solid rock, so headings are arbitrary,
+// widths vary along the length, and branches leave at whatever angle the walk
+// happened to have. Dead ends occur naturally because a branch can wander into
+// rock and stop.
+struct CorridorParams {
+    float sizeM     = 140.f;
+    float cell      = 0.25f;
+    float wallH     = 5.0f;    // open-topped, like the maze: climbing out is a
+                               // legal escape and the climb cost is under test
+    float widthMin  = 2.5f;    // clear width, varied along each path
+    float widthMax  = 6.5f;
+    int   nPaths    = 4;       // one trunk plus branches off it
+    float stepM     = 7.f;     // polyline segment length
+    float turnDeg   = 60.f;    // biggest heading change between segments
+    float tex       = 0.6f;
+    unsigned seed   = 1;
+};
+// Hands back the ends of the trunk path, which are the furthest-apart points
+// the carving is known to connect -- picking a start and goal at random in a
+// corridor world risks an unreachable pair, and an impossible episode teaches
+// a policy that the task is impossible.
+void genCorridor(VoxelWorld& w, const CorridorParams& p,
+                 float* startE = nullptr, float* startN = nullptr,
+                 float* goalE = nullptr, float* goalN = nullptr);
+
 struct MazeParams {
     float cell     = 0.25f;
     int   cellsX   = 8, cellsY = 8;   // maze cells, not voxels

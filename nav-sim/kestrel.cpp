@@ -238,7 +238,9 @@ inline int choose(Pol pol, const std::vector<float>& obs,
 }
 
 int cmdBench(std::vector<std::string> args) {
-    std::vector<std::string> worlds = {"forest", "maze"};
+    // All five styles, matching TRAIN_WORLDS -- a baseline measured on a
+    // narrower set than the policy trains on is not a comparison.
+    std::vector<std::string> worlds = {"forest", "maze", "corridor", "city", "road", "culdesac"};
     int s0 = 101, s1 = 104, maxSteps = 3000;   // the forest goal needs ~2500
     bool stereo = false;
     for (size_t i = 0; i < args.size(); ++i) {

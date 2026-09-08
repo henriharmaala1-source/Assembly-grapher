@@ -401,6 +401,82 @@ void genForest(VoxelWorld& w, const ForestParams& p, std::vector<Trail>* trailsO
 
 // --- cul-de-sac ------------------------------------------------------------
 
+void genCorridor(VoxelWorld& w, const CorridorParams& p,
+                 float* startE, float* startN, float* goalE, float* goalN) {
+    const int n  = int(p.sizeM / p.cell);
+    const int nz = int((p.wallH + 3.f) / p.cell);
+    w.init(p.cell, 0, 0, 0, n, n, nz);
+    std::mt19937 rng(p.seed);
+    std::uniform_real_distribution<float> u01(0.f, 1.f);
+
+    // SOLID FIRST, THEN CARVE. Building corridors by placing walls means every
+    // gap between two walls is also a corridor, and the result is a room with
+    // partitions rather than a corridor network.
+    fillBox(w, 0, 0, 0, p.sizeM, p.sizeM, p.wallH, p.tex);
+
+    auto clearDisc = [&](float cx, float cy, float r) {
+        int a0, b0, c0, a1, b1, c1;
+        w.worldToCell(cx - r, cy - r, 0.f, a0, b0, c0);
+        w.worldToCell(cx + r, cy + r, p.wallH, a1, b1, c1);
+        for (int z = c0; z <= c1; ++z)
+            for (int y = b0; y <= b1; ++y)
+                for (int x = a0; x <= a1; ++x) {
+                    float wx, wy, wz;
+                    w.cellCentre(x, y, z, wx, wy, wz);
+                    if ((wx-cx)*(wx-cx) + (wy-cy)*(wy-cy) <= r*r) w.set(x, y, z, false);
+                }
+    };
+
+    // A path is a random walk in heading, clipped to the box. Each step clears
+    // a disc, so the corridor is a swept circle: width varies smoothly and
+    // corners are rounded rather than mitred.
+    struct Pt { float x, y; };
+    std::vector<Pt> trunk;
+    auto walk = [&](float x, float y, float hdg, int steps, std::vector<Pt>* rec) {
+        float wdt = p.widthMin + u01(rng) * (p.widthMax - p.widthMin);
+        for (int i = 0; i < steps; ++i) {
+            hdg += (u01(rng) * 2.f - 1.f) * p.turnDeg * PI_F / 180.f;
+            // Steer back inside before the walk leaves the box, rather than
+            // clamping after the fact -- a clamped walk hugs the wall and
+            // produces a corridor around the rim.
+            const float m = p.sizeM * 0.12f;
+            if (x < m || x > p.sizeM - m || y < m || y > p.sizeM - m)
+                hdg = std::atan2(p.sizeM * 0.5f - y, p.sizeM * 0.5f - x);
+            const float nx = x + std::cos(hdg) * p.stepM;
+            const float ny = y + std::sin(hdg) * p.stepM;
+            // Width drifts along the length, so no single value describes it.
+            wdt = std::max(p.widthMin,
+                           std::min(p.widthMax, wdt + (u01(rng) * 2.f - 1.f) * 0.6f));
+            const int sub = std::max(2, int(p.stepM / (p.cell * 3.f)));
+            for (int k = 0; k <= sub; ++k) {
+                const float t = float(k) / float(sub);
+                clearDisc(x + (nx - x) * t, y + (ny - y) * t, wdt * 0.5f);
+            }
+            x = nx; y = ny;
+            if (rec) rec->push_back({x, y});
+        }
+        return Pt{x, y};
+    };
+
+    const float sx = p.sizeM * (0.12f + u01(rng) * 0.15f);
+    const float sy = p.sizeM * (0.12f + u01(rng) * 0.15f);
+    trunk.push_back({sx, sy});
+    const Pt end = walk(sx, sy, u01(rng) * 2.f * PI_F, 22, &trunk);
+
+    // Branches leave the trunk at an arbitrary point and angle. Some reach
+    // other parts of the network, some stop in rock -- both are corridors a
+    // planner has to deal with, and only one of them goes anywhere.
+    for (int b = 1; b < p.nPaths && trunk.size() > 2; ++b) {
+        const Pt& from = trunk[size_t(u01(rng) * float(trunk.size() - 1))];
+        walk(from.x, from.y, u01(rng) * 2.f * PI_F, 8 + int(u01(rng) * 8.f), nullptr);
+    }
+
+    if (startE) *startE = sx;
+    if (startN) *startN = sy;
+    if (goalE)  *goalE  = end.x;
+    if (goalN)  *goalN  = end.y;
+}
+
 void genCulDeSac(VoxelWorld& w, const CulDeSacParams& p) {
     const int n  = int(p.sizeM / p.cell);
     const int nz = int((p.wallH + 6.f) / p.cell);

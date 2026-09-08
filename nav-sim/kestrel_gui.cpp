@@ -227,7 +227,8 @@ struct Cfg {
     bool  csv = true;
 
     // bench
-    bool  forest = true, maze = true;
+    bool  forest = true, maze = true, city = true, road = true, culdesac = true;
+    bool  corridor = true;
     int   seed0 = 101, seed1 = 104, steps = 600;
     bool  benchStereo = false;
 
@@ -277,8 +278,12 @@ std::vector<std::string> buildArgs(const Cfg& c,
             break;
         case BENCH:
             a.push_back("--worlds");
-            if (c.forest) a.push_back("forest");
-            if (c.maze)   a.push_back("maze");
+            if (c.forest)   a.push_back("forest");
+            if (c.maze)     a.push_back("maze");
+            if (c.city)     a.push_back("city");
+            if (c.road)     a.push_back("road");
+            if (c.culdesac) a.push_back("culdesac");
+            if (c.corridor) a.push_back("corridor");
             a.push_back("--seeds"); a.push_back(std::to_string(c.seed0));
             a.push_back(std::to_string(c.seed1));
             a.push_back("--steps"); a.push_back(std::to_string(c.steps));
@@ -338,7 +343,9 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
         return inputs.empty()
              ? "no frames or video found - put a folder of images beside this exe"
              : "pick an input first";
-    if (c.mode == BENCH && !c.forest && !c.maze) return "pick at least one world";
+    if (c.mode == BENCH && !c.forest && !c.maze && !c.city && !c.road
+        && !c.culdesac && !c.corridor)
+        return "pick at least one world";
     if (c.mode == WATCH && !c.wForest && !c.wMaze) return "pick at least one world";
     if (c.mode == EVAL && !c.eForest && !c.eMaze) return "pick at least one world";
     if (c.mode == SIM && c.simSource == 2 && (c.replay < 0 || recs.empty()))
@@ -357,6 +364,7 @@ enum {
     ID_TRACK_LIM_M, ID_TRACK_LIM_P, ID_TRACK_CSV,
     ID_BENCH_FOREST = 200, ID_BENCH_MAZE, ID_BENCH_S0M, ID_BENCH_S0P,
     ID_BENCH_S1M, ID_BENCH_S1P, ID_BENCH_STM, ID_BENCH_STP, ID_BENCH_STEREO,
+    ID_BENCH_CITY, ID_BENCH_ROAD, ID_BENCH_CDS, ID_BENCH_CORR,
     ID_SIM_SRC = 300,     // +0..2
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
@@ -417,20 +425,24 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 
     txt(im, "worlds", x, 196, 0.5, DIM);
     bs.push_back({cv::Rect(x, 208, 140, 36), "Forest", ID_BENCH_FOREST, c.forest});
-    bs.push_back({cv::Rect(x + 156, 208, 140, 36), "Maze", ID_BENCH_MAZE, c.maze});
+    bs.push_back({cv::Rect(x + 148, 208, 140, 36), "Maze", ID_BENCH_MAZE, c.maze});
+    bs.push_back({cv::Rect(x + 296, 208, 140, 36), "City", ID_BENCH_CITY, c.city});
+    bs.push_back({cv::Rect(x + 444, 208, 140, 36), "Road", ID_BENCH_ROAD, c.road});
+    bs.push_back({cv::Rect(x + 592, 208, 140, 36), "Cul-de-sac", ID_BENCH_CDS, c.culdesac});
+    bs.push_back({cv::Rect(x, 252, 140, 36), "Corridors", ID_BENCH_CORR, c.corridor});
 
-    stepper(im, bs, x, 300, "first seed", std::to_string(c.seed0),
+    stepper(im, bs, x, 320, "first seed", std::to_string(c.seed0),
             ID_BENCH_S0M, ID_BENCH_S0P);
-    stepper(im, bs, x + 220, 300, "last seed", std::to_string(c.seed1),
+    stepper(im, bs, x + 220, 320, "last seed", std::to_string(c.seed1),
             ID_BENCH_S1M, ID_BENCH_S1P);
-    stepper(im, bs, x + 440, 300, "steps/run", std::to_string(c.steps),
+    stepper(im, bs, x + 440, 320, "steps/run", std::to_string(c.steps),
             ID_BENCH_STM, ID_BENCH_STP);
 
     const int runs = (c.forest + c.maze) * std::max(0, c.seed1 - c.seed0 + 1) * 4;
     txt(im, std::to_string(runs) + " runs (4 policies x " +
             std::to_string(c.forest + c.maze) + " world(s) x " +
             std::to_string(std::max(0, c.seed1 - c.seed0 + 1)) + " seed(s))",
-        x, 392, 0.46, DIM);
+        x, 412, 0.46, DIM);
 
     bs.push_back({cv::Rect(x, 430, 250, 36),
                   c.benchStereo ? "Simulated stereo" : "Perfect depth (control)",
@@ -735,6 +747,10 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
 
         case ID_BENCH_FOREST: c.forest = !c.forest; break;
         case ID_BENCH_MAZE:   c.maze = !c.maze; break;
+        case ID_BENCH_CITY:   c.city = !c.city; break;
+        case ID_BENCH_ROAD:   c.road = !c.road; break;
+        case ID_BENCH_CDS:    c.culdesac = !c.culdesac; break;
+        case ID_BENCH_CORR:   c.corridor = !c.corridor; break;
         case ID_BENCH_S0M:    c.seed0 = std::max(1, c.seed0 - 1);
                               c.seed1 = std::max(c.seed0, c.seed1); break;
         case ID_BENCH_S0P:    c.seed0 = std::min(999, c.seed0 + 1);

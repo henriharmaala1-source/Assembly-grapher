@@ -121,18 +121,79 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     I.trail.clear();
     I.trail.push_back(cv::Point2f(I.px, I.py));
 
+    // FIVE STYLES, NOT TWO, AND VARIED WITHIN EACH. Training on forest and maze
+    // alone lets a policy learn "forest behaviour" and "maze behaviour" -- two
+    // modes selected by what the first frame looks like -- rather than
+    // obstacle avoidance. The obstacle geometry differs completely between
+    // these: trunks, corridor walls, building blocks, thin poles and wires, and
+    // a trap with one way out. A policy that handles all five is doing
+    // something more general than one that handles two.
+    //
+    // The PARAMETERS are drawn per seed as well, so "forest" is not one forest:
+    // stem density, block pitch, street width and pole spacing all move. A
+    // fixed generator with a moving seed still presents one distribution.
+    unsigned ws = seed * 2246822519u + 374761393u;
+    auto wrand = [&ws](float lo, float hi) {
+        ws = ws * 1664525u + 1013904223u;
+        return lo + (float(ws >> 8) * (1.0f / 16777216.0f)) * (hi - lo);
+    };
+    // Where a start or goal may be sampled. Every generator here builds from
+    // the origin, so the box is the world's own extent inset by a margin.
+    float bx0, bx1, by0, by1;
+
     if (world == "maze") {
         MazeParams m; m.cell = cfg_.cell; m.seed = seed;
-        m.cellsX = 6; m.cellsY = 6; m.corridorM = 4.0f;
+        m.cellsX = int(wrand(5, 9)); m.cellsY = int(wrand(5, 9));
+        m.corridorM = wrand(3.0f, 5.5f);
         float sx = 0, sy = 0, gx = 0, gy = 0;
         genMaze(I.world, m, &sx, &sy, &gx, &gy);
         I.px = sx; I.py = sy; I.pz = 1.5f;
         I.goalE = gx; I.goalN = gy; I.goalU = 1.5f;
+        bx0 = std::min(sx, gx); bx1 = std::max(sx, gx);
+        by0 = std::min(sy, gy); by1 = std::max(sy, gy);
+    } else if (world == "corridor") {
+        CorridorParams p; p.cell = cfg_.cell; p.seed = seed;
+        p.sizeM = 140.f;
+        p.widthMin = wrand(2.2f, 3.2f); p.widthMax = wrand(4.5f, 7.5f);
+        p.nPaths = int(wrand(3, 7)); p.turnDeg = wrand(40.f, 80.f);
+        float sx = 0, sy = 0, gx = 0, gy = 0;
+        genCorridor(I.world, p, &sx, &sy, &gx, &gy);
+        I.px = sx; I.py = sy; I.pz = 1.5f;
+        I.goalE = gx; I.goalN = gy; I.goalU = 1.5f;
+        bx0 = std::min(sx, gx); bx1 = std::max(sx, gx);
+        by0 = std::min(sy, gy); by1 = std::max(sy, gy);
+    } else if (world == "city") {
+        CityParams p; p.cell = 0.5f; p.seed = seed; p.sizeM = 300.f;
+        p.blockM = wrand(40.f, 80.f); p.streetM = wrand(10.f, 20.f);
+        genCity(I.world, p);
+        I.px = 20.f; I.py = 20.f; I.pz = 8.f;
+        I.goalE = 280.f; I.goalN = 280.f; I.goalU = 8.f;
+        bx0 = by0 = 15.f; bx1 = by1 = 285.f;
+    } else if (world == "road") {
+        // Thin, tall and few against a wide open background: the worst case
+        // for a stereo mapper and the easiest for an openness histogram, so it
+        // is where two planners are most likely to differ.
+        RoadParams p; p.cell = 0.10f; p.seed = seed;
+        p.poleEveryM = wrand(18.f, 34.f); p.nVehicles = int(wrand(6, 20));
+        genRoad(I.world, p);
+        I.px = p.widthM * 0.5f; I.py = 10.f; I.pz = 3.f;
+        I.goalE = p.widthM * 0.5f; I.goalN = p.lengthM - 10.f; I.goalU = 3.f;
+        bx0 = 4.f; bx1 = p.widthM - 4.f; by0 = 8.f; by1 = p.lengthM - 8.f;
+    } else if (world == "culdesac") {
+        CulDeSacParams p; p.cell = 0.5f; p.seed = seed; p.sizeM = 200.f;
+        p.widthM = wrand(40.f, 70.f); p.depthM = wrand(45.f, 75.f);
+        genCulDeSac(I.world, p);
+        I.px = 100.f; I.py = 20.f; I.pz = 6.f;
+        I.goalE = 100.f; I.goalN = 175.f; I.goalU = 6.f;
+        bx0 = by0 = 15.f; bx1 = by1 = 185.f;
     } else {                                   // forest
         ForestParams f; f.cell = cfg_.cell; f.seed = seed;
+        f.stemsPerHa = wrand(600.f, 1800.f);
+        f.undergrowth = wrand(0.05f, 0.30f);
         genForest(I.world, f, nullptr);
         I.px = 15.f; I.py = 10.f; I.pz = 6.f;
         I.goalE = 120.f; I.goalN = 150.f; I.goalU = 8.f;
+        bx0 = by0 = 15.f; bx1 = by1 = 185.f;
     }
     // VARIED START AND GOAL, deterministic in the seed so a run is still
     // reproducible. See EnvConfig::varyGoal for why fixed geometry was a
@@ -146,15 +207,10 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
         // The box the world actually occupies. For the maze the two corners
         // genMaze handed back ARE its extent; for the forest it is the plot
         // inset far enough that a goal is never outside the trees.
-        float x0, x1, y0, y1, minSep;
-        if (world == "maze") {
-            x0 = std::min(I.px, I.goalE); x1 = std::max(I.px, I.goalE);
-            y0 = std::min(I.py, I.goalN); y1 = std::max(I.py, I.goalN);
-            minSep = 0.6f * std::hypot(x1 - x0, y1 - y0);
-        } else {
-            x0 = 15.f; x1 = 185.f; y0 = 15.f; y1 = 185.f;
-            minSep = 110.f;
-        }
+        const float x0 = bx0, x1 = bx1, y0 = by0, y1 = by1;
+        // Six tenths of the box diagonal: scale-free, so it means the same
+        // thing in a 30 m maze and a 300 m city.
+        const float minSep = 0.6f * std::hypot(x1 - x0, y1 - y0);
         const float want = cfg_.robotR * 1.6f;
         auto sampleClear = [&](float& ox, float& oy, float z,
                                float fromX, float fromY, float sep) {

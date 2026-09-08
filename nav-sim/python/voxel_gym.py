@@ -23,8 +23,14 @@ import voxelenv
 # Held out from training on purpose. If a policy only works where it trained it
 # has learned four worlds rather than navigation, and the maze is the case that
 # motivated memory in the first place.
-TRAIN_WORLDS = ("forest", "maze")
-EVAL_WORLDS = ("forest", "maze")
+# FIVE STYLES, SO WHAT IS LEARNED IS AVOIDANCE AND NOT A WORLD.
+# Training on forest and maze alone lets a policy learn two modes and pick
+# between them from the first frame. The obstacle geometry differs completely
+# across these -- trunks, corridor walls, building blocks, thin poles and
+# overhead wires, and a trap with a single way out -- so a policy that handles
+# all five is doing something more general than one that handles two.
+TRAIN_WORLDS = ("forest", "maze", "corridor", "city", "road", "culdesac")
+EVAL_WORLDS = TRAIN_WORLDS
 
 
 class VoxelNavEnv(gym.Env):
@@ -39,7 +45,11 @@ class VoxelNavEnv(gym.Env):
         # The rollout horizon is per-world: the maze wants ~0.6 s and the forest
         # ~2.0 s, because the optimum tracks the size of the space rather than
         # the scene type. Training both at one value handicaps one of them.
-        self.horizons = horizons or {"maze": 0.6, "forest": 2.0}
+        # The rollout horizon tracks the SIZE OF THE SPACE, not the scene type:
+        # a maze wants ~0.6 s and open forest ~2.0 s, and training everything at
+        # one value handicaps whichever end it is not tuned for.
+        self.horizons = horizons or {"maze": 0.6, "corridor": 0.9, "city": 1.2,
+                                     "culdesac": 1.6, "forest": 2.0, "road": 2.0}
         self._cfg = voxelenv.EnvConfig()
         self._cfg.max_steps = max_steps
         self._cfg.truth_depth = truth_depth

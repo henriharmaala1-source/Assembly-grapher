@@ -95,6 +95,17 @@ struct EnvStep {
     float travelM = 0.f, distToGoalM = 0.f, minClearM = 0.f;
     int   collisions = 0, stoppedSteps = 0, steps = 0;
     bool  reachedGoal = false;
+
+    // WHERE THE REWARD ACTUALLY WENT, accumulated over the episode. A scalar
+    // return says a policy improved; it cannot say which term it improved, and
+    // when reward rises while the scorecard falls that is the only question
+    // worth asking. These are diagnostics -- nothing reads them back.
+    float rProgress = 0.f;   // closing distance to goal (telescopes to start-end)
+    float rCoverage = 0.f;   // newly visited cells
+    float rTime     = 0.f;   // per-step cost of existing
+    float rStop     = 0.f;   // standing still, or picking a masked action
+    float rClear    = 0.f;   // flying closer to things than clearTarget
+    float rTerminal = 0.f;   // the goal bonus or the collision penalty
 };
 
 class VoxelEnv {

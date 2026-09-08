@@ -52,7 +52,15 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readonly("collisions", &EnvStep::collisions)
         .def_readonly("stopped_steps", &EnvStep::stoppedSteps)
         .def_readonly("steps", &EnvStep::steps)
-        .def_readonly("reached_goal", &EnvStep::reachedGoal);
+        .def_readonly("reached_goal", &EnvStep::reachedGoal)
+        // Episode totals per reward term -- which term a policy actually
+        // improved, which a scalar return cannot say.
+        .def_readonly("r_progress", &EnvStep::rProgress)
+        .def_readonly("r_coverage", &EnvStep::rCoverage)
+        .def_readonly("r_time", &EnvStep::rTime)
+        .def_readonly("r_stop", &EnvStep::rStop)
+        .def_readonly("r_clear", &EnvStep::rClear)
+        .def_readonly("r_terminal", &EnvStep::rTerminal);
 
     py::class_<VoxelEnv>(m, "VoxelEnv")
         .def(py::init<const EnvConfig&>(), py::arg("config") = EnvConfig())

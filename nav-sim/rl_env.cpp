@@ -43,6 +43,9 @@ struct VoxelEnv::Impl {
     float goalE = 0, goalN = 0, goalU = 0;
     float startDist = 1.f, prevDist = 1.f;
     float travel = 0.f, minClear = 1e9f;
+    // Episode totals per reward term. EnvStep is built fresh every step, so
+    // these have to live with the episode or they accumulate nothing.
+    float aProgress = 0, aCoverage = 0, aTime = 0, aStop = 0, aClear = 0, aTerm = 0;
     int   steps = 0, stopped = 0, collisions = 0;
     // Visit counts, so a policy can know it has been here before. The maze
     // failure is a planner re-deriving the same local preference at a junction
@@ -79,6 +82,7 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     Impl& I = *im_;
     I.world = VoxelWorld();
     I.visits.clear();
+    I.aProgress = I.aCoverage = I.aTime = I.aStop = I.aClear = I.aTerm = 0.f;
     I.trail.clear();
     I.trail.push_back(cv::Point2f(I.px, I.py));
 
@@ -222,21 +226,26 @@ EnvStep VoxelEnv::step(int action) {
     const float novelty = (it == I.visits.end()) ? 1.f : 0.f;
     I.visits[key] = (it == I.visits.end()) ? 1.f : it->second + 1.f;
 
-    float r = cfg_.wProgress * progress
-            + cfg_.wCoverage * novelty
-            - cfg_.wTime * dt
-            - cfg_.wStop * (speed < 0.1f ? 1.f : 0.f)
-            - cfg_.wClear * std::max(0.f, cfg_.clearTarget - clr);
-    if (!legal) r -= cfg_.wStop;      // choosing a masked action is a hold
+    const float tProgress = cfg_.wProgress * progress;
+    const float tCoverage = cfg_.wCoverage * novelty;
+    const float tTime     = -cfg_.wTime * dt;
+    const float tStop     = -cfg_.wStop * (speed < 0.1f ? 1.f : 0.f)
+                            - (legal ? 0.f : cfg_.wStop);
+    const float tClear    = -cfg_.wClear * std::max(0.f, cfg_.clearTarget - clr);
+    float r = tProgress + tCoverage + tTime + tStop + tClear;
+    I.aProgress += tProgress; I.aCoverage += tCoverage; I.aTime += tTime;
+    I.aStop += tStop;         I.aClear += tClear;
 
     out.reachedGoal = dist <= cfg_.goalTolM;
-    if (out.reachedGoal) r += cfg_.rGoal;
-    if (hit)             r -= cfg_.rCollide;
+    if (out.reachedGoal) { r += cfg_.rGoal;     I.aTerm += cfg_.rGoal; }
+    if (hit)             { r -= cfg_.rCollide; I.aTerm -= cfg_.rCollide; }
 
     out.done      = out.reachedGoal || hit;
     out.truncated = !out.done && I.steps >= cfg_.maxSteps;
     out.reward = r;
     out.travelM = I.travel; out.distToGoalM = dist; out.minClearM = I.minClear;
+    out.rProgress = I.aProgress; out.rCoverage = I.aCoverage; out.rTime = I.aTime;
+    out.rStop = I.aStop; out.rClear = I.aClear; out.rTerminal = I.aTerm;
     out.collisions = I.collisions; out.stoppedSteps = I.stopped; out.steps = I.steps;
 
     buildObservation();

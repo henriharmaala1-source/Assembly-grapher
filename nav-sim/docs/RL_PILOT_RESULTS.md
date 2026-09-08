@@ -124,6 +124,53 @@ something every run" -- was mostly an artefact of spawning inside trees.
 Against the corrected baselines the learned policy is clearly behind in the
 forest: 22.3 m with three collisions against score's 46.4 m with none.
 
+## Where the reward actually goes
+
+EnvStep now carries the episode total of each reward term, because a scalar
+return says a policy improved and cannot say which term it improved. Pilot 2's
+checkpoint, evaluator's own settings:
+
+| world  | seed | outcome      | total | progress | coverage | clear | stop  | terminal |
+|--------|------|--------------|-------|----------|----------|-------|-------|----------|
+| forest | 101  | COLLIDED     |  +5.6 |   47.3   |   10.2   | -1.2  |   0   |  -50     |
+| forest | 102  | COLLIDED     |  -3.1 |   40.3   |    8.9   | -1.8  |   0   |  -50     |
+| forest | 103  | COLLIDED     | -34.9 |   13.1   |    3.6   | -1.4  |   0   |  -50     |
+| forest | 104  | out of steps |  +9.0 |   25.2   |    6.0   | -2.6  | -19.0 |    0     |
+| maze   | 101  | out of steps | +14.9 |   15.1   |    4.8   | -4.3  |   0   |    0     |
+| maze   | 103  | COLLIDED     | -48.7 |    1.4   |    1.3   | -1.3  |   0   |  -50     |
+
+**Forest 101 crashed and still scored +5.6. Forest 104 survived the whole
+episode and scored +9.0.** Crashing is worth almost as much as flying.
+
+The reward already does what it should in shape: reward closing distance,
+punish collisions hard. The fault is SCALE, and it is not scale-invariant
+across worlds.
+
+- Progress telescopes to (start distance - end distance), so it is banked
+  permanently as the aircraft approaches and is never given back.
+- The forest goal is 175 m from the spawn. Closing 50 m therefore pays +50,
+  which exactly cancels rCollide. **Beyond 50 m of progress, crashing is
+  strictly profitable.**
+- The maze goal is ~35 m away, so progress can never exceed ~35 and the -50
+  genuinely dominates. Maze collisions score -48.7; forest collisions score
+  +5.6.
+
+The same weights mean opposite things in the two worlds, which is why the
+policy behaves so differently in them. -50 is not "punish hard"; it is
+"punish hard in the maze and barely at all in the forest".
+
+Forest 104 shows the other half: -19.0 of stop penalty, so it spent roughly
+380 of 600 steps either standing still or selecting masked actions.
+
+### The fix this implies
+
+Make progress scale-free -- pay a fraction of the START distance rather than
+raw metres, so the most an episode can earn from progress is fixed and the
+collision penalty dominates in every world by construction. That is a change
+to the objective itself, so it is written down here rather than made
+unilaterally: every number in this document is measured against the current
+reward and would need re-measuring.
+
 ## What this says
 
 Reward went up by 76 points and the scorecard did not move. Either the reward

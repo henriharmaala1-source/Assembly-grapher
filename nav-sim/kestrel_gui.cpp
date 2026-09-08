@@ -245,6 +245,7 @@ struct Cfg {
 
     // watch
     int   panes = 4, paneIdx = 1, layout = 0;   // layout 0 both, 1 fpv, 2 top
+    bool  wDet = false;
     bool  wForest = true, wMaze = true;
 
     // evaluate
@@ -317,6 +318,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
             a.push_back("--px");     a.push_back(std::to_string(PANE_PX[c.paneIdx]));
             a.push_back("--layout"); a.push_back(LAYOUT_NAME[c.layout]);
+            if (c.wDet) a.push_back("--deterministic");
             a.push_back("--worlds");
             if (c.wForest) a.push_back("forest");
             if (c.wMaze)   a.push_back("maze");
@@ -371,7 +373,7 @@ enum {
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
-    ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
+    ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT, ID_W_DET,
     ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
     ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
     ID_E_PROGRESS, ID_E_NOVETO, ID_E_VARY,
@@ -605,6 +607,13 @@ void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   ID_W_LAYOUT, true});
     txt(im, "click to cycle", x + 440, 354, 0.42, DIM);
 
+    // Early in training an argmaxed policy picks one primitive whatever it
+    // sees, so every pane flies the same arc and the view looks frozen.
+    bs.push_back({cv::Rect(x, 360, 250, 34),
+                  c.wDet ? "argmax (judge a finished policy)"
+                         : "sample (see what training does)",
+                  ID_W_DET, c.wDet});
+
     txt(im, "PALE IS UNKNOWN, drawn as fog and never as air. Early in a forest a",
         x, 404, 0.42, DIM);
     txt(im, "pane is mostly empty and that is correct: at 0.25 m voxels the map",
@@ -780,6 +789,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_W_FOREST:  c.wForest = !c.wForest; break;
         case ID_W_MAZE:    c.wMaze = !c.wMaze; break;
         case ID_W_LAYOUT:  c.layout = (c.layout + 1) % 3; break;
+        case ID_W_DET:     c.wDet = !c.wDet; break;
 
         case ID_E_FOREST: c.eForest = !c.eForest; break;
         case ID_E_MAZE:   c.eMaze = !c.eMaze; break;

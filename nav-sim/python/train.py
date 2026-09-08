@@ -41,7 +41,10 @@ from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 
-from voxel_gym import TRAIN_WORLDS, make_env, newest_checkpoint
+import numpy as np
+
+from voxel_gym import (TRAIN_WORLDS, VoxelNavEnv, make_env,
+                       newest_checkpoint)
 
 
 def main() -> int:
@@ -91,6 +94,39 @@ def main() -> int:
                          "is what you want for a clean comparison and not what "
                          "you want after an interrupted overnight run.")
     args = ap.parse_args()
+
+    # ASKING FOR CUDA AND SILENTLY GETTING CPU is the failure this catches.
+    # requirements.txt installs plain stable-baselines3, which pulls the DEFAULT
+    # torch wheel -- and on Windows that wheel is CPU-only. SB3 then falls back
+    # without stopping, so a run started with --device cuda trains on the CPU
+    # and the only clue is a buried warning. Say it plainly instead.
+    if args.device == "cuda":
+        import torch
+        if not torch.cuda.is_available():
+            # TWO DIFFERENT FAULTS, and they need opposite fixes. A CPU-only
+            # wheel reports torch.version.cuda as None; a CUDA wheel that
+            # cannot see a device reports a version string and still fails,
+            # which is a driver or a machine problem, not a pip problem.
+            if torch.version.cuda is None:
+                why = ("this is the CPU-ONLY torch wheel, which is what plain "
+                       "`pip install torch` gives on Windows.\n"
+                       "        Install the CUDA build into THIS interpreter:\n"
+                       f'          "{sys.executable}" -m pip install '
+                       "--force-reinstall \\\n"
+                       "            --index-url "
+                       "https://download.pytorch.org/whl/cu124 torch")
+            else:
+                why = (f"this torch IS a CUDA build (cuda {torch.version.cuda}) "
+                       "but no device is visible.\n"
+                       "        That is a driver or a hardware problem, not a "
+                       "pip one -- check nvidia-smi.")
+            return (f"[train] --device cuda, but torch {torch.__version__} "
+                    "reports cuda.is_available() = False:\n"
+                    f"        {why}\n"
+                    "        Or run with --device cpu, which is what the "
+                    "bottleneck wants anyway: environment\n"
+                    "        steps are C++ on the CPU and the policy is small.")
+        print(f"[train] cuda: {torch.cuda.get_device_name(0)}", flush=True)
 
     os.makedirs(args.out, exist_ok=True)
     # SAY WHERE THE POLICY IS GOING, as an absolute path. --out is relative to
@@ -156,6 +192,55 @@ def main() -> int:
                 reset_num_timesteps=not resume_from)
     model.save(os.path.join(args.out, "final"))
     print(f"[train] final policy -> {os.path.join(out_abs, 'final.zip')}", flush=True)
+
+    # WHAT THE RUN ACTUALLY PRODUCED, in the columns the scorecard uses.
+    # A training log ends on a reward number, and reward has already disagreed
+    # with the scorecard once in this project -- a retrain scored higher on its
+    # objective and flew worse on every column. So the run reports what it can
+    # be judged on: per world, does it arrive, does it crash, how far does it
+    # get. Held-out seeds, and the same episode budget it trained with.
+    print("\n[train] scoring the final policy on held-out seeds "
+          f"(max {args.max_steps} steps)...", flush=True)
+    try:
+        from voxel_gym import EVAL_WORLDS
+        rows = []
+        for w in args.worlds if args.worlds else EVAL_WORLDS:
+            env = VoxelNavEnv(worlds=(w,), seeds=[901, 902, 903],
+                              max_steps=args.max_steps,
+                              truth_depth=not args.stereo,
+                              mask_unsafe=not args.no_veto,
+                              vary_goal=args.vary_goal)
+            trav, coll, reach, closest = [], 0, 0, []
+            for sd in (901, 902, 903):
+                obs, _ = env.reset(seed=sd)
+                info = {}
+                for _ in range(args.max_steps):
+                    m = env.action_masks()
+                    a, _st = model.predict(obs, action_masks=m, deterministic=True)
+                    obs, _r, done, trunc, info = env.step(int(a))
+                    if done or trunc:
+                        break
+                trav.append(info["travel_m"])
+                closest.append(info["min_dist_to_goal_m"])
+                coll += 1 if info["collisions"] else 0
+                reach += 1 if info["reached_goal"] else 0
+            rows.append((w, float(np.mean(trav)), coll, reach, float(np.min(closest))))
+
+        print(f"\n{'world':10} {'mean travel':>12} {'collisions':>11} "
+              f"{'goals':>6} {'best closest':>13}")
+        for w, mt, c, g, cl in rows:
+            print(f"{w:10} {mt:>11.1f} m {c:>8}/3 {g:>5}/3 {cl:>11.1f} m")
+        print(f"{'TOTAL':10} {np.mean([r[1] for r in rows]):>11.1f} m "
+              f"{sum(r[2] for r in rows):>8}/{3*len(rows)} "
+              f"{sum(r[3] for r in rows):>5}/{3*len(rows)}")
+        print("\nCompare against the classical planners on the same seeds:\n"
+              f"  kestrel evaluate --baselines --run {args.out} "
+              f"--max-steps {args.max_steps}"
+              + (" --vary-goal" if args.vary_goal else "")
+              + (" --stereo" if args.stereo else ""), flush=True)
+    except Exception as exc:                      # never lose a finished run
+        print(f"[train] end-of-run scoring failed ({exc}); the policy is saved "
+              "and `kestrel evaluate` will score it.", flush=True)
     dt = time.time() - t0
     print(f"trained {args.steps} steps in {dt/3600:.2f} h "
           f"({args.steps/max(1e-9, dt):.0f} steps/s, {args.workers} workers)")

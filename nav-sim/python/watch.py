@@ -68,6 +68,17 @@ def main():
     ap.add_argument("--max-steps", type=int, default=1500)
     ap.add_argument("--fps", type=float, default=20.0)
     ap.add_argument("--stereo", action="store_true")
+    ap.add_argument("--deterministic", action="store_true",
+                    help="argmax the policy instead of sampling it. OFF by "
+                         "default, and that matters early: an untrained network "
+                         "argmaxed picks the SAME primitive every step whatever "
+                         "it sees, so every pane flies one identical slow arc "
+                         "and the view looks frozen. Measured at 512 steps of "
+                         "training: 20.6 m of travel in forest, corridor, road "
+                         "and culdesac -- the same number in four different "
+                         "worlds. Sampling shows what training is actually "
+                         "doing; use --deterministic to judge a finished "
+                         "policy.")
     ap.add_argument("--no-veto", action="store_true",
                     help="watch a run with the safety mask off, to see the "
                          "collisions a --no-veto policy is learning from")
@@ -124,7 +135,7 @@ def main():
                 a = int(np.random.choice(legal)) if len(legal) else 0
             else:
                 a, _ = policy.predict(e.observation(), action_masks=mask,
-                                      deterministic=True)
+                                      deterministic=args.deterministic)
                 a = int(a)
             st = e.step(a)
             steps[i] += 1

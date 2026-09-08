@@ -62,6 +62,27 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readonly("r_clear", &EnvStep::rClear)
         .def_readonly("r_terminal", &EnvStep::rTerminal);
 
+    py::enum_<BaselinePolicy>(m, "Baseline")
+        .value("random", BaselinePolicy::Random)
+        .value("freeM",  BaselinePolicy::FreeM)
+        .value("goal",   BaselinePolicy::Goal)
+        .value("score",  BaselinePolicy::Score);
+
+    // The classical planners, from the SAME C++ that `kestrel bench` runs.
+    // Reimplementing them in python would let the two drift, and then the
+    // learned policy would be compared against something that is not the
+    // baseline anyone else measured.
+    m.def("choose_baseline", [](BaselinePolicy pol, py::array_t<float> obs,
+                                py::array_t<bool> mask, int n_prims, unsigned rng) {
+        std::vector<float> o(obs.data(), obs.data() + obs.size());
+        std::vector<uint8_t> mk(mask.size());
+        auto mv = mask.unchecked<1>();
+        for (py::ssize_t i = 0; i < mask.size(); ++i) mk[size_t(i)] = mv(i) ? 1 : 0;
+        const int a = chooseBaseline(pol, o, mk, n_prims, rng);
+        return py::make_tuple(a, rng);          // rng advanced, so callers stay pure
+    }, py::arg("policy"), py::arg("obs"), py::arg("mask"), py::arg("n_prims"),
+       py::arg("rng"));
+
     py::class_<VoxelEnv>(m, "VoxelEnv")
         .def(py::init<const EnvConfig&>(), py::arg("config") = EnvConfig())
         .def("reset", &VoxelEnv::reset, py::arg("world"), py::arg("seed"))

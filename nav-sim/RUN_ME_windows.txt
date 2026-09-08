@@ -250,11 +250,24 @@ columns as the classical ones, on seeds it never trained on.
                      policy hovering and a policy crossing a clearing look
                      identical.
 
-    kestrel evaluate  score a trained policy in the SAME columns `bench`
-                      reports the classical planners in, on seeds held out
-                      from training. Takes the newest checkpoint in
-                      runs\ppo_voxel unless you pass --model or --run.
-                      --random scores the floor instead.
+    kestrel evaluate --baselines
+                      THE COMPARISON, in one command and one table: the
+                      trained policy and all four classical planners, on the
+                      same held-out seeds, scored by the same code. The
+                      baselines come from the same C++ `bench` runs, so there
+                      is no second implementation to drift.
+
+                        kestrel evaluate --baselines --seeds 101 132
+                        kestrel evaluate --baselines --reward   (per-term too)
+
+                      Takes the newest checkpoint in runs\ppo_voxel unless
+                      you pass --model or --run.
+
+                      FOR A REAL COMPARISON USE MORE SEEDS. Four is enough to
+                      see a bug and not enough to rank planners; the pilot
+                      differences in docs\RL_PILOT_RESULTS.md are inside the
+                      noise of four seeds in places, and 30+ is cheap next to
+                      the training run it is judging.
 
 Or click `bench` / `train` / `evaluate` in the window and press RUN.
 

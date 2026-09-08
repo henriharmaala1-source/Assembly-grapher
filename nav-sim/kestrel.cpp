@@ -227,29 +227,14 @@ int cmdTrack(std::vector<std::string> args) {
 }
 
 // ------------------------------------------------------------------ baselines
-enum class Pol { Random, FreeM, Goal, Score };
-const char* polName(Pol p) {
-    switch (p) { case Pol::Random: return "random"; case Pol::FreeM: return "freeM";
-                 case Pol::Goal: return "goal"; default: return "score"; }
-}
-
-int choose(Pol pol, const std::vector<float>& obs, const std::vector<uint8_t>& mask,
-           int nPrims, unsigned& rng) {
-    const int F = VoxelEnv::obsFeaturesPerPrim();
-    std::vector<int> legal;
-    for (int i = 0; i < nPrims; ++i) if (mask[i]) legal.push_back(i);
-    if (legal.empty()) return 0;
-    if (pol == Pol::Random) { rng = rng * 1664525u + 1013904223u; return legal[rng % legal.size()]; }
-    int best = legal[0]; float bestV = -1e30f;
-    for (int i : legal) {
-        const float* o = &obs[size_t(i) * F];
-        float vv = (pol == Pol::FreeM) ? o[0]
-                 : (pol == Pol::Goal)  ? -o[3]
-                 : 0.7f * o[1] - 1.0f * o[3] - 0.25f * std::fabs(o[6])
-                   + 0.5f * o[2] - 2.0f * std::max(0.f, o[4]);
-        if (vv > bestV) { bestV = vv; best = i; }
-    }
-    return best;
+// The four classical planners now live in rl_env.hpp, so `bench` and the
+// python evaluator score against the SAME implementation rather than two that
+// are free to drift apart.
+using Pol = BaselinePolicy;
+inline const char* polName(Pol p) { return baselineName(p); }
+inline int choose(Pol pol, const std::vector<float>& obs,
+                  const std::vector<uint8_t>& mask, int nPrims, unsigned& rng) {
+    return chooseBaseline(pol, obs, mask, nPrims, rng);
 }
 
 int cmdBench(std::vector<std::string> args) {

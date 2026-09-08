@@ -76,6 +76,40 @@ VoxelEnv::VoxelEnv(const EnvConfig& c) : cfg_(c) {
 
 VoxelEnv::~VoxelEnv() = default;
 
+const char* baselineName(BaselinePolicy p) {
+    switch (p) {
+        case BaselinePolicy::Random: return "random";
+        case BaselinePolicy::FreeM:  return "freeM";
+        case BaselinePolicy::Goal:   return "goal";
+        default:                     return "score";
+    }
+}
+
+int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
+                   const std::vector<uint8_t>& mask, int nPrims, unsigned& rng) {
+    const int F = VoxelEnv::obsFeaturesPerPrim();
+    std::vector<int> legal;
+    for (int i = 0; i < nPrims && i < (int)mask.size(); ++i)
+        if (mask[i]) legal.push_back(i);
+    if (legal.empty()) return 0;
+    if (pol == BaselinePolicy::Random) {
+        rng = rng * 1664525u + 1013904223u;
+        return legal[rng % legal.size()];
+    }
+    int best = legal[0];
+    float bestV = -1e30f;
+    for (int i : legal) {
+        const float* o = &obs[size_t(i) * F];
+        const float vv =
+            (pol == BaselinePolicy::FreeM) ? o[0]
+          : (pol == BaselinePolicy::Goal)  ? -o[3]
+          : 0.7f * o[1] - 1.0f * o[3] - 0.25f * std::fabs(o[6])
+            + 0.5f * o[2] - 2.0f * std::max(0.f, o[4]);
+        if (vv > bestV) { bestV = vv; best = i; }
+    }
+    return best;
+}
+
 int VoxelEnv::nPrims() const { return int(im_->traj.librarySize()); }
 
 void VoxelEnv::reset(const std::string& world, unsigned seed) {

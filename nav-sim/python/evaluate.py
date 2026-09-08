@@ -35,17 +35,24 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
                             os.path.join(_here, ".."),
                             _here) if p]
 
+import voxelenv
 from voxel_gym import VoxelNavEnv, newest_checkpoint
 
 
-def run_episode(env, model, rng, world, seed):
+def run_episode(env, model, rng, world, seed, baseline=None):
     env.worlds = (world,)
     env.seeds = [seed]
     obs, _ = env.reset(seed=seed)
     info = {}
     while True:
         mask = env.action_masks()
-        if model is None:
+        if baseline is not None:
+            # Through the extension module, so this is the same code `kestrel
+            # bench` runs rather than a python re-implementation of it.
+            a, run_episode.rng = voxelenv.choose_baseline(
+                baseline, obs, mask, len(mask), run_episode.rng)
+            a = int(a)
+        elif model is None:
             legal = np.flatnonzero(mask)
             a = int(rng.choice(legal)) if len(legal) else 0
         else:
@@ -73,6 +80,12 @@ def main() -> int:
                     help="HELD OUT from training by default")
     ap.add_argument("--max-steps", type=int, default=1500)
     ap.add_argument("--stereo", action="store_true")
+    ap.add_argument("--baselines", action="store_true",
+                    help="score the four classical planners on the SAME seeds "
+                         "and print one comparison table. This is the whole "
+                         "point of the harness; running bench and evaluate "
+                         "separately gives two tables in two formats that have "
+                         "to be lined up by eye.")
     ap.add_argument("--reward", action="store_true",
                     help="also print where the reward went, per term. Produced "
                          "by THIS code path rather than a side script, because "
@@ -108,36 +121,50 @@ def main() -> int:
                       max_steps=args.max_steps, truth_depth=not args.stereo)
     rng = np.random.default_rng(0)
 
-    hdr = (f"{'world':<8} {'seed':<5} {'outcome':<16} {'travel':>9} "
+    hdr = (f"{'planner':<8} {'world':<8} {'seed':<5} {'outcome':<16} {'travel':>9} "
            f"{'end-dist':>9} {'minClr':>9} {'stopped':>8}")
     if args.reward:
         hdr += (f" {'total':>8} {'progress':>9} {'coverage':>9} {'clear':>7} "
                 f"{'stop':>7} {'terminal':>9}")
     print(hdr)
-    tot = hits = reach = 0
-    travels = []
-    for w in args.worlds:
-        for s in args.seeds:
-            outcome, i = run_episode(env, model, rng, w, s)
-            row = (f"{w:<8} {s:<5} {outcome:<16} {i['travel_m']:>9.1f} "
-                   f"{i['dist_to_goal_m']:>9.1f} {i['min_clear_m']:>9.2f} "
-                   f"{i['stopped_steps']:>8}")
-            if args.reward:
-                # NOT named tot: that is the run counter three lines below,
-                # and shadowing it printed "runs -91.7" in the summary.
-                rtot = (i["r_progress"] + i["r_coverage"] + i["r_time"]
-                        + i["r_stop"] + i["r_clear"] + i["r_terminal"])
-                row += (f" {rtot:>8.1f} {i['r_progress']:>9.1f} "
-                        f"{i['r_coverage']:>9.1f} {i['r_clear']:>7.1f} "
-                        f"{i['r_stop']:>7.1f} {i['r_terminal']:>9.1f}")
-            print(row)
-            tot += 1
-            hits += 1 if i["collisions"] else 0
-            reach += 1 if i["reached_goal"] else 0
-            travels.append(i["travel_m"])
+    # One scoring pass, reused for the policy and for each classical planner,
+    # so every row in the comparison is produced by identical code on identical
+    # seeds. That equality is the only thing that makes the table mean anything.
+    def score(label, mdl, baseline):
+        tot = hits = reach = 0
+        travels = []
+        for w in args.worlds:
+            for s in args.seeds:
+                run_episode.rng = 12345          # same stream for every planner
+                outcome, i = run_episode(env, mdl, rng, w, s, baseline)
+                row = (f"{label:<8} {w:<8} {s:<5} {outcome:<16} "
+                       f"{i['travel_m']:>9.1f} {i['dist_to_goal_m']:>9.1f} "
+                       f"{i['min_clear_m']:>9.2f} {i['stopped_steps']:>8}")
+                if args.reward:
+                    # NOT named tot: that is the run counter in this scope, and
+                    # shadowing it once printed "runs -91.7" in the summary.
+                    rtot = (i["r_progress"] + i["r_coverage"] + i["r_time"]
+                            + i["r_stop"] + i["r_clear"] + i["r_terminal"])
+                    row += (f" {rtot:>8.1f} {i['r_progress']:>9.1f} "
+                            f"{i['r_coverage']:>9.1f} {i['r_clear']:>7.1f} "
+                            f"{i['r_stop']:>7.1f} {i['r_terminal']:>9.1f}")
+                print(row, flush=True)
+                tot += 1
+                hits += 1 if i["collisions"] else 0
+                reach += 1 if i["reached_goal"] else 0
+                travels.append(i["travel_m"])
+        return label, tot, hits, reach, float(np.mean(travels)) if travels else 0.0
+
+    rows = [score("policy" if model else "random", model, None)]
+    if args.baselines:
+        for b in (voxelenv.Baseline.random, voxelenv.Baseline.freeM,
+                  voxelenv.Baseline.goal, voxelenv.Baseline.score):
+            rows.append(score(str(b).split(".")[-1], None, b))
+
     print("---")
-    print(f"runs {tot}   collisions {hits}   goals reached {reach}")
-    print(f"mean travel {np.mean(travels):.1f} m   median {np.median(travels):.1f} m")
+    print(f"{'planner':<8} {'runs':>5} {'collisions':>11} {'goals':>6} {'mean travel':>12}")
+    for label, tot, hits, reach, mt in rows:
+        print(f"{label:<8} {tot:>5} {hits:>11} {reach:>6} {mt:>11.1f} m")
     return 0
 
 

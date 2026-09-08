@@ -129,6 +129,18 @@ struct EnvStep {
     float rTerminal = 0.f;   // the goal bonus or the collision penalty
 };
 
+// The classical planners the learned one is measured against. ONE definition,
+// shared by `kestrel bench` and by the python evaluator through the extension
+// module -- a second copy in python would be free to drift, and a comparison
+// against a baseline that is not the baseline is worth nothing.
+enum class BaselinePolicy { Random = 0, FreeM, Goal, Score };
+const char* baselineName(BaselinePolicy p);
+
+// rng is advanced in place; only Random uses it. Returns a primitive index,
+// always one the mask admits when any is admitted.
+int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
+                   const std::vector<uint8_t>& mask, int nPrims, unsigned& rng);
+
 class VoxelEnv {
 public:
     explicit VoxelEnv(const EnvConfig& c = {});

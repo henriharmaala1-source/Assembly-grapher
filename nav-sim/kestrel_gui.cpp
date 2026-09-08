@@ -248,6 +248,7 @@ struct Cfg {
 
     // evaluate
     bool  eForest = true, eMaze = true, eRandom = false, eStereo = false;
+    bool  eBaselines = true, eReward = false;
     int   eSeed0 = 101, eSeed1 = 108, eSteps = 600;
 };
 
@@ -300,6 +301,8 @@ std::vector<std::string> buildArgs(const Cfg& c,
             for (int sd = c.eSeed0; sd <= c.eSeed1; ++sd) a.push_back(std::to_string(sd));
             a.push_back("--max-steps"); a.push_back(std::to_string(c.eSteps));
             if (c.eStereo) a.push_back("--stereo");
+            if (c.eBaselines) a.push_back("--baselines");
+            if (c.eReward) a.push_back("--reward");
             break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
@@ -356,7 +359,7 @@ enum {
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
     ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
-    ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO,
+    ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -613,9 +616,13 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x + 266, 420, 250, 36),
                   c.eStereo ? "Simulated stereo" : "Perfect depth",
                   ID_E_STEREO, c.eStereo});
-    txt(im, "score the floor too: a policy that cannot beat", x, 476, 0.42, DIM);
-    txt(im, "uniform-over-admissible has learned nothing.", x, 494, 0.42, DIM);
-    txt(im, "match whatever the policy trained on", x + 266, 476, 0.42, DIM);
+
+    bs.push_back({cv::Rect(x, 476, 250, 34),
+                  c.eBaselines ? "with the 4 baselines" : "the policy alone",
+                  ID_E_BASE, c.eBaselines});
+    bs.push_back({cv::Rect(x + 266, 476, 250, 34),
+                  c.eReward ? "show reward per term" : "scorecard only",
+                  ID_E_REWARD, c.eReward});
 
     txt(im, "It takes the newest checkpoint in runs/ppo_voxel unless you pass",
         x, 530, 0.42, DIM);
@@ -735,6 +742,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_E_STP:    c.eSteps = std::min(5000, c.eSteps + 100); break;
         case ID_E_RANDOM: c.eRandom = !c.eRandom; break;
         case ID_E_STEREO: c.eStereo = !c.eStereo; break;
+        case ID_E_BASE:   c.eBaselines = !c.eBaselines; break;
+        case ID_E_REWARD: c.eReward = !c.eReward; break;
         default: break;
     }
     (void)inputs; (void)recs;

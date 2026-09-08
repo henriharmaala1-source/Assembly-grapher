@@ -1,5 +1,54 @@
 # RL pilots
 
+# Trained from zero with no safety veto
+
+300 k steps, 3000-step episodes, the geometric veto OFF so the policy can
+select primitives that fly into things and must learn avoidance from the
+-collide penalty. Scored in the same world it trained in (veto off), forest.
+
+Training curves: episode length **69 -> ~1000 steps**. It began by crashing
+within seven seconds of flight and ended surviving roughly a hundred. Reward
+went -135 -> -319 -> -201: worse before better, which is what learning to
+stop dying looks like when dying is the cheap option early on.
+
+Per checkpoint, on TWO seeds:
+
+| checkpoint | collisions | mean travel |
+|------------|------------|-------------|
+| 49 k       | 2/2        |   8.5 m     |
+| 99 k       | 2/2        |   5.5 m     |
+| 149 k      | 2/2        |  10.5 m     |
+| 199 k      | 2/2        |  11.5 m     |
+| 249 k      | 2/2        |  10.4 m     |
+| 299 k      | **0/2**    | **184.4 m** |
+
+That last row looked like a phase transition. **On eight seeds it is not.**
+The same final checkpoint, eight seeds, everything veto-off:
+
+| planner            | collisions | mean travel |
+|--------------------|------------|-------------|
+| freeM              | **1/8**    | **280.0 m** |
+| policy (from zero) | 6/8        |  56.8 m     |
+| score (hand-tuned) | 8/8        |  36.9 m     |
+| goal               | 7/8        |  15.1 m     |
+| random             | 8/8        |  14.0 m     |
+
+What is real: the policy learned partial avoidance from nothing. It travels
+**four times further than random** and crashes less often than the hand-tuned
+planner, having started at 8.5 m and 2/2 crashes. Over 300 k steps that is
+genuine progress from a standing start.
+
+What is not real: reliable navigation. Six crashes in eight runs is not a
+planner anyone would fly, and the 0/2 that suggested otherwise was two lucky
+seeds. Two seeds cannot distinguish 0 % from 75 %.
+
+The result that matters most here is freeM's. **A four-line heuristic --
+steer where the map has confirmed the most free space -- crashes once in
+eight runs with no veto at all, and travels five times further than the
+learned policy.** Whatever the learned planner is eventually worth, it has
+not yet earned its place against that.
+
+
 # The learned policy does not survive a long run
 
 Scored at 3000 steps instead of 600, forest, same checkpoint (pilot 3, which

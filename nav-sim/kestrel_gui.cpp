@@ -246,10 +246,13 @@ struct Cfg {
     // watch
     int   panes = 4, paneIdx = 1, layout = 0;   // layout 0 both, 1 fpv, 2 top
     bool  wDet = false;
-    bool  wForest = true, wMaze = true;
+    bool  wForest = true, wMaze = true, wCity = true, wRoad = true;
+    bool  wCds = true, wCorr = true;
 
     // evaluate
-    bool  eForest = true, eMaze = true, eRandom = false, eStereo = false;
+    bool  eForest = true, eMaze = true, eCity = true, eRoad = true;
+    bool  eCds = true, eCorr = true;
+    bool  eRandom = false, eStereo = false;
     bool  eBaselines = true, eReward = false, eProgress = false, eNoVeto = false;
     bool  eVary = false;
     int   eSeed0 = 101, eSeed1 = 108, eSteps = 600;
@@ -308,6 +311,10 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--worlds");
             if (c.eForest) a.push_back("forest");
             if (c.eMaze)   a.push_back("maze");
+            if (c.eCorr)   a.push_back("corridor");
+            if (c.eCity)   a.push_back("city");
+            if (c.eRoad)   a.push_back("road");
+            if (c.eCds)    a.push_back("culdesac");
             a.push_back("--seeds");
             for (int sd = c.eSeed0; sd <= c.eSeed1; ++sd) a.push_back(std::to_string(sd));
             a.push_back("--max-steps"); a.push_back(std::to_string(c.eSteps));
@@ -326,6 +333,10 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--worlds");
             if (c.wForest) a.push_back("forest");
             if (c.wMaze)   a.push_back("maze");
+            if (c.wCorr)   a.push_back("corridor");
+            if (c.wCity)   a.push_back("city");
+            if (c.wRoad)   a.push_back("road");
+            if (c.wCds)    a.push_back("culdesac");
             break;
         case TRAIN:
             a.push_back("--workers"); a.push_back(std::to_string(c.workers));
@@ -352,8 +363,10 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
     if (c.mode == BENCH && !c.forest && !c.maze && !c.city && !c.road
         && !c.culdesac && !c.corridor)
         return "pick at least one world";
-    if (c.mode == WATCH && !c.wForest && !c.wMaze) return "pick at least one world";
-    if (c.mode == EVAL && !c.eForest && !c.eMaze) return "pick at least one world";
+    if (c.mode == WATCH && !c.wForest && !c.wMaze && !c.wCity && !c.wRoad
+        && !c.wCds && !c.wCorr) return "pick at least one world";
+    if (c.mode == EVAL && !c.eForest && !c.eMaze && !c.eCity && !c.eRoad
+        && !c.eCds && !c.eCorr) return "pick at least one world";
     if (c.mode == SIM && c.simSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     return "";
@@ -378,7 +391,9 @@ enum {
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT, ID_W_DET,
+    ID_W_CITY, ID_W_ROAD, ID_W_CDS, ID_W_CORR,
     ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
+    ID_E_CITY, ID_E_ROAD, ID_E_CDS, ID_E_CORR,
     ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
     ID_E_PROGRESS, ID_E_NOVETO, ID_E_VARY,
 };
@@ -430,12 +445,18 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
         x, 156, 0.44, DIM);
 
     txt(im, "worlds", x, 196, 0.5, DIM);
-    bs.push_back({cv::Rect(x, 208, 140, 36), "Forest", ID_BENCH_FOREST, c.forest});
-    bs.push_back({cv::Rect(x + 148, 208, 140, 36), "Maze", ID_BENCH_MAZE, c.maze});
-    bs.push_back({cv::Rect(x + 296, 208, 140, 36), "City", ID_BENCH_CITY, c.city});
-    bs.push_back({cv::Rect(x + 444, 208, 140, 36), "Road", ID_BENCH_ROAD, c.road});
-    bs.push_back({cv::Rect(x + 592, 208, 140, 36), "Cul-de-sac", ID_BENCH_CDS, c.culdesac});
-    bs.push_back({cv::Rect(x, 252, 140, 36), "Corridors", ID_BENCH_CORR, c.corridor});
+    bs.push_back({cv::Rect(x, 208, 118, 36), "Forest",
+                  ID_BENCH_FOREST, c.forest});
+    bs.push_back({cv::Rect(x + 126, 208, 118, 36), "Maze",
+                  ID_BENCH_MAZE, c.maze});
+    bs.push_back({cv::Rect(x + 252, 208, 118, 36), "City",
+                  ID_BENCH_CITY, c.city});
+    bs.push_back({cv::Rect(x + 378, 208, 118, 36), "Road",
+                  ID_BENCH_ROAD, c.road});
+    bs.push_back({cv::Rect(x + 504, 208, 118, 36), "Cul-de-sac",
+                  ID_BENCH_CDS, c.culdesac});
+    bs.push_back({cv::Rect(x + 630, 208, 118, 36), "Corridors",
+                  ID_BENCH_CORR, c.corridor});
 
     stepper(im, bs, x, 320, "first seed", std::to_string(c.seed0),
             ID_BENCH_S0M, ID_BENCH_S0P);
@@ -597,8 +618,18 @@ void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
         x, 156, 0.44, DIM);
 
     txt(im, "worlds", x, 196, 0.5, DIM);
-    bs.push_back({cv::Rect(x, 208, 140, 36), "Forest", ID_W_FOREST, c.wForest});
-    bs.push_back({cv::Rect(x + 156, 208, 140, 36), "Maze", ID_W_MAZE, c.wMaze});
+    bs.push_back({cv::Rect(x, 208, 118, 36), "Forest",
+                  ID_W_FOREST, c.wForest});
+    bs.push_back({cv::Rect(x + 126, 208, 118, 36), "Maze",
+                  ID_W_MAZE, c.wMaze});
+    bs.push_back({cv::Rect(x + 252, 208, 118, 36), "City",
+                  ID_W_CITY, c.wCity});
+    bs.push_back({cv::Rect(x + 378, 208, 118, 36), "Road",
+                  ID_W_ROAD, c.wRoad});
+    bs.push_back({cv::Rect(x + 504, 208, 118, 36), "Cul-de-sac",
+                  ID_W_CDS, c.wCds});
+    bs.push_back({cv::Rect(x + 630, 208, 118, 36), "Corridors",
+                  ID_W_CORR, c.wCorr});
 
     stepper(im, bs, x, 300, "panes", std::to_string(c.panes),
             ID_W_PANES_M, ID_W_PANES_P, "one episode each");
@@ -644,8 +675,18 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     txt(im, "nothing, so the scorecard is deliberately identical.", x, 176, 0.44, DIM);
 
     txt(im, "worlds", x, 216, 0.5, DIM);
-    bs.push_back({cv::Rect(x, 228, 140, 36), "Forest", ID_E_FOREST, c.eForest});
-    bs.push_back({cv::Rect(x + 156, 228, 140, 36), "Maze", ID_E_MAZE, c.eMaze});
+    bs.push_back({cv::Rect(x, 228, 118, 36), "Forest",
+                  ID_E_FOREST, c.eForest});
+    bs.push_back({cv::Rect(x + 126, 228, 118, 36), "Maze",
+                  ID_E_MAZE, c.eMaze});
+    bs.push_back({cv::Rect(x + 252, 228, 118, 36), "City",
+                  ID_E_CITY, c.eCity});
+    bs.push_back({cv::Rect(x + 378, 228, 118, 36), "Road",
+                  ID_E_ROAD, c.eRoad});
+    bs.push_back({cv::Rect(x + 504, 228, 118, 36), "Cul-de-sac",
+                  ID_E_CDS, c.eCds});
+    bs.push_back({cv::Rect(x + 630, 228, 118, 36), "Corridors",
+                  ID_E_CORR, c.eCorr});
 
     stepper(im, bs, x, 320, "first seed", std::to_string(c.eSeed0),
             ID_E_S0M, ID_E_S0P);
@@ -682,11 +723,6 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   c.eVary ? "varied journey" : "fixed journey",
                   ID_E_VARY, c.eVary});
 
-    // Fitted to the column: the toggle beside it starts at x+266.
-    txt(im, fit("newest checkpoint unless --model", 250, 0.42, false),
-        x, 566, 0.42, DIM);
-    txt(im, fit("results print in the console", 250, 0.42, false),
-        x, 584, 0.42, DIM);
 }
 
 // ------------------------------------------------------------------- compose
@@ -793,11 +829,19 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_W_PX_M:    c.paneIdx = std::max(0, c.paneIdx - 1); break;
         case ID_W_PX_P:    c.paneIdx = std::min(NPANE_PX - 1, c.paneIdx + 1); break;
         case ID_W_FOREST:  c.wForest = !c.wForest; break;
+        case ID_W_CITY:    c.wCity = !c.wCity; break;
+        case ID_W_ROAD:    c.wRoad = !c.wRoad; break;
+        case ID_W_CDS:     c.wCds = !c.wCds; break;
+        case ID_W_CORR:    c.wCorr = !c.wCorr; break;
         case ID_W_MAZE:    c.wMaze = !c.wMaze; break;
         case ID_W_LAYOUT:  c.layout = (c.layout + 1) % NLAYOUT; break;
         case ID_W_DET:     c.wDet = !c.wDet; break;
 
         case ID_E_FOREST: c.eForest = !c.eForest; break;
+        case ID_E_CITY:   c.eCity = !c.eCity; break;
+        case ID_E_ROAD:   c.eRoad = !c.eRoad; break;
+        case ID_E_CDS:    c.eCds = !c.eCds; break;
+        case ID_E_CORR:   c.eCorr = !c.eCorr; break;
         case ID_E_MAZE:   c.eMaze = !c.eMaze; break;
         case ID_E_S0M:    c.eSeed0 = std::max(1, c.eSeed0 - 1);
                           c.eSeed1 = std::max(c.eSeed0, c.eSeed1); break;
@@ -1044,6 +1088,16 @@ int check() {
                                     tag.c_str(), b.label.c_str());
                         ++bad;
                     }
+            // The command strip is drawn last and over everything, so a panel
+            // note that reaches it is clipped in half rather than overlapping
+            // visibly. It is a fixed rectangle; check against it too.
+            const cv::Rect strip(266, H - 96, W - 294, 44);
+            for (const cv::Rect& t : texts)
+                if ((t & strip).area() > 0 && t.y < H - 80) {
+                    std::printf("%s: text runs under the command strip\n",
+                                tag.c_str());
+                    ++bad;
+                }
             g_py = saved;
 
             for (size_t i = 0; i < bs.size(); ++i) {

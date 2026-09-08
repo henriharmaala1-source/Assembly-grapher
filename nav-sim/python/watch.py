@@ -30,7 +30,8 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
                             _here) if p]
 
 import voxelenv  # noqa: E402,F401
-from voxel_gym import newest_checkpoint  # noqa: E402
+from voxel_gym import (TRAIN_WORLDS, newest_checkpoint,  # noqa: E402
+                       newest_run_dir, run_root)
 
 try:
     import cv2
@@ -56,9 +57,11 @@ def label(img, text, colour=(235, 235, 240)):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default="runs/ppo_voxel",
-                    help="the trainer's --out directory")
-    ap.add_argument("--worlds", nargs="+", default=["forest", "maze"])
+    ap.add_argument("--run", default="",
+                    help="which run to follow. Default: the newest one in "
+                         "kestrel-runs on your Desktop -- the same place train "
+                         "writes to, so watching a live run needs no path.")
+    ap.add_argument("--worlds", nargs="+", default=list(TRAIN_WORLDS))
     ap.add_argument("--panes", type=int, default=4)
     ap.add_argument("--px", type=int, default=320, help="pane width")
     ap.add_argument("--layout", default="all",
@@ -93,6 +96,14 @@ def main():
                          "ssh and in CI -- the same reason `gui --shot` exists.")
     ap.add_argument("--shot-steps", type=int, default=120)
     args = ap.parse_args()
+
+    # READ FROM WHERE TRAINING WRITES. This defaulted to runs/ppo_voxel while
+    # train had moved to a dated folder on the Desktop, so watch followed a
+    # directory nothing was writing to and showed the random-legal baseline for
+    # ever, looking like a policy that never improved.
+    if not args.run:
+        args.run = newest_run_dir(run_root()) or run_root()
+        print(f"[watch] run: {args.run}", flush=True)
 
     cfg = voxelenv.EnvConfig()
     cfg.max_steps = args.max_steps

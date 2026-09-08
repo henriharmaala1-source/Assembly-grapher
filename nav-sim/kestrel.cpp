@@ -385,7 +385,17 @@ int cmdTrain(const std::string& dir, const std::vector<std::string>& rest) {
             kpy::report(pys, dir);
             return 3;
         }
-        std::printf("[kestrel] the RL stack is installed. Starting training.\n");
+        // INSTALL AND STOP. This used to fall through into training, so the
+        // window's "Install the RL stack" button silently launched a ten
+        // million step run -- seven hours of it -- with default settings the
+        // caller never chose. A button does what its label says or it is a
+        // trap.
+        std::printf("[kestrel] the RL stack is installed into\n"
+                    "          %s\n"
+                    "          Nothing is training yet. Run `kestrel train` (or "
+                    "press RUN on the train panel)\n          when you have the "
+                    "settings you want.\n", py->exe.c_str());
+        return 0;
     }
 
     if (!py->rl) {

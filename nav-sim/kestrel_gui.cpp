@@ -248,7 +248,7 @@ struct Cfg {
 
     // evaluate
     bool  eForest = true, eMaze = true, eRandom = false, eStereo = false;
-    bool  eBaselines = true, eReward = false;
+    bool  eBaselines = true, eReward = false, eProgress = false;
     int   eSeed0 = 101, eSeed1 = 108, eSteps = 600;
 };
 
@@ -303,6 +303,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.eStereo) a.push_back("--stereo");
             if (c.eBaselines) a.push_back("--baselines");
             if (c.eReward) a.push_back("--reward");
+            if (c.eProgress) a.push_back("--progress");
             break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
@@ -361,6 +362,7 @@ enum {
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT,
     ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
     ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
+    ID_E_PROGRESS,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -630,10 +632,15 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   c.eReward ? "show reward per term" : "scorecard only",
                   ID_E_REWARD, c.eReward});
 
+    bs.push_back({cv::Rect(x, 516, 516, 32),
+                  c.eProgress ? "EVERY checkpoint, in training order"
+                              : "the newest checkpoint only",
+                  ID_E_PROGRESS, c.eProgress});
+
     txt(im, "It takes the newest checkpoint in runs/ppo_voxel unless you pass",
-        x, 530, 0.42, DIM);
+        x, 566, 0.42, DIM);
     txt(im, "--model. Results print in the console, not in this window.",
-        x, 548, 0.42, DIM);
+        x, 584, 0.42, DIM);
 }
 
 // ------------------------------------------------------------------- compose
@@ -752,6 +759,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_E_STEREO: c.eStereo = !c.eStereo; break;
         case ID_E_BASE:   c.eBaselines = !c.eBaselines; break;
         case ID_E_REWARD: c.eReward = !c.eReward; break;
+        case ID_E_PROGRESS: c.eProgress = !c.eProgress; break;
         default: break;
     }
     (void)inputs; (void)recs;

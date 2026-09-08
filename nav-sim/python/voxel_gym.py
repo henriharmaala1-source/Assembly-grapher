@@ -134,3 +134,18 @@ def newest_checkpoint(run_dir):
         if os.path.exists(f):
             return f, 0
     return best, max(best_n, 0)
+
+
+def all_checkpoints(run_dir):
+    """Every ppo_<n>_steps.zip in training order, as (steps, path).
+
+    Ordered by the step count in the NAME, like newest_checkpoint: a
+    progression plotted in mtime order would reorder itself the moment a
+    directory is copied.
+    """
+    out = []
+    for f in glob.glob(os.path.join(run_dir, "ppo_*_steps.zip")):
+        m = re.search(r"_(\d+)_steps\.zip$", f)
+        if m:
+            out.append((int(m.group(1)), f))
+    return sorted(out)

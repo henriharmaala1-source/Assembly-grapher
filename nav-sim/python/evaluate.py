@@ -36,7 +36,7 @@ sys.path[:0] = [p for p in (os.environ.get("KESTREL_MODULE_DIR"),
                             _here) if p]
 
 import voxelenv
-from voxel_gym import VoxelNavEnv, newest_checkpoint
+from voxel_gym import VoxelNavEnv, newest_checkpoint, all_checkpoints
 
 
 def run_episode(env, model, rng, world, seed, baseline=None):
@@ -83,6 +83,12 @@ def main() -> int:
                          "at 1500 measures who is fastest over the first half "
                          "of the journey, not who arrives")
     ap.add_argument("--stereo", action="store_true")
+    ap.add_argument("--progress", action="store_true",
+                    help="score EVERY checkpoint in --run, in training order, "
+                         "and print one row each. Answers 'is it getting "
+                         "better' with the scorecard rather than with the "
+                         "reward curve -- which measures a different thing and "
+                         "has already disagreed with it once here.")
     ap.add_argument("--baselines", action="store_true",
                     help="score the four classical planners on the SAME seeds "
                          "and print one comparison table. This is the whole "
@@ -102,7 +108,7 @@ def main() -> int:
     # was scoring a trained policy -- the two print identical tables. Anything
     # driving this from a menu would have reported the floor as the result.
     model = None
-    if not args.random:
+    if not args.random and not args.progress:
         path = args.model
         if not path:
             path, trained = newest_checkpoint(args.run)
@@ -159,7 +165,17 @@ def main() -> int:
                 travels.append(i["travel_m"])
         return label, tot, hits, reach, float(np.mean(travels)) if travels else 0.0
 
-    rows = [score("policy" if model else "random", model, None)]
+    if args.progress:
+        cks = all_checkpoints(args.run)
+        if not cks:
+            return f"[evaluate] --progress: no ppo_*_steps.zip in {os.path.abspath(args.run)}"
+        from sb3_contrib import MaskablePPO
+        rows = []
+        for n, path in cks:
+            print(f"--- {os.path.basename(path)} ---", flush=True)
+            rows.append(score(f"{n//1000}k", MaskablePPO.load(path, device="cpu"), None))
+    else:
+        rows = [score("policy" if model else "random", model, None)]
     if args.baselines:
         for b in (voxelenv.Baseline.random, voxelenv.Baseline.freeM,
                   voxelenv.Baseline.goal, voxelenv.Baseline.score):

@@ -225,6 +225,28 @@ const int NTRAIN_STEPS = int(sizeof TRAIN_STEPS / sizeof *TRAIN_STEPS);
 const int SAVE_EVERY[] = {10000, 25000, 50000, 100000, 250000};
 const int NSAVE_EVERY = int(sizeof SAVE_EVERY / sizeof *SAVE_EVERY);
 
+// HOW MUCH RANDOM STUFF THE POLICY TRIES -- the PPO entropy bonus at the start
+// of the run, decaying to a tenth of it over the anneal. 0 turns exploration
+// pressure off. The old fixed value was 0.01 and never moved; 0.02 is the new
+// default because a 210-way action space over six worlds is a lot to search.
+const float EXPLORE[] = {0.f, 0.005f, 0.01f, 0.02f, 0.04f, 0.08f, 0.15f};
+const int NEXPLORE = int(sizeof EXPLORE / sizeof *EXPLORE);
+// Steps over which the learning rate and explore fall to a tenth. -1 is auto
+// (the run length, or 20 M for a forever run); 0 holds both constant, which is
+// what the 15 M run that degraded after 14 M did.
+const int ANNEAL[] = {-1, 0, 1000000, 2000000, 5000000, 10000000, 20000000,
+                      50000000, 100000000};
+const int NANNEAL = int(sizeof ANNEAL / sizeof *ANNEAL);
+// How far one update is allowed to move the policy before the rest of it is
+// abandoned. 0 = off, which is what PPO does without it.
+const float TARGET_KL[] = {0.f, 0.01f, 0.02f, 0.03f, 0.05f, 0.1f};
+const int NTARGET_KL = int(sizeof TARGET_KL / sizeof *TARGET_KL);
+
+std::string trimNum(float v) {
+    char b[32]; std::snprintf(b, sizeof b, "%g", v);
+    return std::string(b);
+}
+
 struct Cfg {
     int mode = TRACK;
 
@@ -247,6 +269,10 @@ struct Cfg {
 
     // train
     int   workers = 8, stepsIdx = 8, epLen = 3000, saveIdx = 2;
+    // Defaults matching train.py: explore 0.02, anneal auto, target-kl 0.02,
+    // clearance scaled with world size.
+    int   exploreIdx = 3, annealIdx = 0, klIdx = 2;
+    bool  rawClear = false;
     bool  trainStereo = true;
     bool  cuda = false;
     bool  resume = false;
@@ -364,6 +390,17 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.noVeto) a.push_back("--no-veto");
             a.push_back("--max-steps"); a.push_back(std::to_string(c.epLen));
             if (c.varyGoal) a.push_back("--vary-goal");
+            a.push_back("--explore");
+            a.push_back(trimNum(EXPLORE[c.exploreIdx]));
+            // -1 is train.py's own default, so leaving it out keeps the printed
+            // command as short as what a person would actually type.
+            if (ANNEAL[c.annealIdx] >= 0) {
+                a.push_back("--anneal");
+                a.push_back(std::to_string(ANNEAL[c.annealIdx]));
+            }
+            a.push_back("--target-kl");
+            a.push_back(trimNum(TARGET_KL[c.klIdx]));
+            if (c.rawClear) a.push_back("--raw-clear");
             break;
     }
     return a;
@@ -406,6 +443,8 @@ enum {
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY, ID_TRAIN_SVM, ID_TRAIN_SVP,
+    ID_TRAIN_EXM, ID_TRAIN_EXP, ID_TRAIN_ANM, ID_TRAIN_ANP, ID_TRAIN_KLM,
+    ID_TRAIN_KLP, ID_TRAIN_RAWCLR,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT, ID_W_DET,
     ID_W_CITY, ID_W_ROAD, ID_W_CDS, ID_W_CORR,
@@ -540,56 +579,86 @@ void panelSim(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
 
 void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
-    txt(im, "RL path-policy training", x, 112, 0.62, INK, 1);
+    txt(im, "RL path-policy training", x, 106, 0.62, INK, 1);
     txt(im, "PyTorch and stable-baselines3 driving the C++ environment. This is",
-        x, 136, 0.44, DIM);
+        x, 128, 0.44, DIM);
     txt(im, "the one command that runs python -- see the note at the bottom.",
-        x, 156, 0.44, DIM);
+        x, 146, 0.44, DIM);
 
-    stepper(im, bs, x, 220, "workers", std::to_string(c.workers),
-            ID_TRAIN_WM, ID_TRAIN_WP, "parallel environments");
-    stepper(im, bs, x + 190, 220, "steps", humanSteps(TRAIN_STEPS[c.stepsIdx]),
+    // ROW ONE: how big the run is.
+    stepper(im, bs, x, 182, "workers", std::to_string(c.workers),
+            ID_TRAIN_WM, ID_TRAIN_WP, "parallel envs");
+    stepper(im, bs, x + 190, 182, "steps", humanSteps(TRAIN_STEPS[c.stepsIdx]),
             ID_TRAIN_SM, ID_TRAIN_SP, "checkpointed as it goes");
     // THE GOAL HAS TO FIT INSIDE AN EPISODE. At 1500 it did not: the forest
     // goal needs ~2500 steps, so every episode was cut off before arrival was
     // possible and the goal bonus was unreachable.
-    stepper(im, bs, x + 380, 220, "steps/episode", std::to_string(c.epLen),
-            ID_TRAIN_EPM, ID_TRAIN_EPP, "the goal must fit in this");
-    stepper(im, bs, x + 570, 220, "save every",
+    stepper(im, bs, x + 380, 182, "steps/episode", std::to_string(c.epLen),
+            ID_TRAIN_EPM, ID_TRAIN_EPP, "the goal must fit here");
+    stepper(im, bs, x + 570, 182, "save every",
             humanSteps(SAVE_EVERY[c.saveIdx]),
             ID_TRAIN_SVM, ID_TRAIN_SVP, "checkpoint interval");
 
-    bs.push_back({cv::Rect(x, 320, 250, 38),
+    // ROW TWO: how it learns. These three exist because a 15 M-step run peaked
+    // around 14.3 M and then went backwards -- collisions 0.169 -> 0.233, goals
+    // 0.700 -> 0.622 -- with a learning rate and an entropy bonus that were
+    // hard constants for the whole run and nothing bounding an update.
+    stepper(im, bs, x, 268, "explore", trimNum(EXPLORE[c.exploreIdx]),
+            ID_TRAIN_EXM, ID_TRAIN_EXP, "how random it stays");
+    stepper(im, bs, x + 190, 268, "anneal",
+            ANNEAL[c.annealIdx] < 0 ? std::string("auto")
+          : ANNEAL[c.annealIdx] == 0 ? std::string("off")
+          : humanSteps(ANNEAL[c.annealIdx]),
+            ID_TRAIN_ANM, ID_TRAIN_ANP, "lr + explore decay");
+    stepper(im, bs, x + 380, 268, "target-kl", trimNum(TARGET_KL[c.klIdx]),
+            ID_TRAIN_KLM, ID_TRAIN_KLP, "cap on one update");
+
+    // The fourth column of row two is the only free space left on this panel,
+    // and it is 212 px wide -- so these lines are short by necessity, not by
+    // preference. gui --check now fails anything that runs past the edge.
+    txt(im, "stereo is the honest", x + 570, 262, 0.42, DIM);
+    txt(im, "setting, ~3x slower.", x + 570, 280, 0.42, DIM);
+    txt(im, "cuda WILL look idle:", x + 570, 302, 0.42, DIM);
+    txt(im, "env steps are C++ on", x + 570, 320, 0.42, DIM);
+    txt(im, "the CPU.", x + 570, 338, 0.42, DIM);
+
+    bs.push_back({cv::Rect(x, 356, 250, 38),
                   c.trainStereo ? "Simulated stereo" : "Perfect depth",
                   ID_TRAIN_STEREO, c.trainStereo});
-    // Kept inside its column: the veto button sits at x+266 and the long form
-    // of this line ran under it.
-    txt(im, "the honest setting, ~3x slower", x, 376, 0.42, DIM);
-
-    bs.push_back({cv::Rect(x + 532, 320, 180, 36), c.cuda ? "device: cuda" : "device: cpu",
-                  ID_TRAIN_CUDA, c.cuda});
     // WITHOUT THIS A RUN ALWAYS STARTS FROM ZERO. The trainer checkpoints as it
     // goes but had no way to read one back, so an interrupted overnight run
     // could only be started again from scratch with its weights sitting on disk.
-    bs.push_back({cv::Rect(x + 266, 320, 250, 38),
+    bs.push_back({cv::Rect(x + 266, 356, 250, 38),
                   c.resume ? "resume from newest" : "start from scratch",
                   ID_TRAIN_RESUME, c.resume});
+    bs.push_back({cv::Rect(x + 532, 356, 210, 38),
+                  c.cuda ? "device: cuda" : "device: cpu",
+                  ID_TRAIN_CUDA, c.cuda});
+
     // THE SAFETY MASK, AS A SWITCH. On, the policy chooses among primitives the
     // geometry already approved and cannot collide by choosing -- that is the
     // architecture's safety argument. Off, it can fly into things and must
-    // learn avoidance from the -50: a measurement of what the veto is worth,
-    // not a way to fly.
-    bs.push_back({cv::Rect(x + 266, 362, 250, 36),
+    // learn avoidance from the collision terminal: a measurement of what the
+    // veto is worth, not a way to fly.
+    bs.push_back({cv::Rect(x, 400, 250, 36),
                   c.noVeto ? "NO veto: learn by crashing" : "geometric veto on",
                   ID_TRAIN_NOVETO, c.noVeto});
     // Every episode used one fixed journey, so a compass heading scored as
     // well as navigating. This samples start and goal per episode.
-    bs.push_back({cv::Rect(x, 404, 250, 36),
+    bs.push_back({cv::Rect(x + 266, 400, 250, 36),
                   c.varyGoal ? "varied start and goal" : "one fixed journey",
                   ID_TRAIN_VARY, c.varyGoal});
-    txt(im, "The GPU WILL look idle: the bottleneck is environment steps,", x + 266, 420, 0.42, DIM);
-    txt(im, "which are C++ on the CPU. cuda is here so you can measure", x + 266, 438, 0.42, DIM);
-    txt(im, "that rather than take the claim on trust.", x + 266, 456, 0.42, DIM);
+    // The near-miss penalty is the only avoidance signal that arrives BEFORE
+    // contact. Left in absolute units it was ~5x weaker against progress in a
+    // tight world than an open one -- the wrong way round.
+    bs.push_back({cv::Rect(x + 532, 400, 210, 36),
+                  c.rawClear ? "raw clearance" : "scaled clearance",
+                  ID_TRAIN_RAWCLR, !c.rawClear});
+
+    txt(im, "explore is the entropy bonus -- how much random stuff it tries. "
+            "High early, a tenth of it after the anneal.", x, 456, 0.42, DIM);
+    txt(im, "Raise it if a run plateaus with a world unsolved; anneal off holds "
+            "both constant, which is what the last run did.", x, 474, 0.42, DIM);
 
     // WHICH INTERPRETER, by absolute path. "python" is ambiguous on a machine
     // with several, and installing into the wrong one SUCCEEDS -- leaving the
@@ -600,32 +669,32 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // Fitting to it rather than trusting the text to be short is the fix for a
     // status line that ran straight under "Install the RL stack".
     const int col = 250;
-    txt(im, "python", x, 480, 0.5, DIM);
+    txt(im, "python", x, 504, 0.5, DIM);
     if (!g_py.probed) {
-        txt(im, fit("not checked yet", col, 0.44, false), x, 508, 0.44, DIM);
+        txt(im, fit("not checked yet", col, 0.44, false), x, 526, 0.44, DIM);
     } else if (b && b->rl) {
-        txt(im, fit("ready: " + b->exe, col, 0.44), x, 508, 0.44, INK);
+        txt(im, fit("ready: " + b->exe, col, 0.44), x, 526, 0.44, INK);
         txt(im, fit("CPython " + std::to_string(b->major) + "." +
                     std::to_string(b->minor) + " loads voxelenv", col, 0.42, false),
-        x, 528, 0.42, DIM);
+        x, 544, 0.42, DIM);
     } else if (b) {
-        txt(im, fit("needs the RL stack: " + b->exe, col, 0.44), x, 508, 0.44, INK);
-        txt(im, fit("Install targets THAT interpreter,", col, 0.42, false), x, 528, 0.42, DIM);
-        txt(im, fit("not whatever 'python' means.", col, 0.42, false), x, 546, 0.42, DIM);
+        txt(im, fit("needs the RL stack: " + b->exe, col, 0.44), x, 522, 0.44, INK);
+        txt(im, fit("Install targets THAT interpreter,", col, 0.42, false), x, 540, 0.42, DIM);
+        txt(im, fit("not whatever 'python' means.", col, 0.42, false), x, 558, 0.42, DIM);
     } else if (!g_py.abi.empty()) {
         txt(im, fit("none can load voxelenv (needs " + g_py.abi + ")", col, 0.44, false),
-            x, 508, 0.44, INK);
+            x, 526, 0.44, INK);
         txt(im, fit("a version mismatch, not a missing file", col, 0.42, false),
-            x, 528, 0.42, DIM);
+            x, 544, 0.42, DIM);
     } else {
-        txt(im, fit("voxelenv is not beside this exe", col, 0.44, false), x, 508, 0.44, INK);
-        txt(im, fit("the C++ env the trainer steps", col, 0.42, false), x, 528, 0.42, DIM);
+        txt(im, fit("voxelenv is not beside this exe", col, 0.44, false), x, 526, 0.44, INK);
+        txt(im, fit("the C++ env the trainer steps", col, 0.42, false), x, 544, 0.42, DIM);
     }
-    bs.push_back({cv::Rect(x + 266, 480, 230, 38), "Install the RL stack",
+    bs.push_back({cv::Rect(x + 266, 494, 230, 34), "Install the RL stack",
                   ID_TRAIN_INSTALL, b && !b->rl});
     // The full listing, for when the one line above is not enough -- which is
     // whenever the machine has several pythons and the wrong one is winning.
-    bs.push_back({cv::Rect(x + 266, 524, 230, 32), "List every python",
+    bs.push_back({cv::Rect(x + 266, 532, 230, 30), "List every python",
                   ID_TRAIN_PYTHONS, false});
 }
 
@@ -845,6 +914,13 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_VARY:   c.varyGoal = !c.varyGoal; break;
         case ID_TRAIN_SVM:    c.saveIdx = std::max(0, c.saveIdx - 1); break;
         case ID_TRAIN_SVP:    c.saveIdx = std::min(NSAVE_EVERY - 1, c.saveIdx + 1); break;
+        case ID_TRAIN_EXM:    c.exploreIdx = std::max(0, c.exploreIdx - 1); break;
+        case ID_TRAIN_EXP:    c.exploreIdx = std::min(NEXPLORE - 1, c.exploreIdx + 1); break;
+        case ID_TRAIN_ANM:    c.annealIdx = std::max(0, c.annealIdx - 1); break;
+        case ID_TRAIN_ANP:    c.annealIdx = std::min(NANNEAL - 1, c.annealIdx + 1); break;
+        case ID_TRAIN_KLM:    c.klIdx = std::max(0, c.klIdx - 1); break;
+        case ID_TRAIN_KLP:    c.klIdx = std::min(NTARGET_KL - 1, c.klIdx + 1); break;
+        case ID_TRAIN_RAWCLR: c.rawClear = !c.rawClear; break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;
@@ -1108,6 +1184,31 @@ int check() {
                     if ((t & b.r).area() > 0) {
                         std::printf("%s: text overlaps button '%s'\n",
                                     tag.c_str(), b.label.c_str());
+                        ++bad;
+                    }
+            // TEXT THAT LEAVES THE WINDOW. Buttons were checked against the
+            // canvas from the start and text was not, and the difference
+            // showed the moment a panel got a fourth column: three note lines
+            // written at x+570 simply ran off the right-hand edge, and the
+            // check passed them clean because they overlapped nothing.
+            // Nothing is drawn there to overlap -- that is the whole problem.
+            for (const cv::Rect& t : texts)
+                if ((t & cv::Rect(0, 0, im.cols, im.rows)) != t) {
+                    std::printf("%s: text runs off the canvas at (%d,%d %dx%d)\n",
+                                tag.c_str(), t.x, t.y, t.width, t.height);
+                    ++bad;
+                }
+            // TEXT ON TOP OF TEXT. The same fourth column put two stepper hints
+            // into each other -- "how much random stuff it tries" ran straight
+            // through "both come down over this" -- and neither is a button, so
+            // the button test above could not see it either. Two labels in one
+            // place are less readable than one.
+            for (size_t i = 0; i < texts.size(); ++i)
+                for (size_t j = i + 1; j < texts.size(); ++j)
+                    if ((texts[i] & texts[j]).area() > 0) {
+                        std::printf("%s: text overlaps text at (%d,%d) / (%d,%d)\n",
+                                    tag.c_str(), texts[i].x, texts[i].y,
+                                    texts[j].x, texts[j].y);
                         ++bad;
                     }
             // The command strip is drawn last and over everything, so a panel

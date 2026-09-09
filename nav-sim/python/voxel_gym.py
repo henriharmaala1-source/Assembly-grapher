@@ -38,7 +38,7 @@ class VoxelNavEnv(gym.Env):
 
     def __init__(self, worlds=TRAIN_WORLDS, seeds=range(1, 65), max_steps=1500,
                  truth_depth=False, cam=(160, 120), horizons=None,
-                 mask_unsafe=True, vary_goal=False):
+                 mask_unsafe=True, vary_goal=False, scale_clear=True):
         super().__init__()
         self.worlds = tuple(worlds)
         self.seeds = list(seeds)
@@ -61,6 +61,9 @@ class VoxelNavEnv(gym.Env):
         self._cfg.mask_unsafe = mask_unsafe
         # Sample start and goal per episode; see EnvConfig::varyGoal.
         self._cfg.vary_goal = vary_goal
+        # The near-miss penalty scaled like progress, so avoidance pressure is
+        # the same relative to progress in a 35 m maze as in a 340 m city.
+        self._cfg.scale_clear = scale_clear
         self._env = voxelenv.VoxelEnv(self._cfg)
 
         n = self._env.n_prims
@@ -97,7 +100,10 @@ class VoxelNavEnv(gym.Env):
         self._env = voxelenv.VoxelEnv(self._cfg)
         self._env.reset(world, s)
         self._last = None
-        return self._env.observation(), {"world": world, "seed": s}
+        return (self._env.observation(),
+                {"world": world, "seed": s,
+                 "start_dist_m": self._env.start_dist_m})
+
 
     def step(self, action):
         st = self._env.step(int(action))
@@ -119,6 +125,47 @@ class VoxelNavEnv(gym.Env):
             "r_clear": st.r_clear, "r_terminal": st.r_terminal,
         }
         return self._env.observation(), float(st.reward), bool(st.done), bool(st.truncated), info
+
+
+# WHAT ONE EPISODE CAN ACTUALLY COVER. dt is 0.1 s and vMax 3 m/s, so the
+# ceiling is 0.3 m per step -- but nothing flies at vMax: speed is one of the
+# three primitive dimensions and a planner spends most of it turning. Measured
+# over 3000-step episodes with the best classical planner, path length came out
+# at 260-278 m in every one of the six worlds. It saturates, and the number is
+# the same everywhere, so it is a property of the vehicle rather than of a map:
+#
+#   world      travel in 3000 steps (freeM, 6 seeds)
+#   city       96.8 / 126.5 / 260.7 / 268.1 / 278.4
+#   road       153.0 / 247.2 / 253.9 / 258.1 / 259.6 / 261.8
+#   culdesac   259.9 / 262.7 / 264.8 / 264.8 / 267.4 / 268.6
+#
+# 0.09 m/step is the low end of that, used deliberately: a warning that fires
+# on a journey a policy could just about make is worth less than one that only
+# fires on a journey nothing can.
+CRUISE_M_PER_STEP = 0.09
+
+
+def journey_fit(worlds, max_steps, seeds=(1, 2, 3), **kw):
+    """Per world: the nominal journey, and the steps it needs at cruise.
+
+    A GOAL BEYOND THE EPISODE BUDGET IS INVISIBLE AND EXPENSIVE. It has
+    happened twice in this project -- the 1500-step cap that put the forest
+    goal out of reach, and a city goal 367.7 m away when an episode covers
+    ~270 m -- and both times it read as "the policy cannot learn this world"
+    for millions of steps rather than as "this episode cannot contain this
+    journey". It costs one reset per world to ask.
+    """
+    rows = []
+    for w in worlds:
+        d = []
+        for sd in seeds:
+            env = VoxelNavEnv(worlds=(w,), seeds=[sd], max_steps=max_steps, **kw)
+            _obs, info = env.reset(seed=sd)
+            d.append(info["start_dist_m"])
+        far = max(d)
+        rows.append((w, sum(d) / len(d), far,
+                     int(far / CRUISE_M_PER_STEP), far / CRUISE_M_PER_STEP > max_steps))
+    return rows
 
 
 def make_env(rank: int, worlds=TRAIN_WORLDS, **kw):

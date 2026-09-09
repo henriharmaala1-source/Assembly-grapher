@@ -47,8 +47,9 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 
 import numpy as np
 
-from voxel_gym import (TRAIN_WORLDS, VoxelNavEnv, make_env,
-                       newest_checkpoint, newest_run_dir, run_root)
+from voxel_gym import (CRUISE_M_PER_STEP, TRAIN_WORLDS, VoxelNavEnv,
+                       journey_fit, make_env, newest_checkpoint,
+                       newest_run_dir, run_root)
 
 
 # STOPPING BY HAND, DONE THE WAY THAT ACTUALLY WORKS.
@@ -79,6 +80,62 @@ class StopOnSignal(BaseCallback):
 
     def _on_step(self) -> bool:
         return not _STOP["asked"]
+
+
+class Schedule(BaseCallback):
+    """Learning rate and entropy on a schedule, because CONSTANT is how a good
+    policy walks off a solution it already found.
+
+    The 15 M-step run this was written for peaked around 14.3 M and then went
+    backwards over the next 600 k: collision_rate 0.169 -> 0.233, goal_rate
+    0.700 -> 0.622, ep_rew_mean ~180 -> ~120. Nothing in the setup pushed back
+    on that. learning_rate was a hard 3e-4 for the whole run, so one bad batch
+    could move the weights as far at 15 M as at 15 k; ent_coef was a hard 0.01,
+    which at 15 M steps is a standing payment to STAY random long after random
+    has stopped buying anything.
+
+    So both now start high and come down. Exploration is where you want it --
+    early, when the policy has no idea which of 210 primitives is worth taking
+    -- and the floor is what lets it commit. The entropy floor is a tenth of
+    the start rather than zero: a policy pinned to argmax is one that cannot
+    recover from a distribution shift, and this trains on six worlds.
+
+    The learning rate floors at a tenth for the same reason and one more: with
+    --forever the run has no end to anneal towards, and a rate that reached
+    zero would turn "still training" into "burning CPU".
+
+    Anneal progress is measured in ABSOLUTE trained steps, not in fraction of
+    this invocation, so resuming a 15 M run at --anneal 20M correctly picks up
+    three quarters of the way down rather than starting the descent again.
+    """
+
+    FLOOR = 0.1                      # of the starting value, for both
+
+    def __init__(self, lr0, ent0, anneal):
+        super().__init__()
+        self.lr0, self.ent0, self.anneal = lr0, ent0, anneal
+
+    def _frac(self) -> float:
+        if self.anneal <= 0:
+            return 0.0
+        return min(1.0, max(0.0, self.model.num_timesteps / float(self.anneal)))
+
+    def _on_rollout_start(self) -> None:
+        f = self._frac()
+        lr = self.lr0 * (1.0 - (1.0 - self.FLOOR) * f)
+        ent = self.ent0 * (1.0 - (1.0 - self.FLOOR) * f)
+        # SB3 reads lr_schedule(progress_remaining) at the top of every train()
+        # and ent_coef as a plain float inside it, so replacing both here is
+        # enough -- and it survives a resume, which a schedule baked into the
+        # constructor does not (load() restores the saved one).
+        self.model.lr_schedule = lambda _p, v=lr: v
+        self.model.ent_coef = ent
+        self.logger.record("sched/learning_rate", lr)
+        self.logger.record("sched/ent_coef", ent)
+        self.logger.record("sched/anneal_frac", f)
+
+    def _on_step(self) -> bool:
+        return True
 
 
 class Scorecard(BaseCallback):
@@ -179,6 +236,40 @@ def main() -> int:
     ap.add_argument("--name", default="",
                     help="name this run's folder instead of dating it")
     ap.add_argument("--n-steps", type=int, default=256, help="rollout per worker")
+    ap.add_argument("--explore", type=float, default=0.02, metavar="F",
+                    help="HOW MUCH RANDOM STUFF THE POLICY TRIES. This is the "
+                         "PPO entropy bonus at the start of the run; it decays "
+                         "to a tenth of it over --anneal steps. Higher means "
+                         "the policy keeps spreading probability over "
+                         "primitives it has not tried instead of committing "
+                         "early to the first thing that worked -- which is what "
+                         "you want in a 210-way action space over six worlds. "
+                         "0.02 is double the old fixed value. Try 0.04-0.08 if "
+                         "a run plateaus with a whole world unsolved (city), "
+                         "0 to turn exploration pressure off entirely.")
+    ap.add_argument("--anneal", type=int, default=-1, metavar="N",
+                    help="steps over which the learning rate and --explore fall "
+                         "to a tenth of their starting values. Default (-1) is "
+                         "auto: --steps for a fixed-length run, 20 M under "
+                         "--forever. 0 turns annealing OFF and holds both "
+                         "constant, which is the old behaviour and the reason "
+                         "a 15 M run degraded after 14 M.")
+    ap.add_argument("--target-kl", type=float, default=0.02, metavar="F",
+                    help="abandon the rest of an update once the policy has "
+                         "moved this far in KL. The guard rail against one bad "
+                         "batch undoing hours: without it PPO's clip is the "
+                         "only limit and it is per-sample, not per-update. "
+                         "0 disables it.")
+    ap.add_argument("--raw-clear", action="store_true",
+                    help="do NOT scale the clearance penalty with world size. "
+                         "wClear is the only signal that pushes away from an "
+                         "obstacle BEFORE contact -- the collision terminal is "
+                         "a cliff, this is the gradient -- but progress was "
+                         "made scale-free and this was not, so a near-miss cost "
+                         "about as much as a step of progress in the 175 m "
+                         "forest and a fifth as much in a 35 m maze. It is now "
+                         "scaled the same way; this restores the old behaviour "
+                         "for comparison with runs made before the change.")
     ap.add_argument("--vary-goal", action="store_true",
                     help="sample start and goal every episode instead of "
                          "flying one fixed journey. Every episode used to have "
@@ -256,6 +347,14 @@ def main() -> int:
             args.out = os.path.join(
                 root, args.name or time.strftime("run-%Y%m%d-%H%M%S"))
 
+    # AUTO MEANS "over the run you asked for". --forever has no end to anneal
+    # towards, so it gets a horizon rather than an infinity: 20 M is roughly
+    # where the reference run peaked, and past it the schedule simply holds at
+    # its floor, which is the behaviour you want from an open-ended run.
+    anneal = args.anneal
+    if anneal < 0:
+        anneal = 20_000_000 if args.forever else args.steps
+
     os.makedirs(args.out, exist_ok=True)
     # SAY WHERE THE POLICY IS GOING, as an absolute path. --out is relative to
     # the working directory, which for a double-clicked exe is the folder it
@@ -281,18 +380,50 @@ def main() -> int:
         "max_steps": int(args.max_steps),
         "workers": int(args.workers),
         "device": args.device,
+        "explore": float(args.explore),
+        "anneal": int(anneal),
+        "target_kl": float(args.target_kl),
+        "scale_clear": not args.raw_clear,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(os.path.join(args.out, "run.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)
     kw = dict(worlds=tuple(args.worlds), max_steps=args.max_steps,
               truth_depth=not args.stereo, cam=tuple(args.cam),
-              mask_unsafe=not args.no_veto, vary_goal=args.vary_goal)
+              mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
+              scale_clear=not args.raw_clear)
     if args.no_veto:
         print("[train] NO VETO: every primitive is selectable, including ones "
               "that fly into things.\n"
               "        Expect early collisions and a slower start -- that is "
               "the experiment.", flush=True)
+    # DOES THE GOAL FIT IN AN EPISODE? Asked BEFORE the run, because the two
+    # times it did not in this project the symptom was a world that looked
+    # unlearnable for millions of steps. One reset per world answers it.
+    try:
+        fit = journey_fit(args.worlds, args.max_steps,
+                          truth_depth=not args.stereo, vary_goal=args.vary_goal)
+        bad = [r for r in fit if r[4]]
+        print(f"\n  {'world':10} {'journey':>9} {'needs':>8} {'budget':>8}")
+        for w, mean_d, far, need, over in fit:
+            print(f"  {w:10} {far:>8.0f}m {need:>8} {args.max_steps:>8}"
+                  + ("   TOO FAR" if over else ""))
+        if bad:
+            print("\n[train] the goal does not fit in an episode in "
+                  f"{', '.join(r[0] for r in bad)}. At the {CRUISE_M_PER_STEP} m "
+                  "per step a\n"
+                  "        planner actually holds, those journeys need more "
+                  f"steps than --max-steps {args.max_steps}\n"
+                  "        allows, so the goal bonus is unreachable there and "
+                  "the world will look\n"
+                  "        unlearnable however long you train. Raise "
+                  "--max-steps or drop the world.", flush=True)
+        else:
+            print("[train] every world's goal fits inside "
+                  f"--max-steps {args.max_steps}.", flush=True)
+    except Exception as exc:            # a diagnostic must never stop a run
+        print(f"[train] journey-fit check skipped ({exc})", flush=True)
+
     venv = VecMonitor(SubprocVecEnv([make_env(i, **kw) for i in range(args.workers)]))
 
     # RESUMING, OR NOT, IS AN EXPLICIT CHOICE. It used to be neither: a fresh
@@ -312,9 +443,15 @@ def main() -> int:
             if not os.path.exists(resume_from):
                 return f"[train] --resume: no such checkpoint: {resume_from}"
 
+    LR0 = 3e-4
+    kl = args.target_kl if args.target_kl > 0 else None
     if resume_from:
         model = MaskablePPO.load(resume_from, env=venv, device=args.device,
                                  tensorboard_log=os.path.join(args.out, "tb"))
+        # load() restores whatever the checkpoint was trained with, including a
+        # target_kl of None from before this existed. The flags on THIS command
+        # line are what the user asked for, so they win.
+        model.target_kl = kl
         # final.zip carries no step count in its name, so say so rather than
         # printing "at 0 trained steps", which reads as "it lost everything".
         where = (f"at {resume_at} trained steps" if resume_at
@@ -325,7 +462,10 @@ def main() -> int:
         model = MaskablePPO(
             "MlpPolicy", venv, device=args.device, verbose=1,
             n_steps=args.n_steps, batch_size=args.workers * args.n_steps // 4,
-            learning_rate=3e-4, ent_coef=0.01, gamma=0.995, gae_lambda=0.95,
+            # Both of these are replaced every rollout by Schedule; the values
+            # here are only what the first rollout runs with.
+            learning_rate=LR0, ent_coef=args.explore,
+            target_kl=kl, gamma=0.995, gae_lambda=0.95,
             policy_kwargs=dict(net_arch=[256, 256]),
             tensorboard_log=os.path.join(args.out, "tb"))
 
@@ -352,8 +492,20 @@ def main() -> int:
     # reset_num_timesteps=False on a resume, so the step counter and the
     # TensorBoard curves continue the old run instead of restarting the x
     # axis and making a continued run look like one that learned instantly.
+    if anneal > 0:
+        print(f"[train] schedule: learning rate {LR0:g} -> {LR0*0.1:g} and "
+              f"explore {args.explore:g} -> {args.explore*0.1:g} over the "
+              f"first {anneal:,} steps, then held.", flush=True)
+    else:
+        print(f"[train] NO ANNEALING (--anneal 0): learning rate {LR0:g} and "
+              f"explore {args.explore:g} held constant for the whole run.",
+              flush=True)
+    if kl:
+        print(f"[train] target-kl {kl:g}: an update stops early if it moves "
+              "the policy further than this.", flush=True)
     model.learn(total_timesteps=budget,
-                callback=[ckpt, Scorecard(), StopOnSignal()],
+                callback=[ckpt, Scorecard(),
+                          Schedule(LR0, args.explore, anneal), StopOnSignal()],
                 progress_bar=not args.forever,
                 reset_num_timesteps=not resume_from)
     stopped = _STOP["asked"]
@@ -381,7 +533,8 @@ def main() -> int:
                               max_steps=args.max_steps,
                               truth_depth=not args.stereo,
                               mask_unsafe=not args.no_veto,
-                              vary_goal=args.vary_goal)
+                              vary_goal=args.vary_goal,
+                              scale_clear=not args.raw_clear)
             trav, coll, reach, closest = [], 0, 0, []
             for sd in (901, 902, 903):
                 obs, _ = env.reset(seed=sd)

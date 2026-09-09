@@ -81,6 +81,24 @@ struct EnvConfig {
     float wStop       = 0.05f;
     float wClear      = 0.20f;
     float clearTarget = 0.8f;
+    // THE CLEARANCE PENALTY IS THE ONLY THING THAT PUSHES AWAY FROM AN OBSTACLE
+    // BEFORE CONTACT. rCollide is a cliff -- it arrives once, at the end, after
+    // the mistake is unrecoverable. This term is the gradient: it costs a
+    // little, every step, for flying closer to something than clearTarget.
+    //
+    // It was left in absolute units when progress was made scale-free, and that
+    // reintroduced exactly the disease the progress fix cured. Progress now
+    // pays wProgress * closed * (progressScaleM / startDist), so a step of it
+    // is worth ~0.17 in the 175 m forest and ~0.86 in a 35 m maze, while a
+    // near-miss cost a flat ~0.16 in both. Against progress the avoidance
+    // signal was therefore about FIVE TIMES WEAKER in the tight worlds than in
+    // the open ones -- the wrong way round, since tight is where clearance is
+    // the whole problem.
+    //
+    // Scaled by the same factor, a near-miss costs the same relative to a step
+    // of progress in every world. Set false to restore the old absolute term
+    // for comparison with runs made before this existed.
+    bool  scaleClear  = true;
     // TERMINALS ARE A FLOOR, NOT THE VALUE. A fixed penalty cannot punish hard
     // in worlds of different size, and measurement said so plainly: progress
     // telescopes to (start - end) distance, so in the 175 m forest a policy

@@ -176,8 +176,24 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
         CityParams p; p.cell = 0.5f; p.seed = seed; p.sizeM = 300.f;
         p.blockM = wrand(40.f, 80.f); p.streetM = wrand(10.f, 20.f);
         genCity(I.world, p);
+        // THE CITY GOAL WAS FURTHER AWAY THAN AN EPISODE CAN FLY. Opposite
+        // corners of a 300 m world is a 367.7 m straight line, and straight
+        // line is a LOWER BOUND on the path -- a city is a grid, you go round
+        // blocks. Measured over 3000 steps, the best classical planner covers
+        // 260-278 m of path in every world here; it saturates. So the city
+        // goal sat beyond the budget by a wide margin however well anything
+        // flew, which is the same failure as the 1500-step episode cap that
+        // made the forest goal unreachable -- and it showed up the same way,
+        // as one world stuck near zero while the rest learned: over the
+        // reference run city reached its goal 10-17 % of the time against
+        // road's 98-100 %, and the ordering across all six worlds tracked
+        // journey length almost exactly.
+        //
+        // 183.8 m matches road (180 m), the world with the highest goal rate.
+        // The far half of the city is still built and still in the way; it is
+        // the JOURNEY that is now the size of an episode, not the map.
         I.px = 20.f; I.py = 20.f; I.pz = 8.f;
-        I.goalE = 280.f; I.goalN = 280.f; I.goalU = 8.f;
+        I.goalE = 150.f; I.goalN = 150.f; I.goalU = 8.f;
         bx0 = by0 = 15.f; bx1 = by1 = 285.f;
     } else if (world == "road") {
         // Thin, tall and few against a wide open background: the worst case
@@ -218,9 +234,17 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
         // genMaze handed back ARE its extent; for the forest it is the plot
         // inset far enough that a goal is never outside the trees.
         const float x0 = bx0, x1 = bx1, y0 = by0, y1 = by1;
-        // Six tenths of the box diagonal: scale-free, so it means the same
-        // thing in a 30 m maze and a 300 m city.
-        const float minSep = 0.6f * std::hypot(x1 - x0, y1 - y0);
+        // SIX TENTHS OF THE JOURNEY THE GENERATOR CHOSE, not of the box.
+        // The box is how much world there is; the journey is how much of it
+        // fits in an episode, and those are not the same number. In the city
+        // the box diagonal is 382 m, so every sampled journey was at least
+        // 229 m -- near or past the ~260-280 m of path an episode can cover,
+        // which made --vary-goal quietly unwinnable there in exactly the way
+        // the fixed geometry was. Against the nominal journey it is still
+        // scale-free, and for the maze the two are the same number anyway
+        // because genMaze's own two corners ARE the box.
+        const float nominal = std::hypot(I.goalE - I.px, I.goalN - I.py);
+        const float minSep = 0.6f * nominal;
         const float want = cfg_.robotR * 1.6f;
         auto sampleClear = [&](float& ox, float& oy, float z,
                                float fromX, float fromY, float sep) {
@@ -400,13 +424,16 @@ EnvStep VoxelEnv::step(int action) {
     I.visits[key] = (it == I.visits.end()) ? 1.f : it->second + 1.f;
 
     // Fraction of the journey, not metres -- see EnvConfig::progressScaleM.
-    const float tProgress = cfg_.wProgress * progress
-                          * (cfg_.progressScaleM / std::max(1.f, I.startDist));
+    const float wscale = cfg_.progressScaleM / std::max(1.f, I.startDist);
+    const float tProgress = cfg_.wProgress * progress * wscale;
     const float tCoverage = cfg_.wCoverage * novelty;
     const float tTime     = -cfg_.wTime * dt;
     const float tStop     = -cfg_.wStop * (speed < 0.1f ? 1.f : 0.f)
                             - (legal ? 0.f : cfg_.wStop);
-    const float tClear    = -cfg_.wClear * std::max(0.f, cfg_.clearTarget - clr);
+    // Same scale as progress, so a near-miss costs the same FRACTION of a step
+    // of progress in a 35 m maze as in a 340 m city -- see EnvConfig::scaleClear.
+    const float tClear    = -cfg_.wClear * std::max(0.f, cfg_.clearTarget - clr)
+                          * (cfg_.scaleClear ? wscale : 1.f);
     float r = tProgress + tCoverage + tTime + tStop + tClear;
     I.aProgress += tProgress; I.aCoverage += tCoverage; I.aTime += tTime;
     I.aStop += tStop;         I.aClear += tClear;

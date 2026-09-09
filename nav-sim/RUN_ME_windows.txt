@@ -242,6 +242,95 @@ columns as the classical ones, on seeds it never trained on.
                      which matters most on a forever run, where the
                      checkpoints ARE the record of how it progressed.
 
+                     THE GOAL HAS TO FIT INSIDE AN EPISODE, and the run now
+                     CHECKS before it starts. Per world it prints the journey
+                     and the steps that journey needs at the 0.09 m per step a
+                     planner actually holds, and says TOO FAR where it does
+                     not fit:
+
+                       world        journey    needs   budget
+                       forest           175m     1944     3000
+                       city             184m     2042     3000
+
+                     This has bitten twice. At --max-steps 1500 the forest
+                     goal needed 1944 steps, so nothing could ever arrive. And
+                     the city goal was at the opposite corner of a 300 m world
+                     -- a 367.7 m straight line, and straight line is a LOWER
+                     bound on the path, because a city is a grid and you go
+                     round blocks. Measured over 3000 steps the best classical
+                     planner covers 260-278 m of path in every world here; it
+                     saturates. So the city goal was out of reach by a wide
+                     margin however well anything flew, and it showed up as
+                     "the policy cannot learn cities" for fifteen million
+                     steps: city reached its goal 10-17 % of the time against
+                     road's 98-100 %, and the ordering across all six worlds
+                     tracked journey length almost exactly. The city journey
+                     is now 183.8 m, matching road. The far half of the city
+                     is still built and still in the way -- it is the JOURNEY
+                     that is the size of an episode, not the map.
+
+                     --vary-goal had the same problem for the same reason: the
+                     minimum separation was six tenths of the BOX diagonal,
+                     which in the city meant every sampled journey was at
+                     least 229 m. It is six tenths of the world's own nominal
+                     journey now, which is the number that was already sized
+                     to fit.
+
+                     HOW MUCH RANDOM STUFF IT TRIES, AND FOR HOW LONG:
+
+                       kestrel train --explore 0.04
+                       kestrel train --anneal 20000000
+                       kestrel train --target-kl 0.02
+                       kestrel train --anneal 0        (the old behaviour)
+
+                     or the "explore", "anneal" and "target-kl" steppers on
+                     the train panel.
+
+                     --explore is the PPO entropy bonus: how much probability
+                     the policy keeps spreading over primitives it has not
+                     tried, instead of committing early to the first thing
+                     that worked. In a 210-way action space over six worlds
+                     that is worth paying for early. Default 0.02, double the
+                     old fixed value; try 0.04-0.08 if a run plateaus with a
+                     whole world unsolved.
+
+                     --anneal is how many steps the learning rate AND
+                     --explore take to fall to a tenth of where they started
+                     (default: the length of the run, or 20 M for --forever).
+                     Exploration belongs early; committing belongs late.
+                     Neither floors at zero -- a policy pinned to argmax
+                     cannot recover from a world that surprises it, and a
+                     learning rate of zero turns "still training" into
+                     "burning CPU". --anneal 0 holds both constant, which is
+                     what every run before this did.
+
+                     --target-kl abandons the rest of an update once the
+                     policy has moved that far, so one bad batch cannot undo
+                     an hour. 0 turns it off.
+
+                     WHY THESE EXIST: a 15 M-step run peaked around 14.3 M and
+                     then went backwards -- collision rate 0.169 -> 0.233,
+                     goal rate 0.700 -> 0.622, mean return ~180 -> ~120 -- with
+                     a learning rate and an entropy bonus that were hard
+                     constants for the whole run and nothing bounding a single
+                     update. That is the ordinary way a good policy drifts off
+                     a solution it already found, not a bug.
+
+                     THE NEAR-MISS PENALTY NOW SCALES WITH THE WORLD:
+                     The collision penalty is a cliff -- it arrives once, at
+                     the end, after the mistake is already unrecoverable. The
+                     clearance term is the gradient: a small cost every step
+                     for flying closer to something than 0.8 m, and the only
+                     avoidance signal that exists BEFORE contact. Progress was
+                     made scale-free so every world pays the same for closing
+                     the same fraction of its journey; the clearance term was
+                     left in metres, so against progress it was about five
+                     times weaker in a tight world than an open one -- exactly
+                     the wrong way round. It is now scaled the same way.
+                     --raw-clear restores the old absolute term for comparison
+                     with runs made before this, and the button on the train
+                     panel says which one you are using.
+
                      IT STARTS FROM SCRATCH UNLESS YOU SAY OTHERWISE:
 
                        kestrel train --resume            newest checkpoint

@@ -381,3 +381,111 @@ that is where the policy is losing.
 
 Reproduce with the commands at the top; the checkpoints and the TensorBoard
 log are written to whatever --out names, printed as an absolute path.
+
+---
+
+# The 15 M-step run: the first policy that arrives, and the first that regresses
+
+Everything above was written when no run in this project had ever reached a
+goal. That is no longer the state of the world, and this section supersedes
+the "nobody arrives" conclusion rather than amending it.
+
+A 15 M-step run with `--max-steps 3000` over six worlds reached goals at
+scale. Per-world rolling goal rate over the last ~600 k steps:
+
+| world    | goal_rate   | collision_rate | journey |
+|----------|-------------|----------------|---------|
+| road     | 0.98 - 1.00 | low            | 180 m   |
+| maze     | 0.75 - 0.93 |                | ~40 m   |
+| corridor | 0.82 - 0.90 |                | ~89 m   |
+| forest   | 0.58 - 0.67 |                | 175 m   |
+| culdesac | 0.45 - 0.63 |                | 155 m   |
+| city     | 0.10 - 0.17 | 0.317 -> 0.483 | 368 m   |
+
+Overall 0.62 - 0.70.
+
+## It went backwards over the last 600 k steps
+
+| metric           | 14.34 M | 14.97 M |
+|------------------|---------|---------|
+| collision_rate   | 0.169   | 0.233   |
+| goal_rate        | 0.700   | 0.622   |
+| ep_rew_mean      | ~180    | 108-139 |
+| ep_len_mean      | 2.2e3   | 1.45e3  |
+
+Shorter episodes with more collisions and fewer goals is one story, not
+three: it is dying earlier.
+
+**Raising the collision penalty was considered and rejected on the
+arithmetic.** It is already `max(50, 1.5 * wProgress * progressScaleM)` = 300
+against a best-possible episode of +200 progress and +100 for arriving, so
+crashing already costs one and a half times everything an episode can earn and
+cannot be bought with metres in any world. And the terminals do not account
+for the loss: 0.064 more collisions at 300 is -19, 0.078 fewer goals at 100 is
+-8, so -27 of a -60 drop. The rest is progress and coverage, which matches the
+episode length falling by a third. The policy is travelling less, not merely
+crashing more. A larger terminal would also raise the variance of an advantage
+estimate that a -300 cliff already dominates.
+
+## What was wrong, and what changed
+
+**1. Nothing annealed.** `learning_rate` was a hard 3e-4 and `ent_coef` a hard
+0.01 for the whole run, with no `target_kl`. At 15 M steps a fixed entropy
+bonus is a standing payment to stay random, and a fixed learning rate lets one
+bad batch move the weights as far at 15 M as at 15 k. Both now start higher and
+decay to a tenth over `--anneal` steps (`--explore` sets the entropy start,
+default 0.02), and `--target-kl` (default 0.02) abandons an update that moves
+the policy too far. `--anneal 0` restores the old constant behaviour.
+
+**2. The near-miss penalty was not scale-free.** The collision terminal is a
+cliff that arrives once, after the mistake; `wClear` is the gradient, and the
+only avoidance signal that exists before contact. Progress was made scale-free
+and this was not, so against progress it was ~5x weaker in a tight world than
+an open one -- the wrong way round, since tight is where clearance is the whole
+problem. Now scaled by the same `progressScaleM / startDist`; verified
+directly, forest `r_clear` -0.075 -> -0.043 (x0.571 = 100/175) and maze -0.862
+-> -2.220 (x2.576 = 100/38.8). `--raw-clear` restores the old term.
+
+**3. The city goal was beyond what an episode can fly.** Not a shaping
+problem. Opposite corners of a 300 m world is a 367.7 m straight line, and
+straight line is a lower bound on the path. Measured with the best classical
+planner over 3000-step episodes, path length saturates at 260-278 m in every
+world:
+
+```
+world      travel in 3000 steps (freeM, 6 seeds)
+city       96.8 / 126.5 / 260.7 / 268.1 / 278.4
+road       153.0 / 247.2 / 253.9 / 258.1 / 259.6 / 261.8
+culdesac   259.9 / 262.7 / 264.8 / 264.8 / 267.4 / 268.6
+```
+
+So the city goal was out of reach by a wide margin however well anything flew,
+and the goal-rate ordering across all six worlds tracks journey length almost
+exactly. This is the same failure as the 1500-step episode cap that put the
+forest goal out of reach, and it hid the same way -- as "the policy cannot
+learn this world" for millions of steps.
+
+The city journey is now 183.8 m, matching road. `--vary-goal` had the same
+fault for the same reason: minimum separation was six tenths of the *box*
+diagonal, 229 m in the city; it is six tenths of the world's own nominal
+journey now.
+
+`train` checks this before every run and prints the journey, the steps it needs
+at 0.09 m/step, and TOO FAR where it does not fit. Run against the old
+1500-step cap the check independently reproduces the known finding: forest
+needs 1944 steps.
+
+## One column to stop reading
+
+`best_closest_m` sat at 2.91-2.93 in every world for the whole log. `goalTolM`
+is 3.0, so it saturates the moment goals are reached and carries no information
+after that. It was useful when nothing ever arrived. `goal_rate` is the column
+now.
+
+## Not measured
+
+Whether any of this produces a better policy. These are changes to the
+objective and the task, so every number above is against the old ones and none
+of it transfers. The immediate practical step for the run that produced this
+log is unchanged: an earlier checkpoint probably scores better than the final
+one, and `kestrel evaluate --run <dir> --progress --baselines` says which.

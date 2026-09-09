@@ -35,6 +35,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("w_time", &EnvConfig::wTime)
         .def_readwrite("w_stop", &EnvConfig::wStop)
         .def_readwrite("w_clear", &EnvConfig::wClear)
+        .def_readwrite("scale_clear", &EnvConfig::scaleClear)
         .def_readwrite("r_goal", &EnvConfig::rGoal)
         .def_readwrite("r_collide", &EnvConfig::rCollide)
         // False lets the policy select primitives the geometry rejected, so it
@@ -133,6 +134,12 @@ PYBIND11_MODULE(voxelenv, m) {
             std::memcpy(a.mutable_data(), buf.data(), size_t(n));
             return a;
         }, py::arg("w") = 320, py::arg("h") = 240)
+        // HOW LONG THE JOURNEY IS, readable straight after reset. Without it
+        // nothing could ask the question that mattered -- does the goal fit
+        // inside the episode budget -- and the answer for the city was no for
+        // the whole of a 15 M-step run.
+        .def_property_readonly("start_dist_m",
+                               [](const VoxelEnv& e) { return e.last().distToGoalM; })
         .def_property_readonly("n_prims", &VoxelEnv::nPrims)
         .def_property_readonly("obs_size", &VoxelEnv::obsSize)
         .def_static("features_per_prim", &VoxelEnv::obsFeaturesPerPrim)

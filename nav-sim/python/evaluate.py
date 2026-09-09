@@ -166,7 +166,9 @@ def main() -> int:
                     f"{len(man.get('worlds', []))} worlds",
                     "veto OFF" if man.get("no_veto") else "veto on",
                     "varied goals" if man.get("vary_goal") else "fixed journey",
-                    "stereo" if man.get("stereo") else "perfect depth"]
+                    "stereo" if man.get("stereo") else "perfect depth",
+                    "scaled clearance" if man.get("scale_clear", True)
+                    else "raw clearance"]
             print(f"[evaluate] this run: {', '.join(bits)}", flush=True)
         except Exception as exc:
             print(f"[evaluate] run.json unreadable ({exc})", flush=True)
@@ -194,9 +196,16 @@ def main() -> int:
         print("[evaluate] RANDOM over admissible primitives -- the floor, not a "
               "policy", flush=True)
 
+    # SCORE WITH THE REWARD THE RUN WAS TRAINED ON. --reward prints the reward
+    # decomposition, and printing it under a different clearance scale than the
+    # policy was trained with would make the one column that explains a
+    # regression describe an environment that never existed. Read from the
+    # manifest rather than adding a flag, because it is not a choice: it is a
+    # property of the weights being scored.
     env = VoxelNavEnv(worlds=tuple(args.worlds), seeds=args.seeds,
                       max_steps=args.max_steps, truth_depth=not args.stereo,
-                      mask_unsafe=not args.no_veto, vary_goal=args.vary_goal)
+                      mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
+                      scale_clear=man.get("scale_clear", True))
     print(f"[evaluate] veto {'OFF - every primitive selectable' if args.no_veto else 'on'}",
           flush=True)
     rng = np.random.default_rng(0)

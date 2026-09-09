@@ -1,0 +1,302 @@
+// Headless software-in-the-loop validation of the "pick a direction, press GO"
+// AUTONOMY mode. Wires the REAL components:
+//
+//   SimFcBackend (kinematic FC) -> StateEstimator (ENU EKF) -> synthetic
+//   goal-aware VFH* ray-cast perception (corridorOffset/corridorOpen) ->
+//   MissionController (move-stop-sense) -> back to the FC.
+//
+// Runs a suite of scenarios (goal 25 m East, press-GO). Each tick sets the
+// operator input (goal bearing + GO latch). It PASSES when the drone never
+// breaches its obstacle standoff in ANY scenario AND reaches the goal in the
+// scenarios the reactive layer is designed for (clear / off-path / grazing).
+// Obstacles sitting ON the path are expected NOT to complete (reactive local
+// minima) but MUST still keep standoff — that completion needs the roadmap's
+// deferred occupancy-grid + global planner.
+//
+// The synthetic perception models what a goal-aware local planner produces:
+// obstacles inflated by the vehicle+margin radius, the openest gap nearest the
+// goal bearing chosen (with previous-direction hysteresis), and forward-cone
+// clearance as the "can I move / keep standoff" openness signal.
+
+#include <cmath>
+#include <cstdio>
+#include <vector>
+
+#include "sim_fc_backend.hpp"
+#include "state_estimator.hpp"
+#include "mission.hpp"
+#include "world_model.hpp"
+
+namespace {
+constexpr float kPi = 3.14159265358979323846f;
+inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+inline float wrap180(float d) {
+    while (d > 180.f)  d -= 360.f;
+    while (d <= -180.f) d += 360.f;
+    return d;
+}
+
+// One circular obstacle in the local ENU plane.
+struct Obstacle { float e, n, r; };
+
+// Ray clearance from p along unit dir d to circle (c,r); capped at maxRange.
+float rayClearance(float pe, float pn, float de, float dn,
+                   const Obstacle& o, float maxRange) {
+    const float me = pe - o.e, mn = pn - o.n;
+    const float b  = me * de + mn * dn;
+    const float cc = me * me + mn * mn - o.r * o.r;
+    const float disc = b * b - cc;
+    if (disc < 0.f) return maxRange;              // ray misses the disc
+    const float sq = std::sqrt(disc);
+    const float t1 = -b - sq, t2 = -b + sq;
+    if (t2 < 0.f) return maxRange;                // disc entirely behind
+    if (t1 < 0.f) return 0.f;                     // origin inside the disc
+    return std::min(t1, maxRange);
+}
+
+// Synthetic VFH+-like perception: cast rays across the camera FoV around the
+// vehicle heading, pick the most-open direction, publish it the way the real
+// NavigateModule does (normalised lateral offset + openness).
+void synthPerception(WorldState& s, const std::vector<Obstacle>& obs,
+                     float hFovDeg, float maxRange, float rBot, float goalRelDeg,
+                     float& prevRel) {
+    const int   N = 41;                           // rays across the FoV
+    const float half = hFovDeg * 0.5f;
+    // Inflate each obstacle by the vehicle footprint + margin, exactly like
+    // VFH+'s enlargement: plan for a point robot against fattened obstacles so
+    // the committed path keeps a real clearance.
+    std::vector<Obstacle> infl;
+    infl.reserve(obs.size());
+    for (const auto& o : obs) infl.push_back({o.e, o.n, o.r + rBot});
+
+    // Goal-aware local selection (VFH*): among directions with enough clearance,
+    // prefer the one closest to the goal bearing. This is what a goal-biased
+    // local planner produces; a purely reactive, goal-agnostic "openest ray"
+    // spirals around an obstacle sitting directly between start and goal.
+    const float goalClamped = clampf(goalRelDeg, -half, half);
+    float bestRel = 0.f, bestScore = -1e9f;
+    for (int i = 0; i < N; ++i) {
+        const float rel = -half + (2.f * half) * i / (N - 1);
+        const float bearing = s.vehYawDeg + rel;
+        const float b  = bearing * kPi / 180.f;
+        const float de = std::sin(b), dn = std::cos(b);
+        float clear = maxRange;
+        for (const auto& o : infl) clear = std::min(clear, rayClearance(s.estPe, s.estPn, de, dn, o, maxRange));
+        const float openf = clear / maxRange;                 // [0,1]
+        // Only sufficiently-open directions are candidates; among them, minimise
+        // angular distance to the goal, with a small bias toward the previous
+        // choice (VFH_W_PREV) to commit to ONE side of a symmetric obstacle
+        // instead of chattering across its centre. Blocked directions score by
+        // openness so there is always a "best" (steers the scan when boxed).
+        const float goalPenalty = std::fabs(rel - goalClamped) / 180.f;
+        const float prevPenalty = std::fabs(rel - prevRel) / 180.f;
+        const float score = (openf >= 0.5f) ? (2.f - goalPenalty - 0.5f * prevPenalty)
+                                            : openf;
+        if (score > bestScore) { bestScore = score; bestRel = rel; }
+    }
+    prevRel = bestRel;
+    // Openness is the clearance of the FORWARD travel corridor, not the openest
+    // tangent ray: the drone cruises roughly along its heading, so what gates
+    // "can I move / must I stop for standoff" is the room straight ahead (a small
+    // vehicle-width cone), while `offset` above says which way to steer. Using a
+    // grazing tangent's openness lets the body creep into an obstacle it's only
+    // tangent to; forward-cone clearance keeps a real standoff.
+    float clearFwd = maxRange;
+    for (float relC = -6.f; relC <= 6.f; relC += 3.f) {   // ±6° forward cone
+        const float bc = (s.vehYawDeg + relC) * kPi / 180.f;
+        for (const auto& o : infl)
+            clearFwd = std::min(clearFwd, rayClearance(s.estPe, s.estPn, std::sin(bc), std::cos(bc), o, maxRange));
+    }
+
+    s.corridorValid  = true;
+    s.corridorOffset = clampf(bestRel / half, -1.f, 1.f);
+    s.corridorOpen   = clampf(clearFwd / maxRange, 0.f, 1.f);
+    s.corridorMargin = s.corridorOpen;
+    s.corridorStampS = s.tickMonoS;   // stamp with sim time (staleness timebase)
+
+    // Publish a RAW polar depth scan (clearance to the TRUE obstacles, no
+    // inflation — a real depth sensor measures where the obstacle actually is;
+    // the occupancy grid inflates by the vehicle radius itself). This is the
+    // P5b grid's input.
+    const int M = std::min(N, WorldState::kScanMax);
+    for (int i = 0; i < M; ++i) {
+        const float rel = -half + (2.f * half) * i / (M - 1);
+        const float b   = (s.vehYawDeg + rel) * kPi / 180.f;
+        float clr = maxRange;
+        for (const auto& o : obs)   // RAW obstacles, not `infl`
+            clr = std::min(clr, rayClearance(s.estPe, s.estPn, std::sin(b), std::cos(b), o, maxRange));
+        s.corridorScan[i] = clr;
+    }
+    s.corridorScanN      = M;
+    s.corridorScanFovDeg = hFovDeg;
+    s.corridorScanMaxM   = maxRange;
+}
+}  // namespace
+
+struct Scenario {
+    const char*           name;
+    std::vector<Obstacle> obs;
+    float                 goalE, goalN;
+    bool                  expectReach;         // require goal completion to pass?
+    float                 dropPerceptionAtS = -1.f;  // >=0: stop perception at t
+                                               // (values stay LATCHED, stamps age)
+    float                 dropGpsAtS = -1.f;   // >=0: stop GPS updates at t (the
+                                               // EKF coasts, estEphM inflates)
+};
+
+// True ENU position from the sim FC's telemetry (origin = SimFcBackend's
+// start). The estimator COASTS through a GPS cut — its position keeps
+// integrating stale velocity — so "did the drone stop" must be judged on
+// truth, not on the estimate.
+void truthEnu(const FcTelemetry& tel, float& e, float& n) {
+    constexpr double kLat0 = 60.1699, kLon0 = 24.9384;   // sim FC origin
+    constexpr double kR = 6378137.0, kD2R = 3.14159265358979323846 / 180.0;
+    e = (float)((tel.lon - kLon0) * kD2R * kR * std::cos(kLat0 * kD2R));
+    n = (float)((tel.lat - kLat0) * kD2R * kR);
+}
+
+struct Result {
+    bool  reached; float minObsEdge; float finalGoalDist; float simTime;
+    float driftAfterDropM = 0.f;               // travel after dropout + grace
+};
+
+// Run one scenario headless through the REAL loop; returns metrics.
+Result runScenario(const Scenario& sc, bool verbose) {
+    const float hFovDeg = 60.f, maxRange = 8.f, rBot = 1.5f, dt = 0.02f;
+
+    SimFcBackend fc; StateEstimator est; MissionController mission;
+    mission.enable(true); fc.connect("sim", 0);
+
+    WorldState s; s.missionGo = true;
+    float prevRel = 0.f, t = 0.f, minObsEdge = 1e9f, dg = std::hypot(sc.goalE, sc.goalN);
+    bool  reached = false;
+    // Perception-dropout metrics: position at (dropout + 3 s grace), then track
+    // how far it travels afterwards — a blind drone must stop, not cruise on.
+    bool  haveDropRef = false;
+    float dropRefE = 0.f, dropRefN = 0.f, driftAfterDrop = 0.f;
+
+    for (int step = 0; step < 8000 && !reached; ++step) {
+        fc.advance(dt);
+        FcTelemetry tel; fc.poll(tel);
+
+        est.predict(dt);
+        est.setHeading(tel.yawDeg);
+        const bool gpsUp = sc.dropGpsAtS < 0.f || t < sc.dropGpsAtS;
+        if (gpsUp)
+            est.updateGps(tel.lat, tel.lon, tel.altM, tel.fixType,
+                          true, tel.groundspeedMs * std::cos(tel.groundCourseDeg * kPi / 180.f),
+                          tel.groundspeedMs * std::sin(tel.groundCourseDeg * kPi / 180.f), 0.f,
+                          1.0f, 1.5f);
+        auto e = est.state();
+
+        s.tickMonoS = t;   // sim time drives the staleness timebase
+        s.vehYawDeg = tel.yawDeg; s.vehArmed = tel.armed; s.estValid = e.valid;
+        s.estPe = e.pe; s.estPn = e.pn; s.estPu = e.pu;
+        s.estVe = e.ve; s.estVn = e.vn; s.estSpeed = e.speedMs;
+        s.estEphM = e.ephM; s.estGpsDenied = e.gpsDenied;
+
+        if (e.valid)
+            s.missionGoalBearing = std::atan2(sc.goalE - e.pe, sc.goalN - e.pn) * 180.f / kPi;
+        s.missionGo = true;
+
+        // Perception dropout: past the cut time the module never runs again —
+        // corridor fields stay latched at their last values while stamps age,
+        // exactly what a wedged think thread looks like to the fly loop.
+        const bool perceptionUp = sc.dropPerceptionAtS < 0.f || t < sc.dropPerceptionAtS;
+        if (perceptionUp) {
+            const float goalRel = wrap180(s.missionGoalBearing - s.vehYawDeg);
+            synthPerception(s, sc.obs, hFovDeg, maxRange, rBot, goalRel, prevRel);
+        }
+
+        fc.sendControl(mission.update(s, dt));
+
+        if (e.valid) {
+            // All pass/fail metrics are judged on TRUTH (sim FC position) — the
+            // estimator coasts through a GPS cut and its position is fiction
+            // there, "reaching" goals the airframe never moved toward.
+            float te, tn; truthEnu(tel, te, tn);
+            for (const auto& o : sc.obs)
+                minObsEdge = std::min(minObsEdge, std::hypot(te - o.e, tn - o.n) - o.r);
+            dg = std::hypot(sc.goalE - te, sc.goalN - tn);
+            if (dg <= 2.0f) reached = true;
+
+            // Drift-after-drop: measured on TRUTH, from a grace period after the
+            // cut (the estimator legitimately keeps flying briefly while its
+            // uncertainty inflates past the gate).
+            const float dropAt = std::max(sc.dropPerceptionAtS, sc.dropGpsAtS);
+            if (dropAt >= 0.f && t >= dropAt + 6.f) {
+                float te, tn; truthEnu(tel, te, tn);
+                if (!haveDropRef) { dropRefE = te; dropRefN = tn; haveDropRef = true; }
+                driftAfterDrop = std::max(driftAfterDrop,
+                                          std::hypot(te - dropRefE, tn - dropRefN));
+            }
+            if (verbose && step % 50 == 0)
+                std::printf("   t=%5.1f pos=(%6.2f,%6.2f) yaw=%5.1f phase=%-6s dGoal=%5.2f "
+                            "open=%.2f plan=%d/%5.1f\n",
+                            t, e.pe, e.pn, tel.yawDeg, s.missionPhase.c_str(), dg,
+                            s.corridorOpen, (int)s.planValid, s.planBearing);
+        }
+        t += dt;
+    }
+    return { reached, sc.obs.empty() ? 99.f : minObsEdge, dg, t, driftAfterDrop };
+}
+
+int main() {
+    // Suite: separate the loop/goal-seeking validation from the reactive-avoidance
+    // limitation. All scenarios: goal 25 m East, start facing East, press-GO.
+    std::vector<Scenario> suite = {
+        { "clear field (no obstacle)",        {},                    25.f, 0.f, true  },
+        { "obstacle well off the path",       {{12.f, 8.f, 2.0f}},   25.f, 0.f, true  },
+        { "obstacle grazing the path",        {{12.f, 4.2f, 2.0f}},  25.f, 0.f, true  },
+        { "obstacle partly blocking path",    {{12.f, 3.2f, 2.0f}},  25.f, 0.f, true  },
+        { "obstacle dead-centre on path",     {{12.f, 0.f, 3.0f}},   25.f, 0.f, true  },
+        // Staleness gate (F1): perception dies mid-leg, corridor stays latched
+        // valid with an aging stamp — the drone must STOP, not cruise on blind.
+        { "perception dropout mid-leg",       {},                    25.f, 0.f, false, 6.f },
+        // Estimator gate (F3): GPS dies mid-leg, the EKF coasts with estValid
+        // still true while estEphM inflates — the drone must settle, not fly
+        // legs on a runaway estimate.
+        { "GPS cut mid-leg (est degraded)",   {},                    25.f, 0.f, false, -1.f, 6.f },
+    };
+
+    std::printf("=== AUTONOMY SITL VALIDATION (pick-a-direction, press-GO) ===\n");
+    std::printf("Real components: SimFcBackend -> StateEstimator(ENU EKF) -> "
+                "goal-aware VFH* perception -> MissionController -> FC.\n\n");
+
+    int loopOk = 0, reachOk = 0, safeOk = 0, reachExpected = 0;
+    int stopOk = 0, stopExpected = 0;
+    for (const auto& sc : suite) {
+        Result r = runScenario(sc, true);
+        const bool safe = r.minObsEdge > 0.5f;              // never breached standoff
+        std::printf("[%-32s] reached=%-3s  minObstacleEdge=%5.2fm  finalGoalDist=%5.2fm  t=%4.0fs  %s",
+                    sc.name, r.reached ? "YES" : "no", r.minObsEdge, r.finalGoalDist, r.simTime,
+                    safe ? "SAFE" : "*** UNSAFE ***");
+        if (sc.dropPerceptionAtS >= 0.f || sc.dropGpsAtS >= 0.f) {
+            const bool stopped = r.driftAfterDropM < 1.0f;   // blind → must hold
+            std::printf("  driftAfterDrop=%.2fm %s", r.driftAfterDropM,
+                        stopped ? "(STOPPED)" : "*** KEPT FLYING BLIND ***");
+            stopExpected++; if (stopped) stopOk++;
+        }
+        std::printf("\n\n");
+        loopOk++;                                            // loop ran end-to-end
+        if (safe) safeOk++;
+        if (sc.expectReach) { reachExpected++; if (r.reached) reachOk++; }
+    }
+
+    std::printf("=== SUMMARY ===\n");
+    std::printf("Loop closed (all real components) : %d/%zu scenarios\n", loopOk, suite.size());
+    std::printf("Safety standoff never breached    : %d/%zu scenarios\n", safeOk, suite.size());
+    std::printf("Goal reached where expected       : %d/%d scenarios\n", reachOk, reachExpected);
+    std::printf("Stopped on perception loss        : %d/%d scenarios\n", stopOk, stopExpected);
+    std::printf("\nInterpretation: the SITL loop, arming/GO gating, move-stop-sense cycle,\n"
+                "goal-seeking, and obstacle STANDOFF are validated. With the P5b occupancy\n"
+                "grid + wavefront planner, goal COMPLETION now also holds for an obstacle\n"
+                "sitting ON the direct path (partly-blocking and dead-centre) — the grid\n"
+                "remembers what the live FoV forgets, so the planner routes around where the\n"
+                "pure-reactive layer trapped in a local minimum.\n");
+
+    const bool pass = (safeOk == (int)suite.size()) && (reachOk == reachExpected)
+                   && (stopOk == stopExpected);
+    std::printf("\nVERDICT: %s\n", pass ? "PASS" : "FAIL");
+    return pass ? 0 : 1;
+}

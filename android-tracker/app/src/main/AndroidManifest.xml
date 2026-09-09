@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- USB host is required to talk to the capture dongle over OTG. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <application
+        android:allowBackup="true"
+        android:label="Kestrel Tracker"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.NoActionBar">
+
+        <!-- sensorLandscape: landscape only, but BOTH ways up.
+             Landscape is what the rig is used in. Plain "landscape" would pin one
+             specific way up and then break the moment the phone is turned the other
+             way — the display rotation would say 270 while the window stayed at 90,
+             and that disagreement between window and device is precisely what
+             produced every preview bug so far (an upright frame rendered as a
+             30%-of-screen strip). sensorLandscape keeps the window landscape AND
+             lets it follow the device, so the rotation term stays honest.
+             configChanges keeps the camera session alive across the 90<->270 flip
+             instead of tearing the stream down and restarting it. -->
+        <activity
+            android:name=".MainActivity"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:launchMode="singleTop"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Launch / focus the app when the capture dongle is plugged in. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
+        </activity>
+    </application>
+</manifest>

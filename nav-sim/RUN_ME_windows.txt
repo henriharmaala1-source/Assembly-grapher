@@ -228,6 +228,20 @@ columns as the classical ones, on seeds it never trained on.
                      so it shows what the policy does NOW. The same numbers
                      go to TensorBoard under score/<world>/.
 
+                     TRAIN UNTIL YOU STOP IT:  kestrel train --forever
+                     or set steps to "forever" on the train panel. Ctrl-C
+                     ends it and THE WEIGHTS ARE SAVED ON THE WAY OUT, so
+                     stopping by hand costs nothing -- watch the live
+                     scorecard and end the run when it stops improving,
+                     instead of guessing a step count in advance. A second
+                     Ctrl-C abandons the run without saving, if you mean it.
+                     Resume what you stopped with --resume.
+
+                     The step counts on the panel now run 20 k to 100 M plus
+                     forever, and "save every" sets the checkpoint interval --
+                     which matters most on a forever run, where the
+                     checkpoints ARE the record of how it progressed.
+
                      IT STARTS FROM SCRATCH UNLESS YOU SAY OTHERWISE:
 
                        kestrel train --resume            newest checkpoint

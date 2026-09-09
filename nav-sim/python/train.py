@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 
@@ -48,6 +49,36 @@ import numpy as np
 
 from voxel_gym import (TRAIN_WORLDS, VoxelNavEnv, make_env,
                        newest_checkpoint, newest_run_dir, run_root)
+
+
+# STOPPING BY HAND, DONE THE WAY THAT ACTUALLY WORKS.
+#
+# The obvious version -- wrap model.learn in try/except KeyboardInterrupt --
+# was written first and TESTED, and it does not work here: a SIGINT to a run
+# using SubprocVecEnv killed the process outright, exit 1, no traceback, no
+# saved weights. The interrupt does not reliably surface as a Python exception
+# in the main process when workers are dying at the same time.
+#
+# So the signal only sets a flag, and a callback returning False asks SB3 to
+# stop after the current step. learn() then returns normally and the save runs
+# on the ordinary path -- no exception handling in it at all.
+_STOP = {"asked": False}
+
+
+def _request_stop(signum, frame):
+    if not _STOP["asked"]:
+        print("\n[train] stop requested -- finishing this step, then saving. "
+              "Press Ctrl-C again to abandon the run.", flush=True)
+        _STOP["asked"] = True
+    else:
+        raise KeyboardInterrupt          # second one means they mean it
+
+
+class StopOnSignal(BaseCallback):
+    """Returns False once a stop has been asked for, which ends learn()."""
+
+    def _on_step(self) -> bool:
+        return not _STOP["asked"]
 
 
 class Scorecard(BaseCallback):
@@ -115,6 +146,14 @@ class Scorecard(BaseCallback):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=10_000_000)
+    ap.add_argument("--forever", action="store_true",
+                    help="train until you stop it with Ctrl-C. The weights are "
+                         "saved on the way out, so stopping by hand costs "
+                         "nothing -- which is the point: you can watch the "
+                         "scorecard and end the run when it stops improving "
+                         "instead of guessing a step count in advance.")
+    ap.add_argument("--save-every", type=int, default=50_000,
+                    help="checkpoint interval in steps")
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--worlds", nargs="+", default=list(TRAIN_WORLDS))
     ap.add_argument("--max-steps", type=int, default=3000,
@@ -238,6 +277,7 @@ def main() -> int:
         "stereo": bool(args.stereo),
         "worlds": list(args.worlds),
         "steps": int(args.steps),
+        "forever": bool(args.forever),
         "max_steps": int(args.max_steps),
         "workers": int(args.workers),
         "device": args.device,
@@ -291,17 +331,39 @@ def main() -> int:
 
     # Checkpoint OFTEN. A crash at hour 40 with nothing on disk is the classic
     # way to lose a weekend, and this is an unattended run by design.
-    ckpt = CheckpointCallback(save_freq=max(1, 50_000 // args.workers),
+    ckpt = CheckpointCallback(save_freq=max(1, args.save_every // args.workers),
                               save_path=args.out, name_prefix="ppo")
 
     t0 = time.time()
+    # STOPPING BY HAND MUST NOT COST THE WEIGHTS. Ctrl-C used to kill the
+    # process outright, losing everything since the last checkpoint -- up to
+    # --save-every steps of training. KeyboardInterrupt is caught here and the
+    # model saved on the way out, which is what makes --forever usable: run it,
+    # watch the scorecard, stop it when it stops improving.
+    #
+    # Only KeyboardInterrupt is caught. A real crash still propagates, because
+    # the weights from a run that fell over are worth less than a clear
+    # traceback, and the periodic checkpoints are still on disk either way.
+    budget = 10**12 if args.forever else args.steps
+    signal.signal(signal.SIGINT, _request_stop)
+    if args.forever:
+        print("[train] --forever: press Ctrl-C to stop. The weights are saved "
+              "when you do.", flush=True)
     # reset_num_timesteps=False on a resume, so the step counter and the
-    # TensorBoard curves continue the old run instead of restarting the x axis
-    # and making a continued run look like a new one that learned instantly.
-    model.learn(total_timesteps=args.steps, callback=[ckpt, Scorecard()], progress_bar=True,
+    # TensorBoard curves continue the old run instead of restarting the x
+    # axis and making a continued run look like one that learned instantly.
+    model.learn(total_timesteps=budget,
+                callback=[ckpt, Scorecard(), StopOnSignal()],
+                progress_bar=not args.forever,
                 reset_num_timesteps=not resume_from)
+    stopped = _STOP["asked"]
+    if stopped:
+        print(f"[train] stopped by hand at {model.num_timesteps} steps",
+              flush=True)
     model.save(os.path.join(args.out, "final"))
-    print(f"[train] final policy -> {os.path.join(out_abs, 'final.zip')}", flush=True)
+    print(f"[train] final policy -> {os.path.join(out_abs, 'final.zip')}"
+          + ("  (stopped early -- resume it with --resume)" if stopped else ""),
+          flush=True)
 
     # WHAT THE RUN ACTUALLY PRODUCED, in the columns the scorecard uses.
     # A training log ends on a reward number, and reward has already disagreed
@@ -352,8 +414,9 @@ def main() -> int:
         print(f"[train] end-of-run scoring failed ({exc}); the policy is saved "
               "and `kestrel evaluate` will score it.", flush=True)
     dt = time.time() - t0
-    print(f"trained {args.steps} steps in {dt/3600:.2f} h "
-          f"({args.steps/max(1e-9, dt):.0f} steps/s, {args.workers} workers)")
+    done = model.num_timesteps
+    print(f"trained {done} steps in {dt/3600:.2f} h "
+          f"({done/max(1e-9, dt):.0f} steps/s, {args.workers} workers)")
     venv.close()
     return 0
 

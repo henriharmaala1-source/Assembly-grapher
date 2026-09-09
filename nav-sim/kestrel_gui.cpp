@@ -213,8 +213,17 @@ void refreshPy(const std::string& dir) {
 enum Mode { TRACK = 0, BENCH, SIM, TRAIN, WATCH, EVAL, NMODES };
 const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train", "watch", "evaluate"};
 
-const int TRAIN_STEPS[] = {50000, 200000, 1000000, 5000000, 10000000, 20000000};
+// 0 means FOREVER -- run until stopped by hand, saving on the way out. The
+// rest are close enough together that a run can be sized without dropping to
+// the command line, which the old six-entry list could not do.
+const int TRAIN_STEPS[] = {20000, 50000, 100000, 250000, 500000, 1000000,
+                           2000000, 5000000, 10000000, 20000000, 50000000,
+                           100000000, 0};
 const int NTRAIN_STEPS = int(sizeof TRAIN_STEPS / sizeof *TRAIN_STEPS);
+// How often a checkpoint is written. Matters most for a forever run, where
+// the checkpoints ARE the record of how it progressed.
+const int SAVE_EVERY[] = {10000, 25000, 50000, 100000, 250000};
+const int NSAVE_EVERY = int(sizeof SAVE_EVERY / sizeof *SAVE_EVERY);
 
 struct Cfg {
     int mode = TRACK;
@@ -237,7 +246,7 @@ struct Cfg {
     int   replay = -1;
 
     // train
-    int   workers = 8, stepsIdx = 4, epLen = 3000;
+    int   workers = 8, stepsIdx = 8, epLen = 3000, saveIdx = 2;
     bool  trainStereo = true;
     bool  cuda = false;
     bool  resume = false;
@@ -267,6 +276,7 @@ const char* LAYOUT_NAME[5] = {"all", "both", "fpv", "top", "depth"};
 const int NLAYOUT = 5;
 
 std::string humanSteps(int n) {
+    if (n == 0) return "forever";
     if (n >= 1000000) return std::to_string(n / 1000000) + " M";
     return std::to_string(n / 1000) + " k";
 }
@@ -340,7 +350,14 @@ std::vector<std::string> buildArgs(const Cfg& c,
             break;
         case TRAIN:
             a.push_back("--workers"); a.push_back(std::to_string(c.workers));
-            a.push_back("--steps");   a.push_back(std::to_string(TRAIN_STEPS[c.stepsIdx]));
+            if (TRAIN_STEPS[c.stepsIdx] == 0) {
+                a.push_back("--forever");
+            } else {
+                a.push_back("--steps");
+                a.push_back(std::to_string(TRAIN_STEPS[c.stepsIdx]));
+            }
+            a.push_back("--save-every");
+            a.push_back(std::to_string(SAVE_EVERY[c.saveIdx]));
             if (c.trainStereo) a.push_back("--stereo");
             if (c.cuda) { a.push_back("--device"); a.push_back("cuda"); }
             if (c.resume) a.push_back("--resume");
@@ -388,7 +405,7 @@ enum {
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
-    ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY,
+    ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY, ID_TRAIN_SVM, ID_TRAIN_SVP,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT, ID_W_DET,
     ID_W_CITY, ID_W_ROAD, ID_W_CDS, ID_W_CORR,
@@ -531,13 +548,16 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 
     stepper(im, bs, x, 220, "workers", std::to_string(c.workers),
             ID_TRAIN_WM, ID_TRAIN_WP, "parallel environments");
-    stepper(im, bs, x + 220, 220, "steps", humanSteps(TRAIN_STEPS[c.stepsIdx]),
+    stepper(im, bs, x + 190, 220, "steps", humanSteps(TRAIN_STEPS[c.stepsIdx]),
             ID_TRAIN_SM, ID_TRAIN_SP, "checkpointed as it goes");
     // THE GOAL HAS TO FIT INSIDE AN EPISODE. At 1500 it did not: the forest
     // goal needs ~2500 steps, so every episode was cut off before arrival was
     // possible and the goal bonus was unreachable.
-    stepper(im, bs, x + 440, 220, "steps/episode", std::to_string(c.epLen),
+    stepper(im, bs, x + 380, 220, "steps/episode", std::to_string(c.epLen),
             ID_TRAIN_EPM, ID_TRAIN_EPP, "the goal must fit in this");
+    stepper(im, bs, x + 570, 220, "save every",
+            humanSteps(SAVE_EVERY[c.saveIdx]),
+            ID_TRAIN_SVM, ID_TRAIN_SVP, "checkpoint interval");
 
     bs.push_back({cv::Rect(x, 320, 250, 38),
                   c.trainStereo ? "Simulated stereo" : "Perfect depth",
@@ -823,6 +843,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_EPM:    c.epLen = std::max(500, c.epLen - 500); break;
         case ID_TRAIN_EPP:    c.epLen = std::min(10000, c.epLen + 500); break;
         case ID_TRAIN_VARY:   c.varyGoal = !c.varyGoal; break;
+        case ID_TRAIN_SVM:    c.saveIdx = std::max(0, c.saveIdx - 1); break;
+        case ID_TRAIN_SVP:    c.saveIdx = std::min(NSAVE_EVERY - 1, c.saveIdx + 1); break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;

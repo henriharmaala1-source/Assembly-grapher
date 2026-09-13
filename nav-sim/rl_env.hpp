@@ -182,6 +182,31 @@ struct EnvStep {
     float rStop     = 0.f;   // standing still, or picking a masked action
     float rClear    = 0.f;   // flying closer to things than clearTarget
     float rTerminal = 0.f;   // the goal bonus or the collision penalty
+
+    // WHAT MAKES "OUT OF STEPS" READABLE. One truncation column covered at
+    // least five different failures -- never left the spawn, orbited in place,
+    // flew the wrong way, got close and drifted off, was still closing when
+    // cut off -- and they need completely different fixes. The fields above
+    // already separate some of them; these four separate the rest.
+    //
+    // startDistM  the journey. Without it "end-dist 177.8" is unreadable: only
+    //             knowing the forest journey is 175.0 makes that row say "ended
+    //             further out than it started".
+    // netDispM    straight-line distance from the spawn. travelM alone cannot
+    //             tell a policy orbiting its spawn from one that flew 100 m
+    //             sideways, because distToGoalM only measures motion along the
+    //             goal axis.
+    // cellsVisited how much distinct ground was covered, without the reader
+    //             having to divide rCoverage by a weight that a flag can change.
+    // hitUnknown  on a collision: was the cell flown into UNKNOWN in the map the
+    //             policy had built, or OCCUPIED? With the veto on, hitting
+    //             something already mapped should be impossible, so this splits
+    //             "the veto has a bug" from "the veto was blind" -- the honest
+    //             failure, whose fix is sensing range and not the policy.
+    float startDistM  = 0.f;
+    float netDispM    = 0.f;
+    int   cellsVisited = 0;
+    bool  hitUnknown  = false;
 };
 
 // The classical planners the learned one is measured against. ONE definition,

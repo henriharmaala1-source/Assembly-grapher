@@ -254,6 +254,25 @@ def main() -> int:
                          "--forever. 0 turns annealing OFF and holds both "
                          "constant, which is the old behaviour and the reason "
                          "a 15 M run degraded after 14 M.")
+    ap.add_argument("--gamma", type=float, default=0.999, metavar="F",
+                    help="discount. HOW FAR AHEAD THE VALUE FUNCTION CAN SEE, "
+                         "in steps, is about 1/(1-gamma). This was 0.995 -- a "
+                         "200-step horizon -- while journeys take 573 to 2042 "
+                         "steps (journey_fit prints them). At 0.995 the goal "
+                         "bonus of 100, discounted back over a typical 2000-"
+                         "step journey, is worth 0.995^2000 * 100 = 0.004: "
+                         "arriving was, for practical purposes, not in the "
+                         "objective at all, and everything the policy learned "
+                         "about reaching goals came from the dense progress "
+                         "shaping alone. 0.999 gives a 1000-step horizon and "
+                         "0.135 * 100 = 13.5 for the same arrival.")
+    ap.add_argument("--gae-lambda", type=float, default=0.98, metavar="F",
+                    help="GAE trace. The ADVANTAGE horizon is about "
+                         "1/(1-gamma*lambda), which is the number that decides "
+                         "what a single action is credited for. At the old "
+                         "0.995/0.95 pair that was 18 steps -- 1.8 seconds of "
+                         "flight -- so no action was ever credited with "
+                         "anything further away than its own next turn.")
     ap.add_argument("--target-kl", type=float, default=0.02, metavar="F",
                     help="abandon the rest of an update once the policy has "
                          "moved this far in KL. The guard rail against one bad "
@@ -383,6 +402,8 @@ def main() -> int:
         "explore": float(args.explore),
         "anneal": int(anneal),
         "target_kl": float(args.target_kl),
+        "gamma": float(args.gamma),
+        "gae_lambda": float(args.gae_lambda),
         "scale_clear": not args.raw_clear,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -424,6 +445,19 @@ def main() -> int:
     except Exception as exc:            # a diagnostic must never stop a run
         print(f"[train] journey-fit check skipped ({exc})", flush=True)
 
+    # TORCH MUST NOT FIGHT THE WORKERS FOR CORES. It defaults to one thread per
+    # core, and with --workers 8 already saturating the machine those threads
+    # contend with the environment steps that are the actual bottleneck. The
+    # policy is a 256x256 MLP; it does not need a thread pool.
+    try:
+        import torch
+        if args.device == "cpu":
+            torch.set_num_threads(max(1, min(4, (os.cpu_count() or 8) - args.workers)))
+            print(f"[train] torch threads: {torch.get_num_threads()} "
+                  f"(the other cores are stepping environments)", flush=True)
+    except Exception:
+        pass
+
     venv = VecMonitor(SubprocVecEnv([make_env(i, **kw) for i in range(args.workers)]))
 
     # RESUMING, OR NOT, IS AN EXPLICIT CHOICE. It used to be neither: a fresh
@@ -452,6 +486,10 @@ def main() -> int:
         # target_kl of None from before this existed. The flags on THIS command
         # line are what the user asked for, so they win.
         model.target_kl = kl
+        # Same reasoning as target_kl: the checkpoint carries whatever it was
+        # trained with, and the flags on THIS command line are the request.
+        model.gamma = args.gamma
+        model.gae_lambda = args.gae_lambda
         # final.zip carries no step count in its name, so say so rather than
         # printing "at 0 trained steps", which reads as "it lost everything".
         where = (f"at {resume_at} trained steps" if resume_at
@@ -465,7 +503,7 @@ def main() -> int:
             # Both of these are replaced every rollout by Schedule; the values
             # here are only what the first rollout runs with.
             learning_rate=LR0, ent_coef=args.explore,
-            target_kl=kl, gamma=0.995, gae_lambda=0.95,
+            target_kl=kl, gamma=args.gamma, gae_lambda=args.gae_lambda,
             policy_kwargs=dict(net_arch=[256, 256]),
             tensorboard_log=os.path.join(args.out, "tb"))
 
@@ -503,6 +541,17 @@ def main() -> int:
     if kl:
         print(f"[train] target-kl {kl:g}: an update stops early if it moves "
               "the policy further than this.", flush=True)
+    # IN STEPS, because 0.999 means nothing and "1000 steps against a 2042-step
+    # journey" means everything. This is the number that was wrong for the whole
+    # of the reference run and could not be seen in the log.
+    vh = 1.0 / max(1e-9, 1.0 - args.gamma)
+    ah = 1.0 / max(1e-9, 1.0 - args.gamma * args.gae_lambda)
+    print(f"[train] horizon: value sees ~{vh:.0f} steps ahead (gamma "
+          f"{args.gamma:g}), one action is credited over ~{ah:.0f} steps "
+          f"(lambda {args.gae_lambda:g}).\n"
+          f"        Compare against the journeys above: a goal further away "
+          f"than the value horizon\n        is invisible to the value "
+          f"function and only the progress shaping reaches it.", flush=True)
     model.learn(total_timesteps=budget,
                 callback=[ckpt, Scorecard(),
                           Schedule(LR0, args.explore, anneal), StopOnSignal()],
@@ -537,7 +586,10 @@ def main() -> int:
                               scale_clear=not args.raw_clear)
             trav, coll, reach, closest = [], 0, 0, []
             for sd in (901, 902, 903):
-                obs, _ = env.reset(seed=sd)
+                # options=, not seed=. seed= seeds the DRAW from the seeds list
+                # and this asked for 901/902/903 and flew maps 902/903/903 --
+                # two distinct worlds, one of them twice, printed as three.
+                obs, _ = env.reset(seed=sd, options={"world": w, "seed": sd})
                 info = {}
                 for _ in range(args.max_steps):
                     m = env.action_masks()

@@ -85,20 +85,41 @@ class VoxelNavEnv(gym.Env):
         return m
 
     def reset(self, *, seed=None, options=None):
+        """seed= seeds the CHOICE of world and map; options= pins them.
+
+        THE DIFFERENCE MATTERS AND HAS ALREADY COST A MEASUREMENT. `seed` is
+        gymnasium's reproducibility seed: it seeds the RNG that then DRAWS a
+        world and a map from self.worlds/self.seeds. It is not the map number.
+        train.py's end-of-run scorecard asked for seeds 901, 902 and 903 and
+        actually flew maps 902, 903 and 903 -- two distinct worlds, one of them
+        twice, reported as three held-out seeds. Pass options={"world": w,
+        "seed": s} when you mean a specific map, which is what every scoring
+        caller means.
+        """
         super().reset(seed=seed)
         if seed is not None:
             self._rng = np.random.default_rng(seed)
-        world = self.worlds[int(self._rng.integers(len(self.worlds)))]
-        s = int(self._rng.choice(self.seeds))
+        opt = options or {}
+        world = opt.get("world") or self.worlds[int(self._rng.integers(len(self.worlds)))]
+        s = int(opt["seed"]) if "seed" in opt else int(self._rng.choice(self.seeds))
         # Kept so every STEP's info can name its world. A training callback
         # cannot bucket a result by world it cannot see, and "mean travel" over
         # a 30 m maze and a 340 m city mixed together says nothing about either.
         self._world, self._seed = world, s
-        self._cfg.horizon_s = self.horizons[world]
+        # ONE WORLD PER RESET, NOT TWO. VoxelEnv's constructor ends with
+        # reset(cfg.world, cfg.seed) -- it builds a world -- and this then
+        # called reset(world, s) and built the real one, throwing the first
+        # away. cfg.world was never updated from worlds[0], so every episode
+        # generated a world nobody flew. Measured per reset before the fix:
+        # maze 14.9 ms, city 80.9 ms, forest 1088.6 ms.
+        #
         # horizon_s is read at construction, so a world with a different horizon
-        # needs a fresh env rather than a reset.
+        # needs a fresh env rather than a reset either way -- the saving is in
+        # telling the constructor what to build instead of correcting it after.
+        self._cfg.horizon_s = self.horizons[world]
+        self._cfg.world = world
+        self._cfg.seed = s
         self._env = voxelenv.VoxelEnv(self._cfg)
-        self._env.reset(world, s)
         self._last = None
         return (self._env.observation(),
                 {"world": world, "seed": s,
@@ -123,6 +144,9 @@ class VoxelNavEnv(gym.Env):
             "r_progress": st.r_progress, "r_coverage": st.r_coverage,
             "r_time": st.r_time, "r_stop": st.r_stop,
             "r_clear": st.r_clear, "r_terminal": st.r_terminal,
+            # The failure taxonomy's inputs; see EnvStep in rl_env.hpp.
+            "start_dist_m": st.start_dist_m, "net_disp_m": st.net_disp_m,
+            "cells_visited": st.cells_visited, "hit_unknown": st.hit_unknown,
         }
         return self._env.observation(), float(st.reward), bool(st.done), bool(st.truncated), info
 

@@ -119,15 +119,17 @@ void drawBtn(cv::Mat& im, const Btn& b) {
 
 // A -/+ pair with the value between them. Returns nothing; the caller matches
 // on idMinus / idPlus.
+// `w` is the gap between the - and + buttons. The train panel's second row
+// carries five settings and the default 130 only fits four across the panel.
 void stepper(cv::Mat& im, std::vector<Btn>& bs, int x, int y, const char* label,
              const std::string& value, int idMinus, int idPlus,
-             const char* hint = nullptr) {
+             const char* hint = nullptr, int w = 130) {
     txt(im, label, x, y - 10, 0.5, DIM);
     bs.push_back({cv::Rect(x, y, 34, 34), "-", idMinus});
-    bs.push_back({cv::Rect(x + 130, y, 34, 34), "+", idPlus});
+    bs.push_back({cv::Rect(x + w, y, 34, 34), "+", idPlus});
     int base = 0;
     cv::Size ts = cv::getTextSize(value, cv::FONT_HERSHEY_SIMPLEX, 0.6, 2, &base);
-    txt(im, value, x + 82 - ts.width / 2, y + 24, 0.6, INK, 2);
+    txt(im, value, x + (w + 34) / 2 - ts.width / 2, y + 24, 0.6, INK, 2);
     if (hint) txt(im, hint, x, y + 54, 0.42, DIM);
 }
 
@@ -245,6 +247,19 @@ const int ANNEAL[] = {-1, 0, 1000000, 2000000, 5000000, 10000000, 20000000,
 const int NANNEAL = int(sizeof ANNEAL / sizeof *ANNEAL);
 // How far one update is allowed to move the policy before the rest of it is
 // abandoned. 0 = off, which is what PPO does without it.
+// HORIZONS IN STEPS, NOT AS 0.999. gamma = 1 - 1/steps, and the step count is
+// the number that can be compared against something: a journey takes 573 to
+// 2042 steps (the panel's own steps/episode, and journey_fit's table), so a
+// value horizon of 200 -- which is what gamma 0.995 meant -- could not see the
+// end of any of them. Naming the discount instead of the horizon is why that
+// went unnoticed through a fifteen-million-step run.
+const int VALUE_H[] = {100, 200, 500, 1000, 2000, 4000, 10000};
+const int NVALUE_H = int(sizeof VALUE_H / sizeof *VALUE_H);
+// 1/(1 - gamma*lambda): how far the credit for ONE action reaches. The old
+// 0.995/0.95 pair gave 18 steps, i.e. 1.8 seconds of flight.
+const int CREDIT_H[] = {20, 50, 100, 200, 500, 1000};
+const int NCREDIT_H = int(sizeof CREDIT_H / sizeof *CREDIT_H);
+
 const float TARGET_KL[] = {0.f, 0.01f, 0.02f, 0.03f, 0.05f, 0.1f};
 const int NTARGET_KL = int(sizeof TARGET_KL / sizeof *TARGET_KL);
 
@@ -369,6 +384,7 @@ struct Cfg {
     // Defaults matching train.py: explore 0.02, anneal auto, target-kl 0.02,
     // clearance scaled with world size.
     int   exploreIdx = 3, annealIdx = 0, klIdx = 2;
+    int   valueHIdx = 3, creditHIdx = 3;     // 1000 steps / 200 steps
     bool  rawClear = false;
     bool  trainStereo = true;
     bool  cuda = false;
@@ -478,6 +494,19 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--target-kl");
             a.push_back(trimNum(TARGET_KL[c.klIdx]));
             if (c.rawClear) a.push_back("--raw-clear");
+            // The panel names horizons; train.py takes the discounts. One
+            // conversion, here, so the two can never mean different things.
+            {
+                const double g = 1.0 - 1.0 / double(VALUE_H[c.valueHIdx]);
+                const double lam = (1.0 - 1.0 / double(CREDIT_H[c.creditHIdx])) / g;
+                a.push_back("--gamma");      a.push_back(trimNum(float(g)));
+                // Four decimals: the command strip is meant to be typed, and
+                // 0.995996 is noise on a number whose whole meaning is
+                // "about 200 steps".
+                const double lr = std::round(std::min(0.9999, std::max(0.5, lam))
+                                             * 10000.0) / 10000.0;
+                a.push_back("--gae-lambda"); a.push_back(trimNum(float(lr)));
+            }
             break;
     }
     return a;
@@ -524,7 +553,8 @@ enum {
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY, ID_TRAIN_SVM, ID_TRAIN_SVP,
     ID_TRAIN_EXM, ID_TRAIN_EXP, ID_TRAIN_ANM, ID_TRAIN_ANP, ID_TRAIN_KLM,
-    ID_TRAIN_KLP, ID_TRAIN_RAWCLR,
+    ID_TRAIN_KLP, ID_TRAIN_RAWCLR, ID_TRAIN_VHM, ID_TRAIN_VHP,
+    ID_TRAIN_CHM, ID_TRAIN_CHP,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_LAYOUT, ID_W_DET,
     ID_E_S0M = 600, ID_E_S0P, ID_E_S1M, ID_E_S1P,
@@ -673,24 +703,24 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // around 14.3 M and then went backwards -- collisions 0.169 -> 0.233, goals
     // 0.700 -> 0.622 -- with a learning rate and an entropy bonus that were
     // hard constants for the whole run and nothing bounding an update.
+    const int P = 150, SW = 100;          // five across the panel
     stepper(im, bs, x, 268, "explore", trimNum(EXPLORE[c.exploreIdx]),
-            ID_TRAIN_EXM, ID_TRAIN_EXP, "how random it stays");
-    stepper(im, bs, x + 190, 268, "anneal",
+            ID_TRAIN_EXM, ID_TRAIN_EXP, "how random it stays", SW);
+    stepper(im, bs, x + P, 268, "anneal",
             ANNEAL[c.annealIdx] < 0 ? std::string("auto")
           : ANNEAL[c.annealIdx] == 0 ? std::string("off")
           : humanSteps(ANNEAL[c.annealIdx]),
-            ID_TRAIN_ANM, ID_TRAIN_ANP, "lr + explore decay");
-    stepper(im, bs, x + 380, 268, "target-kl", trimNum(TARGET_KL[c.klIdx]),
-            ID_TRAIN_KLM, ID_TRAIN_KLP, "cap on one update");
-
-    // The fourth column of row two is the only free space left on this panel,
-    // and it is 212 px wide -- so these lines are short by necessity, not by
-    // preference. gui --check now fails anything that runs past the edge.
-    txt(im, "stereo is the honest", x + 570, 262, 0.42, DIM);
-    txt(im, "setting, ~3x slower.", x + 570, 280, 0.42, DIM);
-    txt(im, "cuda WILL look idle:", x + 570, 302, 0.42, DIM);
-    txt(im, "env steps are C++ on", x + 570, 320, 0.42, DIM);
-    txt(im, "the CPU.", x + 570, 338, 0.42, DIM);
+            ID_TRAIN_ANM, ID_TRAIN_ANP, "lr + explore decay", SW);
+    stepper(im, bs, x + 2 * P, 268, "target-kl", trimNum(TARGET_KL[c.klIdx]),
+            ID_TRAIN_KLM, ID_TRAIN_KLP, "cap on one update", SW);
+    // IN STEPS, so it can be compared with steps/episode directly above it.
+    // As a discount this was 0.995 and nobody noticed it meant 200.
+    stepper(im, bs, x + 3 * P, 268, "value horizon",
+            std::to_string(VALUE_H[c.valueHIdx]),
+            ID_TRAIN_VHM, ID_TRAIN_VHP, "steps it sees ahead", SW);
+    stepper(im, bs, x + 4 * P, 268, "credit horizon",
+            std::to_string(CREDIT_H[c.creditHIdx]),
+            ID_TRAIN_CHM, ID_TRAIN_CHP, "steps one act owns", SW);
 
     bs.push_back({cv::Rect(x, 356, 250, 38),
                   c.trainStereo ? "Simulated stereo" : "Perfect depth",
@@ -731,9 +761,12 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   ID_TRAIN_RAWCLR, c.rawClear});
 
     txt(im, "explore is the entropy bonus -- how much random stuff it tries. "
-            "High early, a tenth of it after the anneal.", x, 456, 0.42, DIM);
-    txt(im, "Raise it if a run plateaus with a world unsolved; anneal off holds "
-            "both constant, which is what the last run did.", x, 474, 0.42, DIM);
+            "High early, a tenth of it after the anneal.", x, 452, 0.42, DIM);
+    txt(im, "A goal further away than the value horizon is invisible to the "
+            "value function: only the progress shaping reaches it.",
+        x, 470, 0.42, DIM);
+    txt(im, "stereo is honest and ~3x slower. cuda will look idle: the "
+            "bottleneck is environment steps, in C++.", x, 488, 0.42, DIM);
 
     // WHICH INTERPRETER, by absolute path. "python" is ambiguous on a machine
     // with several, and installing into the wrong one SUCCEEDS -- leaving the
@@ -744,32 +777,34 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // Fitting to it rather than trusting the text to be short is the fix for a
     // status line that ran straight under "Install the RL stack".
     const int col = 250;
-    txt(im, "python", x, 504, 0.5, DIM);
+    txt(im, "python", x, 506, 0.5, DIM);
     if (!g_py.probed) {
-        txt(im, fit("not checked yet", col, 0.44, false), x, 526, 0.44, DIM);
+        txt(im, fit("not checked yet", col, 0.44, false), x, 524, 0.44, DIM);
     } else if (b && b->rl) {
-        txt(im, fit("ready: " + b->exe, col, 0.44), x, 526, 0.44, INK);
+        txt(im, fit("ready: " + b->exe, col, 0.44), x, 524, 0.44, INK);
         txt(im, fit("CPython " + std::to_string(b->major) + "." +
                     std::to_string(b->minor) + " loads voxelenv", col, 0.42, false),
-        x, 544, 0.42, DIM);
+        x, 540, 0.42, DIM);
     } else if (b) {
-        txt(im, fit("needs the RL stack: " + b->exe, col, 0.44), x, 522, 0.44, INK);
+        txt(im, fit("needs the RL stack: " + b->exe, col, 0.44), x, 524, 0.44, INK);
         txt(im, fit("Install targets THAT interpreter,", col, 0.42, false), x, 540, 0.42, DIM);
-        txt(im, fit("not whatever 'python' means.", col, 0.42, false), x, 558, 0.42, DIM);
+        txt(im, fit("not whatever 'python' means.", col, 0.42, false), x, 556, 0.42, DIM);
     } else if (!g_py.abi.empty()) {
         txt(im, fit("none can load voxelenv (needs " + g_py.abi + ")", col, 0.44, false),
-            x, 526, 0.44, INK);
+            x, 524, 0.44, INK);
         txt(im, fit("a version mismatch, not a missing file", col, 0.42, false),
-            x, 544, 0.42, DIM);
+            x, 540, 0.42, DIM);
     } else {
-        txt(im, fit("voxelenv is not beside this exe", col, 0.44, false), x, 526, 0.44, INK);
+        txt(im, fit("voxelenv is not beside this exe", col, 0.44, false), x, 524, 0.44, INK);
         txt(im, fit("the C++ env the trainer steps", col, 0.42, false), x, 544, 0.42, DIM);
     }
-    bs.push_back({cv::Rect(x + 266, 494, 230, 34), "Install the RL stack",
+    bs.push_back({cv::Rect(x + 266, 508, 230, 34), "Install the RL stack",
                   ID_TRAIN_INSTALL, b && !b->rl});
     // The full listing, for when the one line above is not enough -- which is
     // whenever the machine has several pythons and the wrong one is winning.
-    bs.push_back({cv::Rect(x + 266, 532, 230, 30), "List every python",
+    // Beside Install rather than under it: the panel has no vertical room left
+    // and a row at 546 would reach 576, through the command strip at 564.
+    bs.push_back({cv::Rect(x + 512, 508, 230, 34), "List every python",
                   ID_TRAIN_PYTHONS, false});
 }
 
@@ -1022,6 +1057,10 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_KLM:    c.klIdx = std::max(0, c.klIdx - 1); break;
         case ID_TRAIN_KLP:    c.klIdx = std::min(NTARGET_KL - 1, c.klIdx + 1); break;
         case ID_TRAIN_RAWCLR: c.rawClear = !c.rawClear; break;
+        case ID_TRAIN_VHM: c.valueHIdx = std::max(0, c.valueHIdx - 1); break;
+        case ID_TRAIN_VHP: c.valueHIdx = std::min(NVALUE_H - 1, c.valueHIdx + 1); break;
+        case ID_TRAIN_CHM: c.creditHIdx = std::max(0, c.creditHIdx - 1); break;
+        case ID_TRAIN_CHP: c.creditHIdx = std::min(NCREDIT_H - 1, c.creditHIdx + 1); break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;

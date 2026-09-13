@@ -50,6 +50,7 @@ struct VoxelEnv::Impl {
     float px = 0, py = 0, pz = 0, yaw = 0;
     float goalE = 0, goalN = 0, goalU = 0;
     float startDist = 1.f, prevDist = 1.f;
+    float startX = 0.f, startY = 0.f;        // for netDisp; see EnvStep
     float travel = 0.f, minClear = 1e9f;
     float minGoalDist = 1e9f; int minGoalStep = 0;
     // Episode totals per reward term. EnvStep is built fresh every step, so
@@ -128,8 +129,12 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     I.world = VoxelWorld();
     I.visits.clear();
     I.aProgress = I.aCoverage = I.aTime = I.aStop = I.aClear = I.aTerm = 0.f;
+    // A PHANTOM FIRST LEG. This seeded the trail with I.px/I.py BEFORE the
+    // world dispatch below assigns them, so the first point was wherever the
+    // PREVIOUS episode ended and every plan view drew a straight line from
+    // there to the new spawn. The trail is seeded after the spawn is known --
+    // see the end of this function.
     I.trail.clear();
-    I.trail.push_back(cv::Point2f(I.px, I.py));
 
     // FIVE STYLES, NOT TWO, AND VARIED WITHIN EACH. Training on forest and maze
     // alone lets a policy learn "forest behaviour" and "maze behaviour" -- two
@@ -348,6 +353,11 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
 
     I.startDist = std::hypot(I.goalE - I.px, I.goalN - I.py);
     I.prevDist = I.startDist;
+    // The spawn is only known HERE -- after the world dispatch, the --vary-goal
+    // sampling and the clearance nudge have all had their say. Seeding the
+    // trail any earlier drew a line from the previous episode's last position.
+    I.startX = I.px; I.startY = I.py;
+    I.trail.push_back(cv::Point2f(I.px, I.py));
     I.travel = 0.f; I.minClear = 1e9f;
     I.minGoalDist = I.startDist; I.minGoalStep = 0;
     I.steps = 0; I.stopped = 0; I.collisions = 0;
@@ -396,6 +406,12 @@ EnvStep VoxelEnv::step(int action) {
     I.minClear = std::min(I.minClear, clr);
     const bool hit = clr < cfg_.robotR;
     if (hit) ++I.collisions;
+    // WAS IT BLIND, OR WAS THE VETO WRONG? Asked at the moment of contact and
+    // against the map the POLICY built, not the truth -- the truth is what it
+    // just hit. With maskUnsafe on, flying into a cell already marked OCCUPIED
+    // should not be reachable; if it is, the veto has a bug. UNKNOWN is the
+    // honest failure and points at sensing range instead.
+    if (hit) out.hitUnknown = I.map.stateAt(I.px, I.py, I.pz) != VoxelMap::OCCUPIED;
 
     // --- sense: render, integrate. The map is one the policy BUILT ---------
     CamPose pose; pose.e = I.px; pose.n = I.py; pose.u = I.pz; pose.yawDeg = I.yaw;
@@ -457,6 +473,9 @@ EnvStep VoxelEnv::step(int action) {
     out.rProgress = I.aProgress; out.rCoverage = I.aCoverage; out.rTime = I.aTime;
     out.rStop = I.aStop; out.rClear = I.aClear; out.rTerminal = I.aTerm;
     out.collisions = I.collisions; out.stoppedSteps = I.stopped; out.steps = I.steps;
+    out.startDistM = I.startDist;
+    out.netDispM = std::hypot(I.px - I.startX, I.py - I.startY);
+    out.cellsVisited = int(I.visits.size());
 
     buildObservation();
     last_ = out;

@@ -124,6 +124,13 @@ int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
 
 int VoxelEnv::nPrims() const { return int(im_->traj.librarySize()); }
 
+void VoxelEnv::position(float& e, float& n, float& u) const {
+    e = im_->px; n = im_->py; u = im_->pz;
+}
+void VoxelEnv::goal(float& e, float& n, float& u) const {
+    e = im_->goalE; n = im_->goalN; u = im_->goalU;
+}
+
 void VoxelEnv::reset(const std::string& world, unsigned seed) {
     Impl& I = *im_;
     I.world = VoxelWorld();

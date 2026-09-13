@@ -218,8 +218,9 @@ void refreshPy(const std::string& dir) {
 }
 
 // ----------------------------------------------------------------- settings
-enum Mode { TRACK = 0, BENCH, SIM, TRAIN, WATCH, EVAL, NMODES };
-const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train", "watch", "evaluate"};
+enum Mode { TRACK = 0, BENCH, SIM, TRAIN, WATCH, EVAL, REPORT, NMODES };
+const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train", "watch",
+                                 "evaluate", "report"};
 
 // 0 means FOREVER -- run until stopped by hand, saving on the way out. The
 // rest are close enough together that a run can be sized without dropping to
@@ -402,6 +403,12 @@ struct Cfg {
     bool  eBaselines = true, eReward = false, eProgress = false, eNoVeto = false;
     bool  eVary = false;
     int   eSeed0 = 101, eSeed1 = 108, eSteps = 3000;   // see Cfg::steps
+
+    // report
+    bool  rw[NWORLDS] = {true, true, true, true, true, true};
+    int   rSeed0 = 101, rSeed1 = 104, rSteps = 3000, rRepeats = 3;
+    bool  rDet = false, rProgress = false, rBaselines = false, rRandom = false;
+    bool  rStereo = false, rNoVeto = false, rVary = false;
 };
 
 const int PANE_PX[] = {240, 320, 420, 520};
@@ -459,6 +466,21 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.eProgress) a.push_back("--progress");
             if (c.eNoVeto) a.push_back("--no-veto");
             if (c.eVary) a.push_back("--vary-goal");
+            break;
+        case REPORT:
+            emitWorlds(a, c.rw);
+            a.push_back("--seeds");
+            for (int sd = c.rSeed0; sd <= c.rSeed1; ++sd)
+                a.push_back(std::to_string(sd));
+            a.push_back("--max-steps"); a.push_back(std::to_string(c.rSteps));
+            a.push_back("--repeats");   a.push_back(std::to_string(c.rRepeats));
+            if (c.rDet) a.push_back("--deterministic");
+            if (c.rProgress) a.push_back("--progress");
+            if (c.rBaselines) a.push_back("--baselines");
+            if (c.rRandom) a.push_back("--random");
+            if (c.rStereo) a.push_back("--stereo");
+            if (c.rNoVeto) a.push_back("--no-veto");
+            if (c.rVary) a.push_back("--vary-goal");
             break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
@@ -523,6 +545,7 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
     if (c.mode == BENCH && !nWorldsOn(c.bw)) return "pick at least one world";
     if (c.mode == WATCH && !nWorldsOn(c.ww)) return "pick at least one world";
     if (c.mode == EVAL  && !nWorldsOn(c.ew)) return "pick at least one world";
+    if (c.mode == REPORT && !nWorldsOn(c.rw)) return "pick at least one world";
     if (c.mode == SIM && c.simSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     return "";
@@ -547,6 +570,7 @@ enum {
     ID_BW = 250,          // +0..5, the order of WORLD_NAME
     ID_WW = 560,          // +0..5
     ID_EW = 660,          // +0..5
+    ID_RW = 760,          // +0..5
     ID_SIM_SRC = 300,     // +0..2
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
@@ -560,6 +584,9 @@ enum {
     ID_E_S0M = 600, ID_E_S0P, ID_E_S1M, ID_E_S1P,
     ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
     ID_E_PROGRESS, ID_E_NOVETO, ID_E_VARY,
+    ID_R_S0M = 700, ID_R_S0P, ID_R_S1M, ID_R_S1P, ID_R_STM, ID_R_STP,
+    ID_R_RPM, ID_R_RPP, ID_R_DET, ID_R_PROGRESS, ID_R_BASE, ID_R_RANDOM,
+    ID_R_STEREO, ID_R_NOVETO, ID_R_VARY,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -936,8 +963,74 @@ const FlagBtn FLAG_BTNS[] = {
     {EVAL,  ID_E_PROGRESS,    "--progress"},
     {EVAL,  ID_E_NOVETO,      "--no-veto"},
     {EVAL,  ID_E_VARY,        "--vary-goal"},
+    {REPORT, ID_R_DET,      "--deterministic"},
+    {REPORT, ID_R_PROGRESS, "--progress"},
+    {REPORT, ID_R_BASE,     "--baselines"},
+    {REPORT, ID_R_RANDOM,   "--random"},
+    {REPORT, ID_R_STEREO,   "--stereo"},
+    {REPORT, ID_R_NOVETO,   "--no-veto"},
+    {REPORT, ID_R_VARY,     "--vary-goal"},
 };
 const int NFLAG_BTNS = int(sizeof FLAG_BTNS / sizeof *FLAG_BTNS);
+
+void panelReport(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
+    const int x = 266;
+    txt(im, "how it fails, as pictures", x, 106, 0.62, INK, 1);
+    txt(im, "Every other view here reports the policy as numbers, and a table "
+            "cannot say", x, 128, 0.44, DIM);
+    txt(im, "WHY. Six episodes came back as five rows all reading 'ran out of "
+            "steps':", x, 146, 0.44, DIM);
+    txt(im, "one never left the spawn, one flew the wrong way, one was still "
+            "closing.", x, 164, 0.44, DIM);
+
+    worldRow(im, bs, x, 194, ID_RW, c.rw);
+
+    stepper(im, bs, x, 268, "first seed", std::to_string(c.rSeed0),
+            ID_R_S0M, ID_R_S0P, "world instance", 100);
+    stepper(im, bs, x + 150, 268, "last seed", std::to_string(c.rSeed1),
+            ID_R_S1M, ID_R_S1P, nullptr, 100);
+    stepper(im, bs, x + 300, 268, "steps/run", std::to_string(c.rSteps),
+            ID_R_STM, ID_R_STP, "the goal must fit", 100);
+    // A DETERMINISTIC POLICY GIVES ONE TRAIL PER WORLD however many times you
+    // ask, and one trail says nothing about where failures cluster. Repeats
+    // above 1 sample instead, which is what turns the map into a distribution.
+    stepper(im, bs, x + 450, 268, "repeats", std::to_string(c.rRepeats),
+            ID_R_RPM, ID_R_RPP, "runs per instance", 100);
+
+    const int nrun = nWorldsOn(c.rw) * std::max(0, c.rSeed1 - c.rSeed0 + 1)
+                   * std::max(1, c.rRepeats) * (c.rBaselines ? 5 : 1);
+    txt(im, std::to_string(nrun) + " episodes", x + 610, 292, 0.5, INK);
+
+    bs.push_back({cv::Rect(x, 356, 250, 36),
+                  c.rDet ? "argmax (one trail each)" : "sampled (a spread)",
+                  ID_R_DET, c.rDet});
+    bs.push_back({cv::Rect(x + 266, 356, 250, 36),
+                  c.rProgress ? "EVERY checkpoint" : "newest checkpoint",
+                  ID_R_PROGRESS, c.rProgress});
+    bs.push_back({cv::Rect(x + 532, 356, 210, 36),
+                  c.rBaselines ? "with the 4 baselines" : "the policy alone",
+                  ID_R_BASE, c.rBaselines});
+
+    bs.push_back({cv::Rect(x, 400, 250, 36),
+                  c.rRandom ? "random (the floor)" : "the trained policy",
+                  ID_R_RANDOM, c.rRandom});
+    bs.push_back({cv::Rect(x + 266, 400, 250, 36),
+                  c.rStereo ? "Simulated stereo" : "Perfect depth",
+                  ID_R_STEREO, c.rStereo});
+    bs.push_back({cv::Rect(x + 532, 400, 210, 36),
+                  c.rNoVeto ? "veto OFF" : "veto on", ID_R_NOVETO, c.rNoVeto});
+    bs.push_back({cv::Rect(x, 444, 250, 36),
+                  c.rVary ? "varied journey" : "fixed journey",
+                  ID_R_VARY, c.rVary});
+
+    txt(im, "Writes report.csv beside the weights and draws five panels from "
+            "it: which failure is each", x, 494, 0.42, DIM);
+    txt(im, "world's failure, every episode's distance-to-goal curve, where "
+            "the reward went, and the", x, 512, 0.42, DIM);
+    txt(im, "trails laid over the world they were flown in.", x, 530, 0.42, DIM);
+    txt(im, "Redraw without flying again:  kestrel report --plot <dir>",
+        x, 552, 0.42, DIM);
+}
 
 // ------------------------------------------------------------------- compose
 // ONE FUNCTION DRAWS THE WHOLE WINDOW and hands back the buttons it drew, so
@@ -954,7 +1047,12 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
 
     bs.clear();
     for (int i = 0; i < NMODES; ++i)
-        bs.push_back({cv::Rect(28, 100 + i * 54, 210, 46), MODE_NAME[i],
+        // PITCH 48, NOT 54. runY is derived as 100 + NMODES*pitch + 16 and the
+        // refusal line sits 78 below it, so at 54 a seventh mode would put that
+        // line at y=572 -- through the command strip at 564. Deriving runY
+        // already stopped a button landing on RUN; this is the same arithmetic
+        // one row further down.
+        bs.push_back({cv::Rect(28, 100 + i * 48, 210, 42), MODE_NAME[i],
                       ID_MODE + i, c.mode == i});
 
     switch (c.mode) {
@@ -963,6 +1061,7 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
         case SIM:   panelSim(im, bs, c, recs); break;
         case WATCH: panelWatch(im, bs, c); break;
         case EVAL:  panelEval(im, bs, c); break;
+        case REPORT: panelReport(im, bs, c); break;
         default:    panelTrain(im, bs, c); break;
     }
 
@@ -970,7 +1069,7 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
     // Below the LAST mode button, computed rather than a constant: adding the
     // fifth mode put a button straight through RUN, and `gui --check` caught it
     // on the first run. Derive it and it cannot happen again.
-    const int runY = 100 + NMODES * 54 + 16;
+    const int runY = 100 + NMODES * 48 + 16;
     Btn runBtn{cv::Rect(28, runY, 210, 58), "RUN", ID_RUN};
     runBtn.go = why.empty();
     bs.push_back(runBtn);
@@ -1019,6 +1118,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     if (id >= ID_BW && id < ID_BW + NWORLDS) { c.bw[id - ID_BW] ^= 1; return; }
     if (id >= ID_WW && id < ID_WW + NWORLDS) { c.ww[id - ID_WW] ^= 1; return; }
     if (id >= ID_EW && id < ID_EW + NWORLDS) { c.ew[id - ID_EW] ^= 1; return; }
+    if (id >= ID_RW && id < ID_RW + NWORLDS) { c.rw[id - ID_RW] ^= 1; return; }
     switch (id) {
         case ID_TRACK_SIZE_M: c.boxSize = std::max(16, c.boxSize - 16); break;
         case ID_TRACK_SIZE_P: c.boxSize = std::min(256, c.boxSize + 16); break;
@@ -1056,6 +1156,22 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_ANP:    c.annealIdx = std::min(NANNEAL - 1, c.annealIdx + 1); break;
         case ID_TRAIN_KLM:    c.klIdx = std::max(0, c.klIdx - 1); break;
         case ID_TRAIN_KLP:    c.klIdx = std::min(NTARGET_KL - 1, c.klIdx + 1); break;
+        case ID_R_S0M: c.rSeed0 = std::max(1, c.rSeed0 - 1);
+                       c.rSeed1 = std::max(c.rSeed1, c.rSeed0); break;
+        case ID_R_S0P: c.rSeed0 += 1; c.rSeed1 = std::max(c.rSeed1, c.rSeed0); break;
+        case ID_R_S1M: c.rSeed1 = std::max(c.rSeed0, c.rSeed1 - 1); break;
+        case ID_R_S1P: c.rSeed1 += 1; break;
+        case ID_R_STM: c.rSteps = std::max(100, c.rSteps - 250); break;
+        case ID_R_STP: c.rSteps = std::min(10000, c.rSteps + 250); break;
+        case ID_R_RPM: c.rRepeats = std::max(1, c.rRepeats - 1); break;
+        case ID_R_RPP: c.rRepeats = std::min(20, c.rRepeats + 1); break;
+        case ID_R_DET: c.rDet = !c.rDet; break;
+        case ID_R_PROGRESS: c.rProgress = !c.rProgress; break;
+        case ID_R_BASE: c.rBaselines = !c.rBaselines; break;
+        case ID_R_RANDOM: c.rRandom = !c.rRandom; break;
+        case ID_R_STEREO: c.rStereo = !c.rStereo; break;
+        case ID_R_NOVETO: c.rNoVeto = !c.rNoVeto; break;
+        case ID_R_VARY: c.rVary = !c.rVary; break;
         case ID_TRAIN_RAWCLR: c.rawClear = !c.rawClear; break;
         case ID_TRAIN_VHM: c.valueHIdx = std::max(0, c.valueHIdx - 1); break;
         case ID_TRAIN_VHP: c.valueHIdx = std::min(NVALUE_H - 1, c.valueHIdx + 1); break;

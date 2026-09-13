@@ -314,6 +314,7 @@ find_package(pybind11 QUIET)
 if(pybind11_FOUND)
   pybind11_add_module(voxelenv
     python/voxelenv_py.cpp
+    kestrel_report.cpp
     rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
     depth_camera.cpp bearing_field.cpp)
   target_include_directories(voxelenv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
@@ -371,6 +372,7 @@ add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
 add_executable(kestrel
   kestrel.cpp
   kestrel_gui.cpp
+  kestrel_report.cpp
   kestrel_python.cpp
   # The live sim, compiled IN rather than spawned. VOXEL_LIVE_NO_MAIN drops its
   # own main() so kestrel keeps the only entry point in the binary.
@@ -409,6 +411,17 @@ endif()
 # asserts nothing overlaps, runs off the canvas, or is squeezed unreadable.
 if(BUILD_TESTS AND (OpenCV_highgui_FOUND OR TARGET opencv_highgui))
   add_test(NAME kestrel_gui_check COMMAND kestrel gui --check)
+endif()
+
+# The failure report has the same problem the window has -- it is a picture, so
+# nobody reviews it over ssh -- and gets the same answer. `report --check` lays
+# out every panel from synthetic records covering all ten outcome classes and
+# asserts the things that go wrong: text off the canvas, text over text, a class
+# with no colour of its own, a class no input can reach, and a panel that came
+# out uniformly flat because nothing was drawn. No python, no checkpoint, no
+# flying, so it runs in CI beside the GUI check.
+if(BUILD_TESTS)
+  add_test(NAME kestrel_report_check COMMAND kestrel report --check)
 endif()
 
 if(TARGET opencv_videoio)

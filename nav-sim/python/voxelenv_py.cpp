@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "kestrel_report.hpp"
 #include "rl_env.hpp"
 
 namespace py = pybind11;
@@ -75,6 +76,18 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readonly("net_disp_m", &EnvStep::netDispM)
         .def_readonly("cells_visited", &EnvStep::cellsVisited)
         .def_readonly("hit_unknown", &EnvStep::hitUnknown);
+
+    // DRAWING THE REPORT IS C++ AND HAS ONE IMPLEMENTATION. report.py flies the
+    // episodes and writes the CSVs; this hands them straight back to the same
+    // code `kestrel report --plot/--shot/--check` uses, so what CI checks is
+    // what a real run produces.
+    m.def("draw_report", [](const std::string& dir, const std::string& prefix) {
+        std::vector<krep::Episode> eps;
+        std::string err;
+        if (!krep::readCsv(dir, eps, err)) throw std::runtime_error(err);
+        return krep::writeAll(eps, prefix);
+    }, py::arg("dir"), py::arg("prefix"),
+       "Read report.csv/trace.csv from dir and write the panels as prefix_*.png");
 
     py::enum_<BaselinePolicy>(m, "Baseline")
         .value("random", BaselinePolicy::Random)
@@ -143,6 +156,15 @@ PYBIND11_MODULE(voxelenv, m) {
         // nothing could ask the question that mattered -- does the goal fit
         // inside the episode budget -- and the answer for the city was no for
         // the whole of a 15 M-step run.
+        // (east, north, up) in metres. See VoxelEnv::position.
+        .def_property_readonly("position", [](const VoxelEnv& e) {
+            float a = 0, b = 0, c = 0; e.position(a, b, c);
+            return py::make_tuple(a, b, c);
+        })
+        .def_property_readonly("goal", [](const VoxelEnv& e) {
+            float a = 0, b = 0, c = 0; e.goal(a, b, c);
+            return py::make_tuple(a, b, c);
+        })
         .def_property_readonly("start_dist_m",
                                [](const VoxelEnv& e) { return e.last().distToGoalM; })
         .def_property_readonly("n_prims", &VoxelEnv::nPrims)

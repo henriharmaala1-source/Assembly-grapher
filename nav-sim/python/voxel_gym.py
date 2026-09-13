@@ -73,6 +73,15 @@ class VoxelNavEnv(gym.Env):
         self._rng = np.random.default_rng(0)
         self._last = None
 
+    def position_xy(self):
+        """Where the aircraft is, in world metres. For drawing trails."""
+        e, n, _u = self._env.position
+        return float(e), float(n)
+
+    def goal_xy(self):
+        e, n, _u = self._env.goal
+        return float(e), float(n)
+
     # MaskablePPO looks for this by name.
     def action_masks(self) -> np.ndarray:
         m = self._env.action_mask()

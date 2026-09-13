@@ -48,6 +48,7 @@
 #endif
 
 #include "kestrel_gui.hpp"
+#include "kestrel_report.hpp"
 #include "kestrel_python.hpp"
 #include "lock_tracker_fused.hpp"
 #include "rl_env.hpp"
@@ -449,6 +450,35 @@ int cmdEval(const std::string& dir, const std::vector<std::string>& rest) {
     return cmdTrain(dir, a);
 }
 
+// THE FAILURE REPORT. Three of its four modes never leave the process and
+// never touch python: --plot redraws from a report.csv that is already on disk,
+// --shot draws every panel from synthetic records, and --check asserts the
+// layout. Only a real run needs python, because only python can load a
+// MaskablePPO .zip -- and flying the episodes is the expensive half, which is
+// exactly why the CSV exists: changing a plot must never mean re-flying.
+int cmdReport(const std::string& dir, const std::vector<std::string>& rest) {
+    if (!rest.empty() && rest[0] == "--check") return krep::check() ? 1 : 0;
+    if (rest.size() >= 2 && rest[0] == "--shot") return krep::shot(rest[1]);
+    if (rest.size() >= 2 && rest[0] == "--plot") {
+        std::vector<krep::Episode> eps;
+        std::string err;
+        if (!krep::readCsv(rest[1], eps, err)) {
+            std::fprintf(stderr, "[report] %s\n", err.c_str());
+            std::fprintf(stderr,
+                "          --plot wants the directory a `kestrel report` run "
+                "wrote, the one\n          holding report.csv.\n");
+            return 2;
+        }
+        const int n = krep::writeAll(eps, rest[1] + "/report");
+        std::printf("[report] %zu episodes -> %d panel(s) in %s\n", eps.size(),
+                    n, rest[1].c_str());
+        return n ? 0 : 1;
+    }
+    std::vector<std::string> a{"--script", "report.py"};
+    for (const std::string& r : rest) a.push_back(r);
+    return cmdTrain(dir, a);
+}
+
 // ------------------------------------------------------------------ live sim
 // ONE PATH INTO THE SIM, used by the CLI, the window and the text menu alike.
 // voxelLiveMain wants a mutable argv, so the strings are rebuilt here rather
@@ -476,6 +506,7 @@ int menu(const std::string& dir) {
             "  2  path-planner baselines            (bench)\n"
             "  3  live voxel sim                    (in this process)\n"
             "  4  RL training                       (runs python train.py)\n"
+            "  7  how it fails, as pictures           (report)\n"
             "  q  quit\n"
             "  > ");
         std::fflush(stdout);
@@ -513,6 +544,7 @@ int gui(const std::string& dir) {
     a.sim   = [](std::vector<std::string> v) { return cmdSim(std::move(v)); };
     a.train = [dir](std::vector<std::string> v) { return cmdTrain(dir, v); };
     a.watch = [dir](std::vector<std::string> v) { return cmdWatch(dir, v); };
+    a.report = [dir](std::vector<std::string> v) { return cmdReport(dir, v); };
     a.eval  = [dir](std::vector<std::string> v) { return cmdEval(dir, v); };
     a.pythons = [dir]() { kpy::report(kpy::discover(dir), dir); return 0; };
     return kgui::run(a, dir);
@@ -537,6 +569,7 @@ int main(int argc, char** argv) {
     if (cmd == "train") return cmdTrain(dir, rest);
     if (cmd == "watch") return cmdWatch(dir, rest);
     if (cmd == "evaluate" || cmd == "eval") return cmdEval(dir, rest);
+    if (cmd == "report") return cmdReport(dir, rest);
     if (cmd == "gui") {
         // --shot renders the panels to PNG with no display attached. The
         // window is the only thing in this binary that cannot be checked over
@@ -565,7 +598,14 @@ int main(int argc, char** argv) {
             "  watch             a grid of live panes: the policy flying while it\n"
             "                    trains, reloaded from the newest checkpoint\n"
             "  evaluate          score a trained policy on held-out seeds, in the\n"
-            "                    same columns `bench` reports the classical ones\n");
+            "                    same columns `bench` reports the classical ones\n"
+            "  report            HOW it fails, as pictures: one bar per world over\n"
+            "                    ten outcome classes, the distance-to-goal curve of\n"
+            "                    every episode, where the reward went, and the trails\n"
+            "                    laid over the world they were flown in.\n"
+            "                    --plot DIR redraws from a finished run's report.csv\n"
+            "                    without flying anything; --shot PREFIX and --check\n"
+            "                    need no python at all.\n");
         return 0;
     }
     std::fprintf(stderr, "unknown command '%s' -- try --help\n", cmd.c_str());

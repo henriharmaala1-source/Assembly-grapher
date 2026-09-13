@@ -241,6 +241,12 @@ public:
     int obsSize() const { return nPrims() * obsFeaturesPerPrim() + obsGlobalFeatures(); }
 
     const EnvStep& last() const { return last_; }
+    // WHERE IT IS AND WHERE IT IS GOING. Nothing outside the C++ renderer could
+    // see either, so no tool could draw a trail over the world it was flown in
+    // -- the one picture that says whether a world fails at one choke point or
+    // everywhere. Metres, world frame, east/north/up.
+    void position(float& e, float& n, float& u) const;
+    void goal(float& e, float& n, float& u) const;
     const EnvConfig& config() const { return cfg_; }
 
     // --- watching a run -----------------------------------------------------

@@ -439,7 +439,82 @@ columns as the classical ones, on seeds it never trained on.
                       noise of four seeds in places, and 30+ is cheap next to
                       the training run it is judging.
 
-Or click `bench` / `train` / `evaluate` in the window and press RUN.
+  kestrel report [args...]
+        HOW IT FAILS, AS PICTURES. Every other view here reports the policy
+        as numbers, and a table cannot say why. Six episodes scored on a
+        real checkpoint came back as five rows all reading "ran out of
+        steps": one had never left the spawn, one had flown the wrong way,
+        one was still closing when the budget ran out, and two were
+        identical to three significant figures in two differently-generated
+        worlds -- which means the policy was not reading the world at all.
+        Five different failures, five different fixes, one label.
+
+        TEN OUTCOME CLASSES, not two:
+          arrived
+          collided, into something it had MAPPED   (with the veto on this
+                                                    should be impossible --
+                                                    if it happens the veto
+                                                    has a bug)
+          collided, into something nothing had SEEN (the honest failure; the
+                                                    fix is sensing range)
+          never left the spawn, and chose to hold
+          never left the spawn while asking for speed
+          orbited -- travelled a long way, went nowhere
+          wrong way -- never got closer than it started
+          got close, then drifted off
+          still closing, and more steps would have arrived
+          still closing, and never going to arrive
+
+        FIVE PANELS, written as PNG beside the weights:
+          report_outcomes.png   one bar per world over the ten classes, with
+                                the goal rate, crash rate and mean travel
+                                under each so it reconciles with `evaluate`
+          report_curves.png     every episode's distance to the goal over
+                                the episode. Flat at 1.0 is stalled, a
+                                sawtooth is orbiting, a V got close and left,
+                                a line that stops short was still closing --
+                                this is the panel that makes the five
+                                "out of steps" classes visually distinct
+          report_reward.png     per world, what an ARRIVED episode was paid
+                                against a FAILED one, term by term. A return
+                                says the policy improved; it cannot say
+                                WHICH term it improved
+          report_map_<world>.png  every trail flown in one exact world
+                                instance, coloured by outcome, with the
+                                spawn, each run's closest approach, where it
+                                hit, and the goal ring at true scale. This
+                                is the one that answers "one choke point, or
+                                everywhere".
+          report_progress.png   (--progress only) goal rate and fraction of
+                                the journey closed, across checkpoints. The
+                                second still moves while the first is pinned
+                                at zero, which is most of training.
+
+        FLYING AND DRAWING ARE SEPARATE, on purpose. report.py flies the
+        episodes and writes report.csv + trace.csv; kestrel draws from those.
+        So:
+
+          kestrel report --plot DIR     redraw every panel from a finished
+                                        run. No python, no policy, nothing
+                                        flown -- changing a plot must never
+                                        mean re-running a 20-minute job.
+          kestrel report --shot PREFIX  draw every panel from synthetic
+                                        records covering all ten classes.
+          kestrel report --check        assert the layout. Runs in ctest
+                                        beside `gui --check`, with no python
+                                        and no checkpoint.
+
+        --repeats N matters more than it looks. A deterministic policy flies
+        ONE trail per world instance however many times you ask, and one
+        trail says nothing about where failures cluster -- so anything above
+        1 samples instead, and the map panel becomes a distribution.
+
+        The run prints the journey-fit table first, so a goal further away
+        than the step budget can fly is named before twenty minutes are
+        spent on it, and the outcomes panel says how many episodes were
+        unwinnable before they started. Those are not policy failures.
+
+Or click `bench` / `train` / `evaluate` / `report` in the window and press RUN.
 
 GRAPHS WHILE IT TRAINS
     python -m tensorboard.main --logdir runs

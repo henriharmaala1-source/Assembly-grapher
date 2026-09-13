@@ -104,7 +104,13 @@ void drawBtn(cv::Mat& im, const Btn& b) {
     cv::rectangle(im, b.r, b.go ? GO : (b.on ? ONB : OFFB), cv::FILLED);
     cv::rectangle(im, b.r, EDGE, 1);
     const double sc = b.go ? 0.62 : 0.52;
-    const std::string label = fit(b.label, b.r.width - 16, sc);
+    // KEEP THE FRONT OF A BUTTON LABEL. fit() defaults to keeping the TAIL,
+    // which is right for a file path -- you want the filename -- and exactly
+    // wrong for a two-state toggle, where the FIRST word is the state. The
+    // watch panel's sampling button rendered as "... (see what training does)":
+    // the elision ate "sample", the only word that said which mode it was in,
+    // and left the parenthetical that is identical in spirit for both states.
+    const std::string label = fit(b.label, b.r.width - 16, sc, /*keepTail=*/false);
     int base = 0;
     cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, sc, 1, &base);
     txt(im, label, b.r.x + (b.r.width - ts.width) / 2,
@@ -242,6 +248,90 @@ const int NANNEAL = int(sizeof ANNEAL / sizeof *ANNEAL);
 const float TARGET_KL[] = {0.f, 0.01f, 0.02f, 0.03f, 0.05f, 0.1f};
 const int NTARGET_KL = int(sizeof TARGET_KL / sizeof *TARGET_KL);
 
+// THE SIX WORLDS, ONCE. This row was hand-written three times -- bench, watch
+// and evaluate -- with three sets of typed-in offsets, three parallel six-bool
+// blocks in Cfg, eighteen near-identical cases in apply() and three copies of
+// the emit loop in buildArgs. The copies drifted, and the drift was not
+// cosmetic: panelBench's run-count line still multiplied by (forest + maze)
+// long after four more worlds existed, so with all six lit the panel said
+// "32 runs" and launched 96.
+//
+// One row, one order, one count. WORLD_NAME is also the order buildArgs emits,
+// so what the buttons say and what the command says cannot disagree again.
+const char* WORLD_NAME[6] = {"forest", "maze", "city", "road", "culdesac", "corridor"};
+const char* WORLD_LABEL[6] = {"Forest", "Maze", "City", "Road", "Cul-de-sac", "Corridors"};
+const int NWORLDS = 6;
+
+int nWorldsOn(const bool* w) {
+    int n = 0;
+    for (int i = 0; i < NWORLDS; ++i) n += w[i] ? 1 : 0;
+    return n;
+}
+
+void worldRow(cv::Mat& im, std::vector<Btn>& bs, int x, int y, int idBase,
+              const bool* w) {
+    txt(im, "worlds", x, y - 12, 0.5, DIM);
+    for (int i = 0; i < NWORLDS; ++i)
+        bs.push_back({cv::Rect(x + i * 126, y, 118, 36), WORLD_LABEL[i],
+                      idBase + i, w[i]});
+}
+
+void emitWorlds(std::vector<std::string>& a, const bool* w) {
+    a.push_back("--worlds");
+    for (int i = 0; i < NWORLDS; ++i) if (w[i]) a.push_back(WORLD_NAME[i]);
+}
+
+// THE STRIP IS THE CONTRACT, SO IT MUST NOT LIE.
+//
+// It was one line through fit(), which chops CHARACTERS. At default settings
+// that truncated four of the six panels, and the train panel's strip ended
+// "--max-steps 30..." -- which is not a shortened command but a DIFFERENT and
+// still-parseable one: typed in, it runs 30-step episodes instead of 3000 and
+// silently drops --explore and --target-kl, the two flags the panel's whole
+// second stepper row exists to expose. A caption that says "you can type it
+// instead" above a command that means something else is worse than no caption.
+//
+// So wrap at ARGUMENT boundaries, never inside a token, and when even two lines
+// will not hold it drop whole arguments and say how many. A reader then sees
+// either the real command or an honest "(+N more)", and never a wrong one.
+std::vector<std::string> wrapCmd(const std::vector<std::string>& tok, int maxPx,
+                                 double sc, int maxLines, int* dropped) {
+    std::vector<std::string> lines;
+    *dropped = 0;
+    int base = 0;
+    auto wide = [&](const std::string& t) {
+        return cv::getTextSize(t, cv::FONT_HERSHEY_SIMPLEX, sc, 1, &base).width;
+    };
+    size_t i = 0;
+    while (i < tok.size() && int(lines.size()) < maxLines) {
+        std::string line = tok[i];
+        // A single token longer than the whole strip still has to go somewhere;
+        // it goes alone on its line rather than being silently halved.
+        ++i;
+        while (i < tok.size() && wide(line + " " + tok[i]) <= maxPx) {
+            line += " " + tok[i];
+            ++i;
+        }
+        lines.push_back(line);
+    }
+    if (i < tok.size()) {
+        *dropped = int(tok.size() - i);
+        const std::string tail = "(+" + std::to_string(*dropped) + " more)";
+        if (!lines.empty()) {
+            // Make room by giving back whole tokens, never characters.
+            while (!lines.back().empty() &&
+                   wide(lines.back() + " " + tail) > maxPx) {
+                const size_t sp = lines.back().rfind(' ');
+                if (sp == std::string::npos) break;
+                lines.back().erase(sp);
+                ++*dropped;
+            }
+            lines.back() += " " + tail;
+        }
+    }
+    return lines;
+}
+
 std::string trimNum(float v) {
     char b[32]; std::snprintf(b, sizeof b, "%g", v);
     return std::string(b);
@@ -258,9 +348,16 @@ struct Cfg {
     bool  csv = true;
 
     // bench
-    bool  forest = true, maze = true, city = true, road = true, culdesac = true;
-    bool  corridor = true;
-    int   seed0 = 101, seed1 = 104, steps = 600;
+    // One array per panel, indexed like WORLD_NAME. See worldRow().
+    bool  bw[NWORLDS] = {true, true, true, true, true, true};
+    // 600 STEPS COULD NOT REACH THE GOAL IN FIVE OF THE SIX WORLDS, and this is
+    // the panel whose whole job is measurement. journey_fit() puts the journeys
+    // at 573 (maze), 1184 (corridor), 1722 (culdesac), 1944 (forest), 2000
+    // (road) and 2042 (city) steps, so at 600 only the maze could finish and
+    // every other row was scored on a task with an unreachable goal. Same class
+    // of bug as the 1500-step training cap and the 368 m city goal, in the two
+    // commands the policy is actually judged by.
+    int   seed0 = 101, seed1 = 104, steps = 3000;
     bool  benchStereo = false;
 
     // sim
@@ -281,16 +378,14 @@ struct Cfg {
     // watch
     int   panes = 4, paneIdx = 1, layout = 0;   // layout 0 both, 1 fpv, 2 top
     bool  wDet = false;
-    bool  wForest = true, wMaze = true, wCity = true, wRoad = true;
-    bool  wCds = true, wCorr = true;
+    bool  ww[NWORLDS] = {true, true, true, true, true, true};
 
     // evaluate
-    bool  eForest = true, eMaze = true, eCity = true, eRoad = true;
-    bool  eCds = true, eCorr = true;
+    bool  ew[NWORLDS] = {true, true, true, true, true, true};
     bool  eRandom = false, eStereo = false;
     bool  eBaselines = true, eReward = false, eProgress = false, eNoVeto = false;
     bool  eVary = false;
-    int   eSeed0 = 101, eSeed1 = 108, eSteps = 600;
+    int   eSeed0 = 101, eSeed1 = 108, eSteps = 3000;   // see Cfg::steps
 };
 
 const int PANE_PX[] = {240, 320, 420, 520};
@@ -321,13 +416,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 for (const std::string& f : inputs[c.input].args) a.push_back(f);
             break;
         case BENCH:
-            a.push_back("--worlds");
-            if (c.forest)   a.push_back("forest");
-            if (c.maze)     a.push_back("maze");
-            if (c.city)     a.push_back("city");
-            if (c.road)     a.push_back("road");
-            if (c.culdesac) a.push_back("culdesac");
-            if (c.corridor) a.push_back("corridor");
+            emitWorlds(a, c.bw);
             a.push_back("--seeds"); a.push_back(std::to_string(c.seed0));
             a.push_back(std::to_string(c.seed1));
             a.push_back("--steps"); a.push_back(std::to_string(c.steps));
@@ -344,13 +433,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             // No --model: evaluate.py takes the newest checkpoint itself when
             // one is not named, which is what you want right after training.
             if (c.eRandom) a.push_back("--random");
-            a.push_back("--worlds");
-            if (c.eForest) a.push_back("forest");
-            if (c.eMaze)   a.push_back("maze");
-            if (c.eCorr)   a.push_back("corridor");
-            if (c.eCity)   a.push_back("city");
-            if (c.eRoad)   a.push_back("road");
-            if (c.eCds)    a.push_back("culdesac");
+            emitWorlds(a, c.ew);
             a.push_back("--seeds");
             for (int sd = c.eSeed0; sd <= c.eSeed1; ++sd) a.push_back(std::to_string(sd));
             a.push_back("--max-steps"); a.push_back(std::to_string(c.eSteps));
@@ -366,13 +449,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--px");     a.push_back(std::to_string(PANE_PX[c.paneIdx]));
             a.push_back("--layout"); a.push_back(LAYOUT_NAME[c.layout]);
             if (c.wDet) a.push_back("--deterministic");
-            a.push_back("--worlds");
-            if (c.wForest) a.push_back("forest");
-            if (c.wMaze)   a.push_back("maze");
-            if (c.wCorr)   a.push_back("corridor");
-            if (c.wCity)   a.push_back("city");
-            if (c.wRoad)   a.push_back("road");
-            if (c.wCds)    a.push_back("culdesac");
+            emitWorlds(a, c.ww);
             break;
         case TRAIN:
             a.push_back("--workers"); a.push_back(std::to_string(c.workers));
@@ -414,13 +491,9 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
         return inputs.empty()
              ? "no frames or video found - put a folder of images beside this exe"
              : "pick an input first";
-    if (c.mode == BENCH && !c.forest && !c.maze && !c.city && !c.road
-        && !c.culdesac && !c.corridor)
-        return "pick at least one world";
-    if (c.mode == WATCH && !c.wForest && !c.wMaze && !c.wCity && !c.wRoad
-        && !c.wCds && !c.wCorr) return "pick at least one world";
-    if (c.mode == EVAL && !c.eForest && !c.eMaze && !c.eCity && !c.eRoad
-        && !c.eCds && !c.eCorr) return "pick at least one world";
+    if (c.mode == BENCH && !nWorldsOn(c.bw)) return "pick at least one world";
+    if (c.mode == WATCH && !nWorldsOn(c.ww)) return "pick at least one world";
+    if (c.mode == EVAL  && !nWorldsOn(c.ew)) return "pick at least one world";
     if (c.mode == SIM && c.simSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     return "";
@@ -435,9 +508,16 @@ enum {
     ID_TRACK_INPUT = 100, // +index
     ID_TRACK_SIZE_M = 130, ID_TRACK_SIZE_P, ID_TRACK_DESIG,
     ID_TRACK_LIM_M, ID_TRACK_LIM_P, ID_TRACK_CSV,
-    ID_BENCH_FOREST = 200, ID_BENCH_MAZE, ID_BENCH_S0M, ID_BENCH_S0P,
+    ID_BENCH_S0M = 200, ID_BENCH_S0P,
     ID_BENCH_S1M, ID_BENCH_S1P, ID_BENCH_STM, ID_BENCH_STP, ID_BENCH_STEREO,
-    ID_BENCH_CITY, ID_BENCH_ROAD, ID_BENCH_CDS, ID_BENCH_CORR,
+    // Six CONTIGUOUS ids per world row, so apply() is a range test rather than
+    // six cases that can be typed wrong. The old bench ids were split either
+    // side of the seed steppers -- FOREST/MAZE at 200-201 and CITY..CORR at
+    // 209-212 -- which is exactly the shape that made a six-world row look
+    // like a two-world row to the code that counted it.
+    ID_BW = 250,          // +0..5, the order of WORLD_NAME
+    ID_WW = 560,          // +0..5
+    ID_EW = 660,          // +0..5
     ID_SIM_SRC = 300,     // +0..2
     ID_SIM_REPLAY = 310,  // +index
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
@@ -446,10 +526,8 @@ enum {
     ID_TRAIN_EXM, ID_TRAIN_EXP, ID_TRAIN_ANM, ID_TRAIN_ANP, ID_TRAIN_KLM,
     ID_TRAIN_KLP, ID_TRAIN_RAWCLR,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
-    ID_W_FOREST, ID_W_MAZE, ID_W_LAYOUT, ID_W_DET,
-    ID_W_CITY, ID_W_ROAD, ID_W_CDS, ID_W_CORR,
-    ID_E_FOREST = 600, ID_E_MAZE, ID_E_S0M, ID_E_S0P, ID_E_S1M, ID_E_S1P,
-    ID_E_CITY, ID_E_ROAD, ID_E_CDS, ID_E_CORR,
+    ID_W_LAYOUT, ID_W_DET,
+    ID_E_S0M = 600, ID_E_S0P, ID_E_S1M, ID_E_S1P,
     ID_E_STM, ID_E_STP, ID_E_RANDOM, ID_E_STEREO, ID_E_BASE, ID_E_REWARD,
     ID_E_PROGRESS, ID_E_NOVETO, ID_E_VARY,
 };
@@ -500,19 +578,7 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     txt(im, "a learned policy uses. These are the numbers a policy has to beat.",
         x, 156, 0.44, DIM);
 
-    txt(im, "worlds", x, 196, 0.5, DIM);
-    bs.push_back({cv::Rect(x, 208, 118, 36), "Forest",
-                  ID_BENCH_FOREST, c.forest});
-    bs.push_back({cv::Rect(x + 126, 208, 118, 36), "Maze",
-                  ID_BENCH_MAZE, c.maze});
-    bs.push_back({cv::Rect(x + 252, 208, 118, 36), "City",
-                  ID_BENCH_CITY, c.city});
-    bs.push_back({cv::Rect(x + 378, 208, 118, 36), "Road",
-                  ID_BENCH_ROAD, c.road});
-    bs.push_back({cv::Rect(x + 504, 208, 118, 36), "Cul-de-sac",
-                  ID_BENCH_CDS, c.culdesac});
-    bs.push_back({cv::Rect(x + 630, 208, 118, 36), "Corridors",
-                  ID_BENCH_CORR, c.corridor});
+worldRow(im, bs, x, 208, ID_BW, c.bw);
 
     stepper(im, bs, x, 320, "first seed", std::to_string(c.seed0),
             ID_BENCH_S0M, ID_BENCH_S0P);
@@ -521,10 +587,14 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     stepper(im, bs, x + 440, 320, "steps/run", std::to_string(c.steps),
             ID_BENCH_STM, ID_BENCH_STP);
 
-    const int runs = (c.forest + c.maze) * std::max(0, c.seed1 - c.seed0 + 1) * 4;
-    txt(im, std::to_string(runs) + " runs (4 policies x " +
-            std::to_string(c.forest + c.maze) + " world(s) x " +
-            std::to_string(std::max(0, c.seed1 - c.seed0 + 1)) + " seed(s))",
+    // ALL SIX, from the same array the row and the command are built from --
+    // this line used to multiply by (forest + maze) and reported "32 runs" for
+    // a job that launched 96.
+    const int nseeds = std::max(0, c.seed1 - c.seed0 + 1);
+    const int nw = nWorldsOn(c.bw);
+    txt(im, std::to_string(nw * nseeds * 4) + " runs (4 policies x " +
+            std::to_string(nw) + " world(s) x " +
+            std::to_string(nseeds) + " seed(s))",
         x, 412, 0.46, DIM);
 
     bs.push_back({cv::Rect(x, 430, 250, 36),
@@ -651,9 +721,14 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // The near-miss penalty is the only avoidance signal that arrives BEFORE
     // contact. Left in absolute units it was ~5x weaker against progress in a
     // tight world than an open one -- the wrong way round.
+    // GREEN MEANS THE FLAG IS ON THE COMMAND LINE. This one was pushed with
+    // `on = !c.rawClear`, so "scaled clearance" lit green while --raw-clear was
+    // absent and the button went grey exactly when the flag WAS being passed --
+    // the opposite of every other toggle on the panel, and sitting two buttons
+    // away from "Simulated stereo", which lights when --stereo IS passed.
     bs.push_back({cv::Rect(x + 532, 400, 210, 36),
                   c.rawClear ? "raw clearance" : "scaled clearance",
-                  ID_TRAIN_RAWCLR, !c.rawClear});
+                  ID_TRAIN_RAWCLR, c.rawClear});
 
     txt(im, "explore is the entropy bonus -- how much random stuff it tries. "
             "High early, a tenth of it after the anneal.", x, 456, 0.42, DIM);
@@ -706,19 +781,7 @@ void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     txt(im, "aircraft believes it can see. Run this beside a training run.",
         x, 156, 0.44, DIM);
 
-    txt(im, "worlds", x, 196, 0.5, DIM);
-    bs.push_back({cv::Rect(x, 208, 118, 36), "Forest",
-                  ID_W_FOREST, c.wForest});
-    bs.push_back({cv::Rect(x + 126, 208, 118, 36), "Maze",
-                  ID_W_MAZE, c.wMaze});
-    bs.push_back({cv::Rect(x + 252, 208, 118, 36), "City",
-                  ID_W_CITY, c.wCity});
-    bs.push_back({cv::Rect(x + 378, 208, 118, 36), "Road",
-                  ID_W_ROAD, c.wRoad});
-    bs.push_back({cv::Rect(x + 504, 208, 118, 36), "Cul-de-sac",
-                  ID_W_CDS, c.wCds});
-    bs.push_back({cv::Rect(x + 630, 208, 118, 36), "Corridors",
-                  ID_W_CORR, c.wCorr});
+worldRow(im, bs, x, 208, ID_WW, c.ww);
 
     stepper(im, bs, x, 300, "panes", std::to_string(c.panes),
             ID_W_PANES_M, ID_W_PANES_P, "one episode each");
@@ -735,10 +798,16 @@ void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 
     // Early in training an argmaxed policy picks one primitive whatever it
     // sees, so every pane flies the same arc and the view looks frozen.
+    // SHORT ENOUGH TO SURVIVE ITS BUTTON. Both labels used to carry their
+    // reason in a parenthetical, ran past 250 px, and were elided from the
+    // front -- so the button read "... (see what training does)" and the word
+    // that named the state was the one thrown away. The reason moved to the
+    // hint line, which has the whole panel width to spend.
     bs.push_back({cv::Rect(x, 360, 250, 34),
-                  c.wDet ? "argmax (judge a finished policy)"
-                         : "sample (see what training does)",
+                  c.wDet ? "argmax (deterministic)" : "sampled (stochastic)",
                   ID_W_DET, c.wDet});
+    txt(im, c.wDet ? "judging a finished policy"
+                   : "what training actually does", x + 266, 382, 0.42, DIM);
 
     txt(im, "PALE IS UNKNOWN, drawn as fog and never as air. In an open world a",
         x, 404, 0.42, DIM);
@@ -763,19 +832,7 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
         x, 156, 0.44, DIM);
     txt(im, "nothing, so the scorecard is deliberately identical.", x, 176, 0.44, DIM);
 
-    txt(im, "worlds", x, 216, 0.5, DIM);
-    bs.push_back({cv::Rect(x, 228, 118, 36), "Forest",
-                  ID_E_FOREST, c.eForest});
-    bs.push_back({cv::Rect(x + 126, 228, 118, 36), "Maze",
-                  ID_E_MAZE, c.eMaze});
-    bs.push_back({cv::Rect(x + 252, 228, 118, 36), "City",
-                  ID_E_CITY, c.eCity});
-    bs.push_back({cv::Rect(x + 378, 228, 118, 36), "Road",
-                  ID_E_ROAD, c.eRoad});
-    bs.push_back({cv::Rect(x + 504, 228, 118, 36), "Cul-de-sac",
-                  ID_E_CDS, c.eCds});
-    bs.push_back({cv::Rect(x + 630, 228, 118, 36), "Corridors",
-                  ID_E_CORR, c.eCorr});
+worldRow(im, bs, x, 228, ID_EW, c.ew);
 
     stepper(im, bs, x, 320, "first seed", std::to_string(c.eSeed0),
             ID_E_S0M, ID_E_S0P);
@@ -813,6 +870,39 @@ void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   ID_E_VARY, c.eVary});
 
 }
+
+// GREEN MEANS THIS FLAG IS ON THE COMMAND LINE -- and now the check says so.
+//
+// Btn carries one `on` bool and the panels used it for several unrelated ideas:
+// a flag being present, an item being selected out of N, the current value of a
+// cycler, and "click me". The polarity of one of them was simply inverted --
+// ID_TRAIN_RAWCLR lit green when --raw-clear was ABSENT -- and nothing could
+// catch it, because "green" had no definition to check against.
+//
+// For the plain flag toggles it does now. Each row below names a button and the
+// argument it is responsible for; check() builds the command for every mode and
+// variant and asserts the button is green exactly when its flag is emitted. The
+// cyclers, the radio lists and the Install button are deliberately absent: they
+// are not flags, and claiming they were would make this table a lie rather than
+// a test.
+struct FlagBtn { int mode; int id; const char* flag; };
+const FlagBtn FLAG_BTNS[] = {
+    {BENCH, ID_BENCH_STEREO,  "--stereo"},
+    {TRAIN, ID_TRAIN_STEREO,  "--stereo"},
+    {TRAIN, ID_TRAIN_RESUME,  "--resume"},
+    {TRAIN, ID_TRAIN_NOVETO,  "--no-veto"},
+    {TRAIN, ID_TRAIN_VARY,    "--vary-goal"},
+    {TRAIN, ID_TRAIN_RAWCLR,  "--raw-clear"},
+    {WATCH, ID_W_DET,         "--deterministic"},
+    {EVAL,  ID_E_RANDOM,      "--random"},
+    {EVAL,  ID_E_STEREO,      "--stereo"},
+    {EVAL,  ID_E_BASE,        "--baselines"},
+    {EVAL,  ID_E_REWARD,      "--reward"},
+    {EVAL,  ID_E_PROGRESS,    "--progress"},
+    {EVAL,  ID_E_NOVETO,      "--no-veto"},
+    {EVAL,  ID_E_VARY,        "--vary-goal"},
+};
+const int NFLAG_BTNS = int(sizeof FLAG_BTNS / sizeof *FLAG_BTNS);
 
 // ------------------------------------------------------------------- compose
 // ONE FUNCTION DRAWS THE WHOLE WINDOW and hands back the buttons it drew, so
@@ -855,10 +945,23 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
     // The command strip. Not decoration: it is what RUN executes.
     cv::rectangle(im, {266, H - 96, W - 294, 44}, {22, 22, 26}, cv::FILLED);
     cv::rectangle(im, {266, H - 96, W - 294, 44}, EDGE, 1);
-    std::string cmd = "kestrel " + std::string(MODE_NAME[c.mode]);
-    for (const std::string& a : buildArgs(c, inputs, recs)) cmd += " " + a;
-    if (c.mode == TRACK && c.designate) cmd += "   (+ --box from your click)";
-    txt(im, fit(cmd, W - 318, 0.46, /*keepTail=*/false), 278, H - 68, 0.46, INK);
+    std::vector<std::string> tok{"kestrel", MODE_NAME[c.mode]};
+    for (const std::string& a : buildArgs(c, inputs, recs)) tok.push_back(a);
+    if (c.mode == TRACK && c.designate) tok.push_back("(+ --box from your click)");
+    int dropped = 0;
+    const std::vector<std::string> lines =
+        wrapCmd(tok, W - 318, 0.44, 2, &dropped);
+    {
+        // The strip's own lines live INSIDE the strip by construction, so they
+        // must not be measured against it -- the same reason drawBtn keeps a
+        // button's label out of the text boxes.
+        std::vector<cv::Rect>* keep = g_textBoxes;
+        g_textBoxes = nullptr;
+        struct Restore { std::vector<cv::Rect>*& g; std::vector<cv::Rect>* v;
+                         ~Restore() { g = v; } } restore{g_textBoxes, keep};
+        for (size_t i = 0; i < lines.size(); ++i)
+            txt(im, lines[i], 278, H - 78 + int(i) * 18, 0.44, INK);
+    }
     txt(im, "this is the command RUN executes -- you can type it instead",
         266, H - 34, 0.4, DIM);
 
@@ -877,6 +980,10 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     if (id >= ID_SIM_REPLAY && id < ID_SIM_REPLAY + 20) {
         c.replay = id - ID_SIM_REPLAY; return;
     }
+    // The three world rows, as ranges rather than eighteen hand-typed cases.
+    if (id >= ID_BW && id < ID_BW + NWORLDS) { c.bw[id - ID_BW] ^= 1; return; }
+    if (id >= ID_WW && id < ID_WW + NWORLDS) { c.ww[id - ID_WW] ^= 1; return; }
+    if (id >= ID_EW && id < ID_EW + NWORLDS) { c.ew[id - ID_EW] ^= 1; return; }
     switch (id) {
         case ID_TRACK_SIZE_M: c.boxSize = std::max(16, c.boxSize - 16); break;
         case ID_TRACK_SIZE_P: c.boxSize = std::min(256, c.boxSize + 16); break;
@@ -885,12 +992,6 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRACK_LIM_P:  c.frameLimit = std::min(5000, c.frameLimit + 50); break;
         case ID_TRACK_CSV:    c.csv = !c.csv; break;
 
-        case ID_BENCH_FOREST: c.forest = !c.forest; break;
-        case ID_BENCH_MAZE:   c.maze = !c.maze; break;
-        case ID_BENCH_CITY:   c.city = !c.city; break;
-        case ID_BENCH_ROAD:   c.road = !c.road; break;
-        case ID_BENCH_CDS:    c.culdesac = !c.culdesac; break;
-        case ID_BENCH_CORR:   c.corridor = !c.corridor; break;
         case ID_BENCH_S0M:    c.seed0 = std::max(1, c.seed0 - 1);
                               c.seed1 = std::max(c.seed0, c.seed1); break;
         case ID_BENCH_S0P:    c.seed0 = std::min(999, c.seed0 + 1);
@@ -926,21 +1027,9 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;
         case ID_W_PX_M:    c.paneIdx = std::max(0, c.paneIdx - 1); break;
         case ID_W_PX_P:    c.paneIdx = std::min(NPANE_PX - 1, c.paneIdx + 1); break;
-        case ID_W_FOREST:  c.wForest = !c.wForest; break;
-        case ID_W_CITY:    c.wCity = !c.wCity; break;
-        case ID_W_ROAD:    c.wRoad = !c.wRoad; break;
-        case ID_W_CDS:     c.wCds = !c.wCds; break;
-        case ID_W_CORR:    c.wCorr = !c.wCorr; break;
-        case ID_W_MAZE:    c.wMaze = !c.wMaze; break;
         case ID_W_LAYOUT:  c.layout = (c.layout + 1) % NLAYOUT; break;
         case ID_W_DET:     c.wDet = !c.wDet; break;
 
-        case ID_E_FOREST: c.eForest = !c.eForest; break;
-        case ID_E_CITY:   c.eCity = !c.eCity; break;
-        case ID_E_ROAD:   c.eRoad = !c.eRoad; break;
-        case ID_E_CDS:    c.eCds = !c.eCds; break;
-        case ID_E_CORR:   c.eCorr = !c.eCorr; break;
-        case ID_E_MAZE:   c.eMaze = !c.eMaze; break;
         case ID_E_S0M:    c.eSeed0 = std::max(1, c.eSeed0 - 1);
                           c.eSeed1 = std::max(c.eSeed0, c.eSeed1); break;
         case ID_E_S0P:    c.eSeed0 = std::min(999, c.eSeed0 + 1);
@@ -1136,16 +1225,33 @@ int check() {
 
     int bad = 0;
     for (int m = 0; m < NMODES; ++m)
-        for (int variant = 0; variant < 3; ++variant) {
+        // FOUR variants, not three. The fourth turns every world off, which is
+        // the only state that makes blocker() return a string -- so until it
+        // existed the "pick at least one world" line was never laid out by the
+        // check at all, and could overflow its column unnoticed.
+        for (int variant = 0; variant < 4; ++variant) {
             // Panels change shape with their own settings -- sim grows a file
             // list, track swaps its hints -- so each is laid out in more than
             // one state rather than only its default.
             Cfg c;
             c.mode = m;
             c.input = 0; c.replay = 0;
+            // Variant 3 is the REFUSED state: nothing picked anywhere, so every
+            // panel's blocker string is actually drawn and measured. The track
+            // one is 436 px at its 0.40 scale and starts at x=28, so it reaches
+            // well into the panel column -- exactly the kind of overrun the
+            // check exists for, and it could not see it while every variant was
+            // a runnable state.
+            if (variant == 3) { c.input = -1; c.replay = -1; }
             c.simSource = variant;
-            c.designate = c.csv = c.forest = (variant != 1);
-            c.maze = (variant != 2);
+            c.designate = c.csv = (variant != 1);
+            // Vary the world rows too, and include an ALL-OFF state -- without
+            // one, blocker() returned "" in every checked variant and the
+            // "pick at least one world" line was never laid out at all.
+            for (int w = 0; w < NWORLDS; ++w) {
+                c.bw[w] = c.ww[w] = c.ew[w] = (variant != 1) || (w == 0);
+                if (variant == 3) c.bw[w] = c.ww[w] = c.ew[w] = false;
+            }
             c.benchStereo = c.trainStereo = c.cuda = (variant == 1);
             c.frameLimit = variant * 50;
             c.stepsIdx = variant;
@@ -1186,6 +1292,42 @@ int check() {
                                     tag.c_str(), b.label.c_str());
                         ++bad;
                     }
+            // THE STRIP SHOWS THE WHOLE COMMAND. "you can type it instead" is
+            // only true if nothing was dropped; TRACK is exempt because its
+            // input is an arbitrary file name of any length.
+            if (m != TRACK) {
+                std::vector<std::string> tok{"kestrel", MODE_NAME[m]};
+                for (const std::string& g : buildArgs(c, inputs, recs))
+                    tok.push_back(g);
+                int dropped = 0;
+                wrapCmd(tok, W - 318, 0.44, 2, &dropped);
+                if (dropped) {
+                    std::printf("%s: command strip drops %d argument(s)\n",
+                                tag.c_str(), dropped);
+                    ++bad;
+                }
+            }
+            // GREEN == THE FLAG IS EMITTED, for every plain flag toggle on
+            // this panel. This is the rule that would have caught rawClear.
+            {
+                const std::vector<std::string> argv = buildArgs(c, inputs, recs);
+                for (int f = 0; f < NFLAG_BTNS; ++f) {
+                    if (FLAG_BTNS[f].mode != m) continue;
+                    const bool emitted =
+                        std::find(argv.begin(), argv.end(),
+                                  std::string(FLAG_BTNS[f].flag)) != argv.end();
+                    for (const Btn& b : bs) {
+                        if (b.id != FLAG_BTNS[f].id) continue;
+                        if (b.on != emitted) {
+                            std::printf("%s: '%s' is %s but %s is %s the command\n",
+                                        tag.c_str(), b.label.c_str(),
+                                        b.on ? "GREEN" : "grey", FLAG_BTNS[f].flag,
+                                        emitted ? "in" : "NOT in");
+                            ++bad;
+                        }
+                    }
+                }
+            }
             // TEXT THAT LEAVES THE WINDOW. Buttons were checked against the
             // canvas from the start and text was not, and the difference
             // showed the moment a panel got a fourth column: three note lines
@@ -1230,14 +1372,19 @@ int check() {
                                 tag.c_str(), a.label.c_str());
                     ++bad;
                 }
-                // A label truncated below this says nothing useful; the box is
-                // simply too small for what was put in it.
+                // ANY truncation at all. The old rule only fired below five
+                // drawn characters, so "... (see what training does)" -- 27
+                // characters that had lost the only word naming the state --
+                // passed clean. A button label that does not fit its button is
+                // a layout error whatever survives of it, and unlike a file
+                // path there is no long tail here that was never meant to fit.
                 const std::string drawn = fit(a.label, a.r.width - 16,
-                                              a.go ? 0.62 : 0.52);
-                if (!a.label.empty() && drawn.size() < 5 &&
-                    drawn.size() < a.label.size()) {
-                    std::printf("%s: label '%s' does not fit its %d px button\n",
-                                tag.c_str(), a.label.c_str(), a.r.width);
+                                              a.go ? 0.62 : 0.52, false);
+                if (!a.label.empty() && drawn != a.label) {
+                    std::printf("%s: label '%s' does not fit its %d px button "
+                                "(drawn as '%s')\n",
+                                tag.c_str(), a.label.c_str(), a.r.width,
+                                drawn.c_str());
                     ++bad;
                 }
                 for (size_t j = i + 1; j < bs.size(); ++j) {

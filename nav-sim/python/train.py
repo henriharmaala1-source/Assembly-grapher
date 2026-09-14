@@ -43,7 +43,8 @@ from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from collections import deque
 
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
+from stable_baselines3.common.vec_env import (SubprocVecEnv, VecMonitor,
+                                              VecNormalize)
 
 import numpy as np
 
@@ -254,6 +255,28 @@ def main() -> int:
                          "--forever. 0 turns annealing OFF and holds both "
                          "constant, which is the old behaviour and the reason "
                          "a 15 M run degraded after 14 M.")
+    ap.add_argument("--raw-reward", action="store_true",
+                    help="do NOT normalise the return scale. THE VALUE "
+                         "FUNCTION IS WHAT THIS IS FOR. Raising the value "
+                         "horizon from 200 to 1000 steps multiplies the size "
+                         "and the variance of every value target, and measured "
+                         "over a paired 150k-step A/B the value head could not "
+                         "follow: explained_variance fell from +0.705 to "
+                         "+0.286, value_loss doubled, and its worst update went "
+                         "from -3.4 to -8.75. A policy whose critic explains 29 "
+                         "per cent of the return is taking most of its "
+                         "advantage estimates from noise. Normalising divides "
+                         "the reward by the running standard deviation of the "
+                         "discounted return, so the targets stay order-1 "
+                         "whatever the horizon. This restores the old "
+                         "behaviour for comparison.")
+    ap.add_argument("--clip-vf", type=float, default=0.2, metavar="F",
+                    help="clip how far the value head may move in one update, "
+                         "the way PPO already clips the policy. Off by default "
+                         "in SB3, and worth having precisely when the targets "
+                         "are large. 0 disables it. Meaningless without "
+                         "normalised returns, so it is ignored with "
+                         "--raw-reward.")
     ap.add_argument("--seed", type=int, default=0, metavar="N",
                     help="make the run REPRODUCIBLE, and make two runs "
                          "comparable. It seeds the policy's initial weights, "
@@ -418,6 +441,8 @@ def main() -> int:
         "gamma": float(args.gamma),
         "gae_lambda": float(args.gae_lambda),
         "seed": int(args.seed),
+        "norm_reward": not args.raw_reward,
+        "clip_vf": float(args.clip_vf),
         "scale_clear": not args.raw_clear,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -475,6 +500,39 @@ def main() -> int:
         pass
 
     venv = VecMonitor(SubprocVecEnv([make_env(i, **kw) for i in range(args.workers)]))
+    # NORMALISE THE RETURN, NOT THE OBSERVATION. The observations were measured
+    # and are already well scaled -- every feature lands in [-1, 1.32] with an
+    # overall std of 0.37 -- so normalising them would buy nothing and would
+    # force the running statistics through evaluate, watch and report, any of
+    # which could then silently fly a policy on differently-scaled inputs.
+    #
+    # The RETURN is the thing that is out of scale, and only at training time.
+    #
+    # clip_reward is 100, not SB3's default 10. The collision terminal is -300
+    # and VecNormalize starts with a variance estimate of 1, so for the first
+    # updates -300 would normalise to something enormous and be clipped to -10
+    # -- flattening the only hard safety signal in the reward into the same
+    # value as a mild one, exactly while the policy is forming its first idea
+    # of what a crash costs. 100 leaves it intact and still bounds a genuine
+    # outlier.
+    vnpath = os.path.join(args.out, "vecnormalize.pkl")
+    if not args.raw_reward:
+        # THE STATISTICS ARE PART OF THE RUN, so a resume must not restart them.
+        # VecNormalize begins with a variance estimate of 1; dropping a
+        # half-trained policy back into that would rescale every reward it sees
+        # overnight, which looks exactly like the policy falling over.
+        if args.resume and os.path.exists(vnpath):
+            venv = VecNormalize.load(vnpath, venv)
+            venv.training = True
+            print(f"[train] resumed the return statistics from "
+                  f"{os.path.basename(vnpath)}", flush=True)
+        else:
+            venv = VecNormalize(venv, norm_obs=False, norm_reward=True,
+                                gamma=args.gamma, clip_reward=100.0)
+        print("[train] returns normalised (running std of the discounted "
+              "return), so value targets stay order-1\n"
+              "        whatever the horizon. --raw-reward turns this off.",
+              flush=True)
 
     # RESUMING, OR NOT, IS AN EXPLICIT CHOICE. It used to be neither: a fresh
     # model was constructed every run and the checkpoints were written but
@@ -495,6 +553,10 @@ def main() -> int:
 
     LR0 = 3e-4
     kl = args.target_kl if args.target_kl > 0 else None
+    # Clipping the value update only means something once the values are
+    # order-1; against raw returns in the hundreds a 0.2 clip would freeze the
+    # critic rather than steady it.
+    cvf = args.clip_vf if (args.clip_vf > 0 and not args.raw_reward) else None
     if resume_from:
         model = MaskablePPO.load(resume_from, env=venv, device=args.device,
                                  tensorboard_log=os.path.join(args.out, "tb"))
@@ -506,6 +568,7 @@ def main() -> int:
         # trained with, and the flags on THIS command line are the request.
         model.gamma = args.gamma
         model.gae_lambda = args.gae_lambda
+        model.clip_range_vf = (lambda _p, v=cvf: v) if cvf else None
         # final.zip carries no step count in its name, so say so rather than
         # printing "at 0 trained steps", which reads as "it lost everything".
         where = (f"at {resume_at} trained steps" if resume_at
@@ -520,7 +583,7 @@ def main() -> int:
             # here are only what the first rollout runs with.
             learning_rate=LR0, ent_coef=args.explore,
             target_kl=kl, gamma=args.gamma, gae_lambda=args.gae_lambda,
-            seed=args.seed or None,
+            clip_range_vf=cvf, seed=args.seed or None,
             policy_kwargs=dict(net_arch=[256, 256]),
             tensorboard_log=os.path.join(args.out, "tb"))
 
@@ -579,6 +642,11 @@ def main() -> int:
         print(f"[train] stopped by hand at {model.num_timesteps} steps",
               flush=True)
     model.save(os.path.join(args.out, "final"))
+    # Beside the weights, and saved on the stop-by-hand path too -- the whole
+    # point of --forever is that stopping costs nothing, and losing the reward
+    # statistics would make the resume a different run.
+    if isinstance(venv, VecNormalize):
+        venv.save(vnpath)
     print(f"[train] final policy -> {os.path.join(out_abs, 'final.zip')}"
           + ("  (stopped early -- resume it with --resume)" if stopped else ""),
           flush=True)

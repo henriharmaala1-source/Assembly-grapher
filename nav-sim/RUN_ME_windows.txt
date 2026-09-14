@@ -331,6 +331,49 @@ columns as the classical ones, on seeds it never trained on.
                      with runs made before this, and the button on the train
                      panel says which one you are using.
 
+                     THE CRITIC HAS TO BE ABLE TO FIT ITS TARGETS:
+
+                       kestrel train --raw-reward     (turn the fix OFF)
+                       kestrel train --clip-vf 0      (turn the clip OFF)
+
+                     or the "normalised returns" and "clip value updates"
+                     buttons on the train panel. Both are on by default.
+
+                     Raising the value horizon from 200 steps to 1000
+                     multiplies the size AND the variance of every value
+                     target, and a paired 150 k-step A/B measured the critic
+                     failing to follow:
+
+                       explained_variance   0.995: +0.705   0.999: +0.286
+                       worst update         0.995: -3.40    0.999: -8.75
+                       value_loss (end)     0.995:  246     0.999:  497
+                       value_loss (peak)    0.995:  3.7e3   0.999:  2.2e4
+
+                     A critic explaining 29 % of the return is handing the
+                     policy advantage estimates that are mostly noise, and
+                     that is the likeliest reason the longer-horizon run
+                     spiked to a 65 % crash rate mid-training before
+                     recovering.
+
+                     The fix divides the reward by the running standard
+                     deviation of the discounted return, so targets stay
+                     order-1 whatever the horizon, and clips the value update
+                     the way PPO already clips the policy one.
+
+                     WHAT IS *NOT* NORMALISED: the observations. They were
+                     measured first -- every feature lands in [-1, 1.32] with
+                     an overall std of 0.37 -- so there is nothing to gain,
+                     and normalising them would force the running statistics
+                     through evaluate, watch and report, any of which could
+                     then silently fly a policy on differently-scaled inputs.
+                     The return is out of scale; the observation is not.
+
+                     The statistics are saved beside the weights as
+                     vecnormalize.pkl and reloaded by --resume, including on
+                     the stop-by-hand path -- restarting them mid-run would
+                     rescale every reward overnight, which looks exactly like
+                     a policy falling over.
+
                      MAKING TWO RUNS COMPARABLE:  kestrel train --seed 7
                      or the "seed" stepper on the train panel (0 = off, the
                      old behaviour).

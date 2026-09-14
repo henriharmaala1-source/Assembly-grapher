@@ -388,6 +388,8 @@ struct Cfg {
     int   valueHIdx = 3, creditHIdx = 3;     // 1000 steps / 200 steps
     int   trainSeed = 0;                     // 0 = unseeded, as train.py
     bool  rawClear = false;
+    bool  rawReward = false;      // green when normalisation is ON
+    bool  clipVf = true;          // 0.2, matching train.py
     bool  trainStereo = true;
     bool  cuda = false;
     bool  resume = false;
@@ -517,6 +519,11 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--target-kl");
             a.push_back(trimNum(TARGET_KL[c.klIdx]));
             if (c.rawClear) a.push_back("--raw-clear");
+            if (c.rawReward) a.push_back("--raw-reward");
+            // 0.2 is train.py's own default, so only the deviation is
+            // printed -- the strip has to hold the whole command and this row
+            // of settings had already pushed it past two lines.
+            if (!c.clipVf) { a.push_back("--clip-vf"); a.push_back("0"); }
             if (c.trainSeed) {
                 a.push_back("--seed");
                 a.push_back(std::to_string(c.trainSeed));
@@ -584,6 +591,7 @@ enum {
     ID_TRAIN_EXM, ID_TRAIN_EXP, ID_TRAIN_ANM, ID_TRAIN_ANP, ID_TRAIN_KLM,
     ID_TRAIN_KLP, ID_TRAIN_RAWCLR, ID_TRAIN_VHM, ID_TRAIN_VHP,
     ID_TRAIN_CHM, ID_TRAIN_CHP, ID_TRAIN_SEEDM, ID_TRAIN_SEEDP,
+    ID_TRAIN_NORMR, ID_TRAIN_CLIPVF,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_LAYOUT, ID_W_DET,
     ID_E_S0M = 600, ID_E_S0P, ID_E_S1M, ID_E_S1P,
@@ -760,43 +768,55 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
             std::to_string(CREDIT_H[c.creditHIdx]),
             ID_TRAIN_CHM, ID_TRAIN_CHP, "steps one act owns", SW);
 
-    bs.push_back({cv::Rect(x, 356, 250, 38),
+    // FOUR ACROSS, not three. Two more settings had to land here and the panel
+    // has no vertical room left -- the python block already ends 10 px above
+    // the command strip. 184 wide at a 202 pitch fills the 794 px exactly.
+    const int BW = 184, BP = 202;
+    bs.push_back({cv::Rect(x, 356, BW, 38),
                   c.trainStereo ? "Simulated stereo" : "Perfect depth",
                   ID_TRAIN_STEREO, c.trainStereo});
     // WITHOUT THIS A RUN ALWAYS STARTS FROM ZERO. The trainer checkpoints as it
     // goes but had no way to read one back, so an interrupted overnight run
-    // could only be started again from scratch with its weights sitting on disk.
-    bs.push_back({cv::Rect(x + 266, 356, 250, 38),
-                  c.resume ? "resume from newest" : "start from scratch",
+    // could only be started again from scratch with its weights on disk.
+    bs.push_back({cv::Rect(x + BP, 356, BW, 38),
+                  c.resume ? "resume newest" : "from scratch",
                   ID_TRAIN_RESUME, c.resume});
-    bs.push_back({cv::Rect(x + 532, 356, 210, 38),
+    bs.push_back({cv::Rect(x + 2 * BP, 356, BW, 38),
                   c.cuda ? "device: cuda" : "device: cpu",
                   ID_TRAIN_CUDA, c.cuda});
+    // THE CRITIC'S TARGETS, KEPT ORDER-1. Raising the value horizon multiplies
+    // the size and variance of every value target; measured over a paired
+    // 150k-step A/B, explained_variance fell from +0.705 to +0.286 when the
+    // horizon went from 200 steps to 1000. Green is the fix being ON.
+    // GREEN MEANS THE FLAG IS ON THE COMMAND LINE -- here too, even though the
+    // tempting reading is "green = the good setting is on". That is exactly the
+    // inversion --raw-clear shipped with, and one rule that always holds beats
+    // two readings that each feel natural on their own button.
+    bs.push_back({cv::Rect(x + 3 * BP, 356, BW, 38),
+                  c.rawReward ? "raw returns" : "normalised returns",
+                  ID_TRAIN_NORMR, c.rawReward});
 
     // THE SAFETY MASK, AS A SWITCH. On, the policy chooses among primitives the
-    // geometry already approved and cannot collide by choosing -- that is the
-    // architecture's safety argument. Off, it can fly into things and must
+    // geometry already approved and cannot collide by choosing. Off, it must
     // learn avoidance from the collision terminal: a measurement of what the
     // veto is worth, not a way to fly.
-    bs.push_back({cv::Rect(x, 400, 250, 36),
-                  c.noVeto ? "NO veto: learn by crashing" : "geometric veto on",
+    bs.push_back({cv::Rect(x, 400, BW, 36),
+                  c.noVeto ? "learn by crashing" : "geometric veto on",
                   ID_TRAIN_NOVETO, c.noVeto});
-    // Every episode used one fixed journey, so a compass heading scored as
-    // well as navigating. This samples start and goal per episode.
-    bs.push_back({cv::Rect(x + 266, 400, 250, 36),
-                  c.varyGoal ? "varied start and goal" : "one fixed journey",
+    bs.push_back({cv::Rect(x + BP, 400, BW, 36),
+                  c.varyGoal ? "varied journey" : "one fixed journey",
                   ID_TRAIN_VARY, c.varyGoal});
     // The near-miss penalty is the only avoidance signal that arrives BEFORE
     // contact. Left in absolute units it was ~5x weaker against progress in a
     // tight world than an open one -- the wrong way round.
-    // GREEN MEANS THE FLAG IS ON THE COMMAND LINE. This one was pushed with
-    // `on = !c.rawClear`, so "scaled clearance" lit green while --raw-clear was
-    // absent and the button went grey exactly when the flag WAS being passed --
-    // the opposite of every other toggle on the panel, and sitting two buttons
-    // away from "Simulated stereo", which lights when --stereo IS passed.
-    bs.push_back({cv::Rect(x + 532, 400, 210, 36),
+    bs.push_back({cv::Rect(x + 2 * BP, 400, BW, 36),
                   c.rawClear ? "raw clearance" : "scaled clearance",
                   ID_TRAIN_RAWCLR, c.rawClear});
+    // PPO clips the policy update and, by default in SB3, not the value one --
+    // which is the update that matters when the targets are large.
+    bs.push_back({cv::Rect(x + 3 * BP, 400, BW, 36),
+                  c.clipVf ? "clip value updates" : "value clip off",
+                  ID_TRAIN_CLIPVF, c.clipVf});
 
     txt(im, "explore is the entropy bonus -- how much random stuff it tries. "
             "High early, a tenth of it after the anneal.", x, 452, 0.42, DIM);
@@ -966,6 +986,7 @@ const FlagBtn FLAG_BTNS[] = {
     {TRAIN, ID_TRAIN_NOVETO,  "--no-veto"},
     {TRAIN, ID_TRAIN_VARY,    "--vary-goal"},
     {TRAIN, ID_TRAIN_RAWCLR,  "--raw-clear"},
+    {TRAIN, ID_TRAIN_NORMR,   "--raw-reward"},
     {WATCH, ID_W_DET,         "--deterministic"},
     {EVAL,  ID_E_RANDOM,      "--random"},
     {EVAL,  ID_E_STEREO,      "--stereo"},
@@ -1190,6 +1211,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_CHP: c.creditHIdx = std::min(NCREDIT_H - 1, c.creditHIdx + 1); break;
         case ID_TRAIN_SEEDM: c.trainSeed = std::max(0, c.trainSeed - 1); break;
         case ID_TRAIN_SEEDP: c.trainSeed = std::min(999, c.trainSeed + 1); break;
+        case ID_TRAIN_NORMR: c.rawReward = !c.rawReward; break;
+        case ID_TRAIN_CLIPVF: c.clipVf = !c.clipVf; break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;

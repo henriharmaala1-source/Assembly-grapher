@@ -201,10 +201,17 @@ def journey_fit(worlds, max_steps, seeds=(1, 2, 3), **kw):
     return rows
 
 
-def make_env(rank: int, worlds=TRAIN_WORLDS, **kw):
+def make_env(rank: int, worlds=TRAIN_WORLDS, seed=1000, **kw):
+    """One worker. `seed` offsets the whole fleet, so two runs can be paired.
+
+    The rank is added to it, so worker 3 of run A and worker 3 of run B see the
+    same stream of worlds when the two runs share a seed -- which is what makes
+    an A/B of a training setting a comparison rather than two samples from a
+    noisy distribution.
+    """
     def _init():
         env = VoxelNavEnv(worlds=worlds, **kw)
-        env.reset(seed=1000 + rank)
+        env.reset(seed=seed + rank)
         return env
     return _init
 

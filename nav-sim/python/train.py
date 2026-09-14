@@ -254,6 +254,15 @@ def main() -> int:
                          "--forever. 0 turns annealing OFF and holds both "
                          "constant, which is the old behaviour and the reason "
                          "a 15 M run degraded after 14 M.")
+    ap.add_argument("--seed", type=int, default=0, metavar="N",
+                    help="make the run REPRODUCIBLE, and make two runs "
+                         "comparable. It seeds the policy's initial weights, "
+                         "PPO's sampling, and the stream of worlds each worker "
+                         "draws -- so two runs that differ only in one setting "
+                         "differ only in that setting, instead of also "
+                         "differing by whatever the random initialisation "
+                         "happened to be. 0 leaves everything unseeded, which "
+                         "is the old behaviour.")
     ap.add_argument("--gamma", type=float, default=0.999, metavar="F",
                     help="discount. HOW FAR AHEAD THE VALUE FUNCTION CAN SEE, "
                          "in steps, is about 1/(1-gamma). This was 0.995 -- a "
@@ -381,6 +390,10 @@ def main() -> int:
     # alone does not answer "where did my weekend of training go".
     out_abs = os.path.abspath(args.out)
     print(f"[train] checkpoints and final policy -> {out_abs}", flush=True)
+    if args.seed:
+        print(f"[train] seed {args.seed}: weights, sampling and the worker "
+              "world streams are all fixed. Another run with this seed and "
+              "the same\n        flags is the same run.", flush=True)
 
     # WHAT THIS RUN WAS, written beside its weights. A checkpoint records the
     # network and nothing about the conditions that produced it, so a folder of
@@ -404,6 +417,7 @@ def main() -> int:
         "target_kl": float(args.target_kl),
         "gamma": float(args.gamma),
         "gae_lambda": float(args.gae_lambda),
+        "seed": int(args.seed),
         "scale_clear": not args.raw_clear,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -413,6 +427,8 @@ def main() -> int:
               truth_depth=not args.stereo, cam=tuple(args.cam),
               mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
               scale_clear=not args.raw_clear)
+    if args.seed:
+        kw["seed"] = args.seed
     if args.no_veto:
         print("[train] NO VETO: every primitive is selectable, including ones "
               "that fly into things.\n"
@@ -504,6 +520,7 @@ def main() -> int:
             # here are only what the first rollout runs with.
             learning_rate=LR0, ent_coef=args.explore,
             target_kl=kl, gamma=args.gamma, gae_lambda=args.gae_lambda,
+            seed=args.seed or None,
             policy_kwargs=dict(net_arch=[256, 256]),
             tensorboard_log=os.path.join(args.out, "tb"))
 

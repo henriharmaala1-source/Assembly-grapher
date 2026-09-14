@@ -386,6 +386,7 @@ struct Cfg {
     // clearance scaled with world size.
     int   exploreIdx = 3, annealIdx = 0, klIdx = 2;
     int   valueHIdx = 3, creditHIdx = 3;     // 1000 steps / 200 steps
+    int   trainSeed = 0;                     // 0 = unseeded, as train.py
     bool  rawClear = false;
     bool  trainStereo = true;
     bool  cuda = false;
@@ -516,6 +517,10 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--target-kl");
             a.push_back(trimNum(TARGET_KL[c.klIdx]));
             if (c.rawClear) a.push_back("--raw-clear");
+            if (c.trainSeed) {
+                a.push_back("--seed");
+                a.push_back(std::to_string(c.trainSeed));
+            }
             // The panel names horizons; train.py takes the discounts. One
             // conversion, here, so the two can never mean different things.
             {
@@ -578,7 +583,7 @@ enum {
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY, ID_TRAIN_SVM, ID_TRAIN_SVP,
     ID_TRAIN_EXM, ID_TRAIN_EXP, ID_TRAIN_ANM, ID_TRAIN_ANP, ID_TRAIN_KLM,
     ID_TRAIN_KLP, ID_TRAIN_RAWCLR, ID_TRAIN_VHM, ID_TRAIN_VHP,
-    ID_TRAIN_CHM, ID_TRAIN_CHP,
+    ID_TRAIN_CHM, ID_TRAIN_CHP, ID_TRAIN_SEEDM, ID_TRAIN_SEEDP,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_LAYOUT, ID_W_DET,
     ID_E_S0M = 600, ID_E_S0P, ID_E_S1M, ID_E_S1P,
@@ -713,24 +718,30 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
         x, 146, 0.44, DIM);
 
     // ROW ONE: how big the run is.
+    // BOTH ROWS ARE FIVE WIDE at the same pitch, so the panel reads as a grid
+    // rather than as two different layouts stacked.
+    const int P = 150, SW = 100;
     stepper(im, bs, x, 182, "workers", std::to_string(c.workers),
-            ID_TRAIN_WM, ID_TRAIN_WP, "parallel envs");
-    stepper(im, bs, x + 190, 182, "steps", humanSteps(TRAIN_STEPS[c.stepsIdx]),
-            ID_TRAIN_SM, ID_TRAIN_SP, "checkpointed as it goes");
+            ID_TRAIN_WM, ID_TRAIN_WP, "parallel envs", SW);
+    stepper(im, bs, x + P, 182, "steps", humanSteps(TRAIN_STEPS[c.stepsIdx]),
+            ID_TRAIN_SM, ID_TRAIN_SP, "saved as it goes", SW);
     // THE GOAL HAS TO FIT INSIDE AN EPISODE. At 1500 it did not: the forest
     // goal needs ~2500 steps, so every episode was cut off before arrival was
     // possible and the goal bonus was unreachable.
-    stepper(im, bs, x + 380, 182, "steps/episode", std::to_string(c.epLen),
-            ID_TRAIN_EPM, ID_TRAIN_EPP, "the goal must fit here");
-    stepper(im, bs, x + 570, 182, "save every",
+    stepper(im, bs, x + 2 * P, 182, "steps/episode", std::to_string(c.epLen),
+            ID_TRAIN_EPM, ID_TRAIN_EPP, "the goal must fit", SW);
+    stepper(im, bs, x + 3 * P, 182, "save every",
             humanSteps(SAVE_EVERY[c.saveIdx]),
-            ID_TRAIN_SVM, ID_TRAIN_SVP, "checkpoint interval");
+            ID_TRAIN_SVM, ID_TRAIN_SVP, "checkpoint interval", SW);
+    // TWO RUNS THAT DIFFER ONLY IN ONE SETTING. Without a seed they also differ
+    // by whatever the initialisation happened to be, which over a short run is
+    // most of the difference -- so an A/B of a training change would be two
+    // samples from a noisy distribution rather than a comparison.
+    stepper(im, bs, x + 4 * P, 182, "seed",
+            c.trainSeed ? std::to_string(c.trainSeed) : std::string("off"),
+            ID_TRAIN_SEEDM, ID_TRAIN_SEEDP, "0 = unseeded", SW);
 
-    // ROW TWO: how it learns. These three exist because a 15 M-step run peaked
-    // around 14.3 M and then went backwards -- collisions 0.169 -> 0.233, goals
-    // 0.700 -> 0.622 -- with a learning rate and an entropy bonus that were
-    // hard constants for the whole run and nothing bounding an update.
-    const int P = 150, SW = 100;          // five across the panel
+          // five across the panel
     stepper(im, bs, x, 268, "explore", trimNum(EXPLORE[c.exploreIdx]),
             ID_TRAIN_EXM, ID_TRAIN_EXP, "how random it stays", SW);
     stepper(im, bs, x + P, 268, "anneal",
@@ -1177,6 +1188,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_VHP: c.valueHIdx = std::min(NVALUE_H - 1, c.valueHIdx + 1); break;
         case ID_TRAIN_CHM: c.creditHIdx = std::max(0, c.creditHIdx - 1); break;
         case ID_TRAIN_CHP: c.creditHIdx = std::min(NCREDIT_H - 1, c.creditHIdx + 1); break;
+        case ID_TRAIN_SEEDM: c.trainSeed = std::max(0, c.trainSeed - 1); break;
+        case ID_TRAIN_SEEDP: c.trainSeed = std::min(999, c.trainSeed + 1); break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;
         case ID_W_PANES_P: c.panes = std::min(9, c.panes + 1); break;

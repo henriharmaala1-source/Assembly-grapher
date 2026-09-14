@@ -331,6 +331,23 @@ columns as the classical ones, on seeds it never trained on.
                      with runs made before this, and the button on the train
                      panel says which one you are using.
 
+                     MAKING TWO RUNS COMPARABLE:  kestrel train --seed 7
+                     or the "seed" stepper on the train panel (0 = off, the
+                     old behaviour).
+
+                     It fixes three things at once: the policy's initial
+                     weights, PPO's sampling, and the stream of worlds each
+                     worker draws. Two runs with the same seed and the same
+                     flags are the SAME run -- verified by training twice at
+                     --seed 42 and comparing all 12 policy tensors, which came
+                     back bit-identical.
+
+                     That is what makes an A/B of a training setting mean
+                     anything. Without it two runs also differ by whatever the
+                     random initialisation happened to be, and over a short run
+                     that is most of the difference -- so you are comparing two
+                     samples from a noisy distribution and calling it a result.
+
                      IT STARTS FROM SCRATCH UNLESS YOU SAY OTHERWISE:
 
                        kestrel train --resume            newest checkpoint

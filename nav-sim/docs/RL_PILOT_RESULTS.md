@@ -489,3 +489,65 @@ objective and the task, so every number above is against the old ones and none
 of it transfers. The immediate practical step for the run that produced this
 log is unchanged: an earlier checkpoint probably scores better than the final
 one, and `kestrel evaluate --run <dir> --progress --baselines` says which.
+
+---
+
+# A paired A/B of the horizon change, and a critic fix that failed
+
+Three 150k-step runs on maze, `--seed 7`, identical in everything but the
+settings named. The seed fixes initial weights, PPO's sampling and each worker's
+stream of worlds, so these are comparisons rather than samples.
+
+| | OLD | NEW | FIX |
+|---|---|---|---|
+| gamma / lambda | 0.995 / 0.95 | 0.999 / 0.996 | 0.999 / 0.996 |
+| value horizon | 200 steps | 1000 | 1000 |
+| clearance | absolute | scaled | scaled |
+| returns | raw | raw | normalised + clip_vf 0.2 |
+
+## Held out, 18 episodes each (maps 101-106, three repeats, never trained on)
+
+| | OLD | NEW | FIX |
+|---|---|---|---|
+| arrived | 2 | 0 | 1 |
+| collided (blind) | 6 | 0 | 0 |
+| orbited | 7 | 14 | 12 |
+| still closing | 3 | 4 | 5 |
+| mean travel | 46.2 m | 60.3 m | 63.1 m |
+| **closing fraction** | **0.51** | **0.49** | **0.49** |
+| collision rate | 0.33 | 0.00 | 0.00 |
+
+## What this says
+
+**The horizon change bought safety and sold arrival.** Collisions went 6 -> 0;
+arrivals went 2 -> 0; orbiting went 7 -> 14. That is the signature of a policy
+that learned "do not die" and never learned "get there" -- which is what you
+expect when the collision terminal is immediate and locally learnable while the
+goal sits beyond what the critic can estimate.
+
+**Nothing navigated better.** Closing fraction is 0.49-0.51 in all three. The one
+column that measures "did it get meaningfully nearer" did not move. Whatever is
+limiting this policy at 150k steps, none of these three settings is it.
+
+**The critic fix failed, and the reasoning behind it was wrong.** It was added
+because explained_variance fell from +0.705 to +0.286 when the horizon grew.
+Normalising the return moved it to +0.250 and made the worst single update go
+from -8.75 to -75.60. explained_variance is `1 - Var(y-yhat)/Var(y)` and is
+scale-invariant by construction: rescaling targets could never have changed it.
+What it fixed was `value_loss`, ~500 -> ~0.05, which was only ever the units.
+It is now off by default and kept as `--norm-reward`.
+
+**The comparison that motivated it was also unsound.** explained_variance is not
+comparable across gammas -- a 200-step return is dominated by the near future and
+is easier to predict than a 1000-step one, so +0.705 partly means "easier
+question", not "better critic". Only runs sharing a gamma can be compared on it,
+and there (NEW vs FIX) the fix lost.
+
+## Method notes, because two readings were wrong before this one
+
+The training rolling scorecard said OLD won; the three held-out seeds said NEW
+won; 18 held-out episodes say they are doing different things and neither
+navigates better. The rolling scorecard is measured on TRAINING maps, so it
+cannot see generalisation, and n=3 produced a 3/3 collision rate for FIX that
+did not replicate at all on 18 episodes (0.00). Neither number was wrong; both
+were read for more than they could carry.

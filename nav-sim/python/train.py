@@ -255,28 +255,33 @@ def main() -> int:
                          "--forever. 0 turns annealing OFF and holds both "
                          "constant, which is the old behaviour and the reason "
                          "a 15 M run degraded after 14 M.")
-    ap.add_argument("--raw-reward", action="store_true",
-                    help="do NOT normalise the return scale. THE VALUE "
-                         "FUNCTION IS WHAT THIS IS FOR. Raising the value "
-                         "horizon from 200 to 1000 steps multiplies the size "
-                         "and the variance of every value target, and measured "
-                         "over a paired 150k-step A/B the value head could not "
-                         "follow: explained_variance fell from +0.705 to "
-                         "+0.286, value_loss doubled, and its worst update went "
-                         "from -3.4 to -8.75. A policy whose critic explains 29 "
-                         "per cent of the return is taking most of its "
-                         "advantage estimates from noise. Normalising divides "
-                         "the reward by the running standard deviation of the "
-                         "discounted return, so the targets stay order-1 "
-                         "whatever the horizon. This restores the old "
-                         "behaviour for comparison.")
+    ap.add_argument("--norm-reward", action="store_true",
+                    help="divide the reward by the running standard deviation "
+                         "of the discounted return, so value targets stay "
+                         "order-1 whatever the horizon.\n"
+                         "OFF BY DEFAULT, AND THE MEASUREMENT IS WHY. It was "
+                         "added to fix a critic that looked broken at a "
+                         "1000-step horizon (explained_variance +0.286 against "
+                         "+0.705 at 200 steps) and it did not: on a paired "
+                         "150k-step A/B it moved explained_variance to +0.250 "
+                         "-- slightly worse -- while the worst single update "
+                         "went from -8.75 to -75.60. The reason is that "
+                         "explained_variance is 1 - Var(y-yhat)/Var(y), which "
+                         "is scale-invariant by construction, so rescaling the "
+                         "targets could never have changed it. What it did fix "
+                         "was value_loss, which fell from ~500 to ~0.05 -- and "
+                         "that was only ever the units. The running standard "
+                         "deviation also drifts during training, which makes "
+                         "the same state's target non-stationary and is a "
+                         "plausible source of that -75.60. Kept as a flag "
+                         "because one seed on one world is not a refutation, "
+                         "but not as a default.")
     ap.add_argument("--clip-vf", type=float, default=0.2, metavar="F",
                     help="clip how far the value head may move in one update, "
-                         "the way PPO already clips the policy. Off by default "
-                         "in SB3, and worth having precisely when the targets "
-                         "are large. 0 disables it. Meaningless without "
-                         "normalised returns, so it is ignored with "
-                         "--raw-reward.")
+                         "the way PPO already clips the policy. 0 disables it. "
+                         "Only applied with --norm-reward: against raw returns "
+                         "in the hundreds a 0.2 clip would freeze the critic "
+                         "rather than steady it.")
     ap.add_argument("--seed", type=int, default=0, metavar="N",
                     help="make the run REPRODUCIBLE, and make two runs "
                          "comparable. It seeds the policy's initial weights, "
@@ -441,7 +446,7 @@ def main() -> int:
         "gamma": float(args.gamma),
         "gae_lambda": float(args.gae_lambda),
         "seed": int(args.seed),
-        "norm_reward": not args.raw_reward,
+        "norm_reward": bool(args.norm_reward),
         "clip_vf": float(args.clip_vf),
         "scale_clear": not args.raw_clear,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -516,7 +521,7 @@ def main() -> int:
     # of what a crash costs. 100 leaves it intact and still bounds a genuine
     # outlier.
     vnpath = os.path.join(args.out, "vecnormalize.pkl")
-    if not args.raw_reward:
+    if args.norm_reward:
         # THE STATISTICS ARE PART OF THE RUN, so a resume must not restart them.
         # VecNormalize begins with a variance estimate of 1; dropping a
         # half-trained policy back into that would rescale every reward it sees
@@ -531,7 +536,7 @@ def main() -> int:
                                 gamma=args.gamma, clip_reward=100.0)
         print("[train] returns normalised (running std of the discounted "
               "return), so value targets stay order-1\n"
-              "        whatever the horizon. --raw-reward turns this off.",
+              "        whatever the horizon. Measured as a wash; see --help.",
               flush=True)
 
     # RESUMING, OR NOT, IS AN EXPLICIT CHOICE. It used to be neither: a fresh
@@ -556,7 +561,7 @@ def main() -> int:
     # Clipping the value update only means something once the values are
     # order-1; against raw returns in the hundreds a 0.2 clip would freeze the
     # critic rather than steady it.
-    cvf = args.clip_vf if (args.clip_vf > 0 and not args.raw_reward) else None
+    cvf = args.clip_vf if (args.clip_vf > 0 and args.norm_reward) else None
     if resume_from:
         model = MaskablePPO.load(resume_from, env=venv, device=args.device,
                                  tensorboard_log=os.path.join(args.out, "tb"))

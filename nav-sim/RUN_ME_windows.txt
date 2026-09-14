@@ -331,48 +331,53 @@ columns as the classical ones, on seeds it never trained on.
                      with runs made before this, and the button on the train
                      panel says which one you are using.
 
-                     THE CRITIC HAS TO BE ABLE TO FIT ITS TARGETS:
+                     NORMALISING THE RETURN: measured, and it did not
+                     work. OFF by default; --norm-reward turns it on.
 
-                       kestrel train --raw-reward     (turn the fix OFF)
-                       kestrel train --clip-vf 0      (turn the clip OFF)
+                     The story is worth keeping because the reasoning was
+                     wrong in an instructive way. Raising the value horizon
+                     from 200 steps to 1000 made the critic look broken:
 
-                     or the "normalised returns" and "clip value updates"
-                     buttons on the train panel. Both are on by default.
+                       explained_variance   200 steps: +0.705
+                                           1000 steps: +0.286
 
-                     Raising the value horizon from 200 steps to 1000
-                     multiplies the size AND the variance of every value
-                     target, and a paired 150 k-step A/B measured the critic
-                     failing to follow:
+                     so the reward was divided by the running standard
+                     deviation of the discounted return, to keep value
+                     targets order-1. It did not help:
 
-                       explained_variance   0.995: +0.705   0.999: +0.286
-                       worst update         0.995: -3.40    0.999: -8.75
-                       value_loss (end)     0.995:  246     0.999:  497
-                       value_loss (peak)    0.995:  3.7e3   0.999:  2.2e4
+                       explained_variance  +0.286 -> +0.250   (slightly worse)
+                       worst update         -8.75 -> -75.60   (much worse)
+                       held-out, 18 eps     a wash: 0 -> 1 arrivals,
+                                            14 -> 12 orbits, 0 collisions both
 
-                     A critic explaining 29 % of the return is handing the
-                     policy advantage estimates that are mostly noise, and
-                     that is the likeliest reason the longer-horizon run
-                     spiked to a 65 % crash rate mid-training before
-                     recovering.
+                     explained_variance is 1 - Var(y-yhat)/Var(y), which is
+                     SCALE-INVARIANT by construction -- dividing every target
+                     by a constant cannot change it. What normalising actually
+                     fixed was value_loss, ~500 -> ~0.05, and that was only
+                     ever the units. The running standard deviation also
+                     drifts as training goes on, so the same state's target
+                     moves, and that non-stationarity is a plausible source of
+                     the -75.60.
 
-                     The fix divides the reward by the running standard
-                     deviation of the discounted return, so targets stay
-                     order-1 whatever the horizon, and clips the value update
-                     the way PPO already clips the policy one.
+                     AND THE COMPARISON ITSELF WAS UNSOUND. Comparing
+                     explained_variance across two different gammas compares
+                     two different prediction problems: a 200-step return is
+                     dominated by the near future and is genuinely easier to
+                     predict than a 1000-step one. +0.705 does not mean
+                     "better critic", it partly means "easier question". The
+                     only sound comparison is between runs that share a gamma.
 
-                     WHAT IS *NOT* NORMALISED: the observations. They were
-                     measured first -- every feature lands in [-1, 1.32] with
-                     an overall std of 0.37 -- so there is nothing to gain,
-                     and normalising them would force the running statistics
-                     through evaluate, watch and report, any of which could
-                     then silently fly a policy on differently-scaled inputs.
-                     The return is out of scale; the observation is not.
+                     --clip-vf bounds the value update the way PPO bounds the
+                     policy update (SB3 leaves it off). It is applied only
+                     with --norm-reward: against raw returns in the hundreds a
+                     0.2 clip would freeze the critic rather than steady it.
 
-                     The statistics are saved beside the weights as
-                     vecnormalize.pkl and reloaded by --resume, including on
-                     the stop-by-hand path -- restarting them mid-run would
-                     rescale every reward overnight, which looks exactly like
-                     a policy falling over.
+                     WHAT IS NOT NORMALISED, and why: the observations. Every
+                     feature was measured into [-1, 1.32] with an overall std
+                     of 0.37, so there is nothing to gain -- and normalising
+                     them would push running statistics through evaluate,
+                     watch and report, any of which could then silently fly a
+                     policy on differently-scaled inputs.
 
                      MAKING TWO RUNS COMPARABLE:  kestrel train --seed 7
                      or the "seed" stepper on the train panel (0 = off, the

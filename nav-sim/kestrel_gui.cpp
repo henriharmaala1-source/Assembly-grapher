@@ -388,8 +388,10 @@ struct Cfg {
     int   valueHIdx = 3, creditHIdx = 3;     // 1000 steps / 200 steps
     int   trainSeed = 0;                     // 0 = unseeded, as train.py
     bool  rawClear = false;
-    bool  rawReward = false;      // green when normalisation is ON
-    bool  clipVf = true;          // 0.2, matching train.py
+    // OFF by default, matching train.py: normalising the return was measured
+    // and did not help -- see --norm-reward in train.py for the numbers.
+    bool  normReward = false;
+    bool  clipVf = true;          // 0.2, and only applied with normReward
     bool  trainStereo = true;
     bool  cuda = false;
     bool  resume = false;
@@ -519,11 +521,13 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--target-kl");
             a.push_back(trimNum(TARGET_KL[c.klIdx]));
             if (c.rawClear) a.push_back("--raw-clear");
-            if (c.rawReward) a.push_back("--raw-reward");
-            // 0.2 is train.py's own default, so only the deviation is
-            // printed -- the strip has to hold the whole command and this row
-            // of settings had already pushed it past two lines.
-            if (!c.clipVf) { a.push_back("--clip-vf"); a.push_back("0"); }
+            if (c.normReward) a.push_back("--norm-reward");
+            // Inert without --norm-reward, and 0.2 is train.py's own
+            // default, so it is only printed when it deviates AND applies --
+            // the strip has to hold the whole command.
+            if (c.normReward && !c.clipVf) {
+                a.push_back("--clip-vf"); a.push_back("0");
+            }
             if (c.trainSeed) {
                 a.push_back("--seed");
                 a.push_back(std::to_string(c.trainSeed));
@@ -784,17 +788,21 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x + 2 * BP, 356, BW, 38),
                   c.cuda ? "device: cuda" : "device: cpu",
                   ID_TRAIN_CUDA, c.cuda});
-    // THE CRITIC'S TARGETS, KEPT ORDER-1. Raising the value horizon multiplies
-    // the size and variance of every value target; measured over a paired
-    // 150k-step A/B, explained_variance fell from +0.705 to +0.286 when the
-    // horizon went from 200 steps to 1000. Green is the fix being ON.
-    // GREEN MEANS THE FLAG IS ON THE COMMAND LINE -- here too, even though the
-    // tempting reading is "green = the good setting is on". That is exactly the
-    // inversion --raw-clear shipped with, and one rule that always holds beats
-    // two readings that each feel natural on their own button.
+    // OFF, AND MEASURED. Normalising the return was added to rescue a critic
+    // that looked broken at a 1000-step horizon, and did not rescue it:
+    // explained_variance +0.286 -> +0.250 while the worst update went -8.75 ->
+    // -75.60. explained_variance is 1 - Var(y-yhat)/Var(y) and therefore
+    // scale-invariant by construction, so rescaling the targets could never
+    // have moved it. Kept as a switch, not a default.
+    //
+    // GREEN MEANS THE FLAG IS ON THE COMMAND LINE, here as everywhere -- even
+    // though "green = the good setting is on" reads more naturally on a button
+    // like this. That reading is exactly the inversion --raw-clear shipped
+    // with, and one rule that always holds beats two that each feel right on
+    // their own button.
     bs.push_back({cv::Rect(x + 3 * BP, 356, BW, 38),
-                  c.rawReward ? "raw returns" : "normalised returns",
-                  ID_TRAIN_NORMR, c.rawReward});
+                  c.normReward ? "normalised returns" : "raw returns",
+                  ID_TRAIN_NORMR, c.normReward});
 
     // THE SAFETY MASK, AS A SWITCH. On, the policy chooses among primitives the
     // geometry already approved and cannot collide by choosing. Off, it must
@@ -986,7 +994,7 @@ const FlagBtn FLAG_BTNS[] = {
     {TRAIN, ID_TRAIN_NOVETO,  "--no-veto"},
     {TRAIN, ID_TRAIN_VARY,    "--vary-goal"},
     {TRAIN, ID_TRAIN_RAWCLR,  "--raw-clear"},
-    {TRAIN, ID_TRAIN_NORMR,   "--raw-reward"},
+    {TRAIN, ID_TRAIN_NORMR,   "--norm-reward"},
     {WATCH, ID_W_DET,         "--deterministic"},
     {EVAL,  ID_E_RANDOM,      "--random"},
     {EVAL,  ID_E_STEREO,      "--stereo"},
@@ -1211,7 +1219,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_CHP: c.creditHIdx = std::min(NCREDIT_H - 1, c.creditHIdx + 1); break;
         case ID_TRAIN_SEEDM: c.trainSeed = std::max(0, c.trainSeed - 1); break;
         case ID_TRAIN_SEEDP: c.trainSeed = std::min(999, c.trainSeed + 1); break;
-        case ID_TRAIN_NORMR: c.rawReward = !c.rawReward; break;
+        case ID_TRAIN_NORMR: c.normReward = !c.normReward; break;
         case ID_TRAIN_CLIPVF: c.clipVf = !c.clipVf; break;
 
         case ID_W_PANES_M: c.panes = std::max(1, c.panes - 1); break;

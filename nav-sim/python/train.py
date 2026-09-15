@@ -327,6 +327,19 @@ def main() -> int:
                          "length makes that circling the optimum. Measured "
                          "under this reward a hard-turning hoverer scores "
                          "-33.99 against freeM's +132.43.")
+    ap.add_argument("--coverage", type=float, default=0.15, metavar="F",
+                    help="reward per newly visited 1 m cell, under --objective "
+                         "range. THIS IS THE KNOB FOR THE GAP AGAINST freeM. "
+                         "Measured over 18 held-out episodes the range policy "
+                         "gets 69%% further from the spawn than freeM (16.7 m "
+                         "against 9.9 m) and circles far less (2.9x against "
+                         "8.2x), but covers 36 distinct cells against freeM's "
+                         "64 -- because freeM flies 81.6 m of path against the "
+                         "policy's 49.2 m. Displacement is paid for and new "
+                         "ground is paid for, but simply continuing to move is "
+                         "not, so once the policy is far out it has little "
+                         "reason to keep going. Raising this pays for the "
+                         "ground freeM gets by accident.")
     ap.add_argument("--seed", type=int, default=0, metavar="N",
                     help="make the run REPRODUCIBLE, and make two runs "
                          "comparable. It seeds the policy's initial weights, "
@@ -495,6 +508,7 @@ def main() -> int:
         "clip_vf": float(args.clip_vf),
         "scale_clear": not args.raw_clear,
         "objective": args.objective,
+        "coverage": float(args.coverage),
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(os.path.join(args.out, "run.json"), "w") as fh:
@@ -502,7 +516,8 @@ def main() -> int:
     kw = dict(worlds=tuple(args.worlds), max_steps=args.max_steps,
               truth_depth=not args.stereo, cam=tuple(args.cam),
               mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
-              scale_clear=not args.raw_clear, objective=args.objective)
+              scale_clear=not args.raw_clear, objective=args.objective,
+              coverage=args.coverage)
     if args.seed:
         kw["seed"] = args.seed
     if args.no_veto:
@@ -725,7 +740,8 @@ def main() -> int:
                               mask_unsafe=not args.no_veto,
                               vary_goal=args.vary_goal,
                               scale_clear=not args.raw_clear,
-                              objective=args.objective)
+                              objective=args.objective,
+                              coverage=args.coverage)
             trav, coll, reach, closest = [], 0, 0, []
             for sd in (901, 902, 903):
                 # options=, not seed=. seed= seeds the DRAW from the seeds list

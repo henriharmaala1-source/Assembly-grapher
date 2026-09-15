@@ -847,3 +847,93 @@ a 48-step credit horizon while the RUN button used 200, and every measured run
 here passed 0.996 explicitly. The window and the command line are not allowed to
 drift; this one had, silently, in the one place where it would have made the
 documented results irreproducible from the CLI.
+
+---
+
+# The endurance test: it can fly forever, by not going anywhere
+
+20,000-step episodes -- a 1800 m ceiling, twenty times any episode flown here
+before -- across all six worlds, two seeds each, on the safe-travel policy.
+Under this objective an episode ends ONLY on a collision or the cap, so a large
+cap measures range directly.
+
+| world | seed | steps | travel | net | cells | loops | outcome |
+|-------|------|-------|--------|-----|-------|-------|---------|
+| forest | 101 | 20000 | 821.7 m | 15.0 m | **19** | **54.8x** | survived |
+| maze | 102 | 20000 | 862.6 m | 19.5 m | 25 | 44.2x | survived |
+| maze | 101 | 20000 | 863.6 m | 30.6 m | 50 | 28.2x | survived |
+| corridor | 101 | 20000 | 900.1 m | 52.1 m | 145 | 17.3x | survived |
+| culdesac | 101 | 20000 | 153.1 m | 69.2 m | 136 | 2.2x | survived |
+| city | 101 | 20000 | 53.3 m | 16.8 m | 48 | 3.2x | survived |
+| city | 102 | 20000 | 47.5 m | 24.5 m | 41 | 1.9x | survived |
+| culdesac | 102 | 10189 | 640.1 m | 180.1 m | **516** | 3.6x | BLIND HIT |
+| corridor | 102 | 2114 | 106.7 m | 1.9 m | 42 | 55.7x | BLIND HIT |
+| road | 102 | 771 | 49.2 m | 21.6 m | 43 | 2.3x | BLIND HIT |
+| forest | 102 | 769 | 50.0 m | 28.9 m | 46 | 1.7x | BLIND HIT |
+| road | 101 | 198 | 13.1 m | 3.6 m | 14 | 3.6x | BLIND HIT |
+
+**Seven of twelve survived the full 20,000 steps, and they survived by
+hovering.** forest/101 flew 821 metres and covered NINETEEN distinct cells.
+
+## When did it stop finding new ground?
+
+Step of the last new cell, against 19,999:
+
+| survivors | last new cell | | deaths | last new cell | died at |
+|-----------|---------------|---|--------|---------------|---------|
+| forest 101 | 360 | | corridor 102 | 2114 | 2114 |
+| maze 102 | 410 | | culdesac 102 | 10180 | 10189 |
+| city 102 | 580 | | forest 102 | 760 | 769 |
+| city 101 | 690 | | road 102 | 770 | 771 |
+| maze 101 | 810 | | road 101 | 198 | 198 |
+| culdesac 101 | 2330 | | | | |
+| corridor 101 | 19560 | | | | |
+
+**Every one of the five deaths happened within ~10 steps of discovering a new
+cell.** All five, all blind. And five of seven survivors stopped exploring
+inside the first 800 steps, then orbited for the remaining 96% of the flight.
+
+The policy has exactly two behaviours: explore briefly and die, or stop
+exploring and live forever.
+
+## And it is playing optimally
+
+- coverage pays `0.15 * (100/44)` = **+0.34** per new cell in the maze
+- collisions run at 5 per 1125 new cells = **0.0044** per cell
+- a collision costs **300**
+
+One new cell is worth +0.34 and costs `0.0044 * 300 = 1.33` in expectation. Net
+**-0.99 per cell**. Hovering is worth 0. Zero beats negative, so it parks. The
+reward asked for this.
+
+This also makes the "mean free path 912 m per collision" figure meaningless:
+most of those metres are zero-risk hovering metres. The honest hazard is **one
+collision per ~225 new cells**, and it applies only while exploring.
+
+So "how far can it go" has two answers: indefinitely, if it does not go
+anywhere; and about 225 new cells of real exploration before something nothing
+had seen kills it.
+
+## Two fixes, and they work by opposite mechanisms
+
+Scored on a hard-turning hoverer against freeM over 1500 steps:
+
+| variant | hoverer | freeM | gap |
+|---------|---------|-------|-----|
+| plain range | -90.5 | 178.1 | 269 |
+| **--far 1.0** | -90.5 | **198.7** | **289** |
+| --revisit 0.05 | -165.4 | 108.6 | 274 |
+| both | -165.4 | 129.2 | 295 |
+
+`--far` widens the gap by REWARDING good behaviour: the hoverer is untouched
+because it never gets far enough to earn the bonus, while freeM gains 20.
+
+`--revisit` widens it by PUNISHING EVERYTHING. It costs the hoverer 75 and costs
+freeM 70, because freeM loops at 8.2x and therefore revisits constantly. A flat
+revisit charge cannot tell pointless circling from necessary backtracking, and
+in a maze you often must retrace a corridor to get anywhere. That is a real
+hazard, recorded before the run rather than after it.
+
+Both are training at --max-steps 3000, which is the first budget long enough
+that the hovering regime is inside training at all -- at 1000 steps exploration
+saturates around step 800 and the pathology barely appears.

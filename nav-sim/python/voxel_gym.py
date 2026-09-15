@@ -39,7 +39,8 @@ class VoxelNavEnv(gym.Env):
     def __init__(self, worlds=TRAIN_WORLDS, seeds=range(1, 65), max_steps=1500,
                  truth_depth=False, cam=(160, 120), horizons=None,
                  mask_unsafe=True, vary_goal=False, scale_clear=True,
-                 objective="goal", coverage=None, seen=None):
+                 objective="goal", coverage=None, seen=None,
+                 revisit=None, far=None):
         super().__init__()
         self.worlds = tuple(worlds)
         self.seeds = list(seeds)
@@ -74,6 +75,12 @@ class VoxelNavEnv(gym.Env):
         # EnvConfig::wSeen. Every collision in this tree is a blind one.
         if seen is not None:
             self._cfg.w_seen = float(seen)
+        # Charge per step for ground already covered; see EnvConfig::wRevisit.
+        if revisit is not None:
+            self._cfg.w_revisit = float(revisit)
+        # Scale a new cell's worth by how far out it is; EnvConfig::wFar.
+        if far is not None:
+            self._cfg.w_far = float(far)
         self._env = voxelenv.VoxelEnv(self._cfg)
 
         n = self._env.n_prims
@@ -163,6 +170,7 @@ class VoxelNavEnv(gym.Env):
             "r_progress": st.r_progress, "r_coverage": st.r_coverage,
             "r_time": st.r_time, "r_stop": st.r_stop,
             "r_clear": st.r_clear, "r_seen": st.r_seen,
+            "r_revisit": st.r_revisit,
             "r_terminal": st.r_terminal,
             # The failure taxonomy's inputs; see EnvStep in rl_env.hpp.
             "start_dist_m": st.start_dist_m, "net_disp_m": st.net_disp_m,

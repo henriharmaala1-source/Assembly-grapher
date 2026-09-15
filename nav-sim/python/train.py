@@ -354,6 +354,26 @@ def main() -> int:
                          "confirmed-free path length -- it goes fast only where "
                          "it has looked. This pays the policy to do the same. "
                          "0 disables it.")
+    ap.add_argument("--revisit", type=float, default=0.0, metavar="F",
+                    help="charge this per step for every step spent in a cell "
+                         "already visited. THE ANSWER TO HOVERING. Over "
+                         "20,000-step episodes the policy has two behaviours: "
+                         "explore briefly and die, or stop exploring and live "
+                         "forever -- five of seven survivors found their last "
+                         "new cell inside the first 800 steps and orbited for "
+                         "the remaining 96%%. It is optimal play for the reward "
+                         "given: a new cell pays +0.34 and costs 0.0044 * 300 = "
+                         "1.33 in expected collision, so exploring nets -0.99 "
+                         "while hovering nets 0. This makes hovering cost "
+                         "something. At ~20 steps per new cell during genuine "
+                         "exploration, 0.05 flips the comparison.")
+    ap.add_argument("--far", type=float, default=0.0, metavar="F",
+                    help="make a new cell worth (1 + F * displacement/span) "
+                         "times as much, so DISTANCE AND NEW GROUND are one "
+                         "term rather than two additive ones. Coverage "
+                         "otherwise pays the same for a cell 2 m from the spawn "
+                         "as for one 100 m out, which lets 'explore a ring "
+                         "around home' score identically to 'go somewhere'.")
     ap.add_argument("--seed", type=int, default=0, metavar="N",
                     help="make the run REPRODUCIBLE, and make two runs "
                          "comparable. It seeds the policy's initial weights, "
@@ -530,6 +550,8 @@ def main() -> int:
         "objective": args.objective,
         "coverage": float(args.coverage),
         "seen": float(args.seen),
+        "revisit": float(args.revisit),
+        "far": float(args.far),
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(os.path.join(args.out, "run.json"), "w") as fh:
@@ -538,7 +560,8 @@ def main() -> int:
               truth_depth=not args.stereo, cam=tuple(args.cam),
               mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
               scale_clear=not args.raw_clear, objective=args.objective,
-              coverage=args.coverage, seen=args.seen)
+              coverage=args.coverage, seen=args.seen,
+              revisit=args.revisit, far=args.far)
     if args.seed:
         kw["seed"] = args.seed
     if args.no_veto:
@@ -762,7 +785,8 @@ def main() -> int:
                               vary_goal=args.vary_goal,
                               scale_clear=not args.raw_clear,
                               objective=args.objective,
-                              coverage=args.coverage, seen=args.seen)
+                              coverage=args.coverage, seen=args.seen,
+                              revisit=args.revisit, far=args.far)
             trav, coll, reach, closest = [], 0, 0, []
             for sd in (901, 902, 903):
                 # options=, not seed=. seed= seeds the DRAW from the seeds list

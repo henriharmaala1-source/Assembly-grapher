@@ -51,7 +51,8 @@ COLUMNS = ["id", "world", "seed", "repeat", "checkpoint_steps", "planner",
            "min_dist_to_goal_m", "min_dist_step", "net_disp_m", "cells_visited",
            "min_clear_m", "stopped_steps", "collisions", "hit_unknown",
            "reached_goal", "r_progress", "r_coverage", "r_time", "r_stop",
-           "r_clear", "r_seen", "r_terminal", "goal_tol_m", "robot_r",
+           "r_clear", "r_seen", "r_revisit", "r_terminal", "goal_tol_m",
+           "robot_r",
            "goal_x", "goal_y"]
 
 BASELINES = {"random": voxelenv.Baseline.random, "freeM": voxelenv.Baseline.freeM,
@@ -117,6 +118,10 @@ def main() -> int:
     ap.add_argument("--stereo", action="store_true")
     ap.add_argument("--no-veto", action="store_true")
     ap.add_argument("--vary-goal", action="store_true")
+    ap.add_argument("--revisit", type=float, default=0.0,
+                    help="match the run's --revisit")
+    ap.add_argument("--far", type=float, default=0.0,
+                    help="match the run's --far")
     ap.add_argument("--seen", type=float, default=0.0,
                     help="match the run's --seen; see train.py --seen")
     ap.add_argument("--coverage", type=float, default=0.15,
@@ -203,7 +208,8 @@ def main() -> int:
                               mask_unsafe=not args.no_veto,
                               vary_goal=args.vary_goal,
                               objective=args.objective,
-                              coverage=args.coverage, seen=args.seen)
+                              coverage=args.coverage, seen=args.seen,
+                              revisit=args.revisit, far=args.far)
             for sd in args.seeds:
                 for rep in range(args.repeats):
                     fly.rng = 12345 + rep     # same stream for every planner
@@ -232,6 +238,7 @@ def main() -> int:
                         "r_time": info["r_time"], "r_stop": info["r_stop"],
                         "r_clear": info["r_clear"],
                         "r_seen": info["r_seen"],
+                        "r_revisit": info["r_revisit"],
                         "r_terminal": info["r_terminal"],
                         "goal_tol_m": 3.0, "robot_r": 0.6,
                         "goal_x": gx, "goal_y": gy,

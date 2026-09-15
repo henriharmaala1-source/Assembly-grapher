@@ -58,7 +58,7 @@ struct VoxelEnv::Impl {
     float minGoalDist = 1e9f; int minGoalStep = 0;
     // Episode totals per reward term. EnvStep is built fresh every step, so
     // these have to live with the episode or they accumulate nothing.
-    float aProgress = 0, aCoverage = 0, aTime = 0, aStop = 0, aClear = 0, aSeen = 0, aTerm = 0;
+    float aProgress = 0, aCoverage = 0, aTime = 0, aStop = 0, aClear = 0, aSeen = 0, aRevisit = 0, aTerm = 0;
     int   steps = 0, stopped = 0, collisions = 0;
     // Visit counts, so a policy can know it has been here before. The maze
     // failure is a planner re-deriving the same local preference at a junction
@@ -230,7 +230,7 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     Impl& I = *im_;
     I.world = VoxelWorld();
     I.visits.clear();
-    I.aProgress = I.aCoverage = I.aTime = I.aStop = I.aClear = I.aSeen = I.aTerm = 0.f;
+    I.aProgress = I.aCoverage = I.aTime = I.aStop = I.aClear = I.aSeen = I.aRevisit = I.aTerm = 0.f;
     // A PHANTOM FIRST LEG. This seeded the trail with I.px/I.py BEFORE the
     // world dispatch below assigns them, so the first point was wherever the
     // PREVIOUS episode ended and every plan view drew a straight line from
@@ -561,7 +561,14 @@ EnvStep VoxelEnv::step(int action) {
     // Coverage is scaled the same way under RANGE -- it is the other
     // distance-like term and would otherwise favour the big worlds exactly as
     // raw progress once did.
-    const float tCoverage = cfg_.wCoverage * novelty * (range ? rscale : 1.f);
+    // A new cell is worth more the further out it is, when wFar > 0.
+    const float farBonus = (range && cfg_.wFar > 0.f)
+        ? (1.f + cfg_.wFar * std::min(1.f, netNow / I.worldSpan)) : 1.f;
+    const float tCoverage = cfg_.wCoverage * novelty * (range ? rscale : 1.f)
+                          * farBonus;
+    // Every step spent on ground already covered. This is what makes hovering
+    // cost something; see EnvConfig::wRevisit for the arithmetic.
+    const float tRevisit = range ? -cfg_.wRevisit * (1.f - novelty) : 0.f;
     const float tTime     = -cfg_.wTime * dt;
     const float tStop     = -cfg_.wStop * (speed < 0.1f ? 1.f : 0.f)
                             - (legal ? 0.f : cfg_.wStop);
@@ -581,9 +588,10 @@ EnvStep VoxelEnv::step(int action) {
     }
     const float tClear    = -cfg_.wClear * std::max(0.f, cfg_.clearTarget - clr)
                           * (cfg_.scaleClear ? wscale : 1.f);
-    float r = tProgress + tCoverage + tTime + tStop + tClear + tSeen;
+    float r = tProgress + tCoverage + tTime + tStop + tClear + tSeen + tRevisit;
     I.aProgress += tProgress; I.aCoverage += tCoverage; I.aTime += tTime;
     I.aStop += tStop;         I.aClear += tClear; I.aSeen += tSeen;
+    I.aRevisit += tRevisit;
 
     // Under RANGE the goal is scaffolding and nothing more: it still points the
     // planner's rollouts somewhere, but arriving is not an event. Ending the
@@ -606,7 +614,7 @@ EnvStep VoxelEnv::step(int action) {
     out.travelM = I.travel; out.distToGoalM = dist; out.minClearM = I.minClear;
     out.minDistToGoalM = I.minGoalDist; out.minDistStep = I.minGoalStep;
     out.rProgress = I.aProgress; out.rCoverage = I.aCoverage; out.rTime = I.aTime;
-    out.rStop = I.aStop; out.rClear = I.aClear; out.rSeen = I.aSeen; out.rTerminal = I.aTerm;
+    out.rStop = I.aStop; out.rClear = I.aClear; out.rSeen = I.aSeen; out.rRevisit = I.aRevisit; out.rTerminal = I.aTerm;
     out.collisions = I.collisions; out.stoppedSteps = I.stopped; out.steps = I.steps;
     out.startDistM = I.startDist;
     out.netDispM = std::hypot(I.px - I.startX, I.py - I.startY);

@@ -119,6 +119,30 @@ struct EnvConfig {
     // confirmed free, which is the one thing the policy is never paid to care
     // about. 0 disables it.
     float wSeen       = 0.f;
+    // DON'T LOITER. Measured over 20,000-step episodes, the policy has exactly
+    // two behaviours: explore briefly and die, or stop exploring and live
+    // forever. Five of seven survivors found their last new cell inside the
+    // first 800 steps and then orbited for the remaining 96% of the flight --
+    // forest/101 flew 821 m and covered 19 distinct cells.
+    //
+    // It is behaving OPTIMALLY for the reward it was given. Coverage pays
+    // 0.15 * (100/44) = +0.34 per new cell in the maze; collisions run at ~5
+    // per 1125 new cells and cost 300, so exploring one new cell is worth
+    // +0.34 and costs 0.0044 * 300 = 1.33 in expectation. Net -0.99. Hovering
+    // is worth 0. Zero beats negative, so it parks.
+    //
+    // This charges for every step spent in a cell already visited, which turns
+    // hovering from free into costly. At ~20 steps per new cell during genuine
+    // exploration, 0.05/step makes exploring the better bet by the same
+    // arithmetic that currently forbids it.
+    float wRevisit    = 0.f;
+    // DISTANCE TIMES NEW GROUND, as one term rather than two additive ones.
+    // Coverage pays the same for a cell 2 m from the spawn as for one 100 m
+    // out, so "explore a ring around home" scores identically to "go
+    // somewhere". With this, a new cell is worth (1 + wFar * disp/span) times
+    // as much, so the two things being asked for cannot be satisfied
+    // separately. 0 leaves coverage flat.
+    float wFar        = 0.f;
     float wProgress   = 2.0f;
     float progressScaleM = 100.f;
     float wCoverage   = 0.15f;
@@ -232,6 +256,7 @@ struct EnvStep {
     // displacement reward of +97.81, and only separating them shows that
     // almost all of it was this.
     float rSeen     = 0.f;   // flying through space nothing confirmed free
+    float rRevisit  = 0.f;   // steps spent in ground already covered
     float rTerminal = 0.f;   // the goal bonus or the collision penalty
 
     // WHAT MAKES "OUT OF STEPS" READABLE. One truncation column covered at

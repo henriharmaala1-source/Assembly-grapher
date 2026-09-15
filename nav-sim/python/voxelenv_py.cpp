@@ -33,6 +33,8 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("objective", &EnvConfig::objective)
         .def_readwrite("w_range", &EnvConfig::wRange)
         .def_readwrite("w_seen", &EnvConfig::wSeen)
+        .def_readwrite("w_revisit", &EnvConfig::wRevisit)
+        .def_readwrite("w_far", &EnvConfig::wFar)
         .def_readwrite("range_scale_m", &EnvConfig::rangeScaleM)
         .def_readwrite("w_progress", &EnvConfig::wProgress)
         .def_readwrite("progress_scale_m", &EnvConfig::progressScaleM)
@@ -75,6 +77,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readonly("r_stop", &EnvStep::rStop)
         .def_readonly("r_clear", &EnvStep::rClear)
         .def_readonly("r_seen", &EnvStep::rSeen)
+        .def_readonly("r_revisit", &EnvStep::rRevisit)
         .def_readonly("r_terminal", &EnvStep::rTerminal)
         // The four that make "out of steps" readable -- see EnvStep in rl_env.hpp.
         .def_readonly("start_dist_m", &EnvStep::startDistM)

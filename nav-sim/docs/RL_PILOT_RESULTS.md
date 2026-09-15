@@ -1014,3 +1014,39 @@ but the raw percentages would have if compared against the 1000-step runs.
 FOUR REWARD-TERM EXPERIMENTS, FOUR LOSSES: coverage 0.45, seen 0.30, seen 0.03,
 far 1.0, revisit 0.05. One objective change, one large win. Whatever is left is
 not in the shaping weights.
+
+## Held out at 3000 steps: episode length was the win, not any reward term
+
+12 episodes each (maze 101-106 x2), every policy scored identically:
+
+| policy | net | cells | travel | loops | crash | metres/crash | stalled |
+|--------|-----|-------|--------|-------|-------|--------------|---------|
+| **base3k** | 18.0 m | **86** | 158.0 m | 8.8x | 2/12 | **948 m** | 1 |
+| runRANGE | **19.1 m** | 43 | 127.6 m | 6.7x | 2/12 | 765 m | 0 |
+| revisit3k | 15.5 m | 40 | 60.3 m | **3.9x** | 4/12 | 181 m | **5/12** |
+| far3k | 15.3 m | 33 | 63.6 m | 4.2x | **10/12** | 76 m | 0 |
+
+base3k DOUBLES the ground covered, 86 cells against 43, at the same collision
+count and better metres-per-crash. The only difference between those two runs is
+the training episode budget: 3000 steps instead of 1000. No reward term did
+anything comparable.
+
+CAVEAT ON THAT ROW: runRANGE trained at --max-steps 1000 and is scored here at
+3000, so g[8] -- the fraction-of-episode-elapsed channel -- ticks three times
+slower than anything it saw. Part of the margin is it running off-distribution.
+There is no clean way around this: comparing policies trained at different
+episode lengths must evaluate at least one of them outside its regime, and
+scoring each at its own length would compare different tasks instead. The clean
+comparisons are base3k / revisit3k / far3k, which share a seed and a budget.
+
+--revisit HAS A FAILURE MODE NOT PREDICTED HERE: it stalls in 5 of 12 held-out
+episodes. Charging for time spent on ground already covered produced a policy
+that stops moving, which is the opposite of the intent and the same stall
+pattern the endurance run found in city. No confident mechanism for it; recorded
+as observed rather than explained.
+
+FIVE REWARD-TERM EXPERIMENTS, FIVE LOSSES -- coverage 0.45, seen 0.30, seen
+0.03, far 1.0, revisit 0.05. TWO STRUCTURAL CHANGES, TWO WINS: what the policy
+is paid for (goal -> safe travel), and how long it is paid for it (1000 -> 3000
+steps). The shaping weights are not where the remaining gap lives, and that is
+now five measurements deep rather than a hunch.

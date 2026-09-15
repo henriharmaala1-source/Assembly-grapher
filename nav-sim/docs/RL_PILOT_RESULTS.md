@@ -792,3 +792,58 @@ conflating two of them -- and it mattered on the first use: -142.49 reads as a
 clearance problem until you separate it and find almost all of it is the new
 term. rSeen now has its own column in EnvStep, the bindings, the gym info dict
 and report.csv.
+
+## --seen at 0.03: still worse than zero, and monotonic in the weight
+
+| held out, 18 eps | net | cells | crash | travel | loops | steps |
+|------------------|-----|-------|-------|--------|-------|-------|
+| **plain range (seen 0)** | 16.7 m | 36 | **1/18** | 49.2 m | 2.9x | 948 |
+| seen 0.03 | 17.7 m | 34 | 5/18 | 48.0 m | 2.7x | 781 |
+| seen 0.30 | 17.4 m | 32 | 11/18 | 42.4 m | 2.4x | 738 |
+| coverage 0.45 | 18.5 m | 35 | 11/18 | 41.1 m | 2.2x | 653 |
+| freeM | 9.9 m | 64 | 0/18 | 81.6 m | 8.2x | 1000 |
+
+Collisions order strictly by the weight: 1 -> 5 -> 11 as --seen goes 0 -> 0.03
+-> 0.30. Lowering it recovered most of the damage but never beat ZERO. A merely
+mistuned term would show an interior optimum; monotonic degradation says the
+term is harmful at every weight tried, which is a different conclusion from the
+one the previous section reached, and supersedes it.
+
+The likely reason -- stated as a hypothesis, not a finding -- is that the policy
+already receives confirmed-free length as o[0] on all 210 primitives. Paying it
+again in the reward adds no information and only tilts the objective away from
+displacement. freeM wins on safety by CHOOSING on that signal, not by being
+taxed on it.
+
+--seen stays in the code at default 0, with these numbers, the same way
+--norm-reward did.
+
+## What is locked in
+
+The winning configuration is the DEFAULT, so `kestrel train` with no flags
+reproduces it: objective range, coverage 0.15, seen 0, gamma 0.999, lambda
+0.996, explore 0.02, target-kl 0.02, no reward normalisation, 3000-step
+episodes.
+
+| | net disp | cells | crash | loops |
+|---|---|---|---|---|
+| **learned policy** | **16.7 m** | 36 | 1/18 | **2.9x** |
+| freeM | 9.9 m | **64** | **0/18** | 8.2x |
+
+69% further from the spawn than the classical planner, circling a third as much,
+one collision against none, and less ground covered. On "displacement and ground
+covered, hovering is bad" that is a split decision rather than a win -- but it
+is the first configuration in this project to beat freeM on anything that
+matters.
+
+THREE REWARD-WEIGHT EXPERIMENTS, THREE LOSSES; one objective change, one large
+win. The structural choice of what to pay for was worth more than every weight
+inside it.
+
+A LAST BUG, found while checking that claim. --gae-lambda defaulted to 0.98 on
+the command line while the GUI's credit-horizon stepper defaults to 200 steps
+and emits 0.996 on every run. A bare `kestrel train` was therefore training with
+a 48-step credit horizon while the RUN button used 200, and every measured run
+here passed 0.996 explicitly. The window and the command line are not allowed to
+drift; this one had, silently, in the one place where it would have made the
+documented results irreproducible from the CLI.

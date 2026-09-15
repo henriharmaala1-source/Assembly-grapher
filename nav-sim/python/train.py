@@ -375,7 +375,13 @@ def main() -> int:
                          "about reaching goals came from the dense progress "
                          "shaping alone. 0.999 gives a 1000-step horizon and "
                          "0.135 * 100 = 13.5 for the same arrival.")
-    ap.add_argument("--gae-lambda", type=float, default=0.98, metavar="F",
+    # 0.996, NOT 0.98. The GUI's credit-horizon stepper defaults to 200 steps
+    # and converts that to (1 - 1/200)/gamma = 0.996, which it emits on every
+    # run -- so a bare `kestrel train` was training with a 48-step credit
+    # horizon while the RUN button used 200, and every measured run in
+    # docs/RL_PILOT_RESULTS.md passed 0.996 explicitly. The window and the
+    # command line are not allowed to drift; this one had.
+    ap.add_argument("--gae-lambda", type=float, default=0.996, metavar="F",
                     help="GAE trace. The ADVANTAGE horizon is about "
                          "1/(1-gamma*lambda), which is the number that decides "
                          "what a single action is credited for. At the old "

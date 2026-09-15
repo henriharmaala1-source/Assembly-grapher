@@ -756,3 +756,39 @@ because `score` is exactly that and dies every time.
 `--seen` charges for the fraction of the chosen primitive's rollout that was not
 confirmed free, which is the one thing the policy is never paid to care about.
 A run at 0.30 is training.
+
+## --seen 0.30: right idea, weight 10x too big
+
+| held out, 18 eps | net | cells | crash | travel | steps |
+|------------------|-----|-------|-------|--------|-------|
+| plain range | 16.7 m | 36 | 1/18 | 49.2 m | 948 |
+| seen 0.30 | 17.4 m | 32 | 11/18 | 42.4 m | 738 |
+| coverage 0.45 | 18.5 m | 35 | 11/18 | 41.1 m | 653 |
+| freeM | 9.9 m | 64 | 0/18 | 81.6 m | 1000 |
+
+The reward decomposition says why:
+
+```
+r_progress   +97.81      displacement
+r_coverage   +13.76
+r_clear     -142.49      clearance + the seen charge
+r_terminal  -183.33
+```
+
+The seen penalty is LARGER THAN THE ENTIRE DISPLACEMENT REWARD it was meant to
+support. At 0.30 per step over ~738 steps, with most rollouts ending in unknown
+at a 3.5 m sensing range, it accumulates ~133 points of drag against a maximum
+earnable displacement of 200. It stopped being a discriminator between
+primitives and became a cost of living -- and a large cost of living makes
+ending the episode early relatively cheaper. Steps fell 948 -> 738 and
+collisions went 1 -> 11, which is the classic shape of a per-step cost set high
+enough that dying looks attractive.
+
+The idea is not refuted; the weight is wrong by about an order of magnitude.
+
+IT ALSO EXPOSED A FLAW IN THE INSTRUMENT. tSeen was folded into the clearance
+accumulator, so the one diagnostic built to say WHICH term drove an episode was
+conflating two of them -- and it mattered on the first use: -142.49 reads as a
+clearance problem until you separate it and find almost all of it is the new
+term. rSeen now has its own column in EnvStep, the bindings, the gym info dict
+and report.csv.

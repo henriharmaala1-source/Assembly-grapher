@@ -74,6 +74,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readonly("r_time", &EnvStep::rTime)
         .def_readonly("r_stop", &EnvStep::rStop)
         .def_readonly("r_clear", &EnvStep::rClear)
+        .def_readonly("r_seen", &EnvStep::rSeen)
         .def_readonly("r_terminal", &EnvStep::rTerminal)
         // The four that make "out of steps" readable -- see EnvStep in rl_env.hpp.
         .def_readonly("start_dist_m", &EnvStep::startDistM)

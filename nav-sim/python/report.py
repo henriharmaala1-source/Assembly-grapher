@@ -51,7 +51,7 @@ COLUMNS = ["id", "world", "seed", "repeat", "checkpoint_steps", "planner",
            "min_dist_to_goal_m", "min_dist_step", "net_disp_m", "cells_visited",
            "min_clear_m", "stopped_steps", "collisions", "hit_unknown",
            "reached_goal", "r_progress", "r_coverage", "r_time", "r_stop",
-           "r_clear", "r_terminal", "goal_tol_m", "robot_r",
+           "r_clear", "r_seen", "r_terminal", "goal_tol_m", "robot_r",
            "goal_x", "goal_y"]
 
 BASELINES = {"random": voxelenv.Baseline.random, "freeM": voxelenv.Baseline.freeM,
@@ -231,6 +231,7 @@ def main() -> int:
                         "r_coverage": info["r_coverage"],
                         "r_time": info["r_time"], "r_stop": info["r_stop"],
                         "r_clear": info["r_clear"],
+                        "r_seen": info["r_seen"],
                         "r_terminal": info["r_terminal"],
                         "goal_tol_m": 3.0, "robot_r": 0.6,
                         "goal_x": gx, "goal_y": gy,

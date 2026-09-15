@@ -226,6 +226,12 @@ struct EnvStep {
     float rTime     = 0.f;   // per-step cost of existing
     float rStop     = 0.f;   // standing still, or picking a masked action
     float rClear    = 0.f;   // flying closer to things than clearTarget
+    // ITS OWN COLUMN. This was folded into rClear, so the one diagnostic built
+    // to say WHICH term drove an episode was conflating two of them -- and it
+    // mattered immediately: the combined figure read -142.49 against a
+    // displacement reward of +97.81, and only separating them shows that
+    // almost all of it was this.
+    float rSeen     = 0.f;   // flying through space nothing confirmed free
     float rTerminal = 0.f;   // the goal bonus or the collision penalty
 
     // WHAT MAKES "OUT OF STEPS" READABLE. One truncation column covered at

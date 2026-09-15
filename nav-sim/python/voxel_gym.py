@@ -162,7 +162,8 @@ class VoxelNavEnv(gym.Env):
             # question worth asking when reward rises while the scorecard falls.
             "r_progress": st.r_progress, "r_coverage": st.r_coverage,
             "r_time": st.r_time, "r_stop": st.r_stop,
-            "r_clear": st.r_clear, "r_terminal": st.r_terminal,
+            "r_clear": st.r_clear, "r_seen": st.r_seen,
+            "r_terminal": st.r_terminal,
             # The failure taxonomy's inputs; see EnvStep in rl_env.hpp.
             "start_dist_m": st.start_dist_m, "net_disp_m": st.net_disp_m,
             "cells_visited": st.cells_visited, "hit_unknown": st.hit_unknown,

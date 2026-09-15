@@ -551,3 +551,81 @@ navigates better. The rolling scorecard is measured on TRAINING maps, so it
 cannot see generalisation, and n=3 produced a 3/3 collision rate for FIX that
 did not replicate at all on 18 episodes (0.00). Neither number was wrong; both
 were read for more than they could carry.
+
+---
+
+# The observation was missing the one thing a navigator needs
+
+`o[1]` was a bit-exact copy of `o[0]` -- `e.clear` is `freeLen/(vMax*horizonS)`
+and `o[0]` is `freeM/(3*horizonS)` with `vMax` exactly 3. Measured over 300
+steps both reported min 0.000, max 0.714, mean 0.406, std 0.180. 210 of 1914
+inputs carried nothing.
+
+Worse, the only goal channel the policy had was `o[3] = goalErr`, which is
+`|wrap(endAz - goalAz)|/180 + |endEl - goalEl|/90 * 0.5` -- an ABSOLUTE value.
+A primitive 30 degrees left of the goal and one 30 degrees right were
+numerically identical. There was no signed left/right gradient anywhere in the
+observation. And `g[1]`,`g[2]` gave the goal bearing in the WORLD frame while
+every action is body-relative, with heading absent entirely.
+
+`o[1]` now carries the signed bearing; `g[1]`,`g[2]` are relative to heading.
+
+## What it did, paired against the identical configuration (--seed 7, 150k)
+
+| | runNEW (old obs) | runOBS (new obs) |
+|---|---|---|
+| training crash rate | 35.9% | **25.1%** |
+| training goals/window | 3.00 | **4.13** |
+| held-out orbited (of 18) | 14 | **6** |
+| held-out closing fraction | 0.49 | **0.40** |
+| held-out collisions | 0 | 4 |
+
+The mechanism worked: orbiting more than halved, which was the specific failure
+it targeted. The outcome did not follow -- closing fraction went the wrong way
+on held-out maps while improving on training maps. At one seed and 150k steps
+that cannot be separated from noise.
+
+The change is kept anyway, on grounds independent of this run: a duplicated
+input carries zero information and a world-frame bearing with no heading cannot
+be acted on. Both are defects whatever this A/B had said.
+
+# The bar, and we are not over it
+
+18 identical held-out episodes (maze, maps 101-106, three repeats each), the
+policy and all four classical planners under the same build:
+
+| planner | arrive | crash | orbit | travel | closest | closed |
+|---------|--------|-------|-------|--------|---------|--------|
+| policy  | 0 | 4  | 6  | 42.3 m | 22.2 m | 0.40 |
+| freeM   | 0 | 0  | 18 | 81.6 m | 20.2 m | 0.48 |
+| goal    | 0 | 3  | 3  | 32.4 m | 23.5 m | 0.38 |
+| score   | 0 | 18 | 0  | 26.9 m | 19.0 m | 0.52 |
+| random  | 0 | 2  | 16 | 51.6 m | 25.7 m | 0.31 |
+
+**The learned policy does not beat freeM.** freeM closes more of the journey and
+never collides. At 150k steps the policy is not over the bar this project sets.
+
+**Nothing arrives in 90 episodes.** The maze goal needs 573 steps inside a
+1000-step budget, so it is reachable; nothing reaches it on a held-out map.
+
+`score` colliding 18/18 is not a regression: `kestrel bench` measured it at 10
+collisions in 10 runs before any of this work, which independently confirms the
+`o[1]` -> `o[0]` repointing preserved that baseline exactly.
+
+## What five configurations could not move
+
+| run | gamma | observation | closed |
+|-----|-------|-------------|--------|
+| OLD | 0.995 | old | 0.51 |
+| NEW | 0.999 | old | 0.49 |
+| FIX | 0.999 + normalised returns | old | 0.49 |
+| OBS | 0.999 | new | 0.40 |
+| freeM | classical | - | 0.48 |
+
+Closing fraction sits between 0.40 and 0.52 for everything tried, the classical
+planners included. At 150k steps on four cores that looks like the ceiling of
+the experiment rather than a property any one setting controls -- the 15M-step
+run needed two orders of magnitude more experience before maze goal rate reached
+0.75-0.93. Nothing here licenses a claim about which discount or which
+observation makes a better pilot; what it licenses is that the apparatus now
+measures the question, and that the answer is not yet yes.

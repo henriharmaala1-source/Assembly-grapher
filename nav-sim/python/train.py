@@ -154,9 +154,16 @@ class Scorecard(BaseCallback):
     is what the policy does NOW and not what it did an hour ago.
     """
 
-    def __init__(self, window=60):
+    def __init__(self, window=60, objective="range"):
         super().__init__()
         self.window = window
+        # THE COLUMNS HAVE TO MATCH WHAT THE POLICY IS PAID FOR. Under the
+        # range objective "closest approach to the goal" and "goals" are not
+        # merely uninteresting, they are always the same number -- the goal
+        # never ends an episode and nothing steers at it. A live scorecard
+        # whose two right-hand columns are constant is how a run gets watched
+        # for half an hour without being read.
+        self.range = (objective == "range")
         self.ep = {}                     # world -> deque of finished episodes
 
     def _on_step(self) -> bool:
@@ -168,15 +175,21 @@ class Scorecard(BaseCallback):
             d.append((info.get("travel_m", 0.0),
                       info.get("min_dist_to_goal_m", 0.0),
                       1 if info.get("collisions") else 0,
-                      1 if info.get("reached_goal") else 0))
+                      1 if info.get("reached_goal") else 0,
+                      info.get("net_disp_m", 0.0),
+                      info.get("cells_visited", 0)))
         return True
 
     def _on_rollout_end(self) -> None:
         if not self.ep:
             return
         tot = [0, 0, 0]
-        print(f"\n  {'world':10} {'eps':>4} {'travel':>9} {'closest':>9} "
-              f"{'crash':>7} {'goals':>7}", flush=True)
+        if self.range:
+            print(f"\n  {'world':10} {'eps':>4} {'travel':>9} {'net':>9} "
+                  f"{'loops':>7} {'cells':>7} {'crash':>7}", flush=True)
+        else:
+            print(f"\n  {'world':10} {'eps':>4} {'travel':>9} {'closest':>9} "
+                  f"{'crash':>7} {'goals':>7}", flush=True)
         for w in sorted(self.ep):
             e = self.ep[w]
             if not e:
@@ -185,9 +198,20 @@ class Scorecard(BaseCallback):
             clos = min(x[1] for x in e)
             crash = sum(x[2] for x in e)
             goals = sum(x[3] for x in e)
+            net = sum(x[4] for x in e) / len(e)
+            cells = sum(x[5] for x in e) / len(e)
             tot[0] += len(e); tot[1] += crash; tot[2] += goals
-            print(f"  {w:10} {len(e):>4} {trav:>8.1f}m {clos:>8.1f}m "
-                  f"{100.0*crash/len(e):>6.0f}% {goals:>7}", flush=True)
+            if self.range:
+                # loops = path / displacement. 1.0 is a straight line; the
+                # hoverer that scores -34 sits at 76.
+                print(f"  {w:10} {len(e):>4} {trav:>8.1f}m {net:>8.1f}m "
+                      f"{trav/max(0.01, net):>6.1f}x {cells:>7.0f} "
+                      f"{100.0*crash/len(e):>6.0f}%", flush=True)
+            else:
+                print(f"  {w:10} {len(e):>4} {trav:>8.1f}m {clos:>8.1f}m "
+                      f"{100.0*crash/len(e):>6.0f}% {goals:>7}", flush=True)
+            self.logger.record(f"score/{w}/net_disp_m", net)
+            self.logger.record(f"score/{w}/cells_visited", cells)
             # Per world in TensorBoard too, so the curves can be compared
             # rather than averaged into one uninformative line.
             self.logger.record(f"score/{w}/travel_m", trav)
@@ -195,8 +219,12 @@ class Scorecard(BaseCallback):
             self.logger.record(f"score/{w}/goal_rate", goals / len(e))
             self.logger.record(f"score/{w}/best_closest_m", clos)
         if tot[0]:
-            print(f"  {'ALL':10} {tot[0]:>4} {'':>9} {'':>9} "
-                  f"{100.0*tot[1]/tot[0]:>6.0f}% {tot[2]:>7}", flush=True)
+            if self.range:
+                print(f"  {'ALL':10} {tot[0]:>4} {'':>9} {'':>9} {'':>7} "
+                      f"{'':>7} {100.0*tot[1]/tot[0]:>6.0f}%", flush=True)
+            else:
+                print(f"  {'ALL':10} {tot[0]:>4} {'':>9} {'':>9} "
+                      f"{100.0*tot[1]/tot[0]:>6.0f}% {tot[2]:>7}", flush=True)
             self.logger.record("score/collision_rate", tot[1] / tot[0])
             self.logger.record("score/goal_rate", tot[2] / tot[0])
 
@@ -661,7 +689,7 @@ def main() -> int:
           f"than the value horizon\n        is invisible to the value "
           f"function and only the progress shaping reaches it.", flush=True)
     model.learn(total_timesteps=budget,
-                callback=[ckpt, Scorecard(),
+                callback=[ckpt, Scorecard(objective=args.objective),
                           Schedule(LR0, args.explore, anneal), StopOnSignal()],
                 progress_bar=not args.forever,
                 reset_num_timesteps=not resume_from)

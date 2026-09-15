@@ -52,6 +52,8 @@ struct VoxelEnv::Impl {
     float goalE = 0, goalN = 0, goalU = 0;
     float startDist = 1.f, prevDist = 1.f;
     float startX = 0.f, startY = 0.f;        // for netDisp; see EnvStep
+    float prevNet = 0.f;                     // last step's net displacement
+    float worldSpan = 100.f;                 // for the RANGE scaling
     float travel = 0.f, minClear = 1e9f;
     float minGoalDist = 1e9f; int minGoalStep = 0;
     // Episode totals per reward term. EnvStep is built fresh every step, so
@@ -457,6 +459,10 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     // sampling and the clearance nudge have all had their say. Seeding the
     // trail any earlier drew a line from the previous episode's last position.
     I.startX = I.px; I.startY = I.py;
+    I.prevNet = 0.f;
+    // How big this world is, so RANGE pays the same for covering the same
+    // FRACTION of a 60 m maze and a 300 m city.
+    I.worldSpan = std::max(10.f, std::hypot(bx1 - bx0, by1 - by0));
     I.trail.push_back(cv::Point2f(I.px, I.py));
     I.travel = 0.f; I.minClear = 1e9f;
     I.minGoalDist = I.startDist; I.minGoalStep = 0;
@@ -541,8 +547,21 @@ EnvStep VoxelEnv::step(int action) {
 
     // Fraction of the journey, not metres -- see EnvConfig::progressScaleM.
     const float wscale = cfg_.progressScaleM / std::max(1.f, I.startDist);
-    const float tProgress = cfg_.wProgress * progress * wscale;
-    const float tCoverage = cfg_.wCoverage * novelty;
+    const bool range = cfg_.objective == EnvConfig::RANGE;
+    // RANGE pays for getting AWAY from the spawn, per metre gained. It
+    // telescopes to the final displacement, so the route taken is free and only
+    // the outcome is paid for -- and a loop back to the start pays nothing,
+    // which is the whole point.
+    const float netNow = std::hypot(I.px - I.startX, I.py - I.startY);
+    const float rscale = cfg_.rangeScaleM / I.worldSpan;
+    const float tRange = range ? cfg_.wRange * (netNow - I.prevNet) * rscale
+                               : 0.f;
+    I.prevNet = netNow;
+    const float tProgress = range ? tRange : cfg_.wProgress * progress * wscale;
+    // Coverage is scaled the same way under RANGE -- it is the other
+    // distance-like term and would otherwise favour the big worlds exactly as
+    // raw progress once did.
+    const float tCoverage = cfg_.wCoverage * novelty * (range ? rscale : 1.f);
     const float tTime     = -cfg_.wTime * dt;
     const float tStop     = -cfg_.wStop * (speed < 0.1f ? 1.f : 0.f)
                             - (legal ? 0.f : cfg_.wStop);
@@ -554,12 +573,16 @@ EnvStep VoxelEnv::step(int action) {
     I.aProgress += tProgress; I.aCoverage += tCoverage; I.aTime += tTime;
     I.aStop += tStop;         I.aClear += tClear;
 
-    out.reachedGoal = dist <= cfg_.goalTolM;
+    // Under RANGE the goal is scaffolding and nothing more: it still points the
+    // planner's rollouts somewhere, but arriving is not an event. Ending the
+    // episode there would cap exactly the thing being rewarded.
+    out.reachedGoal = !range && dist <= cfg_.goalTolM;
     // Scaled against the most progress this episode could ever have paid, so a
     // crash cannot be bought with metres in a big world -- see EnvConfig.
     // The same in every world now, which is the point: a collision costs the
     // same relative to the best possible episode wherever it happens.
-    const float maxProgress = cfg_.wProgress * cfg_.progressScaleM;
+    const float maxProgress = range ? cfg_.wRange * cfg_.rangeScaleM
+                                    : cfg_.wProgress * cfg_.progressScaleM;
     const float goalR    = std::max(cfg_.rGoal,    cfg_.goalScale    * maxProgress);
     const float collideR = std::max(cfg_.rCollide, cfg_.collideScale * maxProgress);
     if (out.reachedGoal) { r += goalR;    I.aTerm += goalR; }

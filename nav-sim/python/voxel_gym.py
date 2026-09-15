@@ -38,7 +38,8 @@ class VoxelNavEnv(gym.Env):
 
     def __init__(self, worlds=TRAIN_WORLDS, seeds=range(1, 65), max_steps=1500,
                  truth_depth=False, cam=(160, 120), horizons=None,
-                 mask_unsafe=True, vary_goal=False, scale_clear=True):
+                 mask_unsafe=True, vary_goal=False, scale_clear=True,
+                 objective="goal"):
         super().__init__()
         self.worlds = tuple(worlds)
         self.seeds = list(seeds)
@@ -64,6 +65,9 @@ class VoxelNavEnv(gym.Env):
         # The near-miss penalty scaled like progress, so avoidance pressure is
         # the same relative to progress in a 35 m maze as in a 340 m city.
         self._cfg.scale_clear = scale_clear
+        # "range": pay for displacement from the spawn and for new ground, and
+        # ignore the goal. See EnvConfig::Objective -- the goal is scaffolding.
+        self._cfg.objective = 1 if objective == "range" else 0
         self._env = voxelenv.VoxelEnv(self._cfg)
 
         n = self._env.n_prims

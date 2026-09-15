@@ -117,6 +117,11 @@ def main() -> int:
     ap.add_argument("--stereo", action="store_true")
     ap.add_argument("--no-veto", action="store_true")
     ap.add_argument("--vary-goal", action="store_true")
+    ap.add_argument("--objective", default="range", choices=["range", "goal"],
+                    help="score under the same objective the policy was "
+                         "trained on. Under range the goal does not end an "
+                         "episode, so scoring a range policy under goal would "
+                         "cut it off at exactly the thing it was paid for.")
     args = ap.parse_args()
 
     if not args.run:
@@ -191,7 +196,8 @@ def main() -> int:
                               max_steps=args.max_steps,
                               truth_depth=not args.stereo,
                               mask_unsafe=not args.no_veto,
-                              vary_goal=args.vary_goal)
+                              vary_goal=args.vary_goal,
+                              objective=args.objective)
             for sd in args.seeds:
                 for rep in range(args.repeats):
                     fly.rng = 12345 + rep     # same stream for every planner

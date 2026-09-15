@@ -390,6 +390,8 @@ struct Cfg {
     bool  rawClear = false;
     // OFF by default, matching train.py: normalising the return was measured
     // and did not help -- see --norm-reward in train.py for the numbers.
+    // THE DEFINING SETTING ON THIS PANEL. Default range, matching train.py.
+    bool  goalObjective = false;
     bool  normReward = false;
     bool  clipVf = true;          // 0.2, and only applied with normReward
     bool  trainStereo = true;
@@ -521,6 +523,10 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--target-kl");
             a.push_back(trimNum(TARGET_KL[c.klIdx]));
             if (c.rawClear) a.push_back("--raw-clear");
+            // range is train.py's default, so only the deviation prints.
+            if (c.goalObjective) {
+                a.push_back("--objective"); a.push_back("goal");
+            }
             if (c.normReward) a.push_back("--norm-reward");
             // Inert without --norm-reward, and 0.2 is train.py's own
             // default, so it is only printed when it deviates AND applies --
@@ -595,7 +601,7 @@ enum {
     ID_TRAIN_EXM, ID_TRAIN_EXP, ID_TRAIN_ANM, ID_TRAIN_ANP, ID_TRAIN_KLM,
     ID_TRAIN_KLP, ID_TRAIN_RAWCLR, ID_TRAIN_VHM, ID_TRAIN_VHP,
     ID_TRAIN_CHM, ID_TRAIN_CHP, ID_TRAIN_SEEDM, ID_TRAIN_SEEDP,
-    ID_TRAIN_NORMR, ID_TRAIN_CLIPVF,
+    ID_TRAIN_NORMR, ID_TRAIN_CLIPVF, ID_TRAIN_OBJ,
     ID_W_PANES_M = 500, ID_W_PANES_P, ID_W_PX_M, ID_W_PX_P,
     ID_W_LAYOUT, ID_W_DET,
     ID_E_S0M = 600, ID_E_S0P, ID_E_S1M, ID_E_S1P,
@@ -724,6 +730,14 @@ void panelSim(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
 void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
     txt(im, "RL path-policy training", x, 106, 0.62, INK, 1);
+    // BESIDE THE TITLE, not buried in the switch grid. This decides what the
+    // policy is being paid for, and every other control on the panel is a
+    // detail by comparison. The blurb below runs to about x+400, so this sits
+    // clear of it.
+    bs.push_back({cv::Rect(x + 540, 96, 240, 40),
+                  c.goalObjective ? "objective: reach a goal"
+                                  : "objective: safe travel",
+                  ID_TRAIN_OBJ, c.goalObjective});
     txt(im, "PyTorch and stable-baselines3 driving the C++ environment. This is",
         x, 128, 0.44, DIM);
     txt(im, "the one command that runs python -- see the note at the bottom.",
@@ -741,7 +755,8 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // goal needs ~2500 steps, so every episode was cut off before arrival was
     // possible and the goal bonus was unreachable.
     stepper(im, bs, x + 2 * P, 182, "steps/episode", std::to_string(c.epLen),
-            ID_TRAIN_EPM, ID_TRAIN_EPP, "the goal must fit", SW);
+            ID_TRAIN_EPM, ID_TRAIN_EPP,
+            c.goalObjective ? "the goal must fit" : "caps how far it gets", SW);
     stepper(im, bs, x + 3 * P, 182, "save every",
             humanSteps(SAVE_EVERY[c.saveIdx]),
             ID_TRAIN_SVM, ID_TRAIN_SVP, "checkpoint interval", SW);
@@ -822,14 +837,23 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   ID_TRAIN_RAWCLR, c.rawClear});
     // PPO clips the policy update and, by default in SB3, not the value one --
     // which is the update that matters when the targets are large.
+    // GREY WHEN IT DOES NOTHING. clip_range_vf is only applied with
+    // --norm-reward, so lighting it up on its own claims an effect the run
+    // will not have -- the same species of lie as a toggle whose green means
+    // the opposite of its neighbour's.
     bs.push_back({cv::Rect(x + 3 * BP, 400, BW, 36),
-                  c.clipVf ? "clip value updates" : "value clip off",
-                  ID_TRAIN_CLIPVF, c.clipVf});
+                  !c.normReward ? "value clip: n/a"
+                                : (c.clipVf ? "clip value updates"
+                                            : "value clip off"),
+                  ID_TRAIN_CLIPVF, c.clipVf && c.normReward});
 
     txt(im, "explore is the entropy bonus -- how much random stuff it tries. "
             "High early, a tenth of it after the anneal.", x, 452, 0.42, DIM);
-    txt(im, "A goal further away than the value horizon is invisible to the "
-            "value function: only the progress shaping reaches it.",
+    txt(im, c.goalObjective
+            ? "A goal beyond the value horizon is invisible to the value "
+              "function; only the progress shaping reaches it."
+            : "safe travel pays for DISPLACEMENT and NEW GROUND, not metres "
+              "flown: a hoverer scores -34, freeM +132.",
         x, 470, 0.42, DIM);
     txt(im, "stereo is honest and ~3x slower. cuda will look idle: the "
             "bottleneck is environment steps, in C++.", x, 488, 0.42, DIM);
@@ -995,6 +1019,7 @@ const FlagBtn FLAG_BTNS[] = {
     {TRAIN, ID_TRAIN_VARY,    "--vary-goal"},
     {TRAIN, ID_TRAIN_RAWCLR,  "--raw-clear"},
     {TRAIN, ID_TRAIN_NORMR,   "--norm-reward"},
+    {TRAIN, ID_TRAIN_OBJ,     "goal"},          // --objective goal
     {WATCH, ID_W_DET,         "--deterministic"},
     {EVAL,  ID_E_RANDOM,      "--random"},
     {EVAL,  ID_E_STEREO,      "--stereo"},
@@ -1219,6 +1244,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_CHP: c.creditHIdx = std::min(NCREDIT_H - 1, c.creditHIdx + 1); break;
         case ID_TRAIN_SEEDM: c.trainSeed = std::max(0, c.trainSeed - 1); break;
         case ID_TRAIN_SEEDP: c.trainSeed = std::min(999, c.trainSeed + 1); break;
+        case ID_TRAIN_OBJ: c.goalObjective = !c.goalObjective; break;
         case ID_TRAIN_NORMR: c.normReward = !c.normReward; break;
         case ID_TRAIN_CLIPVF: c.clipVf = !c.clipVf; break;
 

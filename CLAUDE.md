@@ -26,6 +26,33 @@ Checklist for a new subcommand:
 - `kestrel gui --check` must still report 0 violations; it walks every mode, so
   a new panel is covered automatically
 
+## WHAT THE POLICY IS FOR
+
+**The objective is safe travel, as far as possible. It is not goal-finding.**
+
+The simulator has a goal in it, and for a long time everything here was scored
+on reaching one -- goal rate, closing fraction, "still closing when cut off".
+That was the wrong target. The goal is scaffolding: something to give the
+aircraft a direction. What is actually wanted is an aircraft that keeps flying,
+covers ground, and does not hit anything.
+
+So the columns that matter are:
+
+- **metres travelled before a collision ends it** -- the headline number
+- **collision rate** -- a crash is the failure, not a missed goal
+- **cells visited / net displacement** -- against the degenerate solution, which
+  is to circle in a safe clearing forever and bank distance for free
+
+And the bar is `freeM`, the classical openness-seeking planner, because it is
+already a greedy version of exactly this objective: it picks the primitive with
+the longest confirmed-free path. Measured over 18 held-out maze episodes it flew
+81.6 m with zero collisions. Any learned policy has to beat that.
+
+A GOAL-SHAPED REWARD WILL NOT PRODUCE THIS. Progress-to-goal pays for closing
+distance to one point and stops paying when the aircraft is there; it says
+nothing about staying alive or covering ground, and it actively punishes the
+detour that avoids a tree.
+
 ## Things that are load-bearing
 
 - **Unknown is not free.** Pale/grey is UNKNOWN everywhere in this tree and is

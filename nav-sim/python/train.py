@@ -282,6 +282,23 @@ def main() -> int:
                          "Only applied with --norm-reward: against raw returns "
                          "in the hundreds a 0.2 clip would freeze the critic "
                          "rather than steady it.")
+    ap.add_argument("--objective", default="range", choices=["range", "goal"],
+                    help="WHAT THE POLICY IS FOR.\n"
+                         "range (default) -- safe travel: pays for DISPLACEMENT "
+                         "from the spawn and for NEW GROUND, and ignores the "
+                         "goal entirely. The goal in these worlds is "
+                         "scaffolding; what is wanted is an aircraft that keeps "
+                         "flying, gets away from where it started, covers "
+                         "ground and does not hit anything.\n"
+                         "goal -- the old objective: close distance to one "
+                         "point, take a bonus for arriving, end there.\n"
+                         "Why displacement rather than metres flown: the greedy "
+                         "openness planner freeM flies 81.6 m of a 90 m ceiling "
+                         "with zero collisions and ends 9.9 m from the spawn, a "
+                         "path 8.2x its own displacement. Paying for path "
+                         "length makes that circling the optimum. Measured "
+                         "under this reward a hard-turning hoverer scores "
+                         "-33.99 against freeM's +132.43.")
     ap.add_argument("--seed", type=int, default=0, metavar="N",
                     help="make the run REPRODUCIBLE, and make two runs "
                          "comparable. It seeds the policy's initial weights, "
@@ -449,6 +466,7 @@ def main() -> int:
         "norm_reward": bool(args.norm_reward),
         "clip_vf": float(args.clip_vf),
         "scale_clear": not args.raw_clear,
+        "objective": args.objective,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(os.path.join(args.out, "run.json"), "w") as fh:
@@ -456,7 +474,7 @@ def main() -> int:
     kw = dict(worlds=tuple(args.worlds), max_steps=args.max_steps,
               truth_depth=not args.stereo, cam=tuple(args.cam),
               mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
-              scale_clear=not args.raw_clear)
+              scale_clear=not args.raw_clear, objective=args.objective)
     if args.seed:
         kw["seed"] = args.seed
     if args.no_veto:
@@ -678,7 +696,8 @@ def main() -> int:
                               truth_depth=not args.stereo,
                               mask_unsafe=not args.no_veto,
                               vary_goal=args.vary_goal,
-                              scale_clear=not args.raw_clear)
+                              scale_clear=not args.raw_clear,
+                              objective=args.objective)
             trav, coll, reach, closest = [], 0, 0, []
             for sd in (901, 902, 903):
                 # options=, not seed=. seed= seeds the DRAW from the seeds list

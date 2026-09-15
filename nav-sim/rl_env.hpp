@@ -74,6 +74,37 @@ struct EnvConfig {
     // everywhere: wProgress * progressScaleM. The scale is in metres purely so
     // the numbers stay in a familiar range -- a full journey pays what a 100 m
     // one used to.
+    // WHAT THE POLICY IS FOR. The simulator has a goal in it and everything
+    // here was scored on reaching one, which was the wrong target: the goal is
+    // scaffolding. What is wanted is an aircraft that keeps flying, gets away
+    // from where it started, covers ground, and does not hit anything.
+    //
+    // GOAL  -- the old objective. Pays for closing distance to one point, pays
+    //          a bonus for arriving, and ends the episode there.
+    // RANGE -- pays for DISPLACEMENT from the spawn and for NEW GROUND, and the
+    //          goal is ignored entirely (the episode does not end on it).
+    //
+    // Why displacement and not path length: the greedy openness planner freeM
+    // flies 81.6 m of a 90 m ceiling with zero collisions and ends 9.9 m from
+    // where it started -- a path 8.2x its own displacement. It is circling a
+    // safe clearing and banking metres. Paying for path length makes that the
+    // optimum; paying for displacement makes it worth nothing, because a loop
+    // returns you to where you began.
+    //
+    // Displacement alone would reward one straight dash and then hovering at
+    // the far end, so coverage pays for new ground alongside it. Between them:
+    // go somewhere, keep going somewhere new, do not come back, do not hover.
+    enum Objective { GOAL = 0, RANGE = 1 };
+    int   objective   = GOAL;
+    // Per metre of net displacement GAINED. Telescopes to the final
+    // displacement, so it is path-independent by construction -- a detour round
+    // a tree costs nothing beyond the time it takes.
+    float wRange      = 2.0f;
+    // Both range and coverage are scaled by rangeScaleM / worldSpan, so a full
+    // traverse of a 60 m maze and of a 300 m city pay the same. Without it the
+    // big worlds would set the weights and the tight ones would be noise --
+    // the same arithmetic that made progress scale-free.
+    float rangeScaleM = 100.f;
     float wProgress   = 2.0f;
     float progressScaleM = 100.f;
     float wCoverage   = 0.15f;

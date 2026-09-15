@@ -937,3 +937,80 @@ hazard, recorded before the run rather than after it.
 Both are training at --max-steps 3000, which is the first budget long enough
 that the hovering regime is inside training at all -- at 1000 steps exploration
 saturates around step 800 and the pathology barely appears.
+
+## CORRECTION: "playing optimally" was wrong, and the reason is a term I omitted
+
+The section above concluded the policy hovers because hovering is optimal play.
+That holds for maze and corridor and is false everywhere else, and the error was
+mine: the reward decomposition I read left out `r_stop`, which turned out to
+dominate. With it:
+
+| world | seed | steps | travel | STOP | total | m/step |
+|-------|------|-------|--------|------|-------|--------|
+| city | 102 | 20000 | 47.5 m | **-1932** | **-1937** | 0.0024 |
+| city | 101 | 20000 | 53.3 m | **-1923** | **-1932** | 0.0027 |
+| culdesac | 101 | 20000 | 153.1 m | **-1766** | **-1718** | 0.0077 |
+| forest | 101 | 20000 | 821.7 m | 0 | -15.9 | 0.0411 |
+| maze | 102 | 20000 | 862.6 m | 0 | **+142** | 0.0431 |
+| corridor | 101 | 20000 | 900.1 m | 0 | **+114** | 0.0450 |
+| *(5 deaths)* | | | | 0 | -136 to -296 | 0.050-0.066 |
+
+THREE REGIMES, NOT ONE:
+
+- **Stalled** (city, culdesac/101): near-zero speed and masked actions, paying
+  wStop's 0.05 + 0.05 for ~19,000 consecutive steps. Total -1932, which is SIX
+  TIMES WORSE than simply crashing. A policy that would be better off flying
+  into a wall is not optimizing; it is broken. Note this policy trained on maze
+  ONLY, so city and cul-de-sac are out of distribution -- this is a
+  generalisation collapse, a different thing from the hovering.
+- **Orbiting** (maze, corridor, forest/101): flying 820-900 m in loops, stop
+  penalty zero, total +114 to +142 against -289 for dying. Here the original
+  conclusion stands: orbiting genuinely pays.
+- **Dead**: and they fly FASTER than the survivors, 0.050-0.066 m/step against
+  0.041-0.045. Speed and death track together.
+
+## Dividing the score by loops
+
+The suggestion was to divide by the loop ratio, which is already computed. It
+ranks the behaviours correctly -- culdesac/102's genuine exploration is 3.6x,
+maze orbiting is 28.2x, forest/101 is 54.8x -- so the signal is right.
+
+Algebraically, `score / loops = score * net / travel`, and for a score that IS
+path flown that reduces to net displacement, which is what --objective range
+already pays. Its useful content beyond that is the part it adds: dividing an
+ACCUMULATED score by a growing ratio makes hovering destroy value rather than
+merely earn none.
+
+As a literal per-step reward it is badly behaved -- non-Markovian (the reward
+for an action depends on the whole history, so the policy cannot tell why it
+fell) and singular as net -> 0 near the spawn. Its well-behaved linearisation is
+"charge for movement that buys no new ground", which is exactly --revisit.
+
+## The sweep: both new terms lost
+
+150k steps, --seed 7, --max-steps 3000, maze, last quarter:
+
+| run | travel | net | loops | cells | crash | crash per metre |
+|-----|--------|-----|-------|-------|-------|-----------------|
+| **base3k** | 87.9 m | **15.9 m** | 5.6x | **57** | 51.2% | 1 per 172 m |
+| far3k | 33.6 m | 10.4 m | **3.3x** | 27 | 96.7% | 1 per **35 m** |
+| revisit3k | **89.0 m** | 14.6 m | 6.1x | 40 | 46.8% | 1 per **190 m** |
+
+`--far` collapsed. Its mechanism worked -- loops fell to 3.3x, the best of the
+three -- but it bought directness by paying more for distant new ground, which
+means paying to fly into unmapped space. Identical to the --coverage 0.45
+failure.
+
+`--revisit` did not do what it was designed to do: loops went UP, 5.6 -> 6.1,
+and cells fell 57 -> 40.
+
+The baseline wins on both columns the objective names.
+
+METHODOLOGICAL NOTE: crash rate per EPISODE is not comparable across episode
+lengths, because a longer episode is more exposure. Per metre flown the ranking
+is revisit 190 m, base 172 m, far 35 m -- which does not change the conclusion,
+but the raw percentages would have if compared against the 1000-step runs.
+
+FOUR REWARD-TERM EXPERIMENTS, FOUR LOSSES: coverage 0.45, seen 0.30, seen 0.03,
+far 1.0, revisit 0.05. One objective change, one large win. Whatever is left is
+not in the shaping weights.

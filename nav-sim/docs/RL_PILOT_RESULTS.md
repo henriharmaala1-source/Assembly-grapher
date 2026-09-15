@@ -629,3 +629,56 @@ run needed two orders of magnitude more experience before maze goal rate reached
 0.75-0.93. Nothing here licenses a claim about which discount or which
 observation makes a better pilot; what it licenses is that the apparatus now
 measures the question, and that the answer is not yet yes.
+
+# Is there a route at all? Asked for the first time, and the answer is yes
+
+The map panel for maze seed 101 showed fifteen held-out episodes flown by five
+completely different planners -- openness-seeking, goal-seeking, weighted-score,
+uniform random and a learned network -- all running the same corridor, turning
+at the same wall and stopping, with the goal ring somewhere none of them went.
+Five objectives do not agree on a wrong turn by coincidence, so the obvious
+hypothesis was a fourth unreachable goal: this project had already shipped three
+(the 1500-step forest cap, the 368 m city goal, the 600-step bench default).
+
+Nothing had ever checked. `journey_fit` compares straight-line distance against
+the step budget, and straight-line distance is a lower bound on the path that
+says nothing whatever about whether a path exists.
+
+`VoxelEnv::goalPathM` now answers it: Dijkstra on a 1 m lattice over cells with
+at least `robotR` of true clearance, from the spawn to the goal.
+
+| world | journey | route | detour | steps needed | budget |
+|-------|---------|-------|--------|--------------|--------|
+| forest | 175 m | 185 m | 1.06x | 1944 | 3000 |
+| maze | 44 m | 46 m | 1.04x | 489 | 3000 |
+| corridor | 96 m | 106 m | 1.10x | 1061 | 3000 |
+| city | 186 m | 209 m | 1.13x | 2065 | 3000 |
+| road | 180 m | 180 m | 1.00x | 2000 | 3000 |
+| culdesac | 155 m | 182 m | 1.17x | 1722 | 3000 |
+
+**THE HYPOTHESIS IS REFUTED. Every goal is reachable**, and the detours are
+small. The ordering is a check on the checker: road is a straight corridor and
+comes out at exactly 1.00x, the cul-de-sac is a trap needing backtracking and is
+the worst at 1.17x, the city is a grid of doglegs at 1.13x. It also re-validates
+the earlier city fix against a PATH rather than a straight line: 209 m is 2322
+steps at cruise, inside the 3000-step budget.
+
+That makes the flat closing fraction harder to explain, not easier. On maze the
+route is 1.04x the straight line -- the direct way is essentially open -- and
+five planners still converge on a wrong turn and stop 20 m short. Whatever is
+wrong is not the task being impossible, and it is not the discount, the critic
+scaling, or the observation frame, all of which were tried. The next place to
+look is the sensing and the primitive library: whether `sphereClear` admits the
+corridor widths these mazes actually have.
+
+Two bugs in the check itself, both caught before it was believed:
+
+  * It first counted lattice MOVES and multiplied by cell size, with
+    26-connectivity, so a diagonal costing sqrt(2) or sqrt(3) cells was charged
+    1. It reported a 33.0 m path between points 44.1 m apart -- impossible on
+    its face, which is the only reason it was visible. Replaced with Dijkstra
+    over true Euclidean edge costs.
+  * The "lattice too large" guard returned -1, the same value as "no route",
+    which would have printed NO ROUTE for the 300 m city: a false alarm of
+    exactly the kind this check exists to prevent, raised by the check itself.
+    It returns -2, and the printers say "-" rather than "NO ROUTE".

@@ -247,6 +247,28 @@ public:
     // everywhere. Metres, world frame, east/north/up.
     void position(float& e, float& n, float& u) const;
     void goal(float& e, float& n, float& u) const;
+
+    // IS THERE A PATH AT ALL? journey_fit already asks whether the goal fits in
+    // the step budget, which is a question about DISTANCE. This is the other
+    // one, and nothing in this project has ever asked it: a flood fill from the
+    // spawn over cells with at least robotR of true clearance, reporting
+    // whether the goal is in the same connected component and how long the
+    // shortest such path is.
+    //
+    // It is asked because of a picture. Fifteen held-out maze episodes flown by
+    // five completely different planners -- openness-seeking, goal-seeking,
+    // weighted-score, uniform random and a learned network -- all ran the same
+    // corridor, turned at the same wall and stopped, with the goal ring
+    // somewhere none of them went. Five objectives do not agree on a wrong turn
+    // by coincidence. Unreachable goals have already cost this project three
+    // times (the 1500-step forest cap, the 368 m city goal, the 600-step bench
+    // default), and every one of them was found late because nothing checked.
+    //
+    // Returns the shortest free-space path length in metres; -1 if the goal is
+    // not reachable from the spawn at all; -2 if the check was not attempted
+    // because the lattice would be too large. "No route" and "not checked" are
+    // different answers and must not share a value.
+    float goalPathM(float cellM = 1.0f) const;
     const EnvConfig& config() const { return cfg_; }
 
     // --- watching a run -----------------------------------------------------

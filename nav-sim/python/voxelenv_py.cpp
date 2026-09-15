@@ -165,6 +165,8 @@ PYBIND11_MODULE(voxelenv, m) {
             float a = 0, b = 0, c = 0; e.goal(a, b, c);
             return py::make_tuple(a, b, c);
         })
+        // Is there a route at all -- see VoxelEnv::goalPathM.
+        .def("goal_path_m", &VoxelEnv::goalPathM, py::arg("cell_m") = 1.0f)
         .def_property_readonly("start_dist_m",
                                [](const VoxelEnv& e) { return e.last().distToGoalM; })
         .def_property_readonly("n_prims", &VoxelEnv::nPrims)

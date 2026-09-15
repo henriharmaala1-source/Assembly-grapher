@@ -190,14 +190,27 @@ def journey_fit(worlds, max_steps, seeds=(1, 2, 3), **kw):
     """
     rows = []
     for w in worlds:
-        d = []
+        d, path = [], None
         for sd in seeds:
             env = VoxelNavEnv(worlds=(w,), seeds=[sd], max_steps=max_steps, **kw)
             _obs, info = env.reset(seed=sd)
             d.append(info["start_dist_m"])
+            # IS THERE A ROUTE, not merely room in the budget. Straight-line
+            # distance is a lower bound on the path and says nothing at all
+            # about whether a path exists -- and all three unreachable goals
+            # this project has shipped were found late because nothing asked.
+            # One seed per world: it costs seconds, and reachability is a
+            # property of the generator far more than of the seed.
+            if path is None:
+                try:
+                    path = env._env.goal_path_m(1.0)
+                except Exception:
+                    path = -2.0
         far = max(d)
         rows.append((w, sum(d) / len(d), far,
-                     int(far / CRUISE_M_PER_STEP), far / CRUISE_M_PER_STEP > max_steps))
+                     int(far / CRUISE_M_PER_STEP),
+                     far / CRUISE_M_PER_STEP > max_steps,
+                     path if path is not None else -2.0))
     return rows
 
 

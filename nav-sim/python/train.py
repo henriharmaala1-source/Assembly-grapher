@@ -471,10 +471,15 @@ def main() -> int:
         fit = journey_fit(args.worlds, args.max_steps,
                           truth_depth=not args.stereo, vary_goal=args.vary_goal)
         bad = [r for r in fit if r[4]]
-        print(f"\n  {'world':10} {'journey':>9} {'needs':>8} {'budget':>8}")
-        for w, mean_d, far, need, over in fit:
-            print(f"  {w:10} {far:>8.0f}m {need:>8} {args.max_steps:>8}"
-                  + ("   TOO FAR" if over else ""))
+        print(f"\n  {'world':10} {'journey':>9} {'route':>9} "
+              f"{'needs':>8} {'budget':>8}")
+        for w, _mean, far, need, over, path in fit:
+            route = ("NO ROUTE" if path == -1 else
+                     "  -" if path < 0 else f"{path:.0f}m")
+            print(f"  {w:10} {far:>8.0f}m {route:>9} {need:>8} "
+                  f"{args.max_steps:>8}"
+                  + ("   TOO FAR" if over else "")
+                  + ("   UNREACHABLE" if path == -1 else ""))
         if bad:
             print("\n[train] the goal does not fit in an episode in "
                   f"{', '.join(r[0] for r in bad)}. At the {CRUISE_M_PER_STEP} m "

@@ -5,6 +5,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <cmath>
+#include <queue>
 #include <cstdio>
 #include <unordered_map>
 
@@ -134,6 +135,91 @@ int VoxelEnv::nPrims() const { return int(im_->traj.librarySize()); }
 void VoxelEnv::position(float& e, float& n, float& u) const {
     e = im_->px; n = im_->py; u = im_->pz;
 }
+float VoxelEnv::goalPathM(float cellM) const {
+    const Impl& I = *im_;
+    // 26-connected flood fill on a coarse lattice. Coarse on purpose: this
+    // answers "is there a route", not "what is the optimal route", and a 1 m
+    // lattice over a 60 m maze is 6e4 cells rather than the 1.5e7 the 0.25 m
+    // voxel grid would be.
+    const float lo[3] = {std::min(I.px, I.goalE) - 40.f,
+                         std::min(I.py, I.goalN) - 40.f,
+                         std::max(0.5f, std::min(I.pz, I.goalU) - 8.f)};
+    const float hi[3] = {std::max(I.px, I.goalE) + 40.f,
+                         std::max(I.py, I.goalN) + 40.f,
+                         std::max(I.pz, I.goalU) + 8.f};
+    const int nx = std::max(1, int((hi[0] - lo[0]) / cellM));
+    const int ny = std::max(1, int((hi[1] - lo[1]) / cellM));
+    const int nz = std::max(1, int((hi[2] - lo[2]) / cellM));
+    // -2, NOT -1. A lattice too big to search and a goal with no route are
+    // completely different answers, and collapsing them would have printed
+    // "NO ROUTE" for the 300 m city -- a false alarm of exactly the kind this
+    // check exists to prevent, raised by the check itself.
+    if ((long long)nx * ny * nz > 40000000LL) return -2.f;   // not attempted
+
+    auto idx = [&](int x, int y, int z) { return (z * ny + y) * nx + x; };
+    auto toCell = [&](float wx, float wy, float wz, int& x, int& y, int& z) {
+        x = int((wx - lo[0]) / cellM); y = int((wy - lo[1]) / cellM);
+        z = int((wz - lo[2]) / cellM);
+    };
+    // EUCLIDEAN COST, NOT A MOVE COUNT. The first version of this counted
+    // lattice moves and multiplied by the cell size, with 26-connectivity --
+    // so a diagonal move costing sqrt(2) or sqrt(3) cells was charged 1. It
+    // reported a 33.0 m path between points 44.1 m apart, which is impossible
+    // on its face and is the only reason the bug was visible at all. A path
+    // length that can come out shorter than the straight line is not a path
+    // length.
+    const float INF = 1e30f;
+    std::vector<float> dist(size_t(nx) * ny * nz, INF);
+    int sx, sy, sz, gx, gy, gz;
+    toCell(I.px, I.py, I.pz, sx, sy, sz);
+    toCell(I.goalE, I.goalN, I.goalU, gx, gy, gz);
+    auto inside = [&](int x, int y, int z) {
+        return x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz;
+    };
+    if (!inside(sx, sy, sz) || !inside(gx, gy, gz)) return -2.f;
+
+    auto freeAt = [&](int x, int y, int z) {
+        const float wx = lo[0] + (x + 0.5f) * cellM;
+        const float wy = lo[1] + (y + 0.5f) * cellM;
+        const float wz = lo[2] + (z + 0.5f) * cellM;
+        return trueClearance(I.world, wx, wy, wz, cfg_.robotR + 0.05f)
+               >= cfg_.robotR;
+    };
+
+    // Dijkstra, because the edge costs are 1, sqrt(2) and sqrt(3) cells and a
+    // queue that ignores that returns the fewest MOVES rather than the
+    // shortest DISTANCE.
+    std::priority_queue<std::pair<float, int>,
+                        std::vector<std::pair<float, int>>,
+                        std::greater<std::pair<float, int>>> q;
+    dist[size_t(idx(sx, sy, sz))] = 0.f;
+    q.push({0.f, idx(sx, sy, sz)});
+    while (!q.empty()) {
+        const float d = q.top().first;
+        const int c = q.top().second;
+        q.pop();
+        if (d > dist[size_t(c)]) continue;          // a stale entry
+        const int z = c / (nx * ny), rem = c % (nx * ny);
+        const int y = rem / nx, x = rem % nx;
+        if (x == gx && y == gy && z == gz) return d;
+        for (int dz = -1; dz <= 1; ++dz)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (!dx && !dy && !dz) continue;
+                    const int a = x + dx, b = y + dy, cc = z + dz;
+                    if (!inside(a, b, cc)) continue;
+                    const int k = idx(a, b, cc);
+                    const float step = cellM * std::sqrt(float(dx * dx + dy * dy
+                                                             + dz * dz));
+                    if (d + step >= dist[size_t(k)]) continue;
+                    if (!freeAt(a, b, cc)) continue;
+                    dist[size_t(k)] = d + step;
+                    q.push({d + step, k});
+                }
+    }
+    return -1.f;                     // the goal is in another component
+}
+
 void VoxelEnv::goal(float& e, float& n, float& u) const {
     e = im_->goalE; n = im_->goalN; u = im_->goalU;
 }

@@ -567,11 +567,23 @@ EnvStep VoxelEnv::step(int action) {
                             - (legal ? 0.f : cfg_.wStop);
     // Same scale as progress, so a near-miss costs the same FRACTION of a step
     // of progress in a 35 m maze as in a 340 m city -- see EnvConfig::scaleClear.
+    // How much of the primitive the policy just chose had actually been seen.
+    // Read from the evals the OBSERVATION was built from, so it is exactly the
+    // number the policy had in front of it when it chose.
+    float tSeen = 0.f;
+    if (cfg_.wSeen > 0.f) {
+        const auto& evs = I.traj.evals();
+        if (action >= 0 && action < (int)evs.size()) {
+            const float reach = std::max(0.1f, 3.f * cfg_.horizonS);
+            const float seen = std::min(1.f, evs[size_t(action)].freeM / reach);
+            tSeen = -cfg_.wSeen * (1.f - seen);
+        }
+    }
     const float tClear    = -cfg_.wClear * std::max(0.f, cfg_.clearTarget - clr)
                           * (cfg_.scaleClear ? wscale : 1.f);
-    float r = tProgress + tCoverage + tTime + tStop + tClear;
+    float r = tProgress + tCoverage + tTime + tStop + tClear + tSeen;
     I.aProgress += tProgress; I.aCoverage += tCoverage; I.aTime += tTime;
-    I.aStop += tStop;         I.aClear += tClear;
+    I.aStop += tStop;         I.aClear += tClear + tSeen;
 
     // Under RANGE the goal is scaffolding and nothing more: it still points the
     // planner's rollouts somewhere, but arriving is not an event. Ending the

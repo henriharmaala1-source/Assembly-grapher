@@ -117,6 +117,8 @@ def main() -> int:
     ap.add_argument("--stereo", action="store_true")
     ap.add_argument("--no-veto", action="store_true")
     ap.add_argument("--vary-goal", action="store_true")
+    ap.add_argument("--seen", type=float, default=0.0,
+                    help="match the run's --seen; see train.py --seen")
     ap.add_argument("--coverage", type=float, default=0.15,
                     help="match the run's --coverage so the reward terms in the "
                          "CSV mean what they did in training")
@@ -201,7 +203,7 @@ def main() -> int:
                               mask_unsafe=not args.no_veto,
                               vary_goal=args.vary_goal,
                               objective=args.objective,
-                              coverage=args.coverage)
+                              coverage=args.coverage, seen=args.seen)
             for sd in args.seeds:
                 for rep in range(args.repeats):
                     fly.rng = 12345 + rep     # same stream for every planner

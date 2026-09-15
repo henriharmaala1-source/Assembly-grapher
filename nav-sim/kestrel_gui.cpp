@@ -391,12 +391,13 @@ struct Cfg {
     // OFF by default, matching train.py: normalising the return was measured
     // and did not help -- see --norm-reward in train.py for the numbers.
     // THE DEFINING SETTING ON THIS PANEL, as a three-way cycle rather than a
-    // toggle. 0 safe travel, 1 safe travel with the coverage reward tripled,
-    // 2 reach a goal. The coverage weight lives here rather than in a stepper
-    // of its own because it is not an independent knob -- it trades
-    // displacement against ground covered WITHIN the travel objective, and it
-    // is meaningless under the goal one. There is also no free stepper slot:
-    // both rows are five wide and the button grid is four by two.
+    // toggle. 0 safe travel, 1 the same with the coverage reward tripled,
+    // 2 the same charged for flying through unseen space, 3 reach a goal.
+    // The two travel variants live here rather than in steppers of their own
+    // because they are not independent knobs -- each trades one term of the
+    // travel objective against another, and both are meaningless under the
+    // goal one. There is also no free stepper slot: both rows are five wide
+    // and the button grid is four by two.
     int   objMode = 0;
     bool  normReward = false;
     bool  clipVf = true;          // 0.2, and only applied with normReward
@@ -530,10 +531,12 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back(trimNum(TARGET_KL[c.klIdx]));
             if (c.rawClear) a.push_back("--raw-clear");
             // range is train.py's default, so only the deviation prints.
-            if (c.objMode == 2) {
+            if (c.objMode == 3) {
                 a.push_back("--objective"); a.push_back("goal");
             } else if (c.objMode == 1) {
                 a.push_back("--coverage"); a.push_back("0.45");
+            } else if (c.objMode == 2) {
+                a.push_back("--seen"); a.push_back("0.3");
             }
             if (c.normReward) a.push_back("--norm-reward");
             // Inert without --norm-reward, and 0.2 is train.py's own
@@ -743,7 +746,8 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // detail by comparison. The blurb below runs to about x+400, so this sits
     // clear of it.
     bs.push_back({cv::Rect(x + 540, 96, 240, 40),
-                  c.objMode == 2 ? "objective: reach a goal"
+                  c.objMode == 3 ? "objective: reach a goal"
+                : c.objMode == 2 ? "safe travel: look first"
                 : c.objMode == 1 ? "safe travel: explore+"
                                  : "objective: safe travel",
                   ID_TRAIN_OBJ, c.objMode != 0});
@@ -765,7 +769,7 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // possible and the goal bonus was unreachable.
     stepper(im, bs, x + 2 * P, 182, "steps/episode", std::to_string(c.epLen),
             ID_TRAIN_EPM, ID_TRAIN_EPP,
-            c.objMode == 2 ? "the goal must fit" : "caps how far it gets", SW);
+            c.objMode == 3 ? "the goal must fit" : "caps how far it gets", SW);
     stepper(im, bs, x + 3 * P, 182, "save every",
             humanSteps(SAVE_EVERY[c.saveIdx]),
             ID_TRAIN_SVM, ID_TRAIN_SVP, "checkpoint interval", SW);
@@ -858,7 +862,7 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 
     txt(im, "explore is the entropy bonus -- how much random stuff it tries. "
             "High early, a tenth of it after the anneal.", x, 452, 0.42, DIM);
-    txt(im, c.objMode == 2
+    txt(im, c.objMode == 3
             ? "A goal beyond the value horizon is invisible to the value "
               "function; only the progress shaping reaches it."
             : "safe travel pays for DISPLACEMENT and NEW GROUND, not metres "
@@ -1252,7 +1256,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_TRAIN_CHP: c.creditHIdx = std::min(NCREDIT_H - 1, c.creditHIdx + 1); break;
         case ID_TRAIN_SEEDM: c.trainSeed = std::max(0, c.trainSeed - 1); break;
         case ID_TRAIN_SEEDP: c.trainSeed = std::min(999, c.trainSeed + 1); break;
-        case ID_TRAIN_OBJ: c.objMode = (c.objMode + 1) % 3; break;
+        case ID_TRAIN_OBJ: c.objMode = (c.objMode + 1) % 4; break;
         case ID_TRAIN_NORMR: c.normReward = !c.normReward; break;
         case ID_TRAIN_CLIPVF: c.clipVf = !c.clipVf; break;
 

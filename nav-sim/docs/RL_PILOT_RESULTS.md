@@ -682,3 +682,77 @@ Two bugs in the check itself, both caught before it was believed:
     which would have printed NO ROUTE for the 300 m city: a false alarm of
     exactly the kind this check exists to prevent, raised by the check itself.
     It returns -2, and the printers say "-" rather than "NO ROUTE".
+
+---
+
+# Safe travel: the objective was the problem, not the tuning
+
+The goal in these worlds is scaffolding. What is wanted is an aircraft that
+keeps flying, gets away from where it started, covers ground, and does not hit
+anything. `--objective range` pays for net displacement from the spawn and for
+newly visited cells, and the goal no longer ends an episode.
+
+Verified against the degenerate solution BEFORE training on it: a hoverer that
+always picks the hardest-turning admissible primitive banks 21.6 m of path at
+76x its displacement across 2 cells, and scores **-33.99** against freeM's
++132.43 and a goal-seeker's +96.60. Circling is not merely unrewarded, it is
+negative.
+
+## Training, same --seed 7 and budget as every goal-objective run
+
+| run | objective | travel | crash |
+|-----|-----------|--------|-------|
+| runOLD | goal, gamma .995 | 53.8 m | 19.0% |
+| runNEW | goal, gamma .999 | 48.5 m | 35.9% |
+| runOBS | goal + observation fix | 44.1 m | 25.1% |
+| **runRANGE** | **safe travel** | **54.8 m** | **12.4%** |
+
+The first cleanly improving curve in the series: travel 33.9 -> 56.4 m and crash
+64% -> 12% over 150k steps. Four commits of discount, critic and observation
+tuning moved these numbers around inside noise; changing what the policy is paid
+for moved both at once, on the first try.
+
+## Held out, 18 episodes, every planner scored under the same objective
+
+| planner | net disp | cells | crash | blind | travel | m/step | loops |
+|---------|----------|-------|-------|-------|--------|--------|-------|
+| policy | 16.7 m | 36 | 1/18 | 1 | 49.2 m | 0.052 | 2.9x |
+| policy cov .45 | 18.5 m | 35 | 11/18 | 11 | 41.1 m | 0.063 | 2.2x |
+| freeM | 9.9 m | 64 | 0/18 | 0 | 81.6 m | 0.082 | 8.2x |
+| random | 9.8 m | 32 | 2/18 | 2 | 51.6 m | 0.054 | 5.3x |
+| goal | 14.9 m | 20 | 3/18 | 3 | 32.4 m | 0.038 | 2.2x |
+| score | 18.6 m | 30 | 18/18 | 18 | 26.9 m | 0.081 | 1.4x |
+
+It beats every goal-trained policy on all three columns at once -- net 15.5 ->
+16.7 m, cells 26 -> 36, collisions 4 -> 1 -- and against freeM it is a split:
+69% further from the spawn and circling a third as much, but 36 cells against
+64.
+
+## Tripling the coverage reward: refuted
+
+Collisions went 1/18 -> 11/18 and cells did not move (36 -> 35). New cells are
+at the frontier, the frontier is unmapped, so paying more for novelty paid the
+policy to fly blind.
+
+## EVERY COLLISION IS A BLIND ONE
+
+The `blind` column equals the `crash` column in every row. Across 108 held-out
+episodes and five planners, **not one collision was into a cell the map had
+already marked OCCUPIED.** The geometric veto has never failed -- it simply
+cannot veto what nothing has seen. Collisions here are a sensing problem, not a
+policy-preference one, and without `hit_unknown` splitting the two classes this
+would read as "the policy sometimes flies into walls", which is false.
+
+And speed is not the lever. `score` flies 0.081 m/step and collides 18 times in
+18; freeM flies 0.082 m/step and collides never. Identical speed, opposite
+safety. What separates them is that freeM maximises CONFIRMED-FREE path length:
+it goes fast only where it has looked.
+
+The coverage gap decomposes the same way. Cells per metre of path are nearly
+equal -- freeM 0.78, policy 0.73 -- so the gap is not routing, it is path
+length, and path length is speed. But the policy cannot simply be made faster,
+because `score` is exactly that and dies every time.
+
+`--seen` charges for the fraction of the chosen primitive's rollout that was not
+confirmed free, which is the one thing the policy is never paid to care about.
+A run at 0.30 is training.

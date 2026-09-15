@@ -32,6 +32,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("robot_r", &EnvConfig::robotR)
         .def_readwrite("objective", &EnvConfig::objective)
         .def_readwrite("w_range", &EnvConfig::wRange)
+        .def_readwrite("w_seen", &EnvConfig::wSeen)
         .def_readwrite("range_scale_m", &EnvConfig::rangeScaleM)
         .def_readwrite("w_progress", &EnvConfig::wProgress)
         .def_readwrite("progress_scale_m", &EnvConfig::progressScaleM)

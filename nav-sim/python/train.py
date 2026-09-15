@@ -340,6 +340,20 @@ def main() -> int:
                          "not, so once the policy is far out it has little "
                          "reason to keep going. Raising this pays for the "
                          "ground freeM gets by accident.")
+    ap.add_argument("--seen", type=float, default=0.0, metavar="F",
+                    help="charge this per step for the fraction of the chosen "
+                         "primitive's rollout that was NOT confirmed free. "
+                         "EVERY COLLISION IN THIS TREE IS A BLIND ONE: across "
+                         "108 held-out episodes and five planners, not one was "
+                         "into a cell the map had already marked OCCUPIED, so "
+                         "the geometric veto has never failed -- it simply "
+                         "cannot veto what nothing has seen. Speed is not the "
+                         "lever either: `score` flies 0.081 m/step and collides "
+                         "18 times in 18, freeM flies 0.082 m/step and collides "
+                         "never. What separates them is that freeM maximises "
+                         "confirmed-free path length -- it goes fast only where "
+                         "it has looked. This pays the policy to do the same. "
+                         "0 disables it.")
     ap.add_argument("--seed", type=int, default=0, metavar="N",
                     help="make the run REPRODUCIBLE, and make two runs "
                          "comparable. It seeds the policy's initial weights, "
@@ -509,6 +523,7 @@ def main() -> int:
         "scale_clear": not args.raw_clear,
         "objective": args.objective,
         "coverage": float(args.coverage),
+        "seen": float(args.seen),
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(os.path.join(args.out, "run.json"), "w") as fh:
@@ -517,7 +532,7 @@ def main() -> int:
               truth_depth=not args.stereo, cam=tuple(args.cam),
               mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
               scale_clear=not args.raw_clear, objective=args.objective,
-              coverage=args.coverage)
+              coverage=args.coverage, seen=args.seen)
     if args.seed:
         kw["seed"] = args.seed
     if args.no_veto:
@@ -741,7 +756,7 @@ def main() -> int:
                               vary_goal=args.vary_goal,
                               scale_clear=not args.raw_clear,
                               objective=args.objective,
-                              coverage=args.coverage)
+                              coverage=args.coverage, seen=args.seen)
             trav, coll, reach, closest = [], 0, 0, []
             for sd in (901, 902, 903):
                 # options=, not seed=. seed= seeds the DRAW from the seeds list

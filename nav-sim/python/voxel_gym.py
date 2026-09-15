@@ -39,7 +39,7 @@ class VoxelNavEnv(gym.Env):
     def __init__(self, worlds=TRAIN_WORLDS, seeds=range(1, 65), max_steps=1500,
                  truth_depth=False, cam=(160, 120), horizons=None,
                  mask_unsafe=True, vary_goal=False, scale_clear=True,
-                 objective="goal", coverage=None):
+                 objective="goal", coverage=None, seen=None):
         super().__init__()
         self.worlds = tuple(worlds)
         self.seeds = list(seeds)
@@ -70,6 +70,10 @@ class VoxelNavEnv(gym.Env):
         self._cfg.objective = 1 if objective == "range" else 0
         if coverage is not None:
             self._cfg.w_coverage = float(coverage)
+        # Charge for flying through space nothing has confirmed free; see
+        # EnvConfig::wSeen. Every collision in this tree is a blind one.
+        if seen is not None:
+            self._cfg.w_seen = float(seen)
         self._env = voxelenv.VoxelEnv(self._cfg)
 
         n = self._env.n_prims

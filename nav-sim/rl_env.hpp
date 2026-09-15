@@ -105,6 +105,20 @@ struct EnvConfig {
     // big worlds would set the weights and the tight ones would be noise --
     // the same arithmetic that made progress scale-free.
     float rangeScaleM = 100.f;
+    // FLY WHERE YOU HAVE LOOKED. Every collision measured in this tree is into
+    // UNMAPPED space -- across 108 held-out episodes and five planners, not one
+    // was into a cell the map had already marked OCCUPIED. The geometric veto
+    // has never failed; it simply cannot veto what nothing has seen.
+    //
+    // Speed is not the lever either. The `score` baseline flies 0.081 m/step
+    // and collides in 18 of 18 episodes; freeM flies 0.082 m/step and collides
+    // in none. What separates them is that freeM maximises CONFIRMED-FREE path
+    // length -- it goes fast only where it has looked.
+    //
+    // This charges for the part of the chosen primitive's rollout that was not
+    // confirmed free, which is the one thing the policy is never paid to care
+    // about. 0 disables it.
+    float wSeen       = 0.f;
     float wProgress   = 2.0f;
     float progressScaleM = 100.f;
     float wCoverage   = 0.15f;

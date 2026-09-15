@@ -1050,3 +1050,45 @@ FIVE REWARD-TERM EXPERIMENTS, FIVE LOSSES -- coverage 0.45, seen 0.30, seen
 is paid for (goal -> safe travel), and how long it is paid for it (1000 -> 3000
 steps). The shaping weights are not where the remaining gap lives, and that is
 now five measurements deep rather than a hunch.
+
+## The bar, re-measured at 3000 steps -- and the policy clears it
+
+freeM's 81.6 m was measured at 1000-step episodes. Every current number is at
+3000, so the bar had to be re-measured rather than quoted. 12 identical
+episodes each:
+
+| planner | net | cells | travel | loops | crash | m/crash |
+|---------|-----|-------|--------|-------|-------|---------|
+| **policy (base3k)** | **18.0 m** | 86 | 158.0 m | **8.8x** | 2/12 | 948 m |
+| freeM | 6.8 m | **110** | 201.3 m | **29.5x** | **0/12** | 2415 m |
+| random | 12.9 m | 57 | 139.9 m | 10.9x | 2/12 | 840 m |
+| goal | 14.9 m | 20 | 77.9 m | 5.2x | 2/12 | 468 m |
+| score | 18.6 m | 30 | 26.9 m | 1.4x | 12/12 | 27 m |
+
+**freeM flies 201 m to finish 6.8 m from where it started.** Given three times
+the budget its loop ratio went 8.2x -> 29.5x and its displacement FELL, 9.9 ->
+6.8 m, while coverage grew sub-linearly (64 -> 110 cells for 2.5x the path).
+More time does not make it explore; it makes it circle more.
+
+On the three things the objective names:
+
+- displacement: policy 18.0 m against 6.8 m, **2.6x**
+- ground covered: freeM 110 against 86, 1.28x to freeM
+- hovering: policy 8.8x against 29.5x, decisively to the policy
+
+On distance x cells, the composite of the two:
+
+| policy | freeM | random | score | goal |
+|--------|-------|--------|-------|------|
+| **1548** | 748 | 735 | 558 | 298 |
+
+THIS IS THE FIRST TIME A LEARNED POLICY HAS BEATEN freeM ON THIS OBJECTIVE.
+Not a clean sweep -- freeM covers more ground and never collides against the
+policy's 2 in 12 -- but on displacement and on not circling it is ahead, and
+those are the two things asked for.
+
+A distinction worth keeping: **distance x cells failed as a REWARD term and
+works as a SCORING metric.** Paying for it in training (--far 1.0) taught the
+policy to fly into unmapped space chasing distant ground, 10 collisions in 12.
+Measuring with it afterwards correctly ranks behaviour that is already safe. A
+good metric is not automatically a good reward.

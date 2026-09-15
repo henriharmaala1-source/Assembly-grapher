@@ -43,10 +43,24 @@ So the columns that matter are:
 - **cells visited / net displacement** -- against the degenerate solution, which
   is to circle in a safe clearing forever and bank distance for free
 
-And the bar is `freeM`, the classical openness-seeking planner, because it is
-already a greedy version of exactly this objective: it picks the primitive with
-the longest confirmed-free path. Measured over 18 held-out maze episodes it flew
-81.6 m with zero collisions. Any learned policy has to beat that.
+The bar is `freeM`, the classical openness-seeking planner, because it is a
+greedy version of half this objective: it picks the primitive with the longest
+confirmed-free path. But it buys that safety by circling, and the longer you let
+it fly the worse that gets -- at 1000-step episodes it loops at 8.2x its own
+displacement, at 3000 steps it loops at **29.5x**, flying 201 m to finish 6.8 m
+from where it started. Its coverage grows sub-linearly with path length while
+its displacement actually FALLS.
+
+So quote it honestly. Over 12 held-out maze episodes at 3000 steps:
+
+| planner | net disp | cells | loops | collisions |
+|---------|----------|-------|-------|------------|
+| learned (base3k) | **18.0 m** | 86 | **8.8x** | 2/12 |
+| freeM | 6.8 m | **110** | 29.5x | **0/12** |
+
+freeM still wins on ground covered and on never crashing. The learned policy
+wins 2.6x on displacement and circles a third as much, and on distance x cells
+-- the composite of the two things asked for -- it is 1548 against 748.
 
 A GOAL-SHAPED REWARD WILL NOT PRODUCE THIS. Progress-to-goal pays for closing
 distance to one point and stops paying when the aircraft is there; it says

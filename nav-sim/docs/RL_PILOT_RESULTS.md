@@ -1083,6 +1083,14 @@ On distance x cells, the composite of the two:
 | **1548** | 748 | 735 | 558 | 298 |
 
 THIS IS THE FIRST TIME A LEARNED POLICY HAS BEATEN freeM ON THIS OBJECTIVE.
+
+> **Superseded -- read "The bar was four goal-seekers" below before quoting
+> this.** Every planner in the table above optimises a goal or nothing. Against
+> planners aimed at safe travel the learned policy is third on `net x cells`,
+> and `net x cells` turns out to be the wrong number regardless: it cannot see
+> metres-before-a-crash. The paragraph is left as written because the mistake it
+> records -- declaring a win against a bar that was never matched to the
+> objective -- is the useful part.
 Not a clean sweep -- freeM covers more ground and never collides against the
 policy's 2 in 12 -- but on displacement and on not circling it is ahead, and
 those are the two things asked for.
@@ -1121,28 +1129,32 @@ harnesses are one harness, and the old protocol is pinned as maze seeds 101-106.
 because its RNG stream is seeded differently in the two programs; every other
 planner is deterministic given the world.
 
-### Nine planners, maze 101-106, 3000 steps
+### Ten planners, maze 101-106 x 2, 3000 steps, ONE command
 
 | planner | travel | net | cells | loops | crash | m/crash | net x cells |
 |---------|--------|-----|-------|-------|-------|---------|-------------|
-| novelG | 137.5 m | 17.8 m | **124** | 7.7x | 3/6 | 275 m | **2198** |
-| freeG | 128.2 m | **20.9 m** | 102 | **6.1x** | 3/6 | 256 m | 2139 |
-| cover | 145.8 m | 19.9 m | 77 | 7.3x | **1/6** | **875 m** | 1542 |
-| *policy (base3k)* | *158.0 m* | *18.0 m* | *86* | *8.8x* | *2/12* | *948 m* | *1548* |
-| freeM | **201.3 m** | 6.8 m | 110 | 29.5x | **0/6** | **never** | 751 |
-| frontRaw | 112.0 m | 14.5 m | 46 | 7.7x | 2/6 | 336 m | 666 |
-| score | 26.9 m | 18.7 m | 30 | 1.4x | 6/6 | 27 m | 560 |
-| goal | 77.9 m | 14.9 m | 20 | 5.2x | 1/6 | 468 m | 293 |
-| circler | 16.3 m | 8.6 m | 16 | 1.9x | 6/6 | 16 m | 141 |
-| random | 104.1 m | 5.1 m | 24 | 20.3x | 2/6 | 312 m | 125 |
+| novelG | 137.5 m | 17.8 m | **124** | 7.7x | 6/12 | 275 m | **2197** |
+| freeG | 128.2 m | **20.9 m** | 102 | **6.1x** | 6/12 | 256 m | 2138 |
+| policy (base3k) | 158.0 m | 18.0 m | 86 | 8.8x | **2/12** | **948 m** | 1551 |
+| cover | 145.9 m | 19.9 m | 77 | 7.3x | **2/12** | 875 m | 1541 |
+| freeM | **201.3 m** | 6.8 m | 110 | 29.5x | **0/12** | **never** | 752 |
+| random | 139.9 m | 12.9 m | 57 | 10.9x | 2/12 | 840 m | 737 |
+| frontRaw | 112.1 m | 14.5 m | 46 | 7.7x | 4/12 | 336 m | 667 |
+| score | 26.9 m | 18.6 m | 30 | 1.4x | 12/12 | 27 m | 559 |
+| goal | 77.9 m | 14.9 m | 20 | 5.2x | 2/12 | 468 m | 294 |
+| circler | 16.3 m | 8.6 m | 16 | 1.9x | 12/12 | 16 m | 142 |
 
-The policy row is the one quoted above, flown by `report`; every other row is
-`bench`. That is a cross-harness line for a SAMPLED policy, so treat it as
-provisional.
+    kestrel report --run RUN --baselines --worlds maze \
+                   --seeds 101 102 103 104 105 106 --repeats 2 --max-steps 3000
+
+Every row above comes out of that one command, so there is no cross-harness
+line anywhere in the table. It reproduces the documented policy row exactly --
+158.0 m, 18.0 m, 86 cells, 8.8x, 2/12 -- and the nine classical rows agree with
+`bench` to a tenth of a metre.
 
 **THE COMPOSITE CLAIM DOES NOT SURVIVE.** `net x cells` was the number that said
-"the first time a learned policy has beaten freeM on this objective", 1548
-against 748. Two planners of a dozen lines each score 2198 and 2139 on it. The
+"the first time a learned policy has beaten freeM on this objective", 1551
+against 752. Two planners of a dozen lines each score 2197 and 2138 on it. The
 learned policy is third.
 
 **AND THE COMPOSITE IS THE WRONG NUMBER**, which is the more useful half. It
@@ -1154,9 +1166,13 @@ planner crashing every 256 m above one that has never crashed is not measuring
 safe travel.
 
 `cover` is the row that matters. It is level with the learned policy on every
-column at once -- 19.9 m against 18.0, 875 m per crash against 948, 1542 against
-1548 -- having never been trained. 150k steps of PPO currently buys a tie with
-frontier-seeking plus a safety gate.
+column at once -- the SAME 2 collisions in 12, 19.9 m of displacement against
+18.0, 875 m per crash against 948, 1541 against 1551 -- having never been
+trained. 150k steps of PPO currently buys a tie with frontier-seeking plus a
+safety gate.
+
+`random` is worth a glance too: 737, within 3% of freeM's 752, because freeM
+spends its enormous path length going nowhere.
 
 ### freeM's circling is load-bearing
 
@@ -1179,23 +1195,30 @@ that `frontRaw` would collide much more, since every collision measured in this
 tree has been into unmapped space, and that this would show the gate was what
 kept `cover` alive.
 
-It did not. `frontRaw` collides 2/6 against `cover`'s 1/6 (3/12 against 4/12 on
-the wider set) -- no separation worth the name. **The gate is not a safety
-device here.** What it bought was reach: 77 cells against 46 and 19.9 m against
-14.5 m.
+The direction was right and the size was not. `frontRaw` collides 4 times in 12
+against `cover`'s 2 -- twice as often, on twelve episodes, which this sample
+cannot resolve from chance. **The prediction is neither confirmed nor refuted,
+and it was stated as though one run of twelve could settle it.** What can be
+said is that the gate is not worth the weight the comment on it claimed.
 
-The likely mechanism is visible in the travel column. `o[7]` is set when a
-rollout STOPPED on unknown, which happens near the fog boundary, so the
-primitives `frontRaw` selects are the short ones -- it creeps, 112 m and 46
-cells, the least of the ground-seekers. It is not safe because steering at fog
-is safe; it is safe because it barely goes anywhere. The gate does not stop the
-aircraft entering unmapped space, it makes entering it productive.
+The clear difference is reach, not safety: 77 cells against 46 and 19.9 m
+against 14.5 m. On metres-before-a-crash, which folds both effects together,
+`cover` goes 875 m and `frontRaw` 336 m.
+
+A mechanism for why an ungated frontier seeker is not obviously suicidal is
+visible in the travel column. `o[7]` is set when a rollout STOPPED on unknown,
+which happens near the fog boundary, so the primitives `frontRaw` selects are
+the short ones -- it creeps, 112 m and 46 cells, the least of the
+ground-seekers. It may be surviving because it barely goes anywhere rather than
+because steering at fog is safe. That is a hypothesis the travel column is
+consistent with, not a result: separating them needs more episodes than were
+flown.
 
 ### circler did not manage to game the metric, and that is not reassuring
 
 `circler` is in the set as an adversary: the degenerate solution CLAUDE.md names
-is to bank distance turning in a safe clearing forever. It scores 141, last but
-one, and collides in 6 of 6.
+is to bank distance turning in a safe clearing forever. It scores 142, last, and
+collides in 12 of 12.
 
 That is not evidence the metric is robust. **It is evidence the test world is
 wrong for the question.** A maze has no clearings, so hard turns end in walls --

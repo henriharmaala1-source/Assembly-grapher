@@ -55,20 +55,20 @@ So quote it honestly. Held-out maze, 3000-step episodes:
 
 | planner | net disp | cells | loops | collisions | m before a crash |
 |---------|----------|-------|-------|------------|------------------|
-| novelG | 17.8 m | **124** | 7.7x | 3/6 | 275 m |
-| freeG | **20.9 m** | 102 | **6.1x** | 3/6 | 256 m |
-| cover | 19.9 m | 77 | 7.3x | 1/6 | 875 m |
-| learned (base3k) | 18.0 m | 86 | 8.8x | 2/12 | 948 m |
-| freeM | 6.8 m | 110 | 29.5x | **0/6** | **never** |
+| novelG | 17.8 m | **124** | 7.7x | 6/12 | 275 m |
+| freeG | **20.9 m** | 102 | **6.1x** | 6/12 | 256 m |
+| learned (base3k) | 18.0 m | 86 | 8.8x | 2/12 | **948 m** |
+| cover | 19.9 m | 77 | 7.3x | 2/12 | 875 m |
+| freeM | 6.8 m | 110 | 29.5x | **0/12** | **never** |
 
 AND QUOTE IT AGAINST A BAR THAT IS MATCHED TO IT. The four planners this was
 first measured against were written when reaching a goal was the score, and two
 of them optimise a goal nothing pays for. Against that set the learned policy
-led on `net x cells`, 1548 to freeM's 748, and that was read as the first
+led on `net x cells`, 1551 to freeM's 752, and that was read as the first
 learned win on this objective. Against planners aimed at what IS scored it is
-third: novelG 2198, freeG 2139, base3k 1548, cover 1542. `cover` is frontier-
+third: novelG 2197, freeG 2138, base3k 1551, cover 1541. `cover` is frontier-
 seeking with a safety gate, about a dozen lines, never trained, and level with
-150k steps of PPO on every column at once.
+150k steps of PPO on every column at once -- the same 2 collisions in 12.
 
 `net x cells` IS ALSO THE WRONG NUMBER, and that is the more useful half. It
 multiplies two of the three columns named above and cannot see the third, so it
@@ -79,7 +79,7 @@ and nothing else clears 470 m. Use the columns, not their product.
 The other thing that came out of that measurement: **freeM's circling is what
 keeps it alive.** freeG is freeM plus a charge on yaw rate, and that single term
 takes the loop ratio 29.5x -> 6.1x and the displacement 6.8 -> 20.9 m -- and the
-collisions 0/6 -> 3/6. A hard turn is short and stays inside mapped air. "Orbits
+collisions 0/12 -> 6/12. A hard turn is short and stays inside mapped air. "Orbits
 too much" and "never crashes" are one property of that planner, not two.
 
 A GOAL-SHAPED REWARD WILL NOT PRODUCE THIS. Progress-to-goal pays for closing

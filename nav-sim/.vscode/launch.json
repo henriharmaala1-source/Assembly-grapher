@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "nav_sim: maze / astar / display",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": ["--world=maze", "--planner=astar", "--display"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "preLaunchTask": "cmake-build",
+      "windows": { "type": "cppvsdbg" },
+      "linux": { "MIMode": "gdb" },
+      "osx": { "MIMode": "lldb" }
+    },
+    {
+      "name": "nav_sim: compare on trap",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": ["--world=trap", "--compare"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "preLaunchTask": "cmake-build",
+      "windows": { "type": "cppvsdbg" },
+      "linux": { "MIMode": "gdb" },
+      "osx": { "MIMode": "lldb" }
+    }
+  ]
+}

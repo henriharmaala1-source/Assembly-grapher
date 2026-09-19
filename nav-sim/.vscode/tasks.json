@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cmake-build",
+      "type": "cmake",
+      "command": "build",
+      "group": { "kind": "build", "isDefault": true },
+      "detail": "Build nav_sim via the CMake Tools extension (any generator/config)."
+    }
+  ]
+}

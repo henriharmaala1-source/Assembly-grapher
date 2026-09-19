@@ -189,11 +189,52 @@ RL PATH-POLICY HARNESS
 The point is a comparison, not a model: a learned planner scored in the SAME
 columns as the classical ones, on seeds it never trained on.
 
-    kestrel bench    the non-RL side. random / freeM / goal / the classical
-                     weighted score, all through the same environment the
-                     policy uses, so the comparison is between planners and
-                     not between two harnesses. START HERE -- these are the
-                     numbers a policy has to beat. Needs nothing installed.
+    kestrel bench    the non-RL side: NINE classical planners through the
+                     same environment the policy uses, so the comparison is
+                     between planners and not between two harnesses. START
+                     HERE -- these are the numbers a policy has to beat.
+                     Needs nothing installed.
+
+                       random    uniform over what geometry admits: the floor
+                       freeM     steer where the map confirms the most free
+                                 space. The strongest of the old four, and
+                                 it buys its safety by circling
+                       goal      straight at the goal, ignoring what is in
+                                 the way
+                       score     a hand-tuned mix, goal-weighted
+
+                     THE FIRST FOUR WERE WRITTEN WHEN REACHING A GOAL WAS
+                     THE SCORE, and two of them optimise distance to a goal
+                     that nothing pays for any more. What is scored here is
+                     safe travel -- metres flown before something stops it,
+                     ground covered, distance from the spawn -- so five more
+                     planners are matched to that:
+
+                       freeG     freeM projected onto the GROUND and charged
+                                 for turning. Free path length rewards a
+                                 steep climb, which covers no ground; this is
+                                 also the smallest change that could fix
+                                 freeM's circling, so it says how much of
+                                 that is just "freeM does not mind turning"
+                       novelG    freeG, avoiding ground already flown over
+                       cover     frontier-seeking: head for UNKNOWN, but only
+                                 along a path the map has confirmed free
+                       frontRaw  the same seeker with the safety gate taken
+                                 out. Deliberately unsafe, and the control
+                                 that makes the gate measurable: every
+                                 collision in this tree has been into
+                                 unmapped space
+                       circler   turn as hard as geometry allows, forever.
+                                 The degenerate solution -- it banks metres
+                                 with no displacement and almost no new
+                                 ground -- kept as a MEASURED row so the
+                                 weakness of the metric is a number and not
+                                 an assurance
+
+                     The columns are travel, net (how far from the spawn it
+                     ended), cells, loops (travel/net) and minimum clearance.
+                     Episodes run under the travel objective, where arriving
+                     at the goal does not end them.
 
     kestrel train    train. Expect 8-18 hours at 10 M steps with stereo.
 
@@ -445,7 +486,7 @@ columns as the classical ones, on seeds it never trained on.
 
     kestrel evaluate --baselines
                       THE COMPARISON, in one command and one table: the
-                      trained policy and all four classical planners, on the
+                      trained policy and all nine classical planners, on the
                       same held-out seeds, scored by the same code. The
                       baselines come from the same C++ `bench` runs, so there
                       is no second implementation to drift.
@@ -554,6 +595,29 @@ columns as the classical ones, on seeds it never trained on.
                                 the journey closed, across checkpoints. The
                                 second still moves while the first is pinned
                                 at zero, which is most of training.
+
+        --no-homeward   HOLD TWO OBSERVATION CHANNELS AT ZERO. g[22] and
+                        g[23] say how far the aircraft is from its spawn and
+                        which way that lies -- half of what the travel
+                        objective pays for, and until they existed nothing
+                        in the 1914 inputs encoded it.
+
+                        A checkpoint trained before they carried signal has
+                        first-layer weights on them that never received a
+                        gradient, because an input of 0 gives a gradient of
+                        0, so they still sit at initialisation. Scoring such
+                        a policy with the channels live drives two untrained
+                        weights with real numbers: the run is noise, and it
+                        does not look like noise, it looks like a bad
+                        policy.
+
+                        You should not normally need this. report reads the
+                        answer out of the run's run.json, and a run with no
+                        readable run.json is assumed to predate the channels
+                        -- the recoverable mistake. The flag is the override
+                        for a --model pointing somewhere with no manifest.
+                        It does not affect the baselines, which read only the
+                        per-primitive block.
 
         FLYING AND DRAWING ARE SEPARATE, on purpose. report.py flies the
         episodes and writes report.csv + trace.csv; kestrel draws from those.

@@ -181,14 +181,21 @@ def main() -> int:
     # untrained input weights real numbers, and the run is then noise -- so the
     # default is read from what the run actually did rather than left to whoever
     # types the command. A run.json without the key predates the channels.
-    homeward = True
+    # THE DEFAULT WHEN NOTHING IS KNOWN IS OFF, because the two mistakes are
+    # not the same size. Holding the channels at 0 for a policy that could use
+    # them costs it two inputs -- the run is worse, and still means something.
+    # Feeding them to a policy that never trained on them drives two weights
+    # that are still at initialisation, and the run means nothing while looking
+    # exactly like a bad policy. Unknown provenance gets the recoverable error.
+    homeward = False
     try:
         with open(os.path.join(args.run, "run.json")) as fh:
             homeward = bool(json.load(fh).get("homeward", False))
         print(f"[report] run.json: homeward={homeward}", flush=True)
     except (OSError, ValueError):
-        print("[report] no readable run.json -- assuming homeward=True; pass "
-              "--no-homeward if this checkpoint predates those channels",
+        print("[report] no readable run.json -- holding g[22],g[23] at 0. A "
+              "checkpoint from a run that recorded homeward=true will be "
+              "under-fed; nothing else here can tell the two apart.",
               flush=True)
     if args.no_homeward:
         homeward = False

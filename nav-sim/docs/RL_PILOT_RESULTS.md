@@ -1092,3 +1092,138 @@ works as a SCORING metric.** Paying for it in training (--far 1.0) taught the
 policy to fly into unmapped space chasing distant ground, 10 collisions in 12.
 Measuring with it afterwards correctly ranks behaviour that is already safe. A
 good metric is not automatically a good reward.
+
+## The bar was four goal-seekers, and it was holding the result up
+
+Every number above compares the policy against random / freeM / goal / score.
+Two of those four maximise `-goalErr`, a quantity nothing has been paid for
+since the objective became safe travel; one is a coin flip and one collides in
+every episode. "The learned policy beat the baselines" was measured against a
+set that was never matched to what is scored.
+
+Five planners that are. All read only the observation and the mask, so they run
+through the identical harness a policy does, and all five are under a dozen
+lines -- `freeG` is `freeM` plus two terms:
+
+    freeG     freeM projected onto the GROUND and charged for turning
+    novelG    freeG, avoiding ground already flown over
+    cover     frontier-seeking, gated on the path there being confirmed free
+    frontRaw  the same seeker with the gate REMOVED -- the control
+    circler   turn as hard as geometry allows: the degenerate solution
+
+### First, the harness agrees with itself
+
+`bench` is C++ and the documented table came from python's `report`. On maze
+101-106, `bench` reproduces it to three significant figures -- freeM 201.3 m /
+6.8 m / 110 cells, goal 77.9 / 14.9 / 20, score 26.9 / 18.7 / 30 -- so the two
+harnesses are one harness, and the old protocol is pinned as maze seeds 101-106.
+`random` is the one row that differs (5.1 m net here against 12.9 m there)
+because its RNG stream is seeded differently in the two programs; every other
+planner is deterministic given the world.
+
+### Nine planners, maze 101-106, 3000 steps
+
+| planner | travel | net | cells | loops | crash | m/crash | net x cells |
+|---------|--------|-----|-------|-------|-------|---------|-------------|
+| novelG | 137.5 m | 17.8 m | **124** | 7.7x | 3/6 | 275 m | **2198** |
+| freeG | 128.2 m | **20.9 m** | 102 | **6.1x** | 3/6 | 256 m | 2139 |
+| cover | 145.8 m | 19.9 m | 77 | 7.3x | **1/6** | **875 m** | 1542 |
+| *policy (base3k)* | *158.0 m* | *18.0 m* | *86* | *8.8x* | *2/12* | *948 m* | *1548* |
+| freeM | **201.3 m** | 6.8 m | 110 | 29.5x | **0/6** | **never** | 751 |
+| frontRaw | 112.0 m | 14.5 m | 46 | 7.7x | 2/6 | 336 m | 666 |
+| score | 26.9 m | 18.7 m | 30 | 1.4x | 6/6 | 27 m | 560 |
+| goal | 77.9 m | 14.9 m | 20 | 5.2x | 1/6 | 468 m | 293 |
+| circler | 16.3 m | 8.6 m | 16 | 1.9x | 6/6 | 16 m | 141 |
+| random | 104.1 m | 5.1 m | 24 | 20.3x | 2/6 | 312 m | 125 |
+
+The policy row is the one quoted above, flown by `report`; every other row is
+`bench`. That is a cross-harness line for a SAMPLED policy, so treat it as
+provisional.
+
+**THE COMPOSITE CLAIM DOES NOT SURVIVE.** `net x cells` was the number that said
+"the first time a learned policy has beaten freeM on this objective", 1548
+against 748. Two planners of a dozen lines each score 2198 and 2139 on it. The
+learned policy is third.
+
+**AND THE COMPOSITE IS THE WRONG NUMBER**, which is the more useful half. It
+multiplies the two columns the objective names and silently drops the third:
+CLAUDE.md calls metres-before-a-collision the headline, and `net x cells` cannot
+see it. On that column the order is unchanged -- freeM never crashes, base3k
+goes 948 m, `cover` 875 m, and nothing else clears 470 m. A metric that ranks a
+planner crashing every 256 m above one that has never crashed is not measuring
+safe travel.
+
+`cover` is the row that matters. It is level with the learned policy on every
+column at once -- 19.9 m against 18.0, 875 m per crash against 948, 1542 against
+1548 -- having never been trained. 150k steps of PPO currently buys a tie with
+frontier-seeking plus a safety gate.
+
+### freeM's circling is load-bearing
+
+`freeG` is `freeM` with the free length projected onto the ground and a 0.20
+charge on yaw rate. That is enough to take the loop ratio from 29.5x to 6.1x and
+triple the displacement, 6.8 m to 20.9 m -- so the circling is not something
+freeM cannot help, it is something nothing was charging it for.
+
+It also takes the collisions from 0/6 to 3/6. Turning was how freeM stayed
+alive: a hard turn is short and stays inside mapped air, and the policy that
+will not turn commits further into space its map has not confirmed. The two
+findings are one finding, and it argues that "orbits too much" and "never
+crashes" were never separable properties of that planner.
+
+### A prediction that failed: the safety gate
+
+`cover` gates its frontier bonus on most of the commanded path being confirmed
+free; `frontRaw` removes the gate and nothing else. The stated expectation was
+that `frontRaw` would collide much more, since every collision measured in this
+tree has been into unmapped space, and that this would show the gate was what
+kept `cover` alive.
+
+It did not. `frontRaw` collides 2/6 against `cover`'s 1/6 (3/12 against 4/12 on
+the wider set) -- no separation worth the name. **The gate is not a safety
+device here.** What it bought was reach: 77 cells against 46 and 19.9 m against
+14.5 m.
+
+The likely mechanism is visible in the travel column. `o[7]` is set when a
+rollout STOPPED on unknown, which happens near the fog boundary, so the
+primitives `frontRaw` selects are the short ones -- it creeps, 112 m and 46
+cells, the least of the ground-seekers. It is not safe because steering at fog
+is safe; it is safe because it barely goes anywhere. The gate does not stop the
+aircraft entering unmapped space, it makes entering it productive.
+
+### circler did not manage to game the metric, and that is not reassuring
+
+`circler` is in the set as an adversary: the degenerate solution CLAUDE.md names
+is to bank distance turning in a safe clearing forever. It scores 141, last but
+one, and collides in 6 of 6.
+
+That is not evidence the metric is robust. **It is evidence the test world is
+wrong for the question.** A maze has no clearings, so hard turns end in walls --
+circler crashes for want of room, not for want of exploit. Whether the metric can
+be gamed has to be asked in forest, road or culdesac, and has not been.
+
+### Wider held-out set, maze 101-112
+
+The ranking is stable; every planner is a little worse on the six maps nothing
+has ever been tuned against, and the composite order is unchanged.
+
+| planner | travel | net | cells | loops | crash | m/crash | net x cells |
+|---------|--------|-----|-------|-------|-------|---------|-------------|
+| novelG | 136.2 m | 15.3 m | 119 | 8.9x | 7/12 | 233 m | 1812 |
+| freeG | 135.8 m | 17.3 m | 94 | 7.8x | 6/12 | 272 m | 1638 |
+| cover | 136.4 m | 16.7 m | 72 | 8.2x | 4/12 | 409 m | 1199 |
+| freeM | 200.1 m | 8.6 m | 100 | 23.2x | 0/12 | never | 860 |
+| frontRaw | 108.3 m | 14.6 m | 40 | 7.4x | 3/12 | 433 m | 591 |
+| score | 24.5 m | 19.0 m | 28 | 1.3x | 12/12 | 25 m | 527 |
+| goal | 67.0 m | 15.1 m | 20 | 4.4x | 5/12 | 161 m | 297 |
+| random | 93.1 m | 7.4 m | 30 | 12.6x | 5/12 | 223 m | 221 |
+| circler | 44.2 m | 9.2 m | 21 | 4.8x | 11/12 | 48 m | 193 |
+
+Reproduce either table with:
+
+    kestrel bench --worlds maze --seeds 101 106 --steps 3000
+    kestrel bench --worlds maze --seeds 101 112 --steps 3000
+
+Every weight in the five new planners is hand-set and none were swept. They are
+quoted as written; tuning them against an untuned policy would be the same
+dishonesty in the other direction.

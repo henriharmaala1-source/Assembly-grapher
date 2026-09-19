@@ -135,7 +135,7 @@ def main() -> int:
                          "reward curve -- which measures a different thing and "
                          "has already disagreed with it once here.")
     ap.add_argument("--baselines", action="store_true",
-                    help="score the four classical planners on the SAME seeds "
+                    help="score the nine classical planners on the SAME seeds "
                          "and print one comparison table. This is the whole "
                          "point of the harness; running bench and evaluate "
                          "separately gives two tables in two formats that have "

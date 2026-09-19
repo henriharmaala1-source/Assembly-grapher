@@ -31,6 +31,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("horizon_s", &EnvConfig::horizonS)
         .def_readwrite("robot_r", &EnvConfig::robotR)
         .def_readwrite("objective", &EnvConfig::objective)
+        .def_readwrite("homeward", &EnvConfig::homeward)
         .def_readwrite("w_range", &EnvConfig::wRange)
         .def_readwrite("w_seen", &EnvConfig::wSeen)
         .def_readwrite("w_revisit", &EnvConfig::wRevisit)
@@ -101,7 +102,12 @@ PYBIND11_MODULE(voxelenv, m) {
         .value("random", BaselinePolicy::Random)
         .value("freeM",  BaselinePolicy::FreeM)
         .value("goal",   BaselinePolicy::Goal)
-        .value("score",  BaselinePolicy::Score);
+        .value("score",  BaselinePolicy::Score)
+        .value("freeG",    BaselinePolicy::FreeG)
+        .value("novelG",   BaselinePolicy::NovelG)
+        .value("cover",    BaselinePolicy::Cover)
+        .value("frontRaw", BaselinePolicy::FrontRaw)
+        .value("circler",  BaselinePolicy::Circler);
 
     // The classical planners, from the SAME C++ that `kestrel bench` runs.
     // Reimplementing them in python would let the two drift, and then the

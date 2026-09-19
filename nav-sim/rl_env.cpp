@@ -93,10 +93,15 @@ VoxelEnv::~VoxelEnv() = default;
 
 const char* baselineName(BaselinePolicy p) {
     switch (p) {
-        case BaselinePolicy::Random: return "random";
-        case BaselinePolicy::FreeM:  return "freeM";
-        case BaselinePolicy::Goal:   return "goal";
-        default:                     return "score";
+        case BaselinePolicy::Random:   return "random";
+        case BaselinePolicy::FreeM:    return "freeM";
+        case BaselinePolicy::Goal:     return "goal";
+        case BaselinePolicy::Score:    return "score";
+        case BaselinePolicy::FreeG:    return "freeG";
+        case BaselinePolicy::NovelG:   return "novelG";
+        case BaselinePolicy::Cover:    return "cover";
+        case BaselinePolicy::FrontRaw: return "frontRaw";
+        default:                       return "circler";
     }
 }
 
@@ -111,13 +116,32 @@ int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
         rng = rng * 1664525u + 1013904223u;
         return legal[rng % legal.size()];
     }
+    // EVERY WEIGHT BELOW IS HAND-SET AND NONE OF THEM WERE SWEPT. These exist
+    // to bracket the objective from the classical side, not to be the best
+    // planner obtainable -- a tuned baseline and an untuned policy is no more
+    // honest a comparison than the reverse. They are quoted as written.
     int best = legal[0];
     float bestV = -1e30f;
     for (int i : legal) {
         const float* o = &obs[size_t(i) * F];
-        const float vv =
-            (pol == BaselinePolicy::FreeM) ? o[0]
-          : (pol == BaselinePolicy::Goal)  ? -o[3]
+        // HORIZONTAL confirmed-free distance. o[0] is the free length ALONG
+        // the path, so a steep climb buys o[0] without covering any ground --
+        // and net displacement and cells visited are both horizontal. cos of
+        // the end elevation projects it down. (o[4] is endEl/90, hence the
+        // quarter turn.)
+        const float ground = o[0] * std::cos(o[4] * 1.57079633f);
+        const float turn   = std::fabs(o[6]);
+        // FRACTION OF THE COMMANDED PATH THAT IS CONFIRMED FREE, and it has to
+        // be a ratio. o[0] is freeM/(3*horizonS) and o[5] is speed/3, so
+        // o[5] is exactly the commanded distance in the same units -- the
+        // quotient is dimensionless and, crucially, independent of horizonS,
+        // which is 0.6 in the maze and 2.0 everywhere else. A fixed threshold
+        // on o[0] alone would mean a different number of metres per world.
+        const float sfree  = std::min(1.f, o[0] / std::max(0.05f, o[5]));
+        float vv;
+        switch (pol) {
+            case BaselinePolicy::FreeM: vv = o[0]; break;
+            case BaselinePolicy::Goal:  vv = -o[3]; break;
             // o[0], NOT o[1]. This read o[1] when that slot held e.clear --
             // and e.clear was freeLen/(vMax*horizonS) while o[0] is
             // freeM/(3*horizonS) with vMax exactly 3, so the two were the same
@@ -125,8 +149,38 @@ int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
             // this baseline prefer primitives to the right of the goal and
             // avoid ones to the left. Pointing at the surviving copy restores
             // the previous behaviour bit-for-bit rather than approximately.
-          : 0.7f * o[0] - 1.0f * o[3] - 0.25f * std::fabs(o[6])
-            + 0.5f * o[2] - 2.0f * std::max(0.f, o[4]);
+            case BaselinePolicy::Score:
+                vv = 0.7f * o[0] - 1.0f * o[3] - 0.25f * turn
+                   + 0.5f * o[2] - 2.0f * std::max(0.f, o[4]);
+                break;
+            case BaselinePolicy::FreeG:
+                vv = ground * (1.f - 0.20f * turn);
+                break;
+            case BaselinePolicy::NovelG:
+                // o[8] is the decayed visit count at the endpoint, already in
+                // [0,1], so 0.35 trades a fully-revisited cell against about a
+                // third of the best available ground.
+                vv = ground * (1.f - 0.20f * turn) - 0.35f * o[8];
+                break;
+            case BaselinePolicy::Cover:
+                // o[7] is "this rollout stopped on UNKNOWN" -- the frontier.
+                // The hinge is the safety gate: the frontier bonus is worth
+                // nothing until most of the commanded path is confirmed free,
+                // and full value only when all of it is. Unknown is not free,
+                // so steering at it is only allowed along known-clear air.
+                vv = ground
+                   + 0.45f * o[7] * (std::max(0.f, sfree - 0.6f) / 0.4f)
+                   - 0.35f * o[8]
+                   - ground * (0.20f * turn + 0.35f * std::fabs(o[4]));
+                break;
+            case BaselinePolicy::FrontRaw:
+                // The gate removed, and nothing else. o[0] is a tiebreak only.
+                vv = o[7] + 0.02f * o[0];
+                break;
+            default:   // Circler
+                vv = turn + 0.05f * o[0];
+                break;
+        }
         if (vv > bestV) { bestV = vv; best = i; }
     }
     return best;
@@ -734,6 +788,29 @@ void VoxelEnv::buildObservation() {
     // A coarse bearing summary, WITH its mask: 12 azimuth sectors, each a
     // normalised range and a "did anything answer here" flag. Absence of a
     // return is absence of knowledge, and the policy has to be able to tell.
+    // WHERE HOME IS, AND HOW FAR. See EnvConfig::homeward -- net displacement
+    // is half of what the range objective pays for and was not observable.
+    //
+    // ONE VECTOR, NOT A BEARING. sin/cos of the relative bearing alone would
+    // say which way home is and never how far, and the distance is the half
+    // that gets PAID. Scaling the unit vector by the normalised displacement
+    // puts both in the two channels: hypot(g[22],g[23]) is how far from the
+    // spawn, atan2 of them is which way it lies. It also starts at (0,0),
+    // which is exactly what the channels held before this existed, so the
+    // value at reset does not jump for a checkpoint that never saw them.
+    //
+    // Body frame, like g[1]/g[2], because every action is relative to the nose.
+    // Normalised by rangeScaleM -- the same length the RANGE reward divides by,
+    // so "1.0 here" and "a full unit of reward there" are the same distance.
+    if (cfg_.homeward) {
+        const float dx = I.startX - I.px, dy = I.startY - I.py;
+        const float m = std::min(1.f, std::hypot(dx, dy)
+                                          / std::max(1.f, cfg_.rangeScaleM));
+        const float spawnAz = std::atan2(dx, dy) * 180.f / sim::PI_F;
+        const float rel = (spawnAz - I.yaw) * sim::PI_F / 180.f;
+        g[22] = m * std::sin(rel);
+        g[23] = m * std::cos(rel);
+    }
     for (int k = 0; k < 6; ++k) {
         const float az = -90.f + k * 36.f;
         const float rr = I.bfield.rangeAt(I.yaw + az, 0.f);

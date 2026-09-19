@@ -94,6 +94,20 @@ struct EnvConfig {
     // Displacement alone would reward one straight dash and then hovering at
     // the far end, so coverage pays for new ground alongside it. Between them:
     // go somewhere, keep going somewhere new, do not come back, do not hover.
+    // HALF THE OBJECTIVE WAS INVISIBLE. Under RANGE the policy is paid for net
+    // displacement from the spawn -- and nothing in the observation encoded it.
+    // g[0] is distance to the GOAL over the journey, g[9] is PATH length over
+    // the journey; neither says how far from home the aircraft is, nor which
+    // way home lies. A network cannot optimise a quantity it cannot see, and
+    // that is the same defect as the world-frame goal bearing fixed earlier.
+    //
+    // g[22] and g[23] were hard zero, so this costs no observation size and
+    // existing checkpoints still load. It does CHANGE what they see: two
+    // channels that were always 0 during their training now carry signal, and
+    // the first-layer weights on them never received a gradient (input 0 =>
+    // gradient 0), so they sit at initialisation. A policy trained without this
+    // must be scored with --no-homeward or its numbers are noise.
+    bool  homeward    = true;
     enum Objective { GOAL = 0, RANGE = 1 };
     int   objective   = GOAL;
     // Per metre of net displacement GAINED. Telescopes to the final
@@ -289,7 +303,38 @@ struct EnvStep {
 // shared by `kestrel bench` and by the python evaluator through the extension
 // module -- a second copy in python would be free to drift, and a comparison
 // against a baseline that is not the baseline is worth nothing.
-enum class BaselinePolicy { Random = 0, FreeM, Goal, Score };
+// THE CLASSICAL BAR. The first four were written when reaching a goal was the
+// score, and two of them optimise -goalErr -- a quantity nothing pays for any
+// more (see CLAUDE.md, "WHAT THE POLICY IS FOR"). Keeping them is right, since
+// a goal-seeker is a legitimate thing to be beaten by, but they cannot be the
+// whole bar: "the learned policy beat the baselines" was measured against two
+// goal-seekers, a hoverer and a coin flip.
+//
+// The five after Score are matched to what IS scored -- distance covered
+// safely, ground visited, displacement from the spawn:
+//
+//   FreeG     FreeM projected onto the ground and charged for turning. FreeM's
+//             pathology is circling at 29.5x its own displacement; this is the
+//             smallest change that could fix it, so it says how much of that
+//             looping is just "freeM does not mind turning".
+//   NovelG    FreeG that avoids ground it has already flown over. The nearest
+//             classical planner to the actual objective.
+//   Cover     Frontier-seeking (Yamauchi 1997) with a safety gate: head for
+//             unknown, but only along a path the map has confirmed free.
+//   FrontRaw  The SAME frontier seeker with the gate removed. Deliberately
+//             unsafe, and the control that makes the gate measurable: every
+//             collision in this tree has been into unmapped space, so a
+//             planner that steers AT unmapped space should collide, and if it
+//             does not then the gate was never the thing keeping us alive.
+//   Circler   The degenerate solution, on purpose: turn as hard as geometry
+//             allows, forever. It banks travelM for free with no displacement
+//             and almost no new ground. It is here so the metric's known
+//             weakness is a measured row rather than a claim.
+//
+// All nine read only the observation and the mask, so they run through the
+// identical harness a learned policy does and no comparison is cross-harness.
+enum class BaselinePolicy { Random = 0, FreeM, Goal, Score,
+                            FreeG, NovelG, Cover, FrontRaw, Circler };
 const char* baselineName(BaselinePolicy p);
 
 // rng is advanced in place; only Random uses it. Returns a primitive index,

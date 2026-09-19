@@ -228,9 +228,9 @@ int cmdTrack(std::vector<std::string> args) {
 }
 
 // ------------------------------------------------------------------ baselines
-// The four classical planners now live in rl_env.hpp, so `bench` and the
-// python evaluator score against the SAME implementation rather than two that
-// are free to drift apart.
+// The nine classical planners live in rl_env.hpp, so `bench` and the python
+// evaluator score against the SAME implementation rather than two that are
+// free to drift apart.
 using Pol = BaselinePolicy;
 inline const char* polName(Pol p) { return baselineName(p); }
 inline int choose(Pol pol, const std::vector<float>& obs,
@@ -261,14 +261,31 @@ int cmdBench(std::vector<std::string> args) {
         else if (args[i] == "--stereo")  stereo = true;
     }
     std::printf("baselines through VoxelEnv -- the same harness a learned policy uses\n");
-    std::printf("%-8s %-8s %-5s %-16s %9s %9s %8s %6s %9s\n",
-                "policy", "world", "seed", "outcome", "travel", "end-dist",
-                "closest", "@step", "minClr");
-    for (Pol pol : {Pol::Random, Pol::FreeM, Pol::Goal, Pol::Score}) {
-        double sum = 0; int runs = 0, coll = 0, reach = 0;
+    // THE COLUMNS ARE THE OBJECTIVE. travel/end-dist/closest/@step were what
+    // this printed when reaching a goal was the score; three of them measure
+    // the goal and none of them measures ground covered. What is wanted here
+    // is distance flown safely, so: travel, how far from the spawn it ended,
+    // how much distinct ground it saw, and how many times it went round --
+    // travel/net is the looping factor freeM scores 29.5 on.
+    std::printf("%-8s %-8s %-5s %-16s %9s %8s %6s %7s %9s\n",
+                "policy", "world", "seed", "outcome", "travel", "net",
+                "cells", "loops", "minClr");
+    for (Pol pol : {Pol::Random, Pol::FreeM, Pol::Goal, Pol::Score,
+                    Pol::FreeG, Pol::NovelG, Pol::Cover, Pol::FrontRaw,
+                    Pol::Circler}) {
+        double sum = 0, sumNet = 0; long long sumCells = 0;
+        int runs = 0, coll = 0;
         for (const std::string& w : worlds)
             for (int s = s0; s <= s1; ++s) {
                 EnvConfig c;
+                // RANGE, NOT GOAL, and this is not cosmetic. Under GOAL the
+                // episode ENDS the moment the aircraft is within goalTolM --
+                // so a planner that happens to pass the goal early has its
+                // travel truncated there, and the travel column, which is the
+                // headline number, would be measuring how quickly each planner
+                // stumbled into a point nothing is scored on. The goal is
+                // scaffolding; see CLAUDE.md.
+                c.objective = EnvConfig::RANGE;
                 c.world = w; c.seed = unsigned(s); c.maxSteps = maxSteps;
                 c.truthDepth = !stereo;
                 c.horizonS = (w == "maze") ? 0.6f : 2.0f;
@@ -280,18 +297,27 @@ int cmdBench(std::vector<std::string> args) {
                                          env.nPrims(), rng));
                     if (st.done || st.truncated) break;
                 }
-                const char* oc = st.reachedGoal ? "reached goal"
-                               : st.collisions  ? "COLLIDED" : "ran out of steps";
-                std::printf("%-8s %-8s %-5d %-16s %9.1f %9.1f %8.1f %6d %9.2f\n",
+                // A collision is the failure here; arriving at the goal is
+                // not a success, it is just something that happened on the way.
+                // reachedGoal is always false under RANGE -- the goal does
+                // not end an episode there -- so there are exactly two ways
+                // out: something stopped it, or the budget did.
+                const char* oc = st.collisions ? "COLLIDED"
+                                               : "flew the whole budget";
+                const float loops = st.travelM / std::max(0.1f, st.netDispM);
+                std::printf("%-8s %-8s %-5d %-16s %9.1f %8.1f %6d %6.1fx %9.2f\n",
                             polName(pol), w.c_str(), s, oc, st.travelM,
-                            st.distToGoalM, st.minDistToGoalM, st.minDistStep,
-                            st.minClearM);
+                            st.netDispM, st.cellsVisited, loops, st.minClearM);
                 std::fflush(stdout);
-                sum += st.travelM; ++runs;
-                coll += st.collisions ? 1 : 0; reach += st.reachedGoal ? 1 : 0;
+                sum += st.travelM; sumNet += st.netDispM; sumCells += st.cellsVisited;
+                ++runs;
+                coll += st.collisions ? 1 : 0;
             }
-        std::printf("  -> %-8s runs %d  collisions %d  goals %d  mean travel %.1f m\n\n",
-                    polName(pol), runs, coll, reach, sum / std::max(1, runs));
+        const double r = std::max(1, runs);
+        std::printf("  -> %-8s runs %d  collisions %d  mean travel %.1f m  "
+                    "net %.1f m  cells %.0f  loops %.1fx\n\n",
+                    polName(pol), runs, coll, sum / r, sumNet / r,
+                    double(sumCells) / r, sum / std::max(0.1, sumNet));
     }
     return 0;
 }

@@ -47,6 +47,12 @@ LEGEND = {
     "freeM":  "steer where the map has confirmed the most free space",
     "goal":   "steer most directly at the goal, ignoring what is in the way",
     "score":  "hand-tuned: 0.7*clear - goalErr - 0.25*|yaw| + 0.5*farOpen - 2*climb",
+    # Matched to safe travel rather than to a goal -- see rl_env.hpp.
+    "freeG":    "freeM projected onto the ground, and charged for turning",
+    "novelG":   "freeG, avoiding ground it has already flown over",
+    "cover":    "frontier-seeking, gated on the path there being confirmed free",
+    "frontRaw": "the same frontier seeker with the safety gate REMOVED",
+    "circler":  "turn as hard as geometry allows -- the degenerate solution",
 }
 
 
@@ -258,7 +264,10 @@ def main() -> int:
         rows = [score(learned_label, model, None)]
     if args.baselines:
         for b in (voxelenv.Baseline.random, voxelenv.Baseline.freeM,
-                  voxelenv.Baseline.goal, voxelenv.Baseline.score):
+                  voxelenv.Baseline.goal, voxelenv.Baseline.score,
+                  voxelenv.Baseline.freeG, voxelenv.Baseline.novelG,
+                  voxelenv.Baseline.cover, voxelenv.Baseline.frontRaw,
+                  voxelenv.Baseline.circler):
             rows.append(score(str(b).split(".")[-1], None, b))
 
     print("---")

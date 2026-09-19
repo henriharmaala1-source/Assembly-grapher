@@ -521,6 +521,33 @@ def main() -> int:
               "world streams are all fixed. Another run with this seed and "
               "the same\n        flags is the same run.", flush=True)
 
+    # HOMEWARD IS INHERITED, NOT SWITCHED. g[22],g[23] carry distance and
+    # bearing back to the spawn; before they existed they were hard zero, so a
+    # checkpoint trained then has first-layer weights on those two inputs that
+    # never received a gradient (input 0 => gradient 0) and still sit at
+    # initialisation. Resuming such a policy with the channels live feeds two
+    # untrained weights real numbers.
+    #
+    # THERE IS NO FLAG FOR THIS, deliberately. The only correct setting is
+    # "whatever the checkpoint was trained with", and the program can read that
+    # off the run it is resuming -- a switch would only offer the wrong answer.
+    # A fresh run always gets them on; a run.json with no key predates them.
+    homeward = True
+    if args.resume:
+        prev = os.path.join(
+            args.out if args.resume == "auto" else os.path.dirname(args.resume),
+            "run.json")
+        try:
+            with open(prev) as fh:
+                homeward = bool(json.load(fh).get("homeward", False))
+            print(f"[train] --resume: inherited homeward={homeward} from "
+                  f"{prev}", flush=True)
+        except (OSError, ValueError):
+            homeward = False
+            print(f"[train] --resume: no readable {prev}; assuming the "
+                  "checkpoint predates the spawn-bearing channels and holding "
+                  "g[22],g[23] at 0", flush=True)
+
     # WHAT THIS RUN WAS, written beside its weights. A checkpoint records the
     # network and nothing about the conditions that produced it, so a folder of
     # .zip files cannot answer "was this the from-zero one or the normal one" --
@@ -547,6 +574,7 @@ def main() -> int:
         "norm_reward": bool(args.norm_reward),
         "clip_vf": float(args.clip_vf),
         "scale_clear": not args.raw_clear,
+        "homeward": homeward,
         "objective": args.objective,
         "coverage": float(args.coverage),
         "seen": float(args.seen),
@@ -561,7 +589,8 @@ def main() -> int:
               mask_unsafe=not args.no_veto, vary_goal=args.vary_goal,
               scale_clear=not args.raw_clear, objective=args.objective,
               coverage=args.coverage, seen=args.seen,
-              revisit=args.revisit, far=args.far)
+              revisit=args.revisit, far=args.far,
+              homeward=homeward)
     if args.seed:
         kw["seed"] = args.seed
     if args.no_veto:
@@ -786,7 +815,8 @@ def main() -> int:
                               scale_clear=not args.raw_clear,
                               objective=args.objective,
                               coverage=args.coverage, seen=args.seen,
-                              revisit=args.revisit, far=args.far)
+                              revisit=args.revisit, far=args.far,
+                              homeward=homeward)
             trav, coll, reach, closest = [], 0, 0, []
             for sd in (901, 902, 903):
                 # options=, not seed=. seed= seeds the DRAW from the seeds list

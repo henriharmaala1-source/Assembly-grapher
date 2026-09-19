@@ -40,7 +40,7 @@ class VoxelNavEnv(gym.Env):
                  truth_depth=False, cam=(160, 120), horizons=None,
                  mask_unsafe=True, vary_goal=False, scale_clear=True,
                  objective="goal", coverage=None, seen=None,
-                 revisit=None, far=None):
+                 revisit=None, far=None, homeward=True):
         super().__init__()
         self.worlds = tuple(worlds)
         self.seeds = list(seeds)
@@ -81,6 +81,10 @@ class VoxelNavEnv(gym.Env):
         # Scale a new cell's worth by how far out it is; EnvConfig::wFar.
         if far is not None:
             self._cfg.w_far = float(far)
+        # g[22],g[23] = bearing home in the body frame. Half the range objective
+        # is net displacement and nothing encoded it; see EnvConfig::homeward.
+        # A policy trained before this existed must be scored with homeward=False.
+        self._cfg.homeward = bool(homeward)
         self._env = voxelenv.VoxelEnv(self._cfg)
 
         n = self._env.n_prims

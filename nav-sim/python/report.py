@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 import time
@@ -55,8 +56,11 @@ COLUMNS = ["id", "world", "seed", "repeat", "checkpoint_steps", "planner",
            "robot_r",
            "goal_x", "goal_y"]
 
-BASELINES = {"random": voxelenv.Baseline.random, "freeM": voxelenv.Baseline.freeM,
-             "goal": voxelenv.Baseline.goal, "score": voxelenv.Baseline.score}
+# Ordered: the four goal-era planners, then the five matched to safe travel.
+# See BaselinePolicy in rl_env.hpp for what each one optimises.
+BASELINES = {n: getattr(voxelenv.Baseline, n) for n in
+             ("random", "freeM", "goal", "score",
+              "freeG", "novelG", "cover", "frontRaw", "circler")}
 
 
 def fly(env, model, baseline, rng, world, seed, max_steps, deterministic):
@@ -112,7 +116,7 @@ def main() -> int:
                     help="every checkpoint in the run, not just the newest -- "
                          "this is what fills the across-checkpoints panel")
     ap.add_argument("--baselines", action="store_true",
-                    help="the four classical planners on the same episodes")
+                    help="the nine classical planners on the same episodes")
     ap.add_argument("--random", action="store_true",
                     help="the floor: uniform over admissible primitives")
     ap.add_argument("--stereo", action="store_true")
@@ -132,6 +136,17 @@ def main() -> int:
                          "trained on. Under range the goal does not end an "
                          "episode, so scoring a range policy under goal would "
                          "cut it off at exactly the thing it was paid for.")
+    ap.add_argument("--no-homeward", action="store_true",
+                    help="zero the two observation channels that say how far "
+                         "the aircraft is from its spawn and which way that "
+                         "lies. REQUIRED when scoring a checkpoint trained "
+                         "before they carried signal: those weights never "
+                         "received a gradient and sit at initialisation, so "
+                         "real numbers there are noise. If the run directory "
+                         "has a run.json this is worked out from it and need "
+                         "not be passed; the flag forces it off regardless. It "
+                         "does not affect the baselines, which read only the "
+                         "per-primitive block.")
     args = ap.parse_args()
 
     if not args.run:
@@ -160,6 +175,25 @@ def main() -> int:
         print(flush=True)
     except Exception as exc:
         print(f"[report] journey-fit check skipped ({exc})", flush=True)
+
+    # HOMEWARD IS A PROPERTY OF THE CHECKPOINT, NOT OF THIS COMMAND. Scoring a
+    # policy with g[22],g[23] live when it trained with them hard zero feeds two
+    # untrained input weights real numbers, and the run is then noise -- so the
+    # default is read from what the run actually did rather than left to whoever
+    # types the command. A run.json without the key predates the channels.
+    homeward = True
+    try:
+        with open(os.path.join(args.run, "run.json")) as fh:
+            homeward = bool(json.load(fh).get("homeward", False))
+        print(f"[report] run.json: homeward={homeward}", flush=True)
+    except (OSError, ValueError):
+        print("[report] no readable run.json -- assuming homeward=True; pass "
+              "--no-homeward if this checkpoint predates those channels",
+              flush=True)
+    if args.no_homeward:
+        homeward = False
+    if not homeward:
+        print("[report] homeward OFF: g[22],g[23] held at 0", flush=True)
 
     # Which policies to fly. Each is (label, model, baseline, checkpoint_steps).
     jobs = []
@@ -209,7 +243,8 @@ def main() -> int:
                               vary_goal=args.vary_goal,
                               objective=args.objective,
                               coverage=args.coverage, seen=args.seen,
-                              revisit=args.revisit, far=args.far)
+                              revisit=args.revisit, far=args.far,
+                              homeward=homeward)
             for sd in args.seeds:
                 for rep in range(args.repeats):
                     fly.rng = 12345 + rep     # same stream for every planner

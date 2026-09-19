@@ -422,6 +422,7 @@ struct Cfg {
     bool  rw[NWORLDS] = {true, true, true, true, true, true};
     int   rSeed0 = 101, rSeed1 = 104, rSteps = 3000, rRepeats = 3;
     bool  rDet = false, rProgress = false, rBaselines = false, rRandom = false;
+    bool  rNoHome = false;
     bool  rStereo = false, rNoVeto = false, rVary = false;
 };
 
@@ -491,6 +492,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.rDet) a.push_back("--deterministic");
             if (c.rProgress) a.push_back("--progress");
             if (c.rBaselines) a.push_back("--baselines");
+            if (c.rNoHome)    a.push_back("--no-homeward");
             if (c.rRandom) a.push_back("--random");
             if (c.rStereo) a.push_back("--stereo");
             if (c.rNoVeto) a.push_back("--no-veto");
@@ -620,7 +622,7 @@ enum {
     ID_E_PROGRESS, ID_E_NOVETO, ID_E_VARY,
     ID_R_S0M = 700, ID_R_S0P, ID_R_S1M, ID_R_S1P, ID_R_STM, ID_R_STP,
     ID_R_RPM, ID_R_RPP, ID_R_DET, ID_R_PROGRESS, ID_R_BASE, ID_R_RANDOM,
-    ID_R_STEREO, ID_R_NOVETO, ID_R_VARY,
+    ID_R_STEREO, ID_R_NOVETO, ID_R_VARY, ID_R_NOHOME,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -987,7 +989,7 @@ worldRow(im, bs, x, 228, ID_EW, c.ew);
                   ID_E_STEREO, c.eStereo});
 
     bs.push_back({cv::Rect(x, 476, 250, 34),
-                  c.eBaselines ? "with the 4 baselines" : "the policy alone",
+                  c.eBaselines ? "with the 9 baselines" : "the policy alone",
                   ID_E_BASE, c.eBaselines});
     bs.push_back({cv::Rect(x + 266, 476, 250, 34),
                   c.eReward ? "show reward per term" : "scorecard only",
@@ -1046,6 +1048,7 @@ const FlagBtn FLAG_BTNS[] = {
     {REPORT, ID_R_RANDOM,   "--random"},
     {REPORT, ID_R_STEREO,   "--stereo"},
     {REPORT, ID_R_NOVETO,   "--no-veto"},
+    {REPORT, ID_R_NOHOME,   "--no-homeward"},
     {REPORT, ID_R_VARY,     "--vary-goal"},
 };
 const int NFLAG_BTNS = int(sizeof FLAG_BTNS / sizeof *FLAG_BTNS);
@@ -1075,7 +1078,10 @@ void panelReport(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
             ID_R_RPM, ID_R_RPP, "runs per instance", 100);
 
     const int nrun = nWorldsOn(c.rw) * std::max(0, c.rSeed1 - c.rSeed0 + 1)
-                   * std::max(1, c.rRepeats) * (c.rBaselines ? 5 : 1);
+    // 10, NOT 5: one policy plus the NINE classical planners. This number is
+    // the only warning before a 20-minute run, and it under-counted by half
+    // the moment the bar stopped being four planners.
+                   * std::max(1, c.rRepeats) * (c.rBaselines ? 10 : 1);
     txt(im, std::to_string(nrun) + " episodes", x + 610, 292, 0.5, INK);
 
     bs.push_back({cv::Rect(x, 356, 250, 36),
@@ -1085,7 +1091,7 @@ void panelReport(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   c.rProgress ? "EVERY checkpoint" : "newest checkpoint",
                   ID_R_PROGRESS, c.rProgress});
     bs.push_back({cv::Rect(x + 532, 356, 210, 36),
-                  c.rBaselines ? "with the 4 baselines" : "the policy alone",
+                  c.rBaselines ? "with the 9 baselines" : "the policy alone",
                   ID_R_BASE, c.rBaselines});
 
     bs.push_back({cv::Rect(x, 400, 250, 36),
@@ -1099,6 +1105,20 @@ void panelReport(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x, 444, 250, 36),
                   c.rVary ? "varied journey" : "fixed journey",
                   ID_R_VARY, c.rVary});
+    // THE ONLY SETTING HERE THAT CAN MAKE A NUMBER MEANINGLESS RATHER THAN BAD.
+    // g[22],g[23] say how far the aircraft is from its spawn and which way that
+    // lies. A checkpoint trained before they carried signal has first-layer
+    // weights on them that never saw a gradient, so scoring it with them live
+    // feeds two untrained weights real numbers -- the run is noise, and it does
+    // not look like noise, it looks like a bad policy.
+    //
+    // report reads the right answer out of the run's run.json and this button
+    // is the override for a checkpoint that arrived without one (--model
+    // pointing somewhere else). It does not touch the baselines: they read only
+    // the per-primitive block.
+    bs.push_back({cv::Rect(x + 266, 444, 250, 36),
+                  c.rNoHome ? "spawn bearing OFF" : "spawn bearing on",
+                  ID_R_NOHOME, c.rNoHome});
 
     txt(im, "Writes report.csv beside the weights and draws five panels from "
             "it: which failure is each", x, 494, 0.42, DIM);
@@ -1245,6 +1265,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_R_DET: c.rDet = !c.rDet; break;
         case ID_R_PROGRESS: c.rProgress = !c.rProgress; break;
         case ID_R_BASE: c.rBaselines = !c.rBaselines; break;
+        case ID_R_NOHOME: c.rNoHome = !c.rNoHome; break;
         case ID_R_RANDOM: c.rRandom = !c.rRandom; break;
         case ID_R_STEREO: c.rStereo = !c.rStereo; break;
         case ID_R_NOVETO: c.rNoVeto = !c.rNoVeto; break;

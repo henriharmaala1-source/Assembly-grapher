@@ -289,6 +289,37 @@ columns as the classical ones, on seeds it never trained on.
                      classical planner named by --fallback (default cover) and
                      the pane says "classical: cover" rather than "learned".
 
+                     CUDA, FOR THE TWO NETWORKS AND NOTHING ELSE.
+
+                       kestrel demo --cuda      require a GPU
+                       kestrel demo --no-cuda   refuse one
+                       (neither)                take one if it is there
+
+                     --cuda moves the policy and an --detector onnx onto
+                     the GPU through OpenCV's dnn CUDA backend. It does
+                     NOT touch the simulator's depth renderer: that has
+                     its own build switch, NAVSIM_WITH_CUDA, guarding a
+                     kernel whose own header says it has never been
+                     compiled or run and which cuda_depth_check gates.
+                     Turning that on from the demo would be shipping an
+                     unvalidated kernel inside the one command whose job
+                     is to be believed.
+
+                     The DEFAULT detector gets nothing from it. HOG's GPU
+                     version lives in opencv_contrib's cudaobjdetect,
+                     which this build does not require, so the people
+                     pane says cpu and means it. Point --detector at an
+                     ONNX model to put detection on the GPU.
+
+                     --cuda REFUSES TO START without a visible device,
+                     deliberately: a flag that passes silently on a
+                     machine with no GPU is how a rehearsal becomes a
+                     surprise. Leave it off to take a GPU when there is
+                     one. Whichever happens, the status line along the
+                     bottom names the backend each network actually got,
+                     so the frame rate on screen always has the right
+                     label under it.
+
                      PEOPLE. The default detector is HOG with a linear SVM,
                      which ships inside OpenCV with trained weights -- no model
                      file, no download, no network on the day. It is also

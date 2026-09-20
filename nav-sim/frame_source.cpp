@@ -63,7 +63,11 @@ public:
     bool start(int w, int h, int fps, bool emitter, std::string* err) {
         // Ask for the IMU. Both optional streams fail independently and
         // neither failure costs depth -- see rsdyn::Pipeline::start.
-        if (!pipe_.start(w, h, fps, false, true)) {
+        // wantIR: the left imager. It costs a little USB bandwidth and it is
+        // what `demo` runs its person detector on -- see FrameSource::
+        // intensity(). A device or link that refuses it still gives depth,
+        // which is why it is a separate attempt inside Pipeline::start.
+        if (!pipe_.start(w, h, fps, true, true)) {
             if (err) *err = pipe_.error();
             return false;
         }
@@ -118,10 +122,12 @@ public:
         int w = pendingW_, h = pendingH_;
         if (pending_) {
             pending_ = false;               // reuse the frame start() already took
-        } else if (!pipe_.waitFrames(raw_, w, h, nullptr,
+        } else if (!pipe_.waitFrames(raw_, w, h,
+                                     pipe_.haveIR() ? &ir_ : nullptr,
                                      haveImu_ ? &motion_ : nullptr, 2000)) {
             return false;
         }
+        irW_ = w; irH_ = h;
 
         // FEED THE FILTER EVERY SAMPLE, not one per depth frame. The gyro runs
         // at 200 Hz against 30 Hz of depth, so a frameset carries several and
@@ -162,6 +168,12 @@ public:
         return true;
     }
 
+    bool intensity(cv::Mat& out) const override {
+        if (ir_.size() != size_t(irW_) * irH_ || irW_ <= 0) return false;
+        out = cv::Mat(irH_, irW_, CV_8U, (void*)ir_.data()).clone();
+        return true;
+    }
+
     int index() const override { return idx_; }
     std::string info(int which) const { return pipe_.deviceInfo(which); }
     float depthScale() const { return scale_; }
@@ -169,6 +181,8 @@ public:
 private:
     rsdyn::Pipeline pipe_;
     std::vector<uint16_t> raw_;
+    std::vector<uint8_t>  ir_;
+    int  irW_ = 0, irH_ = 0;
     std::unique_ptr<DepthCamera> cam_;
     float scale_ = 0.001f;
     std::vector<rsdyn::Pipeline::Motion> motion_;

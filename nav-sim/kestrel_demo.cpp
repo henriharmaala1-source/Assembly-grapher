@@ -21,6 +21,11 @@
 #if KESTREL_HAVE_DNN
 #include <opencv2/dnn.hpp>
 #endif
+// getCudaEnabledDeviceCount() is in core and returns 0 on a build without
+// CUDA, so this header is safe everywhere and the question is answered at RUN
+// time. That matters for the same reason librealsense is loaded at run time:
+// the machine the demo is shown on is not the machine it was built on.
+#include <opencv2/core/cuda.hpp>
 #if KESTREL_HAVE_VIDEOIO
 #include <opencv2/videoio.hpp>
 #endif
@@ -115,6 +120,56 @@ Layout layoutFor(int paneW, int paneH) {
     return L;
 }
 
+// ------------------------------------------------------------------ backends
+// WHERE THE TWO NETWORKS RUN, decided at run time and REPORTED.
+//
+// A demo that claims CUDA and silently runs on the CPU is worse than one that
+// never mentioned it: the number on screen is then a CPU number wearing a GPU
+// label, and the first question anyone asks about a live demo is how fast it
+// is. So the backend each net actually got is written on its pane.
+//
+// OpenCV will accept DNN_BACKEND_CUDA on a build without CUDA and quietly fall
+// back, which is exactly the silent-wrong-label case -- hence the device count
+// is checked first rather than the request being trusted.
+int cudaDevices() {
+    try { return cv::cuda::getCudaEnabledDeviceCount(); }
+    catch (const cv::Exception&) { return 0; }
+}
+
+// Returns the label to print. `want` is Options::Cuda.
+std::string applyBackend(void* netv, int want, bool* usedCuda) {
+    *usedCuda = false;
+#if KESTREL_HAVE_DNN
+    cv::dnn::Net& net = *static_cast<cv::dnn::Net*>(netv);
+    if (want == Options::CUDA_OFF) {
+        net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+        net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+        return "cpu (--no-cuda)";
+    }
+    const int n = cudaDevices();
+    if (n > 0) {
+        try {
+            net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+            // FP16 is not free accuracy-wise and this is a detector and a
+            // policy, not a benchmark, so the default target is the plain one.
+            net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+            *usedCuda = true;
+            return cv::format("cuda (%d device%s)", n, n == 1 ? "" : "s");
+        } catch (const cv::Exception& e) {
+            return std::string("cpu (cuda refused: ") + e.what() + ")";
+        }
+    }
+    net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+    net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+    return want == Options::CUDA_ON
+             ? "cpu -- NO CUDA DEVICE, and --cuda asked for one"
+             : "cpu (no cuda device)";
+#else
+    (void)netv; (void)want;
+    return "cpu (this build has no opencv dnn)";
+#endif
+}
+
 // --------------------------------------------------------------- the detector
 // PEOPLE, and only the parts of "people" this build can honestly do.
 //
@@ -141,12 +196,17 @@ struct Person {
 
 class PersonDetector {
 public:
-    bool init(const std::string& onnx, std::string& note) {
+    bool init(const std::string& onnx, int want, std::string& note) {
 #if KESTREL_HAVE_DNN
         if (!onnx.empty()) {
             try {
                 net_ = cv::dnn::readNet(onnx);
-                if (!net_.empty()) { kind_ = ONNX; note = "onnx: " + onnx; return true; }
+                if (!net_.empty()) {
+                    kind_ = ONNX;
+                    backend_ = applyBackend(&net_, want, &cuda_);
+                    note = "onnx on " + backend_;
+                    return true;
+                }
             } catch (const cv::Exception& e) {
                 note = std::string("onnx failed, using HOG: ") + e.what();
             }
@@ -157,7 +217,14 @@ public:
 #if KESTREL_HAVE_OBJDETECT
         hog_.setSVMDetector(cv::HOGDescriptor::getDefaultPeopleDetector());
         kind_ = HOG;
-        if (note.empty()) note = "HOG + linear SVM, upright people, no model file";
+        // HOG IS CPU HERE AND THERE IS NO GPU PATH FOR IT in mainline OpenCV
+        // -- cv::cuda::HOG lives in the contrib cudaobjdetect module, which
+        // this build does not require. So --cuda does nothing for the default
+        // detector, and the pane says cpu rather than implying otherwise. The
+        // way to put the detector on the GPU is --detector FILE.onnx.
+        backend_ = "cpu (HOG has no cuda path in this build)";
+        if (note.empty())
+            note = "HOG + linear SVM, upright people, no model file";
         return true;
 #else
         kind_ = NONE;
@@ -167,6 +234,8 @@ public:
     }
 
     bool available() const { return kind_ != NONE; }
+    const std::string& backend() const { return backend_; }
+    bool onCuda() const { return cuda_; }
     const char* kindName() const {
         return kind_ == ONNX ? "onnx" : kind_ == HOG ? "HOG" : "none";
     }
@@ -231,6 +300,8 @@ private:
     }
 
     enum Kind { NONE = 0, HOG, ONNX } kind_ = NONE;
+    std::string backend_ = "cpu";
+    bool cuda_ = false;
 #if KESTREL_HAVE_OBJDETECT
     cv::HOGDescriptor hog_;
 #endif
@@ -250,6 +321,7 @@ void drawPeople(cv::Mat& bgr, const std::vector<Person>& ps) {
             p.rangeM > 0.f ? OK : WARN, 1);
     }
 }
+
 
 // ---------------------------------------------------------------- the stages
 // ONE SLOT PER STAGE, holding the latest FINISHED frame. A queue would be
@@ -291,6 +363,9 @@ struct PeopleFrame {
     cv::Mat  image;
     int      n = 0;
     double   msPerFrame = 0;
+    // Whether the image came from the camera that measured the depth. When it
+    // did not, the boxes have no range and the pane says why.
+    bool     aligned = false;
 };
 
 // ------------------------------------------------------------ policy loading
@@ -308,14 +383,15 @@ struct PeopleFrame {
 // exactly as the trainer does it.
 class Policy {
 public:
-    bool loadOnnx(const std::string& path, std::string& note) {
+    bool loadOnnx(const std::string& path, int want, std::string& note) {
 #if KESTREL_HAVE_DNN
         if (path.empty()) return false;
         try {
             net_ = cv::dnn::readNet(path);
             if (net_.empty()) { note = "onnx loaded empty: " + path; return false; }
             haveNet_ = true;
-            note = "learned policy (onnx)";
+            backend_ = applyBackend(&net_, want, &cuda_);
+            note = "learned policy, onnx on " + backend_;
             return true;
         } catch (const cv::Exception& e) {
             note = std::string("onnx failed: ") + e.what();
@@ -355,9 +431,13 @@ public:
     }
 
     bool learned() const { return haveNet_; }
+    const std::string& backend() const { return backend_; }
+    bool onCuda() const { return cuda_; }
 
 private:
     bool haveNet_ = false;
+    std::string backend_ = "cpu";
+    bool cuda_ = false;
 #if KESTREL_HAVE_DNN
     cv::dnn::Net net_;
 #endif
@@ -429,8 +509,19 @@ bool parse(const std::vector<std::string>& args, Options& o, std::string& err) {
         else if (a == "--pane")   { o.paneW = std::stoi(next("--pane")); o.paneH = o.paneW * 3 / 4; }
         else if (a == "--no-mirror") o.mirror = false;
         else if (a == "--no-emitter") o.emitter = false;
+        else if (a == "--cuda")     o.cuda = Options::CUDA_ON;
+        else if (a == "--no-cuda")  o.cuda = Options::CUDA_OFF;
         else { err = "unknown argument: " + a; return false; }
         if (!err.empty()) return false;
+    }
+    // --cuda MEANS "I INTEND TO RUN ON THE GPU". Letting it pass silently on a
+    // machine with no device is how a rehearsal becomes a surprise, so it is
+    // refused here rather than noted on a pane an hour later. AUTO is the
+    // default precisely so this is opt-in.
+    if (o.cuda == Options::CUDA_ON && cudaDevices() == 0) {
+        err = "--cuda: no CUDA device visible to OpenCV. Drop the flag to run "
+              "on the CPU, or --no-cuda to say so deliberately.";
+        return false;
     }
     bool ok = false;
     baselineByName(o.fallback, &ok);
@@ -525,7 +616,7 @@ int shot(const Options& o, const std::string& prefix) {
 
     PersonDetector det;
     std::string dnote;
-    det.init(o.detector, dnote);
+    det.init(o.detector, o.cuda, dnote);
     cv::Mat colour = syntheticColour(iw, ih);
     drawPeople(colour, det.detect(colour, dRaw));
     p[3].title = "HUMANS";
@@ -587,19 +678,18 @@ public:
         return false;
     }
 
-    // Always returns something drawable, so the pane never goes blank.
-    cv::Mat grab(int w, int h, bool mirror) {
+    // Always returns something drawable, so the pane never goes blank. It does
+    // NOT mirror: the caller detects in sensor orientation and mirrors once,
+    // afterwards, so there is exactly one place that decides which way round
+    // the pane is.
+    cv::Mat grab(int w, int h) {
 #if KESTREL_HAVE_VIDEOIO
         if (live_) {
             cv::Mat f;
-            if (cap_.read(f) && !f.empty()) {
-                if (mirror) cv::flip(f, f, 1);
-                return f;
-            }
+            if (cap_.read(f) && !f.empty()) return f;
             live_ = false;      // it went away mid-demo; fall through, say so
         }
 #endif
-        (void)mirror;
         return syntheticColour(w, h);
     }
     bool live() const { return live_; }
@@ -633,7 +723,7 @@ int run(const Options& o) {
 
     Policy pol;
     std::string polNote;
-    const bool learned = pol.loadOnnx(o.model, polNote);
+    const bool learned = pol.loadOnnx(o.model, o.cuda, polNote);
     bool fbFound = false;
     const sim::BaselinePolicy fb = baselineByName(o.fallback, &fbFound);
     const std::string polLabel =
@@ -712,6 +802,14 @@ int run(const Options& o) {
                 f.validFrac = float(valid) / std::max(1, depth.rows * depth.cols);
                 f.depthRaw = depth.clone();
                 f.depthVis = sim::colourDepthEq(depth, 8.f);
+                // THE IMAGE THE DEPTH WAS MEASURED IN, when the source has
+                // one. Registered with the depth by construction, so a box
+                // found here indexes straight into f.depthRaw -- which is what
+                // makes "person at 2.3 m" a measurement rather than an
+                // estimate from apparent height. See FrameSource::intensity.
+                cv::Mat ir;
+                if (src->intensity(ir) && !ir.empty())
+                    cv::cvtColor(ir, f.colour, cv::COLOR_GRAY2BGR);
                 f.mapFpv = map.fpvImage(pose.e, pose.n, pose.u, pose.yawDeg,
                                         pose.pitchDeg, iw, 90.f, 8.f);
             } else {
@@ -736,7 +834,7 @@ int run(const Options& o) {
     const bool eyesLive = eyes.open(o, eyesNote);
     PersonDetector det;
     std::string detNote;
-    det.init(o.detector, detNote);
+    det.init(o.detector, o.cuda, detNote);
 
     Slot<PeopleFrame> pplSlot;
     std::thread detThread([&] {
@@ -744,13 +842,39 @@ int run(const Options& o) {
         CameraFrame cf;
         while (!stop.load()) {
             const auto t0 = std::chrono::steady_clock::now();
-            cv::Mat bgr = eyes.grab(iw, ih, o.mirror);
             camSlot.take(cf, seenCam);
+            // PREFER THE CAMERA THAT MEASURED THE DEPTH. A webcam image is
+            // not registered with the RealSense's depth frame, so a box found
+            // in it cannot honestly be given a range -- rangeIn would be
+            // indexing a different camera's pixels and would return a
+            // confident wrong number, which is the one failure mode this tree
+            // refuses everywhere else. The webcam is the fallback for when
+            // there is no depth camera at all, and then boxes come back
+            // without a range rather than with a guessed one.
+            const bool aligned = !cf.colour.empty();
             PeopleFrame pf;
-            const std::vector<Person> ps = det.detect(bgr, cf.depthRaw);
-            drawPeople(bgr, ps);
-            pf.image = bgr;
+            // DETECT IN THE ORIENTATION THE SENSOR DELIVERED, always. The
+            // mirror is a courtesy to the person standing in front of the
+            // camera -- it makes waving match -- and a mirrored image does not
+            // index the same pixels as the depth frame, so detecting in it
+            // would look the boxes up in the wrong half of the scene and
+            // return a confident wrong range.
+            cv::Mat sensorView = aligned ? cf.colour : eyes.grab(iw, ih);
+            std::vector<Person> ps =
+                det.detect(sensorView, aligned ? cf.depthRaw : cv::Mat());
+
+            cv::Mat shown;
+            if (o.mirror) {
+                cv::flip(sensorView, shown, 1);
+                for (Person& pp : ps)
+                    pp.box.x = shown.cols - pp.box.x - pp.box.width;
+            } else {
+                shown = sensorView.clone();
+            }
+            drawPeople(shown, ps);
+            pf.image = shown;
             pf.n = int(ps.size());
+            pf.aligned = aligned;
             pf.msPerFrame = std::chrono::duration<double, std::milli>(
                                 std::chrono::steady_clock::now() - t0).count();
             pplSlot.publish(std::move(pf));
@@ -790,8 +914,10 @@ int run(const Options& o) {
         p[2].img = cf.mapFpv.empty() ? pf.fpv : cf.mapFpv;
         p[3].title = "HUMANS";
         p[3].sub = det.available()
-                     ? cv::format("%s, %s   %d found   %.0f ms", det.kindName(),
-                                  eyesNote.c_str(), hf.n, hf.msPerFrame)
+                     ? cv::format("%s on %s   %d found   %.0f ms", det.kindName(),
+                                  hf.aligned ? "the depth camera's own imager"
+                                             : eyesNote.c_str(),
+                                  hf.n, hf.msPerFrame)
                      : detNote;
         p[3].subColour = det.available() ? DIM : WARN;
         p[3].img = hf.image;
@@ -799,8 +925,9 @@ int run(const Options& o) {
 
         txt(canvas,
             cv::format("step %d   travel %.0f m   net %.0f m   cells %d   collisions %d"
-                       "      [q] quit  [r] restart the episode",
-                       pf.steps, pf.travelM, pf.netM, pf.cells, pf.collisions),
+                       "   |  policy %s   people %s      [q] quit  [r] restart",
+                       pf.steps, pf.travelM, pf.netM, pf.cells, pf.collisions,
+                       pol.backend().c_str(), det.backend().c_str()),
             L.strip.x + 4, L.strip.y + 18, 0.44, DIM, 1);
 
         cv::imshow(WIN, canvas);

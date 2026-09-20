@@ -436,6 +436,10 @@ struct Cfg {
     // NOTHING is the --raw-clear inversion again. Naming the field after the
     // argument makes the button, the flag and the green light one fact.
     bool  dNoPeople = false, dNoMirror = false, dNoEmitter = false;
+    // 0 auto, 1 --cuda, 2 --no-cuda. Three states rather than a toggle because
+    // "take the GPU if it is there" and "I am relying on the GPU" are different
+    // intentions, and only the second should refuse to start without one.
+    int   dCuda = 0;
     bool  rDet = false, rProgress = false, rBaselines = false, rRandom = false;
     bool  rNoHome = false;
     bool  rStereo = false, rNoVeto = false, rVary = false;
@@ -494,6 +498,8 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.dNoPeople)  a.push_back("--no-people");
             if (c.dNoMirror)  a.push_back("--no-mirror");
             if (c.dNoEmitter) a.push_back("--no-emitter");
+            if (c.dCuda == 1) a.push_back("--cuda");
+            else if (c.dCuda == 2) a.push_back("--no-cuda");
             break;
         case EVAL:
             // No --model: evaluate.py takes the newest checkpoint itself when
@@ -660,7 +666,7 @@ enum {
     // the duplicate-id case `gui --check` exists to catch, and it caught it.
     ID_D_SOURCE = 800,
     ID_D_WORLD = 810, ID_D_PANEM, ID_D_PANEP,
-    ID_D_PEOPLE, ID_D_MIRROR, ID_D_EMITTER, ID_D_SHOT,
+    ID_D_PEOPLE, ID_D_MIRROR, ID_D_EMITTER, ID_D_SHOT, ID_D_CUDA,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -749,63 +755,71 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                const std::vector<std::string>& recs) {
     const int x = 266;
     txt(im, "the demo -- four things at once", x, 112, 0.62, INK, 1);
-    txt(im, "The policy flying, the depth a real camera returns, the map built",
-        x, 136, 0.44, DIM);
-    txt(im, "from it, and people found in the camera image with a RANGE read off",
-        x, 156, 0.44, DIM);
-    txt(im, "the depth frame. Four threads, because the detector is the slowest",
-        x, 176, 0.44, DIM);
-    txt(im, "stage and one loop would make every pane as slow as it is.",
-        x, 196, 0.44, DIM);
+    txt(im, "The policy flying, the depth a real camera returns, the map built from",
+        x, 134, 0.44, DIM);
+    txt(im, "it, and people found in the camera image with a RANGE read off the depth",
+        x, 152, 0.44, DIM);
+    txt(im, "frame. Four threads, because the detector is the slowest stage.",
+        x, 170, 0.44, DIM);
 
-    txt(im, "depth for the two live panes", x, 240, 0.5, DIM);
+    txt(im, "depth for the two live panes", x, 208, 0.5, DIM);
     const char* src[3] = {"Simulated raycaster", "Live D435i", "Replay a recording"};
     for (int i = 0; i < 3; ++i)
-        bs.push_back({cv::Rect(x + i * 260, 252, 250, 38), src[i],
+        bs.push_back({cv::Rect(x + i * 260, 220, 250, 38), src[i],
                       ID_D_SOURCE + i, c.dSource == i});
 
     // WHICH WORLD THE POLICY FLIES IN, and it is a single choice rather than
     // the multi-select the measuring panels use: a demo shows one thing at a
     // time and a checklist would imply otherwise.
-    txt(im, "world for the planner pane", x, 326, 0.5, DIM);
-    bs.push_back({cv::Rect(x, 338, 250, 38),
+    txt(im, "world for the planner pane", x, 292, 0.5, DIM);
+    bs.push_back({cv::Rect(x, 304, 250, 38),
                   std::string("world: ") + WORLD_NAME[c.dWorld], ID_D_WORLD, true});
-    txt(im, "click to cycle", x, 392, 0.42, DIM);
-
-    stepper(im, bs, x + 300, 338, "pane px",
+    txt(im, "click to cycle", x, 358, 0.42, DIM);
+    stepper(im, bs, x + 300, 304, "pane px",
             std::to_string(DEMO_PANE[c.dPane]), ID_D_PANEM, ID_D_PANEP,
             "one of the four", 100);
 
-    bs.push_back({cv::Rect(x, 418, 250, 38),
+    bs.push_back({cv::Rect(x, 382, 250, 36),
                   c.dNoPeople ? "people pane OFF" : "people pane on",
                   ID_D_PEOPLE, c.dNoPeople});
-    bs.push_back({cv::Rect(x + 260, 418, 250, 38),
+    bs.push_back({cv::Rect(x + 260, 382, 250, 36),
                   c.dNoMirror ? "camera as-is" : "mirror the camera",
                   ID_D_MIRROR, c.dNoMirror});
     // The projector is what makes a D435i work on a blank wall, and it is also
-    // what puts a dot pattern in the infrared image. It matters here and
-    // nowhere else in this window, so it lives on this panel.
-    bs.push_back({cv::Rect(x + 520, 418, 250, 38),
+    // what puts a dot pattern in the infrared image the detector reads. It
+    // matters here and nowhere else in this window.
+    bs.push_back({cv::Rect(x + 520, 382, 250, 36),
                   c.dNoEmitter ? "IR emitter off" : "IR emitter on",
                   ID_D_EMITTER, c.dNoEmitter});
 
-    bs.push_back({cv::Rect(x, 470, 250, 38), "Write the panes as PNG",
+    // THE GPU, FOR THE TWO NETWORKS AND NOTHING ELSE. It does not touch the
+    // sim's depth renderer: that has its own build switch guarding a kernel
+    // its own header says has never been compiled or run.
+    bs.push_back({cv::Rect(x, 428, 250, 36),
+                  c.dCuda == 1 ? "cuda: required"
+                : c.dCuda == 2 ? "cuda: off"
+                               : "cuda: if present",
+                  ID_D_CUDA, c.dCuda != 0});
+    bs.push_back({cv::Rect(x + 260, 428, 250, 36), "Write the panes as PNG",
                   ID_D_SHOT, false});
-    txt(im, "--shot needs no camera and no display; it is how this layout is",
-        x + 260, 486, 0.42, DIM);
-    txt(im, "reviewed over ssh, the same way gui --check is.", x + 260, 504, 0.42, DIM);
+
+    // BELOW the buttons, not beside them: at x+520 four lines of this length
+    // ran 200 px off a 1060 px canvas, and gui --check caught it.
+    txt(im, "cuda moves the POLICY and an --detector onnx onto the GPU. The default "
+            "HOG detector has", x, 486, 0.42, DIM);
+    txt(im, "no GPU path in this build and says cpu on its pane. 'required' refuses "
+            "to start without one.", x, 502, 0.42, DIM);
 
     if (c.dSource == 1) {
-        txt(im, "librealsense loads at RUN time, so this build needs no SDK. With no",
-            x, 540, 0.42, DIM);
-        txt(im, "camera the two live panes fall back to the sim and say so on the pane.",
-            x, 558, 0.42, DIM);
+        txt(im, "librealsense loads at RUN time, so this build needs no SDK. With no "
+                "camera the two", x, 526, 0.42, DIM);
+        txt(im, "live panes fall back to the sim and say so on the pane.",
+            x, 542, 0.42, DIM);
     } else if (c.dSource == 2 && recs.empty()) {
-        txt(im, "no .kdr recordings found in ./ or ./recordings", x, 540, 0.42, DIM);
+        txt(im, "no .kdr recordings found in ./ or ./recordings", x, 526, 0.42, DIM);
     } else {
-        txt(im, "In the demo window:  q quit   r restart the episode", x, 540, 0.42, DIM);
-        txt(im, "Panes name what they are ACTUALLY showing -- a classical planner is",
-            x, 558, 0.42, DIM);
+        txt(im, "In the demo window:  q quit   r restart the episode", x, 526, 0.42, DIM);
+        txt(im, "Every pane names what it is ACTUALLY showing.", x, 542, 0.42, DIM);
     }
 }
 
@@ -1159,6 +1173,10 @@ const FlagBtn FLAG_BTNS[] = {
     {DEMO,  ID_D_PEOPLE,    "--no-people"},
     {DEMO,  ID_D_MIRROR,    "--no-mirror"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
+    // Three-state, so the table cannot name one flag: lit for --cuda AND for
+    // --no-cuda, dark only for auto, which emits nothing. Checking it against
+    // a single flag would fail whichever of the two was not named.
+    {DEMO,  ID_D_CUDA,      ""},
     {REPORT, ID_R_NOVETO,   "--no-veto"},
     {REPORT, ID_R_NOHOME,   "--no-homeward"},
     {REPORT, ID_R_VARY,     "--vary-goal"},
@@ -1388,6 +1406,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_D_PEOPLE:  c.dNoPeople = !c.dNoPeople; break;
         case ID_D_MIRROR:  c.dNoMirror = !c.dNoMirror; break;
         case ID_D_EMITTER: c.dNoEmitter = !c.dNoEmitter; break;
+        case ID_D_CUDA:    c.dCuda = (c.dCuda + 1) % 3; break;
         case ID_R_RANDOM: c.rRandom = !c.rRandom; break;
         case ID_R_STEREO: c.rStereo = !c.rStereo; break;
         case ID_R_NOVETO: c.rNoVeto = !c.rNoVeto; break;

@@ -75,6 +75,23 @@ public:
     // the source knows about pose. Returns false at end of stream or on error.
     virtual bool next(cv::Mat& depth, PoseHint& hint) = 0;
 
+    // THE IMAGE THE DEPTH WAS COMPUTED IN, when the source has one. On a
+    // RealSense that is the LEFT infrared imager -- the same sensor the
+    // disparity is measured in, so it is registered with the depth by
+    // construction: pixel (u,v) here and pixel (u,v) in the depth frame are
+    // the same ray, with no alignment step and nothing to calibrate.
+    //
+    // That is the whole reason this is on the interface rather than being a
+    // colour stream added beside it. A box found in a colour image has to be
+    // warped into the depth frame before its distance can be read, and the
+    // warp needs an extrinsic nobody here has measured; a box found in THIS
+    // image can be looked up directly. `demo` uses it for exactly that.
+    //
+    // CV_8U, one channel, the same size as the depth frame. False means this
+    // source has no such image, which is not an error -- the sim renders depth
+    // without ever forming one.
+    virtual bool intensity(cv::Mat& out) const { (void)out; return false; }
+
     // Frames available, or -1 for an open-ended stream (live).
     virtual int  frameCount() const { return -1; }
     virtual int  index() const { return 0; }

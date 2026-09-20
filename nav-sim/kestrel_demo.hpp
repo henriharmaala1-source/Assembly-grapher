@@ -72,6 +72,19 @@ struct Options {
     int  webcamIndex = 0;
     std::string detector;       // .onnx person detector; empty = built-in HOG
 
+    // CUDA FOR THE TWO NETWORKS, when there is a GPU and OpenCV was built to
+    // use it. AUTO takes it if it is there, which is what a demo wants; ON
+    // fails loudly if it is not, which is what a rehearsal wants; OFF is the
+    // control you need to claim a speedup at all.
+    //
+    // It does NOT touch the sim's depth renderer. That has its own switch
+    // (NAVSIM_WITH_CUDA) guarding a kernel whose own header says it has never
+    // been compiled or run, gated by cuda_depth_check -- turning that on from
+    // here would be shipping an unvalidated kernel inside the one command
+    // whose job is to be believed.
+    enum Cuda { CUDA_AUTO = 0, CUDA_ON, CUDA_OFF };
+    int  cuda = CUDA_AUTO;
+
     int  camW = 640, camH = 480, camFps = 30;
     bool emitter = true;
 

@@ -517,102 +517,88 @@ void genGallery(VoxelWorld& w, const GalleryParams& p,
     const float clear = std::max(L, q(p.clearM));
     const int   cells = std::max(2, int(size / pitch));
 
-    // ONE FEATURE PER PLAN CELL, PLACED OFF-CENTRE BY WHOLE LATTICE STEPS.
+    // ROOMS AND DOORWAYS, not a field of posts.
     //
-    // The first version put one block at the exact centre of every cell, and
-    // the plan view came out as wallpaper: a regular grid of near-identical
-    // posts. That is bad for the demo twice over -- it reads as a texture
-    // rather than a place, and an aircraft crossing it never has to choose,
-    // because every gap is the same gap. Jittering inside the cell fixes both
-    // and costs nothing, PROVIDED the jitter is a whole number of lattice
-    // steps: anything finer would put a face between two coarse voxels and
-    // undo the one property these worlds exist for.
-    auto jitter = [&](float span) {
-        const int steps = std::max(0, int((pitch - span) / L));
-        return float(int(u01(rng) * float(steps + 1))) * L;
+    // TWO EARLIER TRIES FAILED THE SAME WAY. Blocks at the centre of every plan
+    // cell gave wallpaper; jittered blocks with varied footprints gave a
+    // scattered field. Both left about half the ground open, and they could not
+    // do otherwise: a free-standing obstacle must be smaller than its cell or
+    // there is no lane, so a lane is exactly what is always there. An aircraft
+    // crossing that flies more or less straight and the demo shows nothing.
+    //
+    // Putting the walls on the CELL EDGES inverts it. The open space becomes a
+    // room -- bounded on four sides by construction -- and the only way out is
+    // a doorway. There is then no open ground anywhere, the first-person view
+    // always has a wall in it, and getting anywhere means finding and lining up
+    // on a gap, which is the behaviour worth watching.
+    //
+    // NOT EVERY EDGE IS OPEN, and that is where the decisions come from. A room
+    // with four doorways is a crossroads; with one it is a dead end that has to
+    // be backed out of. pSolid sets the mix.
+    const int rooms = std::max(2, int(size / pitch));
+    const float wallT = L;                       // walls are one lattice thick
+    const float doorW = std::max(2 * L, q(clear));   // and doorways this wide
+    auto wallH = [&]() {
+        return floorZ + q(p.minHM + u01(rng) * std::max(0.f, p.maxHM - p.minHM));
     };
-    // SPINE WALLS FIRST, running most of the way across the world with gaps in
-    // them. Without something at this scale the map is a field of separate
-    // objects and every route is as good as every other; a long wall is what
-    // makes one way round better than the other, which is the decision worth
-    // watching a planner make.
-    const int spines = (p.wallFrac > 0.5f) ? 5 : 3;
-    for (int i = 0; i < spines; ++i) {
-        const bool alongX = (i % 2) == 0;
-        const float at = q(2 * L + u01(rng) * (size - 4 * L));
-        const float h = floorZ + q(p.minHM + u01(rng) *
-                                   std::max(0.f, p.maxHM - p.minHM));
-        // Walk it in lattice steps, leaving a gap every so often. The gaps are
-        // several cells wide so the wall is a decision and not a wall.
-        for (float t = 2 * L; t < size - 2 * L; t += L) {
-            if (u01(rng) < 0.18f) { t += q(clear); continue; }
-            if (alongX) block(t, at, floorZ, t + L, at + L, h, p.tex);
-            else        block(at, t, floorZ, at + L, t + L, h, p.tex);
+    // A wall from (x0,y0) to (x1,y1) along one axis, with an optional gap.
+    auto edge = [&](float x0, float y0, float x1, float y1, bool alongX) {
+        const float h = wallH();
+        const float len = alongX ? (x1 - x0) : (y1 - y0);
+        if (len < doorW + 2 * L || u01(rng) < p.wallFrac) {   // solid
+            if (alongX) block(x0, y0, floorZ, x1, y0 + wallT, h, p.tex);
+            else        block(x0, y0, floorZ, x0 + wallT, y1, h, p.tex);
+            return;
         }
-    }
+        // THE GAP IS ON THE LATTICE like everything else, and it runs from the
+        // floor up rather than being a window: an opening the aircraft has to
+        // climb to is one it will not find, and a demo where it mills about in
+        // a room is worse than one with fewer doors.
+        const float off = q((len - doorW) * (0.25f + 0.5f * u01(rng)));
+        if (alongX) {
+            block(x0, y0, floorZ, x0 + off, y0 + wallT, h, p.tex);
+            block(x0 + off + doorW, y0, floorZ, x1, y0 + wallT, h, p.tex);
+            // A LINTEL over the gap, so the doorway is a HOLE and not a notch.
+            // A notch can be represented by a 2-D occupancy grid; a hole with
+            // solid above and below cannot, and showing the difference is most
+            // of why the map is three-dimensional at all.
+            block(x0 + off, y0, floorZ + 3 * L, x0 + off + doorW, y0 + wallT, h, p.tex);
+        } else {
+            block(x0, y0, floorZ, x0 + wallT, y0 + off, h, p.tex);
+            block(x0, y0 + off + doorW, floorZ, x0 + wallT, y1, h, p.tex);
+            block(x0, y0 + off, floorZ + 3 * L, x0 + wallT, y0 + off + doorW, h, p.tex);
+        }
+    };
 
-    for (int iy = 0; iy < cells; ++iy) {
-        for (int ix = 0; ix < cells; ++ix) {
-            const float ox = q(ix * pitch), oy = q(iy * pitch);
-            if (ox < 2 * L || oy < 2 * L || ox > size - 3 * L || oy > size - 3 * L)
-                continue;
-            const float r = u01(rng);
-            const float h = floorZ + q(p.minHM + u01(rng) *
-                                       std::max(0.f, p.maxHM - p.minHM));
-            if (h < floorZ + L) continue;
-            if (r > 0.88f) continue;          // some cells are simply open
-
-            if (r < p.wallFrac) {
-                // A WALL SEGMENT: a long flat face, and the single best thing
-                // to look at through this ladder. A flat surface subdividing
-                // cleanly from 2.0 m to 0.25 m as you close on it is the whole
-                // claim made visible; a tree cannot show it.
-                const bool alongX = u01(rng) < 0.5f;
-                const float len = q(std::max(3 * L, (pitch - clear) *
-                                             (0.7f + 0.5f * u01(rng))));
-                const float jx = jitter(alongX ? len : L);
-                const float jy = jitter(alongX ? L : len);
-                const float x0 = ox + jx, y0 = oy + jy;
-                // A DOORWAY in some of them, one lattice off the floor, so the
-                // map has to represent a HOLE rather than a surface -- the
-                // thing a 2-D occupancy grid cannot do and this one can. It is
-                // 2 lattice cells wide and 2 tall, which clears the 0.6 m
-                // robot radius with room to be flown at rather than squeezed.
-                const bool door = u01(rng) < 0.4f && h >= floorZ + 4 * L
-                                                  && len >= 5 * L;
-                const float dz0 = floorZ + L, dz1 = floorZ + 3 * L;
-                const float m0 = q(len * 0.5f) - L;     // the gap, on lattice
-                if (alongX) {
-                    if (door) {
-                        block(x0, y0, floorZ, x0 + m0, y0 + L, h, p.tex);
-                        block(x0 + m0 + 2 * L, y0, floorZ, x0 + len, y0 + L, h, p.tex);
-                        block(x0 + m0, y0, floorZ, x0 + m0 + 2 * L, y0 + L, dz0, p.tex);
-                        block(x0 + m0, y0, dz1, x0 + m0 + 2 * L, y0 + L, h, p.tex);
-                    } else {
-                        block(x0, y0, floorZ, x0 + len, y0 + L, h, p.tex);
-                    }
-                } else {
-                    if (door) {
-                        block(x0, y0, floorZ, x0 + L, y0 + m0, h, p.tex);
-                        block(x0, y0 + m0 + 2 * L, floorZ, x0 + L, y0 + len, h, p.tex);
-                        block(x0, y0 + m0, floorZ, x0 + L, y0 + m0 + 2 * L, dz0, p.tex);
-                        block(x0, y0 + m0, dz1, x0 + L, y0 + m0 + 2 * L, h, p.tex);
-                    } else {
-                        block(x0, y0, floorZ, x0 + L, y0 + len, h, p.tex);
-                    }
-                }
-            } else {
-                // A BLOCK, one to four lattice cells square. Stepping the
-                // footprint as well as the height is what stops the scene
-                // reading as one object repeated, which at these angles looks
-                // like a rendering artefact rather than a world.
-                const float wide = L * float(1 + int(u01(rng) * 3.99f));
-                const float deep = L * float(1 + int(u01(rng) * 3.99f));
-                const float x0 = ox + jitter(wide), y0 = oy + jitter(deep);
-                block(x0, y0, floorZ, x0 + wide, y0 + deep, h, p.tex);
+    for (int j = 0; j < rooms; ++j) {
+        for (int i = 0; i < rooms; ++i) {
+            const float x0 = q(i * pitch), y0 = q(j * pitch);
+            const float x1 = q((i + 1) * pitch), y1 = q((j + 1) * pitch);
+            if (x1 > size - L || y1 > size - L) continue;
+            edge(x0, y0, x1, y1, true);     // the room's south wall
+            edge(x0, y0, x1, y1, false);    // and its west wall
+            // SOMETHING IN THE ROOM TOO, in about half of them. A bare room is
+            // a short open space, and the whole argument above is that open
+            // space is what the demo must not contain.
+            if (u01(rng) < 0.55f) {
+                const int maxCells = std::max(1, int((pitch - 2 * doorW) / L));
+                const float wide = L * float(1 + int(u01(rng) * float(maxCells)));
+                const float deep = L * float(1 + int(u01(rng) * float(maxCells)));
+                const int sx = std::max(0, int((pitch - wide - 2 * wallT) / L));
+                const float bx = x0 + wallT + float(int(u01(rng) * float(sx + 1))) * L;
+                const float by = y0 + wallT + float(int(u01(rng) * float(sx + 1))) * L;
+                block(bx, by, floorZ, bx + wide, by + deep, wallH(), p.tex);
             }
         }
     }
+    // THE OUTER WALL, so the world is a building and not a slab with things on
+    // it. Without it the edge of the map is the one place with nothing in the
+    // way, and that is exactly where a planner that likes open space will go.
+    const float hOut = floorZ + q(p.maxHM);
+    block(0, 0, floorZ, size, wallT, hOut, p.tex);
+    block(0, q(size - wallT), floorZ, size, size, hOut, p.tex);
+    block(0, 0, floorZ, wallT, size, hOut, p.tex);
+    block(q(size - wallT), 0, floorZ, size, size, hOut, p.tex);
 
     // A CLEAR BERTH AT BOTH ENDS, and it is the GEOMETRY that moves, not the
     // spawn. Everywhere else a generator picks a start by finding somewhere

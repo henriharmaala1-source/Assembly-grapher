@@ -347,10 +347,26 @@ struct GalleryParams {
     // rung's cell or the whole argument above collapses. It is here so the
     // reason is written down next to the number, not so it can be tuned.
     float latticeM = 2.0f;
-    float pitchM  = 12.f;   // pillar spacing, rounded to the lattice
-    float clearM  = 6.f;    // the lane left between structures
-    float wallFrac = 0.35f; // how much of the plan is walls rather than pillars
-    float minHM   = 4.f, maxHM = 14.f;   // block heights, rounded to the lattice
+    // DENSITY IS THE POINT. A demo of an obstacle-avoiding planner in an open
+    // field shows an aircraft flying straight. Every one of these exists to
+    // put something in the way and keep it there:
+    float pitchM  = 14.f;   // ROOM pitch: interior is this minus one wall
+    float fillFrac = 0.92f; // how many plan cells get a feature at all. The
+                            // first version left 12% empty and the empties
+                            // joined up into open ground
+    float clearM  = 4.f;    // the narrowest lane left between structures. Below
+                            // about 3 m the swept-sphere test rejects
+                            // everything and the aircraft simply stops, which
+                            // looks like a broken policy rather than a tight
+                            // world -- see the measurement in RUN_ME
+    // THE FRACTION OF EDGES WITH NO DOORWAY. A room with four doorways is a
+    // crossroads; with one it is a dead end that has to be backed out of. Too
+    // high and the world stops being connected, which is not a hard failure --
+    // the aircraft simply never leaves the first few rooms.
+    float wallFrac = 0.28f;
+    // TALL ENOUGH THAT OVER IS NOT A ROUTE. The aircraft flies at 4 m and can
+    // climb; obstacles it can top are obstacles it does not have to avoid.
+    float minHM   = 14.f, maxHM = 24.f;  // block heights, rounded to the lattice
     bool  ceiling = false;  // hall: a roof, so the map closes overhead
     float tex     = 0.62f;  // strongly textured: this shows mapping, not stereo
     unsigned seed = 1;

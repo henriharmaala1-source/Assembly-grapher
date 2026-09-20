@@ -266,12 +266,34 @@ columns as the classical ones, on seeds it never trained on.
                      and it is indistinguishable, to anyone watching,
                      from the map being broken.
 
-                       gallery   pillars and free-standing walls, open,
-                                 lanes wide enough to watch the planner
-                                 choose rather than squeeze
-                       hall      the same geometry indoors: more walls,
-                                 doorways, and a roof, so the map closes
-                                 overhead and UNKNOWN above you matters
+                       gallery   a grid of rooms, walls on every cell
+                                 edge, doorways through most of them and
+                                 a free-standing block in about half the
+                                 rooms. 14-24 m walls, so over is not a
+                                 route
+                       hall      the same, tighter and roofed: more solid
+                                 edges, so more dead ends, and a ceiling,
+                                 so the map closes overhead and UNKNOWN
+                                 above you matters
+
+                     THERE IS NO OPEN GROUND, and that is structural
+                     rather than a matter of turning a density up. A
+                     free-standing obstacle has to be smaller than its
+                     cell or there is no lane past it -- so with scattered
+                     obstacles a lane is exactly what is always there,
+                     and an aircraft crossing that flies more or less
+                     straight. Two versions of this world failed that way
+                     before the walls moved onto the cell EDGES. Then the
+                     open space is a room, bounded on four sides by
+                     construction, and the only way out is a doorway:
+                     the view always has a wall in it and getting
+                     anywhere means finding and lining up on a gap.
+
+                     Measured on the shipped settings, 400 steps, two
+                     seeds: every classical planner flew its whole budget
+                     with no collisions, at a minimum clearance of
+                     0.64-0.98 m against a 0.6 m robot radius. It is
+                     threading doorways, not sailing past them.
 
                      Every surface in both sits on a 2.0 m lattice and
                      every extent is a multiple of 2.0 m. 2.0 is the

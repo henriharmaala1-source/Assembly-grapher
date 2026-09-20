@@ -200,6 +200,33 @@ std::vector<std::string> findRecordings(const std::string& exeDir) {
     return v;
 }
 
+// EXPORTED POLICIES. A .onnx beside the exe or under runs/ is a checkpoint
+// someone has already put through export_onnx.py's agreement check, so it is
+// safe to offer. Without one the demo flies a classical planner and says so --
+// which is correct, and is also the single most likely reason for someone to
+// come away thinking the learned policy is what they watched when it was not.
+std::vector<std::string> findModels(const std::string& exeDir) {
+    std::vector<std::string> v = filesIn(".", {".onnx"}, 6);
+    for (const std::string& f : filesIn("runs", {".onnx"}, 6)) v.push_back(f);
+    for (const std::string& f : filesIn(exeDir, {".onnx"}, 6)) v.push_back(f);
+    // DEDUPE BY THE PATH THE FILESYSTEM AGREES ON. "." and exeDir are the same
+    // directory whenever the exe is run from beside itself, which is the normal
+    // case, so every model was listed twice -- two buttons, same file, one of
+    // them lit. Comparing the strings would not catch it; comparing what they
+    // resolve to does.
+    std::vector<std::string> out;
+    std::vector<std::string> seen;
+    for (const std::string& f : v) {
+        std::error_code ec;
+        const std::string key = fs::weakly_canonical(f, ec).string();
+        const std::string k = ec ? f : key;
+        if (std::find(seen.begin(), seen.end(), k) != seen.end()) continue;
+        seen.push_back(k);
+        out.push_back(f);
+    }
+    return out;
+}
+
 // --------------------------------------------------------------- python state
 // WHICH PYTHON, shown on the train panel. Discovery starts several
 // interpreters, so it runs once when the window opens and again after anything
@@ -210,6 +237,13 @@ struct PyState {
     bool probed = false;
 };
 PyState g_py;
+
+// FILE SCOPE, refreshed beside the python probe, for the same reason g_py is:
+// threading a fifth list through compose(), panelX() and buildArgs() would
+// touch every panel to serve one. Refreshed whenever a command returns, since
+// running the export is exactly what creates one of these.
+std::vector<std::string> g_models;
+void refreshModels(const std::string& dir) { g_models = findModels(dir); }
 
 void refreshPy(const std::string& dir) {
     g_py.pys = kpy::discover(dir);
@@ -440,6 +474,8 @@ struct Cfg {
     // "take the GPU if it is there" and "I am relying on the GPU" are different
     // intentions, and only the second should refuse to start without one.
     int   dCuda = 0;
+    // -1 means "no model": fly the classical fallback, captioned as one.
+    int   dModel = -1;
     bool  rDet = false, rProgress = false, rBaselines = false, rRandom = false;
     bool  rNoHome = false;
     bool  rStereo = false, rNoVeto = false, rVary = false;
@@ -498,6 +534,9 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.dNoPeople)  a.push_back("--no-people");
             if (c.dNoMirror)  a.push_back("--no-mirror");
             if (c.dNoEmitter) a.push_back("--no-emitter");
+            if (c.dModel >= 0 && c.dModel < int(g_models.size())) {
+                a.push_back("--model"); a.push_back(g_models[c.dModel]);
+            }
             if (c.dCuda == 1) a.push_back("--cuda");
             else if (c.dCuda == 2) a.push_back("--no-cuda");
             break;
@@ -667,6 +706,9 @@ enum {
     ID_D_SOURCE = 800,
     ID_D_WORLD = 810, ID_D_PANEM, ID_D_PANEP,
     ID_D_PEOPLE, ID_D_MIRROR, ID_D_EMITTER, ID_D_SHOT, ID_D_CUDA,
+    ID_D_EXPORT,
+    // A RANGE, like ID_SIM_REPLAY: one id per .onnx found, plus one for "none".
+    ID_D_MODEL = 830,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -802,24 +844,39 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                   ID_D_CUDA, c.dCuda != 0});
     bs.push_back({cv::Rect(x + 260, 428, 250, 36), "Write the panes as PNG",
                   ID_D_SHOT, false});
+    // EXPORT IS ONE BUTTON because the script defaults to the newest
+    // checkpoint in the newest run, the same convention report and evaluate
+    // use. It runs through train, which is where the interpreter is chosen.
+    bs.push_back({cv::Rect(x + 520, 428, 250, 36), "Export newest -> .onnx",
+                  ID_D_EXPORT, false});
+
+    // WHICH POLICY, and "none" is a real choice rather than the absence of one:
+    // the pane is then captioned "classical: <name>" and nobody can come away
+    // thinking they watched the learned policy.
+    txt(im, "policy for the planner pane", x, 478, 0.5, DIM);
+    {
+        const int n = std::min<int>(3, int(g_models.size()));
+        bs.push_back({cv::Rect(x, 486, 180, 32), "none (classical)",
+                      ID_D_MODEL, c.dModel < 0});
+        for (int i = 0; i < n; ++i)
+            bs.push_back({cv::Rect(x + 190 + i * 200, 486, 190, 32),
+                          fs::path(g_models[i]).filename().string(),
+                          ID_D_MODEL + 1 + i, c.dModel == i});
+    }
 
     // BELOW the buttons, not beside them: at x+520 four lines of this length
     // ran 200 px off a 1060 px canvas, and gui --check caught it.
-    txt(im, "cuda moves the POLICY and an --detector onnx onto the GPU. The default "
-            "HOG detector has", x, 486, 0.42, DIM);
-    txt(im, "no GPU path in this build and says cpu on its pane. 'required' refuses "
-            "to start without one.", x, 502, 0.42, DIM);
+    txt(im, "cuda moves the POLICY and an --detector onnx onto the GPU; the default "
+            "HOG detector has none.", x, 536, 0.42, DIM);
 
     if (c.dSource == 1) {
-        txt(im, "librealsense loads at RUN time, so this build needs no SDK. With no "
-                "camera the two", x, 526, 0.42, DIM);
-        txt(im, "live panes fall back to the sim and say so on the pane.",
-            x, 542, 0.42, DIM);
+        txt(im, "librealsense loads at RUN time; with no camera the two live panes "
+                "fall back to the sim.", x, 554, 0.42, DIM);
     } else if (c.dSource == 2 && recs.empty()) {
-        txt(im, "no .kdr recordings found in ./ or ./recordings", x, 526, 0.42, DIM);
+        txt(im, "no .kdr recordings found in ./ or ./recordings", x, 554, 0.42, DIM);
     } else {
-        txt(im, "In the demo window:  q quit   r restart the episode", x, 526, 0.42, DIM);
-        txt(im, "Every pane names what it is ACTUALLY showing.", x, 542, 0.42, DIM);
+        txt(im, "q quit, r restart. Every pane names what it is ACTUALLY showing.",
+            x, 554, 0.42, DIM);
     }
 }
 
@@ -1335,6 +1392,10 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
 void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
            const std::vector<std::string>& recs) {
     if (id >= ID_MODE && id < ID_MODE + NMODES) { c.mode = id - ID_MODE; return; }
+    if (id >= ID_D_MODEL && id < ID_D_MODEL + 30) {
+        c.dModel = id - ID_D_MODEL - 1;      // the first entry is "none"
+        return;
+    }
     if (id >= ID_TRACK_INPUT && id < ID_TRACK_INPUT + 30) {
         c.input = id - ID_TRACK_INPUT; return;
     }
@@ -1513,6 +1574,7 @@ int run(const Actions& act, const std::string& exeDir) {
     if (!inputs.empty()) c.input = 0;
     if (!recs.empty())   c.replay = 0;
     refreshPy(exeDir);
+    refreshModels(exeDir);
 
     cv::namedWindow(WIN, cv::WINDOW_AUTOSIZE);
     cv::setMouseCallback(WIN, onMouse);
@@ -1538,7 +1600,8 @@ int run(const Actions& act, const std::string& exeDir) {
         const bool isInstall = (hit == ID_TRAIN_INSTALL);
         const bool isPythons = (hit == ID_TRAIN_PYTHONS);
         const bool isShot    = (hit == ID_D_SHOT);
-        if (hit != ID_RUN && !isInstall && !isPythons && !isShot) {
+        const bool isExport  = (hit == ID_D_EXPORT);
+        if (hit != ID_RUN && !isInstall && !isPythons && !isShot && !isExport) {
             apply(hit, c, inputs, recs);
             continue;
         }
@@ -1547,7 +1610,8 @@ int run(const Actions& act, const std::string& exeDir) {
         // Install is dispatched through train, so there is exactly one place
         // that decides which interpreter is meant.
         std::vector<std::string> args =
-            isInstall ? std::vector<std::string>{"--install"}
+            isExport  ? std::vector<std::string>{"--script", "export_onnx.py"}
+          : isInstall ? std::vector<std::string>{"--install"}
           : isPythons ? std::vector<std::string>{}
                       : buildArgs(c, inputs, recs);
         // The shot writes PREFIX_*.png beside the exe and returns immediately,
@@ -1585,6 +1649,7 @@ int run(const Actions& act, const std::string& exeDir) {
         if (isPythons)      rc = act.pythons();
         else if (isInstall) rc = act.train(args);
         else if (isShot)    rc = act.demo(args);
+        else if (isExport)  rc = act.train(args);
         else switch (c.mode) {
             case TRACK: rc = act.track(args); break;
             case BENCH: rc = act.bench(args); break;
@@ -1617,6 +1682,8 @@ int run(const Actions& act, const std::string& exeDir) {
         inputs = findTrackInputs(exeDir);
         recs = findRecordings(exeDir);
         refreshPy(exeDir);
+        refreshModels(exeDir);
+        if (c.dModel >= int(g_models.size())) c.dModel = -1;
         if (c.input >= int(inputs.size())) c.input = inputs.empty() ? -1 : 0;
         if (c.replay >= int(recs.size()))  c.replay = recs.empty() ? -1 : 0;
 
@@ -1823,6 +1890,11 @@ int shot(const std::string& exeDir, const std::string& prefix) {
     const std::vector<TrackInput> inputs = findTrackInputs(exeDir);
     const std::vector<std::string> recs = findRecordings(exeDir);
     refreshPy(exeDir);
+    // THE SHOT MUST SEE WHAT THE WINDOW SEES. g_models is file-scope state that
+    // run() refreshes; without this line --shot rendered the demo panel with an
+    // empty policy list however many .onnx files were sitting there, so the one
+    // artefact that gets reviewed over ssh showed a control that looks broken.
+    refreshModels(exeDir);
     int n = 0;
     for (int m = 0; m < NMODES; ++m) {
         Cfg c;
@@ -1830,6 +1902,7 @@ int shot(const std::string& exeDir, const std::string& prefix) {
         if (!inputs.empty()) c.input = 0;
         if (!recs.empty())   c.replay = 0;
         if (m == SIM && !recs.empty()) c.simSource = 2;   // show the replay list
+        if (m == DEMO && !g_models.empty()) c.dModel = 0; // and the policy list
         std::vector<Btn> bs;
         const cv::Mat im = compose(c, inputs, recs, bs);
         const std::string f = prefix + "_" + MODE_NAME[m] + ".png";

@@ -289,6 +289,31 @@ columns as the classical ones, on seeds it never trained on.
                      classical planner named by --fallback (default cover) and
                      the pane says "classical: cover" rather than "learned".
 
+                     GETTING A POLICY INTO IT. The pane says "learned"
+                     only when it is flying one, so a checkpoint has to
+                     be exported first -- on the machine that trained,
+                     once:
+
+                       kestrel train --script export_onnx.py RUN/final.zip
+
+                     That writes RUN/final.onnx and then CHECKS IT: it
+                     replays real observations from a real VoxelEnv
+                     through both the PyTorch policy and the exported
+                     graph as OpenCV reads it, and DELETES the file
+                     unless every masked argmax agrees. An export that is
+                     subtly wrong produces a demo that flies badly and
+                     looks like a bad policy, which is unfalsifiable from
+                     the outside; this is the same gate cuda_depth_check
+                     applies to the CUDA renderer.
+
+                     Then, on any machine, with nothing installed:
+
+                       kestrel demo --model final.onnx
+
+                     Without --model the pane flies the planner named by
+                     --fallback (default cover) and is captioned
+                     "classical: cover" -- never "learned".
+
                      CUDA, FOR THE TWO NETWORKS AND NOTHING ELSE.
 
                        kestrel demo --cuda      require a GPU

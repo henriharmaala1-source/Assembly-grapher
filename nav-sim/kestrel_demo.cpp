@@ -583,14 +583,21 @@ int shot(const Options& o, const std::string& prefix) {
     unsigned rng = 7u;
     bool found = false;
     const sim::BaselinePolicy fb = baselineByName(o.fallback, &found);
+    // THE SHOT FLIES WHAT THE DEMO WOULD FLY. Using the fallback here
+    // regardless would mean --shot could never show the one thing the demo
+    // exists for, and an exported policy would have no path through this
+    // binary that runs without a display -- so nothing headless could ever
+    // check that the .onnx loads, masks and steers.
+    Policy pol;
+    std::string polNote;
+    const bool learned = pol.loadOnnx(o.model, o.cuda, polNote);
     // FAR ENOUGH TO HAVE A MAP. At 60 steps both the FPV and the plan view are
     // almost entirely UNKNOWN -- which is correct, and reads as a broken
     // renderer to anyone who has not been told that pale means fog. The shot is
     // a picture of the layout, so it shows the layout with something in it.
     for (int i = 0; i < 500; ++i) {
         const sim::EnvStep st = env.step(
-            sim::chooseBaseline(fb, env.observation(), env.actionMask(),
-                                env.nPrims(), rng));
+            pol.act(env.observation(), env.actionMask(), env.nPrims(), fb, rng));
         if (st.done || st.truncated) break;
     }
     auto toMat = [&](std::vector<uint8_t> v, int w, int h) {
@@ -600,8 +607,9 @@ int shot(const Options& o, const std::string& prefix) {
     };
     Pane p[4];
     p[0].title = "LEARNED PLANNER";
-    p[0].sub   = std::string("classical: ") + sim::baselineName(fb);
-    p[0].subColour = WARN;
+    p[0].sub   = learned ? polNote
+                         : std::string("classical: ") + sim::baselineName(fb);
+    p[0].subColour = learned ? OK : WARN;
     p[0].img   = toMat(env.renderFrame(iw, ih, false), iw, ih);
 
     const cv::Mat dRaw = syntheticDepth(iw, ih);
@@ -628,8 +636,9 @@ int shot(const Options& o, const std::string& prefix) {
     txt(canvas, "kestrel demo -- synthetic input, nothing measured here",
         12, 28, 0.62, INK, 1);
     for (int i = 0; i < 4; ++i) drawPane(canvas, L.pane[i], p[i]);
-    txt(canvas, "source: shot (no device)   planner: classical   people: "
-                + std::string(det.kindName()),
+    txt(canvas, "source: shot (no device)   planner: "
+                + std::string(learned ? pol.backend() : "classical")
+                + "   people: " + det.kindName(),
         L.strip.x + 4, L.strip.y + 18, 0.44, DIM, 1);
 
     int n = 0;

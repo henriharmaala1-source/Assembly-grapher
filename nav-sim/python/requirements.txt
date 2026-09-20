@@ -6,3 +6,8 @@ numpy>=1.24
 pybind11>=2.12
 tensorboard
 opencv-python           # `kestrel watch` only: the C++ side renders, this shows it
+# export_onnx.py ONLY, and only on the machine that trained. Exporting is a
+# one-off that turns a checkpoint into something `kestrel demo` can fly with no
+# python at all, so the demo machine never needs this line -- or any of the
+# ones above it.
+onnx>=1.15

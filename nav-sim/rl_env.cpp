@@ -381,8 +381,11 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
         g.pitchM = wrand(10.f, 16.f);
         g.wallFrac = (world == "hall") ? 0.65f : 0.30f;
         g.ceiling = (world == "hall");
-        g.minHM = (world == "hall") ? 6.f : 4.f;
-        g.maxHM = (world == "hall") ? 10.f : 16.f;
+        // TALL ENOUGH TO BE IN THE WAY. The aircraft flies at 4 m; blocks
+        // 4 m high are something it can simply climb over, and a demo of a
+        // planner that never has to turn is a demo of nothing.
+        g.minHM = (world == "hall") ? 8.f : 8.f;
+        g.maxHM = (world == "hall") ? 12.f : 18.f;
         float sx = 0, sy = 0, gx = 0, gy = 0;
         genGallery(I.world, g, &sx, &sy, &gx, &gy);
         I.px = sx; I.py = sy;

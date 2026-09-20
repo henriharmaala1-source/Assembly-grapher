@@ -1414,3 +1414,68 @@ unresolved for that reason. Seeds 101-140 at 3000 steps would put the paired
 standard errors near 300 and settle novelG, freeG and cover against the policy
 in one run. The other gap is worlds: every number here is maze, and `circler`
 failed to game the metric only because a maze has no clearings to circle in.
+
+## novelG tops the composite and loses on the reward
+
+`novelG` leads `net x cells` at 2197. Scored by the reward the environment
+actually pays, over the same 12 episodes:
+
+| planner | total | range | coverage | clear | terminal |
+|---------|-------|-------|----------|-------|----------|
+| **policy** | **+73.5** | 107.5 | 39.6 | -5.2 | -50.0 |
+| freeM | +70.9 | 44.2 | 43.8 | -14.1 | 0.0 |
+| cover | +59.3 | 108.9 | 30.8 | -27.8 | -50.0 |
+| novelG | **-17.0** | 99.7 | 50.2 | -15.0 | **-150.0** |
+
+novelG earns the MOST coverage of the four and finishes last by 90 points,
+because a collision costs 300 and it collides 6 times in 12. The learned policy
+is first. Two scorings of one set of episodes put the same two planners in
+opposite orders, and the disagreement is entirely the collision terminal --
+which is the concrete form of the point made above, that `net x cells` cannot
+see safety. The reward can. Prefer it.
+
+### The composite lead is one map
+
+Leave-one-map-out on `net x cells`:
+
+| dropped | novelG | freeG | policy | cover | freeM |
+|---------|--------|-------|--------|-------|-------|
+| none | 2197 | 2138 | 1551 | 1541 | 752 |
+| 101 | 2035 | 2001 | 1107 | 1202 | 413 |
+| 102 | 2361 | 2103 | 1470 | 1673 | 951 |
+| 103 | 2879 | 2758 | 1816 | 2062 | 984 |
+| 104 | 2026 | 2044 | 1657 | 1382 | 928 |
+| **105** | **1513** | 1612 | **1770** | 1200 | 671 |
+| 106 | 2439 | 2363 | 1541 | 1813 | 624 |
+
+Drop seed 105 and novelG falls behind the policy. One map in six flips the
+ordering -- which is what +620 +/- 828 means in a form that can be checked by
+looking. novelG scored 261 m of travel and 279 cells on 105, roughly double its
+own average, and that single episode carries its lead.
+
+### The policy hovers, and nothing else does
+
+| planner | stopped steps per episode | of steps flown |
+|---------|---------------------------|----------------|
+| policy | **156.2** | 2703 |
+| novelG | 0.0 | 1934 |
+| cover | 0.0 | 2547 |
+| freeG | 0.0 | 1997 |
+| freeM | 0.0 | 3000 |
+
+Every classical planner commands speed on every step of every episode, because
+none of them has a reason not to. The learned policy spends about 6% of its
+episode commanding stop and is the only thing in the table that does. `r_stop`
+is charging it -15.6 a run and it does it anyway -- so the stop penalty is
+priced too low, or stopping is buying something the decomposition does not
+separate. This is a defect that needs no more episodes to see, and it is the one
+behaviour the objective names outright as unwanted.
+
+### The two policy collisions
+
+    seed 103 rep 0   died at step 123 after 8.8 m      into UNKNOWN
+    seed 102 rep 1   died at step 2317 after 141.7 m   into UNKNOWN
+
+The first is the same draw that makes seed 103 the 13.7x variance case: the
+other repeat on that map flew 189.7 m and survived. The policy's worst failure
+and its median behaviour are the same weights on the same world.

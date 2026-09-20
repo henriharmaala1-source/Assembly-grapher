@@ -255,6 +255,49 @@ columns as the classical ones, on seeds it never trained on.
                                         trick; a box that says 2.3 m is this
                                         stack
 
+                     TWO WORLDS BUILT FOR THIS VIEW, and they are the
+                     default. The first-person voxel pane is a ladder:
+                     0.25 m voxels out to about 3.5 m, then 1.0 m, then
+                     2.0 m. A forest through that ladder is mush -- a
+                     0.3 m trunk is one voxel on the fine rung and gone
+                     on the coarse one, and nothing in the scene is
+                     aligned to anything, so the geometry appears to
+                     CHANGE as you fly at it. That is correct behaviour
+                     and it is indistinguishable, to anyone watching,
+                     from the map being broken.
+
+                       gallery   pillars and free-standing walls, open,
+                                 lanes wide enough to watch the planner
+                                 choose rather than squeeze
+                       hall      the same geometry indoors: more walls,
+                                 doorways, and a roof, so the map closes
+                                 overhead and UNKNOWN above you matters
+
+                     Every surface in both sits on a 2.0 m lattice and
+                     every extent is a multiple of 2.0 m. 2.0 is the
+                     COARSEST rung's cell and the finer rungs divide it
+                     exactly, so one wall face is one coarse voxel, four
+                     mid ones, sixty-four fine ones, over the same
+                     volume. Approaching a wall SUBDIVIDES it and never
+                     moves it.
+
+                     The spawn sets the phase of all three map rungs --
+                     VoxelMap::init puts its origin at centre minus
+                     30.0, 64.0 or 128.0 m, all multiples of 2.0 -- so
+                     the generator returns a start on the lattice rather
+                     than letting anything pick one. gallery_lattice_check
+                     asserts all of it in ctest: every solid voxel must
+                     fill a WHOLE 2 m cell, and a cell that is part solid
+                     is a wall that moves as you approach it.
+
+                     The six training worlds are still on the list, since
+                     the demo should be able to show what the policy was
+                     actually measured in. They are not the default, and
+                     gallery and hall are deliberately NOT added to the
+                     world lists bench, watch, evaluate and report use --
+                     a world nothing has trained on would quietly change
+                     every one of those tables.
+
                      FOUR THREADS, and not for show. The sim steps as fast as
                      the planner allows, the camera arrives at 30 Hz whatever
                      anyone wants, a person detector is tens of milliseconds a

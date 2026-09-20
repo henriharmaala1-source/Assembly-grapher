@@ -307,6 +307,58 @@ void genForest(VoxelWorld& w, const ForestParams& p,
 // walls were hard to see it would silently become a perception test instead --
 // the aircraft would fly into one rather than being trapped by it, and the
 // result would answer a different question than the one asked.
+// ---------------------------------------------------------------------------
+// GALLERY -- a world built to be LOOKED AT through the first-person voxel view.
+//
+// THE PROBLEM IT SOLVES. The FPV is a three-rung ladder: 0.25 m voxels out to
+// about 3.5 m, then 1.0 m, then 2.0 m (see VoxelEnv::renderFrame). A forest
+// through that ladder is mush -- a 0.3 m trunk is one voxel on the fine rung,
+// invisible on the coarse one, and lands in a different place on each because
+// nothing in the scene is aligned to anything. The geometry appears to CHANGE
+// as you approach it, which is exactly the impression a demo must not give,
+// because it is indistinguishable from the map being broken.
+//
+// THE RULE. Every surface here sits on a 2.0 m lattice and every extent is a
+// multiple of 2.0 m. 2.0 is the COARSEST rung's cell, and the finer rungs are
+// exact divisors of it -- 2.0 / 1.0 / 0.25 -- so one wall face is one coarse
+// voxel, four mid voxels, sixty-four fine ones, covering the same volume. The
+// silhouette is then identical at all three resolutions: approaching a wall
+// subdivides it and never moves it.
+//
+// THE LATTICE HAS A PHASE, and the spawn sets it. VoxelMap::init puts its
+// origin at centre - nx*cell/2, and those half-extents are 30.0, 64.0 and
+// 128.0 m for the three rungs -- all multiples of 2.0. So a spawn whose x and
+// y are multiples of 2.0 m puts all three map lattices in phase with each
+// other AND with this world. genGallery therefore returns a lattice-aligned
+// start and goal rather than letting a caller pick one; getting that wrong
+// undoes everything above and looks like nothing in particular.
+//
+// (VERTICAL IS HALF A CELL OUT and stays that way. The coarse map's z origin
+// is centre - nz*cell*0.25 = 21.0 m with nz=42, which is odd, so no spawn
+// height can bring the coarse rung's horizontal planes into phase with the
+// other two. Changing nz to 44 would fix it and would also move every number
+// in docs/ by changing what every world's observation contains, so it is not
+// done here. The visible cost is that the TOPS of far-away blocks can sit a
+// metre off; their sides, which is what you fly between, are exact.)
+struct GalleryParams {
+    float sizeM   = 160.f;
+    float cell    = 0.25f;
+    // THE LATTICE. Not a taste parameter -- it must equal the coarsest map
+    // rung's cell or the whole argument above collapses. It is here so the
+    // reason is written down next to the number, not so it can be tuned.
+    float latticeM = 2.0f;
+    float pitchM  = 12.f;   // pillar spacing, rounded to the lattice
+    float clearM  = 6.f;    // the lane left between structures
+    float wallFrac = 0.35f; // how much of the plan is walls rather than pillars
+    float minHM   = 4.f, maxHM = 14.f;   // block heights, rounded to the lattice
+    bool  ceiling = false;  // hall: a roof, so the map closes overhead
+    float tex     = 0.62f;  // strongly textured: this shows mapping, not stereo
+    unsigned seed = 1;
+};
+// Returns a start and goal that are ON the lattice -- see the note above.
+void genGallery(VoxelWorld& w, const GalleryParams& p,
+                float* startX, float* startY, float* goalX, float* goalY);
+
 struct CulDeSacParams {
     float sizeM   = 200.f;
     float cell    = 0.5f;

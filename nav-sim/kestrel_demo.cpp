@@ -523,6 +523,20 @@ bool parse(const std::vector<std::string>& args, Options& o, std::string& err) {
               "on the CPU, or --no-cuda to say so deliberately.";
         return false;
     }
+    // A MISTYPED WORLD IS SILENTLY A FOREST. VoxelEnv::reset falls through to
+    // forest for anything it does not recognise, which is right for the
+    // environment -- it must always build something -- and wrong here, where
+    // `--world galery` would quietly show the exact thing gallery exists to
+    // avoid and nothing would say so.
+    static const char* WORLDS[] = {"gallery", "hall", "forest", "maze", "city",
+                                   "road", "culdesac", "corridor"};
+    bool knownWorld = false;
+    for (const char* wn : WORLDS) if (o.world == wn) knownWorld = true;
+    if (!knownWorld) {
+        err = "--world: no such world: " + o.world + ". One of:";
+        for (const char* wn : WORLDS) err += std::string(" ") + wn;
+        return false;
+    }
     bool ok = false;
     baselineByName(o.fallback, &ok);
     if (!ok) { err = "--fallback: no such planner: " + o.fallback; return false; }

@@ -314,6 +314,19 @@ const int NWORLDS = 6;
 // Pane size, in pixels of ONE of the four. The window is 2x2 of these plus
 // furniture, so 640 is a 1320x1500 window -- past what a laptop lid shows,
 // which is why the default is 480 and not the biggest on the list.
+// THE DEMO'S OWN WORLD LIST, and gallery/hall lead it. They are built on the
+// 2 m lattice the coarsest map rung uses, so the first-person view subdivides
+// as you approach a wall instead of the wall appearing to move -- which is
+// what the six training worlds do through that ladder, correctly and
+// unwatchably. The training worlds stay on the list because the demo should be
+// able to show what the policy was actually measured in; they are just not the
+// default. They are deliberately NOT added to WORLD_NAME: that list is what
+// bench, watch, evaluate and report sample, and adding a world nothing has
+// trained on would quietly change every one of those tables.
+const char* DEMO_WORLD[] = {"gallery", "hall", "forest", "maze", "city",
+                            "road", "culdesac", "corridor"};
+const int NDEMO_WORLD = int(sizeof DEMO_WORLD / sizeof *DEMO_WORLD);
+
 const int DEMO_PANE[] = {360, 480, 560, 640};
 const int NDEMO_PANE = int(sizeof DEMO_PANE / sizeof *DEMO_PANE);
 
@@ -529,7 +542,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 a.push_back(c.replay >= 0 && c.replay < int(recs.size())
                                 ? recs[c.replay] : std::string("(no recording)"));
             } else a.push_back("--sim");
-            a.push_back("--world"); a.push_back(WORLD_NAME[c.dWorld]);
+            a.push_back("--world"); a.push_back(DEMO_WORLD[c.dWorld]);
             a.push_back("--pane");  a.push_back(std::to_string(DEMO_PANE[c.dPane]));
             if (c.dNoPeople)  a.push_back("--no-people");
             if (c.dNoMirror)  a.push_back("--no-mirror");
@@ -815,7 +828,7 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     // time and a checklist would imply otherwise.
     txt(im, "world for the planner pane", x, 292, 0.5, DIM);
     bs.push_back({cv::Rect(x, 304, 250, 38),
-                  std::string("world: ") + WORLD_NAME[c.dWorld], ID_D_WORLD, true});
+                  std::string("world: ") + DEMO_WORLD[c.dWorld], ID_D_WORLD, true});
     txt(im, "click to cycle", x, 358, 0.42, DIM);
     stepper(im, bs, x + 300, 304, "pane px",
             std::to_string(DEMO_PANE[c.dPane]), ID_D_PANEM, ID_D_PANEP,
@@ -1461,7 +1474,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_D_SOURCE:     c.dSource = 0; break;
         case ID_D_SOURCE + 1: c.dSource = 1; break;
         case ID_D_SOURCE + 2: c.dSource = 2; break;
-        case ID_D_WORLD:  c.dWorld = (c.dWorld + 1) % NWORLDS; break;
+        case ID_D_WORLD:  c.dWorld = (c.dWorld + 1) % NDEMO_WORLD; break;
         case ID_D_PANEM:  c.dPane = std::max(0, c.dPane - 1); break;
         case ID_D_PANEP:  c.dPane = std::min(NDEMO_PANE - 1, c.dPane + 1); break;
         case ID_D_PEOPLE:  c.dNoPeople = !c.dNoPeople; break;

@@ -60,7 +60,12 @@ struct Options {
     std::string model;          // .onnx exported from the checkpoint
     std::string fallback = "cover";   // a BaselinePolicy name
 
-    std::string world = "forest";
+    // GALLERY BY DEFAULT, not forest. Through the 2.0/1.0/0.25 m FPV ladder a
+    // forest is mush -- a 0.3 m trunk is one voxel on the fine rung and absent
+    // on the coarse one -- so the view appears to change as you approach it,
+    // which is indistinguishable from a broken map. gallery is built on the
+    // coarse rung's own lattice; see GalleryParams in voxel_world.hpp.
+    std::string world = "gallery";
     unsigned    seed = 101;
     int         maxSteps = 0;   // 0 = never stop; the demo loops forever
 

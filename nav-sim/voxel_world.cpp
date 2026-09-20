@@ -477,6 +477,145 @@ void genCorridor(VoxelWorld& w, const CorridorParams& p,
     if (goalN)  *goalN  = end.y;
 }
 
+// GALLERY. See the header for why every number below is rounded to a lattice.
+void genGallery(VoxelWorld& w, const GalleryParams& p,
+                float* startX, float* startY, float* goalX, float* goalY) {
+    const float L = p.latticeM;
+    auto q = [&](float v) { return std::round(v / L) * L; };          // to lattice
+    auto qUp = [&](float v) { return std::ceil(v / L) * L; };
+
+    const float size = q(p.sizeM);
+    const int n  = int(size / p.cell);
+    const float topM = q(p.maxHM) + 4.f * L;
+    const int nz = int(topM / p.cell);
+    w.init(p.cell, 0, 0, 0, n, n, nz);
+
+    std::mt19937 rng(p.seed);
+    std::uniform_real_distribution<float> u01(0.f, 1.f);
+    // ONE LATTICE CELL SHORT on the far face of every block. fillBox walks an
+    // INCLUSIVE cell range, so a box asked for [0, 2] fills nine 0.25 m cells
+    // and is 2.25 m wide -- which is off-lattice, and off-lattice is the one
+    // thing this world exists not to be.
+    const float e = p.cell * 0.5f;
+    auto block = [&](float x0, float y0, float z0, float x1, float y1, float z1,
+                     float tex) {
+        fillBox(w, q(x0), q(y0), q(z0),
+                   q(x1) - e, q(y1) - e, q(z1) - e, tex);
+    };
+
+    // GROUND, THE FIRST LATTICE LAYER, z in [0, L). It cannot sit BELOW z = 0:
+    // the world's own origin is 0 and VoxelWorld::set bounds-checks, so a slab
+    // asked for at [-L, 0) is silently dropped and the scene has no floor at
+    // all -- which renders as an FPV of pure fog and reads as a broken map
+    // rather than as a missing box.
+    block(0, 0, 0, size, size, L, 0.5f);
+    // Everything else stands ON it, so a height here is a height above the
+    // floor and the floor is a lattice boundary like every other surface.
+    const float floorZ = L;
+
+    const float pitch = std::max(2.f * L, q(p.pitchM));
+    const float clear = std::max(L, q(p.clearM));
+    const int   cells = std::max(2, int(size / pitch));
+
+    // A BLOCK PER LATTICE CELL OF THE PLAN, with a lane kept clear through the
+    // middle of every row and column. The lanes are what make this flyable at
+    // all: a policy that has to squeeze between pillars at every step is a
+    // test of the veto, and what a demo wants to show is the aircraft choosing.
+    for (int iy = 0; iy < cells; ++iy) {
+        for (int ix = 0; ix < cells; ++ix) {
+            const float cx = q(ix * pitch + pitch * 0.5f);
+            const float cy = q(iy * pitch + pitch * 0.5f);
+            if (cx < 2 * L || cy < 2 * L || cx > size - 2 * L || cy > size - 2 * L)
+                continue;
+            const float r = u01(rng);
+            const float h = floorZ + q(p.minHM + u01(rng) * std::max(0.f, p.maxHM - p.minHM));
+            if (h < floorZ + L) continue;
+
+            if (r < p.wallFrac) {
+                // A WALL SEGMENT: a long flat face, which is the single best
+                // thing to look at through this ladder. A flat surface
+                // subdividing cleanly from 2.0 m to 0.25 m as you close on it
+                // is the whole claim made visible; a tree cannot show it.
+                const bool alongX = u01(rng) < 0.5f;
+                const float len = q(std::max(2.f * L, (pitch - clear) *
+                                             (0.6f + 0.4f * u01(rng))));
+                const float half = len * 0.5f;
+                // A DOORWAY in some of them, one lattice off the floor, so the
+                // map has to represent a hole rather than a surface -- the
+                // thing a 2-D occupancy grid cannot do and this one can.
+                const bool door = u01(rng) < 0.35f && h >= floorZ + 3 * L;
+                const float dz0 = floorZ + L, dz1 = std::min(h, floorZ + 3 * L);
+                if (alongX) {
+                    if (door) {
+                        block(cx - half, cy, floorZ, cx - L, cy + L, h, p.tex);
+                        block(cx + L, cy, floorZ, cx + half, cy + L, h, p.tex);
+                        block(cx - L, cy, floorZ, cx + L, cy + L, dz0, p.tex);
+                        block(cx - L, cy, dz1, cx + L, cy + L, h, p.tex);
+                    } else {
+                        block(cx - half, cy, floorZ, cx + half, cy + L, h, p.tex);
+                    }
+                } else {
+                    if (door) {
+                        block(cx, cy - half, floorZ, cx + L, cy - L, h, p.tex);
+                        block(cx, cy + L, floorZ, cx + L, cy + half, h, p.tex);
+                        block(cx, cy - L, floorZ, cx + L, cy + L, dz0, p.tex);
+                        block(cx, cy - L, dz1, cx + L, cy + L, h, p.tex);
+                    } else {
+                        block(cx, cy - half, floorZ, cx + L, cy + half, h, p.tex);
+                    }
+                }
+            } else {
+                // A PILLAR, one or two lattice cells square. Stepping the
+                // width as well as the height keeps the scene from reading as
+                // one repeated object, which at these angles looks like a
+                // rendering artefact rather than a world.
+                const float wblk = (u01(rng) < 0.4f) ? 2.f * L : L;
+                block(cx, cy, floorZ, cx + wblk, cy + wblk, h, p.tex);
+            }
+        }
+    }
+
+    // A CLEAR BERTH AT BOTH ENDS, and it is the GEOMETRY that moves, not the
+    // spawn. Everywhere else a generator picks a start by finding somewhere
+    // empty; here the start is fixed by the lattice -- it sets the phase of all
+    // three map rungs -- so a block that lands on it has to be taken out
+    // instead. A spawn inside a wall makes every primitive inadmissible and the
+    // aircraft sits still, which looks exactly like a policy that has failed.
+    const float berth = std::max(3.f * L, q(p.clearM));
+    const float sxM = qUp(2.f * pitch), syM = sxM;
+    const float gxM = q(size - sxM),    gyM = gxM;
+    auto clearAround = [&](float cx, float cy) {
+        int a0, b0, c0, a1, b1, c1;
+        // THE SAME HALF-CELL SHORT fillBox needs, and for the same reason:
+        // worldToCell + an inclusive loop would erase one extra row on the far
+        // face, leaving a 2 m lattice cell partly cleared. A partly-filled
+        // lattice cell is precisely what the three rungs cannot agree about.
+        w.worldToCell(cx - berth, cy - berth, floorZ, a0, b0, c0);
+        w.worldToCell(cx + berth - e, cy + berth - e, topM - e, a1, b1, c1);
+        for (int z = c0; z <= c1; ++z)
+            for (int y = b0; y <= b1; ++y)
+                for (int x = a0; x <= a1; ++x) w.set(x, y, z, false);
+    };
+    clearAround(sxM, syM);
+    clearAround(gxM, gyM);
+
+    // A ROOF, for the indoor variant. It closes the map overhead, which is what
+    // makes the first-person view read as a room rather than as a field of
+    // posts -- and it is the case where UNKNOWN above you matters.
+    if (p.ceiling) {
+        const float roof = q(p.maxHM) + 2.f * L;
+        block(0, 0, roof, size, size, roof + L, p.tex * 0.9f);
+    }
+
+    // START AND GOAL, ON THE LATTICE. This is the part a caller must not be
+    // allowed to get wrong: the spawn sets the phase of all three map rungs,
+    // so an off-lattice spawn silently undoes every alignment above.
+    if (startX) *startX = sxM;
+    if (startY) *startY = syM;
+    if (goalX)  *goalX  = gxM;
+    if (goalY)  *goalY  = gyM;
+}
+
 void genCulDeSac(VoxelWorld& w, const CulDeSacParams& p) {
     const int n  = int(p.sizeM / p.cell);
     const int nz = int((p.wallH + 6.f) / p.cell);

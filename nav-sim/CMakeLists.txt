@@ -101,6 +101,23 @@ if(BUILD_TESTS)
   add_test(NAME depth_improve_check COMMAND depth_improve_check)
 endif()
 
+# THE DEMO WORLDS ARE ON THE LATTICE, asserted rather than eyeballed. gallery
+# and hall exist to make the first-person voxel view consistent across the
+# 2.0/1.0/0.25 m ladder, and that rests on one geometric claim: every solid
+# voxel fills a whole 2 m lattice cell. A cell that is part solid and part air
+# is a wall that MOVES as you fly at it, and at 2 m voxels the defect is
+# invisible until you are close -- which is when a demo is being watched. This
+# found two off-by-one errors that the render did not.
+add_executable(gallery_lattice_check
+  test/gallery_lattice_check.cpp
+  voxel_world.cpp)
+target_include_directories(gallery_lattice_check PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(gallery_lattice_check PRIVATE ${OpenCV_LIBS})
+if(BUILD_TESTS)
+  add_test(NAME gallery_lattice_check COMMAND gallery_lattice_check)
+endif()
+
 # Yaw-coupled sideslip: asserts |v| is preserved, straight primitives are
 # untouched, and the lateral gain is where the header claims it is.
 add_executable(sideslip_check test/sideslip_check.cpp)

@@ -366,6 +366,32 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
         I.px = p.widthM * 0.5f; I.py = 10.f; I.pz = 3.f;
         I.goalE = p.widthM * 0.5f; I.goalN = p.lengthM - 10.f; I.goalU = 3.f;
         bx0 = 4.f; bx1 = p.widthM - 4.f; by0 = 8.f; by1 = p.lengthM - 8.f;
+    } else if (world == "gallery" || world == "hall") {
+        // THE TWO DEMO WORLDS. Everything in them sits on the 2.0 m lattice the
+        // coarsest map rung uses, so a wall is one coarse voxel, four mid ones
+        // and sixty-four fine ones covering the same volume -- approaching it
+        // subdivides it and never moves it. See GalleryParams.
+        //
+        // THE SPAWN SETS THE PHASE of all three rungs, and genGallery returns
+        // one on the lattice for exactly that reason. It is used verbatim
+        // below; rounding or nudging it here would undo the world's whole
+        // point without changing anything visible in this file.
+        GalleryParams g; g.cell = cfg_.cell; g.seed = seed;
+        g.sizeM = 160.f;
+        g.pitchM = wrand(10.f, 16.f);
+        g.wallFrac = (world == "hall") ? 0.65f : 0.30f;
+        g.ceiling = (world == "hall");
+        g.minHM = (world == "hall") ? 6.f : 4.f;
+        g.maxHM = (world == "hall") ? 10.f : 16.f;
+        float sx = 0, sy = 0, gx = 0, gy = 0;
+        genGallery(I.world, g, &sx, &sy, &gx, &gy);
+        I.px = sx; I.py = sy;
+        // AN EVEN HEIGHT, to keep the fine and mid rungs in vertical phase too
+        // -- their z origins are centre - 6.0 and centre - 10.0. The coarse
+        // rung cannot be brought in with them; GalleryParams says why.
+        I.pz = 4.f;
+        I.goalE = gx; I.goalN = gy; I.goalU = 4.f;
+        bx0 = sx; bx1 = gx; by0 = sy; by1 = gy;
     } else if (world == "culdesac") {
         CulDeSacParams p; p.cell = 0.5f; p.seed = seed; p.sizeM = 200.f;
         p.widthM = wrand(40.f, 70.f); p.depthM = wrand(45.f, 75.f);

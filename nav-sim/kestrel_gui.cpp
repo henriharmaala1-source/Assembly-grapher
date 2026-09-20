@@ -218,9 +218,9 @@ void refreshPy(const std::string& dir) {
 }
 
 // ----------------------------------------------------------------- settings
-enum Mode { TRACK = 0, BENCH, SIM, TRAIN, WATCH, EVAL, REPORT, NMODES };
-const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "train", "watch",
-                                 "evaluate", "report"};
+enum Mode { TRACK = 0, BENCH, SIM, DEMO, TRAIN, WATCH, EVAL, REPORT, NMODES };
+const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "demo", "train",
+                                 "watch", "evaluate", "report"};
 
 // 0 means FOREVER -- run until stopped by hand, saving on the way out. The
 // rest are close enough together that a run can be sized without dropping to
@@ -277,6 +277,11 @@ const int NTARGET_KL = int(sizeof TARGET_KL / sizeof *TARGET_KL);
 const char* WORLD_NAME[6] = {"forest", "maze", "city", "road", "culdesac", "corridor"};
 const char* WORLD_LABEL[6] = {"Forest", "Maze", "City", "Road", "Cul-de-sac", "Corridors"};
 const int NWORLDS = 6;
+// Pane size, in pixels of ONE of the four. The window is 2x2 of these plus
+// furniture, so 640 is a 1320x1500 window -- past what a laptop lid shows,
+// which is why the default is 480 and not the biggest on the list.
+const int DEMO_PANE[] = {360, 480, 560, 640};
+const int NDEMO_PANE = int(sizeof DEMO_PANE / sizeof *DEMO_PANE);
 
 int nWorldsOn(const bool* w) {
     int n = 0;
@@ -421,6 +426,16 @@ struct Cfg {
     // report
     bool  rw[NWORLDS] = {true, true, true, true, true, true};
     int   rSeed0 = 101, rSeed1 = 104, rSteps = 3000, rRepeats = 3;
+    // demo: the showcase. Four panes, and the only choices that change what
+    // it SHOWS rather than how fast it runs.
+    int   dSource = 0;          // 0 sim, 1 live RealSense, 2 replay
+    int   dWorld = 0;           // index into WORLD_NAME
+    int   dPane = 1;            // index into DEMO_PANE
+    // STORED AS THE FLAG, not as the feature. Green means the flag is on the
+    // command line everywhere in this window, so a toggle whose ON state emits
+    // NOTHING is the --raw-clear inversion again. Naming the field after the
+    // argument makes the button, the flag and the green light one fact.
+    bool  dNoPeople = false, dNoMirror = false, dNoEmitter = false;
     bool  rDet = false, rProgress = false, rBaselines = false, rRandom = false;
     bool  rNoHome = false;
     bool  rStereo = false, rNoVeto = false, rVary = false;
@@ -466,6 +481,19 @@ std::vector<std::string> buildArgs(const Cfg& c,
             else if (c.replay >= 0 && c.replay < int(recs.size())) {
                 a.push_back("--replay"); a.push_back(recs[c.replay]);
             }
+            break;
+        case DEMO:
+            if (c.dSource == 1) a.push_back("--live");
+            else if (c.dSource == 2) {
+                a.push_back("--replay");
+                a.push_back(c.replay >= 0 && c.replay < int(recs.size())
+                                ? recs[c.replay] : std::string("(no recording)"));
+            } else a.push_back("--sim");
+            a.push_back("--world"); a.push_back(WORLD_NAME[c.dWorld]);
+            a.push_back("--pane");  a.push_back(std::to_string(DEMO_PANE[c.dPane]));
+            if (c.dNoPeople)  a.push_back("--no-people");
+            if (c.dNoMirror)  a.push_back("--no-mirror");
+            if (c.dNoEmitter) a.push_back("--no-emitter");
             break;
         case EVAL:
             // No --model: evaluate.py takes the newest checkpoint itself when
@@ -583,6 +611,8 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
     if (c.mode == REPORT && !nWorldsOn(c.rw)) return "pick at least one world";
     if (c.mode == SIM && c.simSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
+    if (c.mode == DEMO && c.dSource == 2 && (c.replay < 0 || recs.empty()))
+        return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     return "";
 }
 
@@ -623,6 +653,14 @@ enum {
     ID_R_S0M = 700, ID_R_S0P, ID_R_S1M, ID_R_S1P, ID_R_STM, ID_R_STP,
     ID_R_RPM, ID_R_RPP, ID_R_DET, ID_R_PROGRESS, ID_R_BASE, ID_R_RANDOM,
     ID_R_STEREO, ID_R_NOVETO, ID_R_VARY, ID_R_NOHOME,
+    // ID_D_SOURCE OWNS THREE IDS, one per source button, because the buttons
+    // are emitted as ID_D_SOURCE + i. The next name therefore starts at 810
+    // rather than following on: written as a bare successor it WAS
+    // ID_D_SOURCE + 1, so clicking "Live D435i" also cycled the world. This is
+    // the duplicate-id case `gui --check` exists to catch, and it caught it.
+    ID_D_SOURCE = 800,
+    ID_D_WORLD = 810, ID_D_PANEM, ID_D_PANEP,
+    ID_D_PEOPLE, ID_D_MIRROR, ID_D_EMITTER, ID_D_SHOT,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -698,6 +736,77 @@ worldRow(im, bs, x, 208, ID_BW, c.bw);
     txt(im, "if only on stereo, the sensor is the limit.", x, 506, 0.42, DIM);
     txt(im, "Output is a table in the console, not in this window.",
         x, 540, 0.42, DIM);
+}
+
+
+// THE SHOWCASE. Every other panel here sets up a measurement; this one sets up
+// something to look at, and the settings are chosen on that basis -- what the
+// four panes show, and how big they are on the screen in the room.
+//
+// It builds an argument vector like every other panel and calls the same
+// cmdDemo the command line does. There is no second demo.
+void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
+               const std::vector<std::string>& recs) {
+    const int x = 266;
+    txt(im, "the demo -- four things at once", x, 112, 0.62, INK, 1);
+    txt(im, "The policy flying, the depth a real camera returns, the map built",
+        x, 136, 0.44, DIM);
+    txt(im, "from it, and people found in the camera image with a RANGE read off",
+        x, 156, 0.44, DIM);
+    txt(im, "the depth frame. Four threads, because the detector is the slowest",
+        x, 176, 0.44, DIM);
+    txt(im, "stage and one loop would make every pane as slow as it is.",
+        x, 196, 0.44, DIM);
+
+    txt(im, "depth for the two live panes", x, 240, 0.5, DIM);
+    const char* src[3] = {"Simulated raycaster", "Live D435i", "Replay a recording"};
+    for (int i = 0; i < 3; ++i)
+        bs.push_back({cv::Rect(x + i * 260, 252, 250, 38), src[i],
+                      ID_D_SOURCE + i, c.dSource == i});
+
+    // WHICH WORLD THE POLICY FLIES IN, and it is a single choice rather than
+    // the multi-select the measuring panels use: a demo shows one thing at a
+    // time and a checklist would imply otherwise.
+    txt(im, "world for the planner pane", x, 326, 0.5, DIM);
+    bs.push_back({cv::Rect(x, 338, 250, 38),
+                  std::string("world: ") + WORLD_NAME[c.dWorld], ID_D_WORLD, true});
+    txt(im, "click to cycle", x, 392, 0.42, DIM);
+
+    stepper(im, bs, x + 300, 338, "pane px",
+            std::to_string(DEMO_PANE[c.dPane]), ID_D_PANEM, ID_D_PANEP,
+            "one of the four", 100);
+
+    bs.push_back({cv::Rect(x, 418, 250, 38),
+                  c.dNoPeople ? "people pane OFF" : "people pane on",
+                  ID_D_PEOPLE, c.dNoPeople});
+    bs.push_back({cv::Rect(x + 260, 418, 250, 38),
+                  c.dNoMirror ? "camera as-is" : "mirror the camera",
+                  ID_D_MIRROR, c.dNoMirror});
+    // The projector is what makes a D435i work on a blank wall, and it is also
+    // what puts a dot pattern in the infrared image. It matters here and
+    // nowhere else in this window, so it lives on this panel.
+    bs.push_back({cv::Rect(x + 520, 418, 250, 38),
+                  c.dNoEmitter ? "IR emitter off" : "IR emitter on",
+                  ID_D_EMITTER, c.dNoEmitter});
+
+    bs.push_back({cv::Rect(x, 470, 250, 38), "Write the panes as PNG",
+                  ID_D_SHOT, false});
+    txt(im, "--shot needs no camera and no display; it is how this layout is",
+        x + 260, 486, 0.42, DIM);
+    txt(im, "reviewed over ssh, the same way gui --check is.", x + 260, 504, 0.42, DIM);
+
+    if (c.dSource == 1) {
+        txt(im, "librealsense loads at RUN time, so this build needs no SDK. With no",
+            x, 540, 0.42, DIM);
+        txt(im, "camera the two live panes fall back to the sim and say so on the pane.",
+            x, 558, 0.42, DIM);
+    } else if (c.dSource == 2 && recs.empty()) {
+        txt(im, "no .kdr recordings found in ./ or ./recordings", x, 540, 0.42, DIM);
+    } else {
+        txt(im, "In the demo window:  q quit   r restart the episode", x, 540, 0.42, DIM);
+        txt(im, "Panes name what they are ACTUALLY showing -- a classical planner is",
+            x, 558, 0.42, DIM);
+    }
 }
 
 void panelSim(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -1047,6 +1156,9 @@ const FlagBtn FLAG_BTNS[] = {
     {REPORT, ID_R_BASE,     "--baselines"},
     {REPORT, ID_R_RANDOM,   "--random"},
     {REPORT, ID_R_STEREO,   "--stereo"},
+    {DEMO,  ID_D_PEOPLE,    "--no-people"},
+    {DEMO,  ID_D_MIRROR,    "--no-mirror"},
+    {DEMO,  ID_D_EMITTER,   "--no-emitter"},
     {REPORT, ID_R_NOVETO,   "--no-veto"},
     {REPORT, ID_R_NOHOME,   "--no-homeward"},
     {REPORT, ID_R_VARY,     "--vary-goal"},
@@ -1156,6 +1268,7 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
         case TRACK: panelTrack(im, bs, c, inputs); break;
         case BENCH: panelBench(im, bs, c); break;
         case SIM:   panelSim(im, bs, c, recs); break;
+        case DEMO:  panelDemo(im, bs, c, recs); break;
         case WATCH: panelWatch(im, bs, c); break;
         case EVAL:  panelEval(im, bs, c); break;
         case REPORT: panelReport(im, bs, c); break;
@@ -1266,6 +1379,15 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_R_PROGRESS: c.rProgress = !c.rProgress; break;
         case ID_R_BASE: c.rBaselines = !c.rBaselines; break;
         case ID_R_NOHOME: c.rNoHome = !c.rNoHome; break;
+        case ID_D_SOURCE:     c.dSource = 0; break;
+        case ID_D_SOURCE + 1: c.dSource = 1; break;
+        case ID_D_SOURCE + 2: c.dSource = 2; break;
+        case ID_D_WORLD:  c.dWorld = (c.dWorld + 1) % NWORLDS; break;
+        case ID_D_PANEM:  c.dPane = std::max(0, c.dPane - 1); break;
+        case ID_D_PANEP:  c.dPane = std::min(NDEMO_PANE - 1, c.dPane + 1); break;
+        case ID_D_PEOPLE:  c.dNoPeople = !c.dNoPeople; break;
+        case ID_D_MIRROR:  c.dNoMirror = !c.dNoMirror; break;
+        case ID_D_EMITTER: c.dNoEmitter = !c.dNoEmitter; break;
         case ID_R_RANDOM: c.rRandom = !c.rRandom; break;
         case ID_R_STEREO: c.rStereo = !c.rStereo; break;
         case ID_R_NOVETO: c.rNoVeto = !c.rNoVeto; break;
@@ -1396,7 +1518,8 @@ int run(const Actions& act, const std::string& exeDir) {
         // their output lands in the console in the same place.
         const bool isInstall = (hit == ID_TRAIN_INSTALL);
         const bool isPythons = (hit == ID_TRAIN_PYTHONS);
-        if (hit != ID_RUN && !isInstall && !isPythons) {
+        const bool isShot    = (hit == ID_D_SHOT);
+        if (hit != ID_RUN && !isInstall && !isPythons && !isShot) {
             apply(hit, c, inputs, recs);
             continue;
         }
@@ -1408,10 +1531,14 @@ int run(const Actions& act, const std::string& exeDir) {
             isInstall ? std::vector<std::string>{"--install"}
           : isPythons ? std::vector<std::string>{}
                       : buildArgs(c, inputs, recs);
+        // The shot writes PREFIX_*.png beside the exe and returns immediately,
+        // so it keeps the rest of the panel's settings rather than being a
+        // second, differently-configured demo.
+        if (isShot) args.insert(args.begin(), {"--shot", "demo"});
 
         // Designating happens IN this window, before it is torn down, because
         // it needs the first frame on screen and a click on it.
-        if (!isInstall && !isPythons && c.mode == TRACK && c.designate && c.input >= 0) {
+        if (!isInstall && !isPythons && !isShot && c.mode == TRACK && c.designate && c.input >= 0) {
             float bx = 0, by = 0;
             if (clickTarget(inputs[c.input].args.front(), bx, by)) {
                 std::vector<std::string> box{"--box", std::to_string(int(bx)),
@@ -1419,7 +1546,7 @@ int run(const Actions& act, const std::string& exeDir) {
                                              std::to_string(c.boxSize)};
                 args.insert(args.begin(), box.begin(), box.end());
             }
-        } else if (!isInstall && !isPythons && c.mode == TRACK) {
+        } else if (!isInstall && !isPythons && !isShot && c.mode == TRACK) {
             args.insert(args.begin(), {"--box", "-1", "-1", std::to_string(c.boxSize)});
         }
 
@@ -1438,12 +1565,21 @@ int run(const Actions& act, const std::string& exeDir) {
         int rc = 0;
         if (isPythons)      rc = act.pythons();
         else if (isInstall) rc = act.train(args);
+        else if (isShot)    rc = act.demo(args);
         else switch (c.mode) {
             case TRACK: rc = act.track(args); break;
             case BENCH: rc = act.bench(args); break;
             case SIM:   rc = act.sim(args);   break;
+            case DEMO:  rc = act.demo(args);  break;
             case WATCH: rc = act.watch(args); break;
             case EVAL:  rc = act.eval(args);  break;
+            // REPORT WAS NOT HERE, so it fell into `default` and RUN on the
+            // report panel launched TRAINING with report's arguments. The
+            // action was bound in kestrel.cpp and never called. `default` is
+            // why it was silent -- a mode that forgets to list itself gets
+            // whatever the last line does, so every mode is now named and
+            // default only catches TRAIN.
+            case REPORT: rc = act.report(args); break;
             default:    rc = act.train(args); break;
         }
         // The listing is read in the terminal, so hold the window closed until

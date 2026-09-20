@@ -13,6 +13,13 @@ endif()
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(OpenCV QUIET COMPONENTS highgui)
 find_package(OpenCV QUIET OPTIONAL_COMPONENTS videoio)
+# OPTIONAL, AND THE DEMO DEGRADES RATHER THAN FAILING. objdetect carries the
+# trained HOG people detector, so it is the one that needs no model file; dnn
+# runs an exported policy and an ONNX person detector when either is supplied.
+# Both ship with almost every OpenCV build, and neither is worth making the
+# whole tree un-buildable over -- `demo` names on screen what it could not load.
+find_package(OpenCV QUIET OPTIONAL_COMPONENTS objdetect)
+find_package(OpenCV QUIET OPTIONAL_COMPONENTS dnn)
 
 add_executable(nav_sim
   sim_main.cpp
@@ -201,7 +208,7 @@ endif()
 # an SDK that WAS installed; a dependency only needed at runtime should not be
 # able to break a build at all.
 add_executable(voxel_live
-  voxel_live.cpp
+  voxel_live.cpp depth_vis.cpp
   scan_match.cpp
   bearing_field.cpp
   frame_source.cpp
@@ -377,7 +384,10 @@ add_executable(kestrel
   # The live sim, compiled IN rather than spawned. VOXEL_LIVE_NO_MAIN drops its
   # own main() so kestrel keeps the only entry point in the binary.
   voxel_live.cpp
+  # The demo: four panes, four threads, no second implementation of anything.
+  kestrel_demo.cpp
   scan_match.cpp frame_source.cpp realsense_dyn.cpp depth_record.cpp
+  depth_vis.cpp
   voxel_planner.cpp
   rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
   depth_camera.cpp bearing_field.cpp
@@ -390,6 +400,18 @@ target_include_directories(kestrel PRIVATE
   ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 target_compile_definitions(kestrel PRIVATE VOXEL_LIVE_NO_MAIN=1)
+if(OpenCV_objdetect_FOUND OR TARGET opencv_objdetect)
+  target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_OBJDETECT=1)
+  message(STATUS "kestrel: objdetect found - demo can detect people")
+else()
+  message(STATUS "kestrel: no objdetect - demo's people pane says so on screen")
+endif()
+if(OpenCV_dnn_FOUND OR TARGET opencv_dnn)
+  target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_DNN=1)
+  message(STATUS "kestrel: dnn found - demo can fly an exported .onnx policy")
+else()
+  message(STATUS "kestrel: no dnn - demo flies a classical planner, and says so")
+endif()
 # TRAINING IS THE ONE COMMAND THAT LEAVES THE PROCESS, and embedding CPython
 # would not change that. The trainer is PyTorch and stable-baselines3: linking
 # libpython in still requires that exact interpreter, its ABI and its
@@ -422,6 +444,15 @@ endif()
 # flying, so it runs in CI beside the GUI check.
 if(BUILD_TESTS)
   add_test(NAME kestrel_report_check COMMAND kestrel report --check)
+endif()
+
+# The demo's layout, asserted with no camera and no display -- four panes that
+# do not overlap, fit the canvas, clear the status strip, and captions that
+# survive elision with their first word intact. That last rule is what stops a
+# pane captioned "classical: cover" from rendering as "..." and claiming to be
+# the learned policy by omission.
+if(BUILD_TESTS)
+  add_test(NAME kestrel_demo_check COMMAND kestrel demo --check)
 endif()
 
 if(TARGET opencv_videoio)

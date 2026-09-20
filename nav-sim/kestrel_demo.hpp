@@ -1,0 +1,99 @@
+// THE DEMO. Four things at once, on a laptop, in one window.
+//
+//   kestrel demo                  sim everywhere -- runs on any machine
+//   kestrel demo --live           depth and the detector from a RealSense
+//   kestrel demo --replay w.kdr   a recording, for when the camera is packed
+//
+// WHAT IT SHOWS, and why these four:
+//
+//   LEARNED PLANNER   the trained policy flying in the sim, drawn as the
+//                     first-person VOXEL view -- what it BELIEVES, not the
+//                     world. Pale is UNKNOWN. This is the thing the project is
+//                     for, and it is the only pane that needs no camera.
+//   LIVE DEPTH        what the real sensor returns, colourised. The one part
+//                     of the stack that can lie, and the one that has to be
+//                     watched rather than trusted.
+//   LIVE VOXEL        the SAME VoxelMap, integrating that live depth. Grey is
+//                     unknown here too, and the honest-range ring says where
+//                     the mapper deliberately stops marking.
+//   HUMANS            people found in the camera image, each labelled with a
+//                     range read out of the depth frame. A box alone is a
+//                     webcam trick; a box that says "2.3 m" is this stack.
+//
+// FOUR PANES, FOUR THREADS, and that is not decoration. Each stage has its own
+// natural rate -- the sim steps as fast as the planner allows, the camera
+// arrives at 30 Hz whatever we do, a person detector is tens of milliseconds
+// per frame, and the window wants to redraw smoothly regardless. Running them
+// in one loop makes every pane as slow as the slowest, which on a laptop is
+// the detector, and a 6 Hz FPV looks broken. Each stage therefore owns a
+// thread and publishes its latest finished frame; the compositor takes what is
+// there and never waits.
+//
+// NOTHING HERE IMPLEMENTS ANYTHING. The planner pane steps `VoxelEnv`, the
+// depth comes from `FrameSource`, the map is `VoxelMap`, the FPV is
+// `renderFrame` -- the same code the measurements in docs/ were taken with.
+// A demo that reimplements the stack is a demo of the demo.
+//
+// IT IS CHECKABLE WITHOUT A CAMERA OR A DISPLAY. `demo --shot PREFIX` writes
+// every pane and the composed window to PNG from synthetic input, and
+// `demo --check` asserts the layout, both with no device attached. That is the
+// same property `gui --check` and `report --check` have, and it exists for the
+// same reason: this is reviewed over ssh.
+#pragma once
+
+#include <string>
+#include <vector>
+
+namespace kdemo {
+
+// Parsed `kestrel demo` arguments. Defaults are the ones that run anywhere.
+struct Options {
+    // Where the depth for the two live panes comes from.
+    enum Source { SIM = 0, REPLAY, LIVE };
+    int         source = SIM;
+    std::string replayPath;
+
+    // The policy for the planner pane. Empty means "no network available" and
+    // the pane falls back to a classical planner, saying so on screen -- see
+    // plannerLabel(). A demo that silently shows freeM while the caption says
+    // "learned" is the worst thing this file could do.
+    std::string model;          // .onnx exported from the checkpoint
+    std::string fallback = "cover";   // a BaselinePolicy name
+
+    std::string world = "forest";
+    unsigned    seed = 101;
+    int         maxSteps = 0;   // 0 = never stop; the demo loops forever
+
+    // Camera stream the detector reads. AUTO prefers colour, then infrared,
+    // then any webcam videoio can open -- so an unplugged camera costs the
+    // demo one pane and not the demo.
+    enum Eyes { AUTO = 0, COLOUR, INFRARED, WEBCAM, NOEYES };
+    int  eyes = AUTO;
+    int  webcamIndex = 0;
+    std::string detector;       // .onnx person detector; empty = built-in HOG
+
+    int  camW = 640, camH = 480, camFps = 30;
+    bool emitter = true;
+
+    int  paneW = 480, paneH = 360;   // one pane; the window is 2x2 of these
+    bool mirror = true;              // the human pane, so waving matches
+};
+
+// Parse; returns false and fills `err` on a bad argument.
+bool parse(const std::vector<std::string>& args, Options& o, std::string& err);
+
+// Run the window until q/ESC. Returns a process exit code, or -1 when this
+// build has no highgui -- the caller then says so rather than exiting, exactly
+// as `gui` does.
+int run(const Options& o);
+
+// Every pane plus the composed window, as PREFIX_<name>.png, from synthetic
+// input. No camera, no display, no policy. Returns how many were written.
+int shot(const Options& o, const std::string& prefix);
+
+// Assert the layout: panes inside the canvas, no pane overlapping another,
+// every caption inside its pane, no caption elided to nothing. Prints each
+// violation and returns the count. Runs in ctest.
+int check();
+
+}  // namespace kdemo

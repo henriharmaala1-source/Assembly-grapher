@@ -4,6 +4,7 @@
 //   kestrel track  <frames...>    object lock over video or an image sequence
 //   kestrel bench  [--worlds ...] the non-RL path-planner baselines
 //   kestrel sim    [args...]      the live voxel sim, in this process
+//   kestrel demo   [args...]      the showcase: four panes, four threads
 //   kestrel train  [args...]      RL training         (runs python train.py)
 //   kestrel gui                   the window (also what a double-click gets)
 //   kestrel menu                  the text menu, for a headless box
@@ -47,6 +48,7 @@
 #include <opencv2/videoio.hpp>
 #endif
 
+#include "kestrel_demo.hpp"
 #include "kestrel_gui.hpp"
 #include "kestrel_report.hpp"
 #include "kestrel_python.hpp"
@@ -509,6 +511,43 @@ int cmdReport(const std::string& dir, const std::vector<std::string>& rest) {
 // ONE PATH INTO THE SIM, used by the CLI, the window and the text menu alike.
 // voxelLiveMain wants a mutable argv, so the strings are rebuilt here rather
 // than in each of the three callers.
+// THE DEMO, and it is the one command whose job is to be WATCHED rather than
+// measured. Four panes at once -- the policy flying, what the sensor returns,
+// what the map makes of it, and who is standing in front of the camera --
+// because the interesting claim in this project is that those are one stack
+// and a table of numbers cannot show that.
+//
+// --shot and --check come first so a machine with no camera and no display can
+// still verify the layout, exactly as `gui` and `report` do.
+int cmdDemo(std::vector<std::string> args) {
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--check") return kdemo::check();
+        if (args[i] == "--shot") {
+            if (i + 1 >= args.size()) {
+                std::fprintf(stderr, "[demo] --shot needs a filename prefix\n");
+                return 2;
+            }
+            const std::string prefix = args[i + 1];
+            args.erase(args.begin() + i, args.begin() + i + 2);
+            kdemo::Options o; std::string err;
+            if (!kdemo::parse(args, o, err)) {
+                std::fprintf(stderr, "[demo] %s\n", err.c_str());
+                return 2;
+            }
+            return kdemo::shot(o, prefix) > 0 ? 0 : 1;
+        }
+    }
+    kdemo::Options o;
+    std::string err;
+    if (!kdemo::parse(args, o, err)) {
+        std::fprintf(stderr, "[demo] %s\n", err.c_str());
+        return 2;
+    }
+    const int rc = kdemo::run(o);
+    if (rc < 0) return 1;
+    return rc;
+}
+
 int cmdSim(std::vector<std::string> args) {
     std::vector<char*> a;
     std::string self = "kestrel-sim";
@@ -531,6 +570,7 @@ int menu(const std::string& dir) {
             "  1  object lock over recorded frames   (track)\n"
             "  2  path-planner baselines            (bench)\n"
             "  3  live voxel sim                    (in this process)\n"
+            "  5  the demo: four panes at once        (demo)\n"
             "  4  RL training                       (runs python train.py)\n"
             "  7  how it fails, as pictures           (report)\n"
             "  q  quit\n"
@@ -554,6 +594,11 @@ int menu(const std::string& dir) {
             case '2': cmdBench({}); break;
             case '3': cmdSim({}); break;
             case '4': cmdTrain(dir, {"--workers", "8"}); break;
+            case '5': cmdDemo({}); break;
+            // 7 WAS LISTED AND NOT HANDLED, so picking it printed "?". The menu
+            // is the headless box's only front end; an entry that does nothing
+            // is worse there than a missing one.
+            case '7': cmdReport(dir, {}); break;
             case 'q': case 'Q': return 0;
             default:  std::printf("  ?\n");
         }
@@ -568,6 +613,7 @@ int gui(const std::string& dir) {
     a.track = [](std::vector<std::string> v) { return cmdTrack(std::move(v)); };
     a.bench = [](std::vector<std::string> v) { return cmdBench(std::move(v)); };
     a.sim   = [](std::vector<std::string> v) { return cmdSim(std::move(v)); };
+    a.demo  = [](std::vector<std::string> v) { return cmdDemo(std::move(v)); };
     a.train = [dir](std::vector<std::string> v) { return cmdTrain(dir, v); };
     a.watch = [dir](std::vector<std::string> v) { return cmdWatch(dir, v); };
     a.report = [dir](std::vector<std::string> v) { return cmdReport(dir, v); };
@@ -592,6 +638,7 @@ int main(int argc, char** argv) {
     if (cmd == "track") return cmdTrack(rest);
     if (cmd == "bench") return cmdBench(rest);
     if (cmd == "sim")  return cmdSim(rest);
+    if (cmd == "demo") return cmdDemo(rest);
     if (cmd == "train") return cmdTrain(dir, rest);
     if (cmd == "watch") return cmdWatch(dir, rest);
     if (cmd == "evaluate" || cmd == "eval") return cmdEval(dir, rest);
@@ -612,11 +659,18 @@ int main(int argc, char** argv) {
     if (cmd == "python") { kpy::report(kpy::discover(dir), dir); return 0; }
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf(
-            "kestrel [track|bench|sim|train|watch|evaluate|gui|menu|python] ...\n"
+            "kestrel [track|bench|sim|demo|train|watch|evaluate|report|gui|menu|python]\n"
             "  no arguments opens the window; `menu` is the text one, for a\n"
             "  headless box or over ssh. Every button in the window prints the\n"
             "  command it runs, so anything you can click you can also type.\n"
             "\n"
+            "  demo              the showcase: four panes at once -- the policy\n"
+            "                    flying, the depth a real camera returns, the map\n"
+            "                    built from it, and people found in the camera\n"
+            "                    image with a range read off the depth frame.\n"
+            "                    --live takes a RealSense; with no camera every\n"
+            "                    pane still runs off the sim. --shot PREFIX and\n"
+            "                    --check need no camera and no display.\n"
             "  train --install   pip the RL stack into the interpreter that can\n"
             "                    load voxelenv, named by absolute path\n"
             "  python            list every python found here and say which one\n"

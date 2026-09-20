@@ -57,6 +57,7 @@
 #endif
 
 #include "depth_record.hpp"
+#include "depth_vis.hpp"
 #include "frame_source.hpp"
 #include "scan_match.hpp"
 #include "voxel_map.hpp"
@@ -68,77 +69,8 @@ using namespace sim;
 
 namespace {
 
-// Depth -> colour. Near red, far blue, INVALID mid-grey and not black, because
-// black reads as "far" to the eye and the entire point of the three-state map
-// is that missing data is not distance.
-// Histogram-equalised variant. A LINEAR ramp cannot show near and far structure
-// at the same time: set it to 10 m and everything past 10 m is one blue; set it
-// to 20 m and the near field collapses into a few shades of red. Equalisation
-// allocates colour where the DATA is, which is why the RealSense Viewer's own
-// display looks so much more informative than ours did.
-//
-// Found by noticing a lamppost was only visible at the longest scale setting --
-// in the DEPTH image, not the map. The sensor had measured it the whole time;
-// the ramp could not show it.
-cv::Mat colourDepthEq(const cv::Mat& d, float maxM) {
-    int hist[256] = {0};
-    long n = 0;
-    for (int y = 0; y < d.rows; ++y) {
-        const float* r = d.ptr<float>(y);
-        for (int x = 0; x < d.cols; ++x) {
-            if (!(r[x] > 0.f)) continue;
-            int b = int(std::min(1.f, r[x] / std::max(0.1f, maxM)) * 255.f);
-            ++hist[b]; ++n;
-        }
-    }
-    float cdf[256];
-    long acc = 0;
-    for (int i = 0; i < 256; ++i) { acc += hist[i]; cdf[i] = n ? float(acc) / n : 0.f; }
-
-    cv::Mat out(d.rows, d.cols, CV_8UC3, cv::Scalar(90, 90, 90));
-    for (int y = 0; y < d.rows; ++y) {
-        const float* r = d.ptr<float>(y);
-        for (int x = 0; x < d.cols; ++x) {
-            if (!(r[x] > 0.f)) continue;
-            int b = int(std::min(1.f, r[x] / std::max(0.1f, maxM)) * 255.f);
-            out.at<cv::Vec3b>(y, x) = cv::Vec3b(uchar(cdf[b] * 120.f), 200, 230);
-        }
-    }
-    cv::Mat bgr; cv::cvtColor(out, bgr, cv::COLOR_HSV2BGR);
-    for (int y = 0; y < d.rows; ++y) {
-        const float* r = d.ptr<float>(y);
-        for (int x = 0; x < d.cols; ++x)
-            if (!(r[x] > 0.f)) bgr.at<cv::Vec3b>(y, x) = cv::Vec3b(90, 90, 90);
-    }
-    return bgr;
-}
-
-cv::Mat colourDepth(const cv::Mat& d, float maxM) {
-    cv::Mat out(d.rows, d.cols, CV_8UC3, cv::Scalar(90, 90, 90));
-    for (int y = 0; y < d.rows; ++y) {
-        const float* r = d.ptr<float>(y);
-        for (int x = 0; x < d.cols; ++x) {
-            if (!(r[x] > 0.f)) continue;
-            const float t = std::min(1.f, r[x] / std::max(0.1f, maxM));
-            // OpenCV 8-bit hue is 0..179, NOT 0..359. The first version added a
-            // 120 offset on top of a 0..120 ramp, so everything past ~6 m wrapped
-            // through magenta and read as NEARER than the foreground -- a colour
-            // map that inverts its own meaning at range.
-            const int hue = int(t * 120.f);          // 0 = red near, 120 = blue far
-            out.at<cv::Vec3b>(y, x) = cv::Vec3b(uchar(hue), 200, 230);
-        }
-    }
-    cv::Mat bgr;
-    cv::cvtColor(out, bgr, cv::COLOR_HSV2BGR);
-    // Repaint the invalid pixels AFTER the conversion, so they are a flat grey
-    // rather than whatever the hue ramp does at the ends.
-    for (int y = 0; y < d.rows; ++y) {
-        const float* r = d.ptr<float>(y);
-        for (int x = 0; x < d.cols; ++x)
-            if (!(r[x] > 0.f)) bgr.at<cv::Vec3b>(y, x) = cv::Vec3b(90, 90, 90);
-    }
-    return bgr;
-}
+// colourDepth / colourDepthEq now live in depth_vis.cpp, so this pane and the
+// demo's cannot drift into two ramps for one quantity.
 
 void banner(cv::Mat& img, const std::string& text, int y = 22) {
     cv::putText(img, text, {10, y}, cv::FONT_HERSHEY_SIMPLEX, 0.5,

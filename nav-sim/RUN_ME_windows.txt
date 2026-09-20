@@ -6,7 +6,8 @@ BUILDING IT
     cmake --build build --config Release
 
 That produces exactly ONE executable: build\Release\kestrel.exe. The live
-sim, the object-lock tracker and the planner baselines are all compiled into
+sim, the demo, the object-lock tracker and the planner baselines are all
+compiled into
 it -- there is no voxel_live.exe or voxel_sim.exe to keep beside it any more.
 
 If the configure step fails it will be on OpenCV, which is the only hard
@@ -235,6 +236,68 @@ columns as the classical ones, on seeds it never trained on.
                      ended), cells, loops (travel/net) and minimum clearance.
                      Episodes run under the travel objective, where arriving
                      at the goal does not end them.
+
+    kestrel demo     THE SHOWCASE, and the only command here whose job is to
+                     be watched rather than measured. Four panes at once:
+
+                       LEARNED PLANNER  the policy flying in the sim, drawn as
+                                        the first-person VOXEL view -- what it
+                                        BELIEVES, not the world. Pale is
+                                        UNKNOWN. Needs no camera.
+                       LIVE DEPTH       what the real sensor returns,
+                                        colourised, with the fraction of pixels
+                                        that came back at all
+                       LIVE VOXEL MAP   the same VoxelMap integrating that live
+                                        depth. Grey is unknown here too
+                       HUMANS           people found in the camera image, each
+                                        labelled with a RANGE read out of the
+                                        depth frame. A box alone is a webcam
+                                        trick; a box that says 2.3 m is this
+                                        stack
+
+                     FOUR THREADS, and not for show. The sim steps as fast as
+                     the planner allows, the camera arrives at 30 Hz whatever
+                     anyone wants, a person detector is tens of milliseconds a
+                     frame, and the window wants to redraw smoothly regardless.
+                     One loop makes every pane as slow as the slowest, which on
+                     a laptop is the detector, and a 6 Hz first-person view
+                     looks broken. Each stage owns a thread and publishes its
+                     latest finished frame; the compositor never waits.
+
+                       kestrel demo                    everything off the sim
+                       kestrel demo --live             depth from a D435i
+                       kestrel demo --replay walk.kdr  from a recording
+                       kestrel demo --world maze       which world it flies in
+                       kestrel demo --pane 640         bigger panes
+                       kestrel demo --no-people        drop the detector pane
+                       kestrel demo --shot PREFIX      every pane to PNG, with
+                                                       no camera and no display
+                       kestrel demo --check            assert the layout. Runs
+                                                       in ctest.
+
+                     WITH NO CAMERA IT STILL RUNS. The two live panes fall back
+                     to the planner's own simulated stereo and SAY SO on the
+                     pane. Every pane names what it is actually showing -- a
+                     classical planner is captioned as one, and a missing
+                     detector is captioned as missing. A demo that mislabels
+                     its own panes is worse than a demo with fewer panes.
+
+                     THE POLICY. --model FILE takes a .onnx exported from a
+                     checkpoint and flies it through OpenCV's dnn, so there is
+                     no python at demo time and nothing to install on the
+                     machine you are showing it on. Without one it flies the
+                     classical planner named by --fallback (default cover) and
+                     the pane says "classical: cover" rather than "learned".
+
+                     PEOPLE. The default detector is HOG with a linear SVM,
+                     which ships inside OpenCV with trained weights -- no model
+                     file, no download, no network on the day. It is also
+                     genuinely mediocre: upright, unoccluded, roughly full-body
+                     people only. --detector FILE takes an ONNX detector
+                     instead when you have one. Range always comes from the
+                     DEPTH frame, never from how tall the box is, because
+                     guessing distance from apparent height means assuming how
+                     tall someone is and this stack does not have to.
 
     kestrel train    train. Expect 8-18 hours at 10 M steps with stereo.
 

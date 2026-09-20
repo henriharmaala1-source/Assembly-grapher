@@ -12,11 +12,16 @@
 
 namespace kgui {
 
-// Bound by kestrel.cpp to its own cmdTrack / cmdBench / voxelLiveMain / cmdTrain.
+// Bound by kestrel.cpp to its own cmdTrack / cmdBench / voxelLiveMain / cmdDemo /
+// cmdTrain.
 struct Actions {
     std::function<int(std::vector<std::string>)> track;
     std::function<int(std::vector<std::string>)> bench;
     std::function<int(std::vector<std::string>)> sim;
+    // The showcase: four panes at once. Like every other entry here it is the
+    // same function the CLI calls, so the window cannot show something the
+    // command line cannot.
+    std::function<int(std::vector<std::string>)> demo;
     std::function<int(std::vector<std::string>)> train;
     std::function<int(std::vector<std::string>)> watch;
     std::function<int(std::vector<std::string>)> eval;

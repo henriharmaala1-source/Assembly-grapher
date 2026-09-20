@@ -1152,10 +1152,14 @@ line anywhere in the table. It reproduces the documented policy row exactly --
 158.0 m, 18.0 m, 86 cells, 8.8x, 2/12 -- and the nine classical rows agree with
 `bench` to a tenth of a metre.
 
-**THE COMPOSITE CLAIM DOES NOT SURVIVE.** `net x cells` was the number that said
-"the first time a learned policy has beaten freeM on this objective", 1551
-against 752. Two planners of a dozen lines each score 2197 and 2138 on it. The
-learned policy is third.
+**THE COMPOSITE CLAIM IS NOT REFUTED -- IT IS UNRESOLVED, AND SO WAS THE
+ORIGINAL.** `net x cells` was the number that said "the first time a learned
+policy has beaten freeM on this objective", 1551 against 752. Two planners of a
+dozen lines each score 2197 and 2138 on it, and the learned policy is third on
+the point estimates. Paired episode by episode, those leads are +620 +/- 828 and
++481 +/- 705. **Neither clears its own standard error.** See "What twelve
+episodes can and cannot settle" below; the ranking above is the point estimate
+and very little of it is resolvable.
 
 **AND THE COMPOSITE IS THE WRONG NUMBER**, which is the more useful half. It
 multiplies the two columns the objective names and silently drops the third:
@@ -1167,9 +1171,11 @@ safe travel.
 
 `cover` is the row that matters. It is level with the learned policy on every
 column at once -- the SAME 2 collisions in 12, 19.9 m of displacement against
-18.0, 875 m per crash against 948, 1541 against 1551 -- having never been
-trained. 150k steps of PPO currently buys a tie with frontier-seeking plus a
-safety gate.
+18.0, 875 m per crash against 948, 1541 against 1551, and paired by episode a
+difference of +11 +/- 521 -- having never been trained. That is the one place a
+null result is the interesting one: 150k steps of PPO is indistinguishable from
+a dozen lines of frontier-seeking, and the measurement is easily powerful enough
+to have caught a large difference if there were one.
 
 `random` is worth a glance too: 737, within 3% of freeM's 752, because freeM
 spends its enormous path length going nowhere.
@@ -1250,3 +1256,161 @@ Reproduce either table with:
 Every weight in the five new planners is hand-set and none were swept. They are
 quoted as written; tuning them against an untuned policy would be the same
 dishonesty in the other direction.
+
+## What twelve episodes can and cannot settle
+
+The table above is 6 maps x 2 repeats. Eight of the ten planners are
+deterministic given the world, so for them it is **6 independent samples, not
+12** -- the repeats are bit-identical and add nothing. This section is what the
+numbers support once that is taken seriously, and the short version is that most
+of the ranking is not resolvable and a smaller set of findings is solid.
+
+### Episodes are not the same length, and the means mix two things
+
+| planner | survived 3000 | mean steps | died at step |
+|---------|---------------|-----------|--------------|
+| freeM | 12/12 | 3000 | -- |
+| policy | 10/12 | 2703 | 123, 2317 |
+| cover | 10/12 | 2547 | 280, 280 |
+| random | 10/12 | 2784 | 436, 2967 |
+| goal | 10/12 | 2512 | 70, 70 |
+| frontRaw | 8/12 | 2139 | 296, 296, 537, 537 |
+| freeG | 6/12 | 1997 | 735 ... 1907 |
+| novelG | 6/12 | 1934 | 608 ... 1902 |
+| score | 0/12 | 333 | 213 ... 500 |
+| circler | 0/12 | 178 | 66 ... 300 |
+
+A planner that dies at step 700 banked 700 steps of travel, coverage and
+displacement, not 3000. Per-episode means therefore confound HOW FAST a planner
+covers ground with HOW LONG it survived, and they do it in the direction that
+flatters the safe planners on totals and punishes them on rates. Two views fix
+it -- rates per metre actually flown, and survivors only.
+
+### Rates per 100 m flown, with bootstrap intervals
+
+| planner | cells / 100 m | net m / 100 m |
+|---------|---------------|---------------|
+| novelG | **89.8** [75.4, 103.6] | 12.9 [10.5, 16.5] |
+| freeG | 79.7 [63.0, 97.1] | 16.3 [11.1, 22.5] |
+| freeM | 54.7 [40.0, 65.9] | **3.4** [1.7, 5.0] |
+| policy | 54.5 [46.5, 62.3] | 11.4 [8.3, 14.7] |
+| cover | 53.0 [42.4, 63.6] | 13.7 [11.2, 15.8] |
+| random | 40.9 [23.3, 60.0] | 9.2 [6.6, 12.5] |
+| frontRaw | 40.9 [22.8, 61.7] | 13.0 [7.8, 20.6] |
+| goal | 25.2 [19.1, 40.4] | 19.2 [13.2, 33.9] |
+
+**THE POLICY COVERS GROUND AT EXACTLY freeM'S RATE.** 54.5 [46.5, 62.3] against
+54.7 [40.0, 65.9] -- the same number. Its 86 cells against freeM's 110 is not a
+coverage deficit at all; it is the same coverage per metre over a shorter path,
+because the policy flies 158 m where freeM flies 201 m. Every statement anywhere
+above about the policy "covering less ground than freeM" is really a statement
+about path length. The planners that genuinely cover faster are novelG and
+freeG, and novelG's interval clears the policy's.
+
+`score` and `circler` are left out: they die in under 500 steps, and the first
+metres of an episode are always novel and always directed, so their rates are
+inflated by the same truncation the rates were meant to remove.
+
+### Survivors only: the 3000-step episodes, all the same length
+
+| planner | n | travel | net | cells | loops | net x cells |
+|---------|---|--------|-----|-------|-------|-------------|
+| novelG | 6 | 202.1 m | **25.7 m** | **166** | 7.9x | **4257** |
+| freeG | 6 | 170.3 m | 20.7 m | 108 | 8.2x | 2227 |
+| cover | 10 | 170.3 m | 23.5 m | 88 | **7.2x** | 2062 |
+| policy | 10 | 174.6 m | 19.7 m | 94 | 8.9x | 1840 |
+| freeM | 12 | **201.3 m** | 6.8 m | 110 | 29.5x | 752 |
+| random | 10 | 146.3 m | 12.5 m | 52 | 11.7x | 650 |
+| frontRaw | 8 | 149.2 m | 12.5 m | 49 | 12.0x | 611 |
+| goal | 10 | 92.7 m | 17.1 m | 22 | 5.4x | 384 |
+
+This is the most flattering view of the new planners and it is also the most
+selected one: **novelG's six survivors are the maps novelG happens to survive.**
+Restricting to episodes every ground-seeker survived leaves 4 episodes on 2
+maps. That is not a comparison, it is an anecdote, and it is reported here only
+so nobody reconstructs it and believes it:
+
+| planner | travel | net | cells | loops |
+|---------|--------|-----|-------|-------|
+| novelG | 202.8 m | 27.9 m | 176 | 7.3x |
+| freeG | 178.2 m | 30.1 m | 134 | 5.9x |
+| cover | 178.6 m | 28.9 m | 107 | 6.2x |
+| policy | 147.6 m | 12.0 m | 71 | 12.3x |
+| freeM | 220.3 m | 2.7 m | 139 | 81.1x |
+
+### Paired against the policy, episode by episode
+
+`net x cells`, mean difference over the same 12 episodes, +/- one standard error:
+
+    novelG  +620 +/- 828    NOT resolved
+    freeG   +481 +/- 705    NOT resolved
+    cover    +11 +/- 521    NOT resolved
+    freeM   -892 +/- 307    resolved
+
+**Only the freeM comparison clears its own error bar**, and it clears it in the
+direction the original write-up claimed. The learned policy beating freeM on
+this composite is a real result. Two ten-line planners beating the learned
+policy is not -- it is a point estimate with an interval twice its size.
+
+### Crash rate, with exact Poisson intervals on the exposure
+
+Exposure is metres actually flown, which is the right denominator: a planner
+that dies early gets less opportunity to die again.
+
+| planner | m flown | crashes | m per crash | 95% interval |
+|---------|---------|---------|-------------|--------------|
+| freeM | 2415 | 0 | never | 655 m - inf |
+| policy | 1896 | 2 | 948 m | 340 - 3065 m |
+| cover | 1750 | 2 | 875 m | 314 - 2829 m |
+| random | 1679 | 2 | 840 m | 301 - 2714 m |
+| goal | 935 | 2 | 468 m | 168 - 1512 m |
+| frontRaw | 1345 | 4 | 336 m | 153 - 828 m |
+| novelG | 1650 | 6 | 275 m | 141 - 586 m |
+| freeG | 1538 | 6 | 256 m | 132 - 547 m |
+
+The policy's interval and freeG's overlap between 340 and 547 m. The 3.7x gap
+in the point estimates is **not established** by this run either. Two crashes is
+two crashes; an interval nine times wide is what two events buys.
+
+### The policy is sampled, and the spread is the largest effect here
+
+Net displacement, the same policy on the same map, two draws:
+
+    seed 101   39.3 vs 30.9 m        seed 104    1.8 vs 24.5 m
+    seed 102   25.3 vs 12.5 m        seed 105   14.5 vs  7.2 m
+    seed 103    7.1 vs 19.2 m        seed 106   12.3 vs 21.6 m
+
+One map differs by **13.7x between two runs of the same weights**, and seed 103
+gave 8.8 m of travel on one draw and 189.7 m on the other. The policy's mean of
+18.0 m has a standard error of 3.1 m, a 95% interval of 11.9 to 24.2 m -- wide
+enough to contain cover, freeG and novelG. Scoring a SAMPLED policy on 12
+episodes cannot separate it from anything except freeM.
+
+### What IS established
+
+1. **freeM does not go anywhere.** 3.4 net metres per 100 m flown, interval
+   [1.7, 5.0], against 9.2 or better for every other planner, non-overlapping
+   with all of them. 29.5x looping is not a sampling accident.
+2. **The learned policy beats freeM on net x cells**, paired, -892 +/- 307.
+3. **The policy's coverage rate is freeM's**, 54.5 against 54.7 cells per 100 m.
+4. **novelG covers ground faster than the policy**, 89.8 [75.4, 103.6] against
+   54.5 [46.5, 62.3] -- intervals do not overlap. It is the one new planner with
+   a resolved advantage on any column, and it is not the safety column.
+5. **cover is indistinguishable from the policy**, +11 +/- 521, on the same 2
+   collisions in 12. A tie against something never trained.
+6. **48 collisions out of 48 were into UNKNOWN space; none into mapped space.**
+   The geometric veto has still never failed.
+7. **`min_clear_m` is a tautology, not a margin.** Crashed episodes: max 0.60 m.
+   Survived: min 0.60 m. `robotR` is 0.60. The column records contact, not how
+   close anything came to it, and cannot be used as a safety score.
+8. **The old bar was mismatched**, and **`net x cells` cannot see safety.** Both
+   are facts about the design, not measurements, and neither needs statistics.
+
+### What the next run has to do differently
+
+Not more repeats of a deterministic planner -- those are free and worthless.
+**More maps.** Six is the sample size, and everything unresolved above is
+unresolved for that reason. Seeds 101-140 at 3000 steps would put the paired
+standard errors near 300 and settle novelG, freeG and cover against the policy
+in one run. The other gap is worlds: every number here is maze, and `circler`
+failed to game the metric only because a maze has no clearings to circle in.

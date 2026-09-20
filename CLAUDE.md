@@ -66,15 +66,34 @@ first measured against were written when reaching a goal was the score, and two
 of them optimise a goal nothing pays for. Against that set the learned policy
 led on `net x cells`, 1551 to freeM's 752, and that was read as the first
 learned win on this objective. Against planners aimed at what IS scored it is
-third: novelG 2197, freeG 2138, base3k 1551, cover 1541. `cover` is frontier-
-seeking with a safety gate, about a dozen lines, never trained, and level with
-150k steps of PPO on every column at once -- the same 2 collisions in 12.
+third on the point estimates: novelG 2197, freeG 2138, base3k 1551, cover 1541.
+
+**SIX MAPS CANNOT RANK THOSE FOUR, AND SAYING OTHERWISE IS THE STANDING ERROR
+HERE.** Paired episode by episode, novelG leads the policy by 620 +/- 828 and
+freeG by 481 +/- 705 -- neither clears its own error bar. The policy's own net
+displacement varies 13.7x between two draws on the SAME map. What IS resolved:
+the policy beats freeM (-892 +/- 307), novelG covers ground faster than the
+policy (89.8 vs 54.5 cells per 100 m, intervals disjoint), and `cover` --
+frontier-seeking with a gate, a dozen lines, never trained -- is
+indistinguishable from 150k steps of PPO at +11 +/- 521 on the same 2 collisions
+in 12. Before quoting any other ordering, run more MAPS; repeats of a
+deterministic planner are bit-identical and add nothing.
 
 `net x cells` IS ALSO THE WRONG NUMBER, and that is the more useful half. It
 multiplies two of the three columns named above and cannot see the third, so it
 ranks a planner that crashes every 256 m over one that has never crashed. On
-metres-before-a-crash nothing has moved: freeM never, base3k 948 m, cover 875 m,
-and nothing else clears 470 m. Use the columns, not their product.
+metres-before-a-crash the point estimates are freeM never, base3k 948 m, cover
+875 m, and nothing else over 470 m -- but two crashes buys a 95% interval of 340
+to 3065 m, so that column is not resolved either. Use the columns, not their
+product, and quote the interval with the column.
+
+TWO MORE TRAPS IN THE TABLE. **Per-episode means mix rate with survival**: a
+planner that dies at step 700 banked 700 steps of coverage, not 3000, so compare
+per metre flown. Do that and **the policy covers ground at exactly freeM's rate**
+-- 54.5 against 54.7 cells per 100 m -- meaning its 86 cells against freeM's 110
+is a shorter path, not worse coverage. And **`min_clear_m` is a tautology**:
+crashed episodes max out at 0.60 m, survivors start at 0.60 m, `robotR` is 0.60.
+It records contact, never margin, and is not a safety score.
 
 The other thing that came out of that measurement: **freeM's circling is what
 keeps it alive.** freeG is freeM plus a charge on yaw rate, and that single term

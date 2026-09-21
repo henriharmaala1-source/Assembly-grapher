@@ -237,6 +237,41 @@ columns as the classical ones, on seeds it never trained on.
                      Episodes run under the travel objective, where arriving
                      at the goal does not end them.
 
+                       --policies a b c    run only these, in bench's own
+                                           order. A question about the veto is
+                                           answered by the two or three
+                                           planners that reach it, and paying
+                                           for the other six at every point of
+                                           a sweep is most of a day.
+
+                       --corefrac F        how much of the body's own volume
+                                           the veto insists is CONFIRMED FREE,
+                                           as a fraction of robotR. 0, the
+                                           default everywhere, lets a
+                                           primitive sweep through air nothing
+                                           has measured -- which is why every
+                                           collision ever measured in this
+                                           tree has been into unmapped space.
+                                           The sensor never lied; the veto
+                                           permitted the motion.
+
+                     COREFRAC IS QUANTISED BY THE VOXEL, and the number is not
+                     continuous. sphereClear walks INTEGER cell offsets, so the
+                     squared distances it can test are k*cell^2, and the core
+                     condition only changes behaviour as the parameter crosses
+                     sqrt(k)*cell/robotR. At 0.25 m cells and a 0.6 m body:
+
+                       below 0.417   the centre cell alone -- a no-op in
+                                     practice, since an admissible rollout's
+                                     own cell is already free
+                       0.417         + the 6 face neighbours    (7 cells)
+                       0.589         + the 12 edges             (19 cells)
+                       0.722         + the 8 corners            (27 cells)
+                       0.932         the whole ball             (57 cells)
+
+                     Sweeping round decimals therefore measures the same thing
+                     several times. Sweep the boundaries.
+
     kestrel demo     THE SHOWCASE, and the only command here whose job is to
                      be watched rather than measured. Four panes at once:
 

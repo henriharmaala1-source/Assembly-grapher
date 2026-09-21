@@ -85,6 +85,7 @@ VoxelEnv::VoxelEnv(const EnvConfig& c) : cfg_(c) {
     tp.robotR = cfg_.robotR;
     tp.horizonS = cfg_.horizonS;
     tp.dt = cfg_.dt;
+    tp.coreFrac = cfg_.coreFrac;
     im_.reset(new Impl(tp));
     reset(cfg_.world, cfg_.seed);
 }

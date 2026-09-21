@@ -327,6 +327,24 @@ const char* DEMO_WORLD[] = {"gallery", "hall", "forest", "maze", "city",
                             "road", "culdesac", "corridor"};
 const int NDEMO_WORLD = int(sizeof DEMO_WORLD / sizeof *DEMO_WORLD);
 
+// THE NINE, in the order bench runs them and named exactly as --policies takes
+// them, so the row, the command and the binary cannot disagree about what a
+// planner is called.
+const char* POLICY_NAME[] = {"random", "freeM", "goal", "score",
+                             "freeG", "novelG", "cover", "frontRaw", "circler"};
+const int NPOLICY = int(sizeof POLICY_NAME / sizeof *POLICY_NAME);
+
+// CORE FRACTION, AT THE REGIME BOUNDARIES rather than at round decimals.
+// sphereClear walks INTEGER cell offsets, so the distances it can test are
+// quantised: the core condition fires when d2 <= (robotR*coreFrac)^2 and d2 is
+// k*cell^2, so the parameter only changes behaviour as it crosses
+// sqrt(k)*cell/robotR. At 0.25 m cells and a 0.6 m body that is 0.417, 0.589,
+// 0.722, 0.833, 0.932. Anything below 0.417 tests the centre cell alone and is
+// a no-op in practice -- 0.30 is on the list to SHOW that, not because it is a
+// setting anyone should pick.
+const float CORE_FRAC[] = {0.f, 0.30f, 0.45f, 0.62f, 0.80f, 1.00f};
+const int NCORE_FRAC = int(sizeof CORE_FRAC / sizeof *CORE_FRAC);
+
 const int DEMO_PANE[] = {360, 480, 560, 640};
 const int NDEMO_PANE = int(sizeof DEMO_PANE / sizeof *DEMO_PANE);
 
@@ -427,6 +445,10 @@ struct Cfg {
     // commands the policy is actually judged by.
     int   seed0 = 101, seed1 = 104, steps = 3000;
     bool  benchStereo = false;
+    // Which planners bench runs, and how much of the body's volume the veto
+    // insists is CONFIRMED free. Both default to what bench has always done.
+    bool  bp[9] = {true, true, true, true, true, true, true, true, true};
+    int   coreIdx = 0;
 
     // sim
     int   simSource = 0;          // 0 raycaster, 1 live, 2 replay
@@ -527,6 +549,21 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back(std::to_string(c.seed1));
             a.push_back("--steps"); a.push_back(std::to_string(c.steps));
             if (c.benchStereo) a.push_back("--stereo");
+            // Only when it is a SUBSET. Emitting all nine would be the same run
+            // with a longer command line, and the strip is meant to be typed.
+            {
+                int on = 0;
+                for (int i = 0; i < NPOLICY; ++i) on += c.bp[i] ? 1 : 0;
+                if (on && on < NPOLICY) {
+                    a.push_back("--policies");
+                    for (int i = 0; i < NPOLICY; ++i)
+                        if (c.bp[i]) a.push_back(POLICY_NAME[i]);
+                }
+            }
+            if (CORE_FRAC[c.coreIdx] > 0.f) {
+                a.push_back("--corefrac");
+                a.push_back(trimNum(CORE_FRAC[c.coreIdx]));
+            }
             break;
         case SIM:
             if (c.simSource == 0) a.push_back("--sim");
@@ -691,6 +728,8 @@ enum {
     // 209-212 -- which is exactly the shape that made a six-world row look
     // like a two-world row to the code that counted it.
     ID_BW = 250,          // +0..5, the order of WORLD_NAME
+    ID_BENCH_POL = 260,   // +0..8, the order of POLICY_NAME
+    ID_BENCH_CFM = 270, ID_BENCH_CFP,
     ID_WW = 560,          // +0..5
     ID_EW = 660,          // +0..5
     ID_RW = 760,          // +0..5
@@ -765,47 +804,51 @@ void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
 void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
     txt(im, "path-planner baselines", x, 112, 0.62, INK, 1);
-    txt(im, "random / freeM / goal / weighted score, through the SAME environment",
+    txt(im, "NINE classical planners through the SAME environment a learned policy",
         x, 136, 0.44, DIM);
-    txt(im, "a learned policy uses. These are the numbers a policy has to beat.",
+    txt(im, "uses. Four optimise a goal nothing is scored on any more; five are",
         x, 156, 0.44, DIM);
+    txt(im, "matched to safe travel. RUN_ME says what each one does.",
+        x, 176, 0.44, DIM);
 
-worldRow(im, bs, x, 208, ID_BW, c.bw);
+    worldRow(im, bs, x, 206, ID_BW, c.bw);        // label 194, buttons 206-242
 
-    stepper(im, bs, x, 320, "first seed", std::to_string(c.seed0),
-            ID_BENCH_S0M, ID_BENCH_S0P);
-    stepper(im, bs, x + 220, 320, "last seed", std::to_string(c.seed1),
-            ID_BENCH_S1M, ID_BENCH_S1P);
-    stepper(im, bs, x + 440, 320, "steps/run", std::to_string(c.steps),
-            ID_BENCH_STM, ID_BENCH_STP);
+    txt(im, "planners", x, 268, 0.5, DIM);
+    for (int i = 0; i < NPOLICY; ++i)             // two rows, 280-314 and 320-354
+        bs.push_back({cv::Rect(x + (i % 5) * 158, 280 + (i / 5) * 40, 150, 34),
+                      POLICY_NAME[i], ID_BENCH_POL + i, c.bp[i]});
 
-    // ALL SIX, from the same array the row and the command are built from --
-    // this line used to multiply by (forest + maze) and reported "32 runs" for
-    // a job that launched 96.
+    stepper(im, bs, x, 386, "first seed", std::to_string(c.seed0),
+            ID_BENCH_S0M, ID_BENCH_S0P, nullptr, 100);
+    stepper(im, bs, x + 190, 386, "last seed", std::to_string(c.seed1),
+            ID_BENCH_S1M, ID_BENCH_S1P, nullptr, 100);
+    stepper(im, bs, x + 380, 386, "steps/run", std::to_string(c.steps),
+            ID_BENCH_STM, ID_BENCH_STP, nullptr, 100);
+    // THE VETO'S ATTITUDE TO UNKNOWN SPACE. 0 lets a primitive sweep through
+    // air nothing has measured, which is why every collision ever measured in
+    // this tree has been into unmapped space. Quantised by the voxel size --
+    // see CORE_FRAC for why the list is not round numbers.
+    stepper(im, bs, x + 570, 386, "corefrac", trimNum(CORE_FRAC[c.coreIdx]),
+            ID_BENCH_CFM, ID_BENCH_CFP, "unknown is not free", 100);
+
+    // FROM THE SAME ARRAYS the row and the command are built from. This line
+    // once multiplied by (forest + maze) and reported "32 runs" for a job that
+    // launched 96, and later still said "4 policies" when bench ran nine.
     const int nseeds = std::max(0, c.seed1 - c.seed0 + 1);
     const int nw = nWorldsOn(c.bw);
-    txt(im, std::to_string(nw * nseeds * 4) + " runs (4 policies x " +
-            std::to_string(nw) + " world(s) x " +
-            std::to_string(nseeds) + " seed(s))",
-        x, 412, 0.46, DIM);
+    int npol = 0;
+    for (int i = 0; i < NPOLICY; ++i) npol += c.bp[i] ? 1 : 0;
+    txt(im, std::to_string(nw * nseeds * npol) + " runs (" +
+            std::to_string(npol) + " planner(s) x " + std::to_string(nw) +
+            " world(s) x " + std::to_string(nseeds) + " seed(s))",
+        x, 470, 0.46, DIM);
 
-    bs.push_back({cv::Rect(x, 430, 250, 36),
+    bs.push_back({cv::Rect(x, 486, 250, 36),
                   c.benchStereo ? "Simulated stereo" : "Perfect depth (control)",
                   ID_BENCH_STEREO, c.benchStereo});
-    txt(im, "Run both. If it fails on perfect depth the planner is at fault;",
-        x, 486, 0.42, DIM);
-    txt(im, "if only on stereo, the sensor is the limit.", x, 506, 0.42, DIM);
-    txt(im, "Output is a table in the console, not in this window.",
-        x, 540, 0.42, DIM);
+    txt(im, "Run both: a failure on perfect depth is the planner, a failure only on "
+            "stereo is the sensor.", x, 546, 0.42, DIM);
 }
-
-
-// THE SHOWCASE. Every other panel here sets up a measurement; this one sets up
-// something to look at, and the settings are chosen on that basis -- what the
-// four panes show, and how big they are on the screen in the room.
-//
-// It builds an argument vector like every other panel and calls the same
-// cmdDemo the command line does. There is no second demo.
 void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                const std::vector<std::string>& recs) {
     const int x = 266;
@@ -1243,6 +1286,7 @@ const FlagBtn FLAG_BTNS[] = {
     {DEMO,  ID_D_PEOPLE,    "--no-people"},
     {DEMO,  ID_D_MIRROR,    "--no-mirror"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
+    {BENCH, ID_BENCH_STEREO, "--stereo"},
     // Three-state, so the table cannot name one flag: lit for --cuda AND for
     // --no-cuda, dark only for auto, which emits nothing. Checking it against
     // a single flag would fail whichever of the two was not named.
@@ -1418,6 +1462,9 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     }
     // The three world rows, as ranges rather than eighteen hand-typed cases.
     if (id >= ID_BW && id < ID_BW + NWORLDS) { c.bw[id - ID_BW] ^= 1; return; }
+    if (id >= ID_BENCH_POL && id < ID_BENCH_POL + NPOLICY) {
+        c.bp[id - ID_BENCH_POL] ^= 1; return;
+    }
     if (id >= ID_WW && id < ID_WW + NWORLDS) { c.ww[id - ID_WW] ^= 1; return; }
     if (id >= ID_EW && id < ID_EW + NWORLDS) { c.ew[id - ID_EW] ^= 1; return; }
     if (id >= ID_RW && id < ID_RW + NWORLDS) { c.rw[id - ID_RW] ^= 1; return; }
@@ -1481,6 +1528,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_D_MIRROR:  c.dNoMirror = !c.dNoMirror; break;
         case ID_D_EMITTER: c.dNoEmitter = !c.dNoEmitter; break;
         case ID_D_CUDA:    c.dCuda = (c.dCuda + 1) % 3; break;
+        case ID_BENCH_CFM: c.coreIdx = std::max(0, c.coreIdx - 1); break;
+        case ID_BENCH_CFP: c.coreIdx = std::min(NCORE_FRAC - 1, c.coreIdx + 1); break;
         case ID_R_RANDOM: c.rRandom = !c.rRandom; break;
         case ID_R_STEREO: c.rStereo = !c.rStereo; break;
         case ID_R_NOVETO: c.rNoVeto = !c.rNoVeto; break;

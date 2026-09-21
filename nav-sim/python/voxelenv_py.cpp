@@ -30,6 +30,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("truth_depth", &EnvConfig::truthDepth)
         .def_readwrite("horizon_s", &EnvConfig::horizonS)
         .def_readwrite("robot_r", &EnvConfig::robotR)
+        .def_readwrite("core_frac", &EnvConfig::coreFrac)
         .def_readwrite("objective", &EnvConfig::objective)
         .def_readwrite("homeward", &EnvConfig::homeward)
         .def_readwrite("w_range", &EnvConfig::wRange)

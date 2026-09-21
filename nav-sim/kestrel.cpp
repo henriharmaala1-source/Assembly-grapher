@@ -246,6 +246,12 @@ int cmdBench(std::vector<std::string> args) {
     std::vector<std::string> worlds = {"forest", "maze", "corridor", "city", "road", "culdesac"};
     int s0 = 101, s1 = 104, maxSteps = 3000;   // the forest goal needs ~2500
     bool stereo = false;
+    float coreFrac = 0.f;
+    // WHICH PLANNERS, because a sweep does not want all nine. The veto is
+    // shared by every one of them, so a question about the veto is answered by
+    // whichever two or three actually reach it -- and paying for the other six
+    // at every point of a five-value sweep is most of a day.
+    std::vector<std::string> only;
     for (size_t i = 0; i < args.size(); ++i) {
         auto next = [&](const char* d) { return (i + 1 < args.size()) ? args[++i] : std::string(d); };
         if (args[i] == "--worlds") {
@@ -261,8 +267,17 @@ int cmdBench(std::vector<std::string> args) {
         }
         else if (args[i] == "--steps")   maxSteps = std::stoi(next("600"));
         else if (args[i] == "--stereo")  stereo = true;
+        // THE VETO'S ATTITUDE TO UNKNOWN SPACE, swept rather than assumed. 0 --
+        // the default everywhere -- lets a primitive sweep through air nothing
+        // has measured; 1 demands the body's whole volume be confirmed free.
+        else if (args[i] == "--corefrac") coreFrac = float(std::atof(next("0.3").c_str()));
+        else if (args[i] == "--policies") {
+            while (i + 1 < args.size() && args[i + 1][0] != '-') only.push_back(args[++i]);
+        }
     }
     std::printf("baselines through VoxelEnv -- the same harness a learned policy uses\n");
+    std::printf("corefrac %.2f   %s depth   %d steps\n", coreFrac,
+                stereo ? "simulated stereo" : "truth", maxSteps);
     // THE COLUMNS ARE THE OBJECTIVE. travel/end-dist/closest/@step were what
     // this printed when reaching a goal was the score; three of them measure
     // the goal and none of them measures ground covered. What is wanted here
@@ -275,6 +290,9 @@ int cmdBench(std::vector<std::string> args) {
     for (Pol pol : {Pol::Random, Pol::FreeM, Pol::Goal, Pol::Score,
                     Pol::FreeG, Pol::NovelG, Pol::Cover, Pol::FrontRaw,
                     Pol::Circler}) {
+        if (!only.empty() &&
+            std::find(only.begin(), only.end(), polName(pol)) == only.end())
+            continue;
         double sum = 0, sumNet = 0; long long sumCells = 0;
         int runs = 0, coll = 0;
         for (const std::string& w : worlds)
@@ -288,6 +306,7 @@ int cmdBench(std::vector<std::string> args) {
                 // stumbled into a point nothing is scored on. The goal is
                 // scaffolding; see CLAUDE.md.
                 c.objective = EnvConfig::RANGE;
+                c.coreFrac = coreFrac;
                 c.world = w; c.seed = unsigned(s); c.maxSteps = maxSteps;
                 c.truthDepth = !stereo;
                 c.horizonS = (w == "maze") ? 0.6f : 2.0f;

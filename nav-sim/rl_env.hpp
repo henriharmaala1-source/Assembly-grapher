@@ -48,6 +48,19 @@ struct EnvConfig {
     int   camW        = 160, camH = 120;   // training res; validate at 320x240
     bool  truthDepth  = false;             // cheap render for stage 1
     float robotR      = 0.6f;
+    // HOW MUCH OF THE BODY'S OWN VOLUME MUST BE CONFIRMED FREE, as a fraction
+    // of robotR. 0 lets UNKNOWN pass the veto, which is the shipped default and
+    // the reason every collision measured in this tree has been into unmapped
+    // space: the sensor never lied, the veto permitted motion into air nothing
+    // had measured.
+    //
+    // It existed only on voxel_sim's command line, so the one sweep ever run on
+    // it was scored in goal-era columns -- travel, end distance, stopped steps
+    // -- against an objective this project has since abandoned, at n=4 per
+    // cell. See voxel_traj.hpp for that table and why it does not settle the
+    // question. Wiring it here is what lets it be asked in metres per collision
+    // instead.
+    float coreFrac    = 0.0f;
     float horizonS    = 0.6f;
     // Visit-count memory. The maze failure is that a stateless planner
     // re-derives the same local preference every time it returns to a junction.

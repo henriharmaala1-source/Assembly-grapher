@@ -337,6 +337,39 @@ cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
 // must stop exactly at `range`.
 // carveTo: how far to mark FREE. hitAt: where to mark OCCUPIED, or < 0 for
 // "this return is too far to trust as an obstacle -- carve only".
+bool VoxelMap::sphereClear(float x, float y, float z, float r,
+                           float coreFrac) const {
+    const float h = p_.cell * 0.5f;
+    const float r2 = r * r;
+    const float core = r * coreFrac, core2 = core * core;
+    // The cell range the ball can touch, taken from the float position rather
+    // than from the cell the centre happens to fall in.
+    int x0, y0, z0, x1, y1, z1;
+    worldToCell(x - r, y - r, z - r, x0, y0, z0);
+    worldToCell(x + r, y + r, z + r, x1, y1, z1);
+    for (int cz = z0; cz <= z1; ++cz)
+        for (int cy = y0; cy <= y1; ++cy)
+            for (int cx = x0; cx <= x1; ++cx) {
+                float bx, by, bz; cellCentre(cx, cy, cz, bx, by, bz);
+                // Nearest point of this voxel's box to the sphere centre.
+                const float nx = std::max(0.f, std::fabs(x - bx) - h);
+                const float ny = std::max(0.f, std::fabs(y - by) - h);
+                const float nz = std::max(0.f, std::fabs(z - bz) - h);
+                const float d2 = nx * nx + ny * ny + nz * nz;
+                if (d2 > r2) continue;              // the box does not reach
+                if (!inBounds(cx, cy, cz)) {
+                    // Outside the map is unknown. Treat it like any unknown.
+                    if (coreFrac > 0.f && d2 <= core2) return false;
+                    continue;
+                }
+                const float l = log_[idx(cx, cy, cz)];
+                if (l > p_.occThresh) return false;                  // blocked
+                if (coreFrac > 0.f && d2 <= core2 && !(l < p_.freeThresh))
+                    return false;                                    // not confirmed
+            }
+    return true;
+}
+
 void VoxelMap::rayInsert(float px, float py, float pz,
                          float dx, float dy, float dz,
                          float carveTo, float hitAt) {

@@ -36,21 +36,8 @@ static inline void dirFrom(float azDeg, float elDeg, float& dx, float& dy, float
 // 0.10-0.35 m trunk at 45 deg sits between them and is invisible. That is why
 // the aircraft still hit trees with PERFECT depth, a map with 0.000% false-free
 // cells, and voxels finer than the trunks.
-static inline bool sphereClear(const VoxelMap& m, float x, float y, float z, float r) {
-    int cx, cy, cz; m.worldToCell(x, y, z, cx, cy, cz);
-    const float cell = m.params().cell;
-    const int R = int(std::ceil(r / cell));
-    const float r2 = r * r;
-    for (int dz = -R; dz <= R; ++dz)
-        for (int dy = -R; dy <= R; ++dy)
-            for (int dx = -R; dx <= R; ++dx) {
-                float ox = dx * cell, oy = dy * cell, oz = dz * cell;
-                if (ox*ox + oy*oy + oz*oz > r2) continue;
-                if (!m.inBounds(cx+dx, cy+dy, cz+dz)) continue;
-                if (m.logAt(cx+dx, cy+dy, cz+dz) > m.params().occThresh) return false;
-            }
-    return true;
-}
+// sphereClear lives on VoxelMap. This file used to carry its own copy with
+// the same two defects; see voxel_map.hpp for what they were.
 
 // --- general planner --------------------------------------------------------
 
@@ -73,7 +60,7 @@ void GeneralPlanner::probe(const VoxelMap& m, float px, float py, float pz,
         // robot-sized volume must be clear, not a centre line. Only out to
         // sweepM -- past that it cannot affect the command.
         if (stillFree) {
-            if (t <= p_.sweepM && !sphereClear(m, qx, qy, qz, p_.robotR)) stillFree = false;
+            if (t <= p_.sweepM && !m.sphereClear(qx, qy, qz, p_.robotR)) stillFree = false;
             else if (s == VoxelMap::FREE) freeRun = t;
             else stillFree = false;
         }

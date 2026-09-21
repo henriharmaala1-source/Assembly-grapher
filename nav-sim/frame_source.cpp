@@ -146,11 +146,21 @@ public:
             if (t > 0.0) lastImuMs_ = t;
         }
         motion_.clear();
+        // Z-DEPTH IN, RANGE OUT. librealsense reports the distance along the
+        // OPTICAL AXIS; everything downstream of this seam works in range
+        // along the ray, and VoxelMap::rayInsert normalises the direction
+        // before marching. Handing it Z would place every off-centre return
+        // nearer than it is -- 18% at the edge of a 70-degree frame, 25% at
+        // the corner -- so a flat wall would map as a bowl curving toward the
+        // camera. The sim never showed this because renderTruth already
+        // returns range.
         depth.create(h, w, CV_32F);
         for (int y = 0; y < h; ++y) {
             float* dst = depth.ptr<float>(y);
             const uint16_t* src = raw_.data() + size_t(y) * w;
-            for (int x = 0; x < w; ++x) dst[x] = src[x] ? float(src[x]) * scale_ : -1.f;
+            for (int x = 0; x < w; ++x)
+                dst[x] = src[x] ? float(src[x]) * scale_ * cam_->rangePerZ(x, y)
+                                : -1.f;
         }
         ++idx_;
         // ATTITUDE ONLY, and the flag says so. There is no translation in here

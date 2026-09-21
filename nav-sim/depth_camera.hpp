@@ -186,6 +186,13 @@ public:
     cv::Mat renderStereo(const VoxelWorld& w, const CamPose& pose,
                          float* validFrac = nullptr) const;
 
+    // METRES OF RANGE PER METRE OF Z-DEPTH for pixel (u,v), i.e.
+    // sqrt(x'^2 + y'^2 + 1). A sensor that reports Z-depth -- which is what
+    // librealsense hands back -- must be multiplied by this before anything in
+    // this tree touches it, because everything here works in RANGE ALONG THE
+    // RAY. At the corner of a 70-degree frame the two differ by 32%.
+    float rangePerZ(int u, int v) const;
+
     // Unit ray direction in WORLD coords for pixel (u,v). Exposed because the
     // voxel mapper needs exactly the same rays to carve free space along.
     void rayFor(const CamPose& pose, int u, int v,

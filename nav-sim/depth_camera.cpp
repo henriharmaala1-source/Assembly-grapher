@@ -47,10 +47,34 @@ void DepthCamera::camToWorld(const CamPose& pose, float rx, float ry, float rz,
     dz = fU;
 }
 
+// THE DEPTH CONVENTION IN THIS TREE IS RANGE ALONG THE RAY, not Z-depth, and
+// every consumer must agree about that or they reconstruct different points
+// from the same pixel.
+//
+// It was not stated anywhere and it was not held. camToWorld is a pure
+// rotation, so it hands back whatever magnitude it is given -- and rayFor gave
+// it (x', y', 1), whose length is sqrt(x'^2 + y'^2 + 1). That is 1.32 at the
+// corner of a 70-degree frame. The comment here said "normalised ray"; it was
+// not one.
+//
+// Nothing in the sim noticed, because the two consumers that matter both
+// normalise internally: VoxelWorld::raycast divides by the length before
+// marching, so renderTruth returns RANGE, and VoxelMap::rayInsert divides
+// again, so the map puts the return back at that range. Two wrongs that are
+// the same wrong. ScanMatch did NOT normalise -- it multiplied this vector by
+// the depth directly -- so it placed every off-centre point up to 32% further
+// out than the map did, from the same frame, with perfect depth.
+float DepthCamera::rangePerZ(int u, int v) const {
+    const float x = (u - ppx_) / fpx_, y = (v - ppy_) / fy_;
+    return std::sqrt(x * x + y * y + 1.f);
+}
+
 void DepthCamera::rayFor(const CamPose& pose, int u, int v,
                          float& dx, float& dy, float& dz) const {
-    // Camera frame: +X right, +Y down, +Z forward. Pixel -> normalised ray.
-    camToWorld(pose, (u - ppx_) / fpx_, (v - ppy_) / fy_, 1.f, dx, dy, dz);
+    // Camera frame: +X right, +Y down, +Z forward. Pixel -> UNIT ray, which is
+    // what the name has always promised and what range-along-the-ray needs.
+    const float s = 1.f / rangePerZ(u, v);
+    camToWorld(pose, (u - ppx_) / fpx_ * s, (v - ppy_) / fy_ * s, s, dx, dy, dz);
 }
 
 cv::Mat DepthCamera::renderTruth(const VoxelWorld& w, const CamPose& pose) const {

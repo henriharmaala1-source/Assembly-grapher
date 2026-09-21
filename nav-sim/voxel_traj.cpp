@@ -13,30 +13,8 @@ static inline float wrapDeg(float d) { return std::fmod(d + 540.f, 360.f) - 180.
 // version was the same mistake this codebase made three times -- adjacent axis
 // samples on a 0.6 m sphere are 0.85 m apart, and a 0.2 m trunk sits between
 // them unseen.
-static inline bool sphereClear(const VoxelMap& m, float x, float y, float z,
-                               float r, float coreFrac) {
-    int cx, cy, cz; m.worldToCell(x, y, z, cx, cy, cz);
-    const float cell = m.params().cell;
-    const int R = int(std::ceil(r / cell));
-    const float r2 = r * r;
-    const float core2 = (r * coreFrac) * (r * coreFrac);
-    for (int dz = -R; dz <= R; ++dz)
-        for (int dy = -R; dy <= R; ++dy)
-            for (int dx = -R; dx <= R; ++dx) {
-                float ox = dx * cell, oy = dy * cell, oz = dz * cell;
-                float d2 = ox*ox + oy*oy + oz*oz;
-                if (d2 > r2) continue;
-                if (!m.inBounds(cx+dx, cy+dy, cz+dz)) {
-                    // Outside the map is unknown. Treat it like any unknown.
-                    if (d2 <= core2 && coreFrac > 0.f) return false;
-                    continue;
-                }
-                float l = m.logAt(cx+dx, cy+dy, cz+dz);
-                if (l > m.params().occThresh) return false;              // blocked
-                if (d2 <= core2 && !(l < m.params().freeThresh)) return false;  // not confirmed
-            }
-    return true;
-}
+// sphereClear now lives on VoxelMap, so this and voxel_planner cannot hold
+// two different opinions about whether a body fits. See voxel_map.hpp.
 
 TrajectoryPlanner::TrajectoryPlanner(const TrajParams& p) : p_(p) {
     // Roll out every primitive ONCE, here, in the body frame with +y forward.
@@ -150,7 +128,7 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
             // keeps whatever free length it earned up to here.
             if (p_.rollCapM > 0.f && freeLen >= p_.rollCapM) break;
             float wx, wy, wz; toWorld(pr.pts[i], wx, wy, wz);
-            if (!sphereClear(m, wx, wy, wz, p_.robotR, p_.coreFrac)) {
+            if (!m.sphereClear(wx, wy, wz, p_.robotR, p_.coreFrac)) {
                 // WHICH KIND of rejection, and they are not the same thing.
                 // sphereClear refuses an OCCUPIED cell anywhere in the ball and
                 // also a centre cell that is merely not CONFIRMED free -- so
@@ -285,7 +263,20 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
         // action mask handed to a policy is this flag and nothing else, so the
         // policy and the planner are choosing from the same set.
         ev.admissible = (freeLen >= p_.minFreeM);
-        if (score > best) {
+        // A CANDIDATE THAT CANNOT BE FLOWN MUST NOT BE RANKED. The winner used
+        // to be whatever scored highest, admissible or not, and the executable
+        // clearance was only checked AFTERWARDS -- at which point a winner with
+        // too little room set speed to zero. So a short, goal-aligned candidate
+        // could win and stop the aircraft while a longer, flyable one sat
+        // unchosen beside it, and the vehicle would hold in open air with no
+        // indication why.
+        //
+        // The test is the same expression the speed law uses below, margin
+        // included, because "can this be flown" must mean one thing. If nothing
+        // passes it, bestPrim stays null and the BLOCKED path below holds --
+        // which is the honest outcome and was always there.
+        const float usableLen = std::max(0.f, freeLen - p_.robotR * p_.freeMarginFrac);
+        if (usableLen >= p_.minFreeM && score > best) {
             best = score; bestPrim = &pr; bestFree = freeLen; bestClear = nClear;
         }
         // Keep admissible candidates for drawing. Capped, because this is a
@@ -331,6 +322,10 @@ GeneralResult TrajectoryPlanner::plan(const VoxelMap& m, float px, float py, flo
     // over what was confirmed clear. Same rule as before -- solving
     // d = v*t_react + v^2/(2a) for v -- so this cannot command faster than it
     // can stop inside what it has actually seen.
+    // Unreachable for a chosen winner now that ranking filters on this same
+    // expression, and kept because the two must not drift apart silently: if
+    // the filter above is ever weakened, this still refuses to command a speed
+    // the clearance does not support.
     float usable = std::max(0.f, bestFree - p_.robotR * p_.freeMarginFrac);
     if (usable < p_.minFreeM) { r.speed = 0; }
     else {

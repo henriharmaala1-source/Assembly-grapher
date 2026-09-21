@@ -241,6 +241,33 @@ public:
     //
     // Do not reach for this anywhere else. Asserting free space you have not
     // observed is the exact failure this whole map exists to prevent.
+    // IS A BODY-SIZED BALL CLEAR AT (x,y,z)? The swept-volume veto, and the
+    // ONE copy of it -- voxel_traj and voxel_planner each had their own, with
+    // the same two defects, which is the failure mode this tree keeps a rule
+    // against.
+    //
+    // TRUE SPHERE-AGAINST-BOX, from the FLOAT position. Both old copies walked
+    // INTEGER cell offsets from the query's own cell and compared
+    // centre-to-centre distance against r. That is wrong twice:
+    //
+    //   * it discards the sub-cell position, so the ball was tested as if the
+    //     body sat at its cell's centre -- up to cell*sqrt(3)/2 = 0.217 m away
+    //     from where it actually is, at 0.25 m cells;
+    //   * a voxel is a BOX. Its centre can be further than r while its nearest
+    //     CORNER is well inside the ball. Enumerated at robotR 0.6 and cell
+    //     0.25: SIXTY voxels intersect the body and were never looked at, the
+    //     worst of them overlapping it by 0.185 m.
+    //
+    // So a trajectory could pass the veto with the aircraft's volume already
+    // inside an OCCUPIED voxel. The header of the old version records that
+    // sampled points were replaced by an exhaustive cell scan for exactly this
+    // class of reason; the scan was exhaustive over the wrong set.
+    //
+    // coreFrac: the inner fraction of the radius that must be CONFIRMED free
+    // rather than merely not-known-occupied. 0 lets UNKNOWN pass. See
+    // TrajParams::coreFrac for what that is worth, measured.
+    bool sphereClear(float x, float y, float z, float r, float coreFrac = 0.f) const;
+
     void seedFree(float cx, float cy, float cz, float radiusM);
 
     enum State : uint8_t { UNKNOWN = 0, FREE = 1, OCCUPIED = 2 };

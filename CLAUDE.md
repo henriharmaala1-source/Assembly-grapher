@@ -45,11 +45,17 @@ So the columns that matter are:
 
 The bar is `freeM`, the classical openness-seeking planner, because it is a
 greedy version of half this objective: it picks the primitive with the longest
-confirmed-free path. But it buys that safety by circling, and the longer you let
-it fly the worse that gets -- at 1000-step episodes it loops at 8.2x its own
-displacement, at 3000 steps it loops at **29.5x**, flying 201 m to finish 6.8 m
-from where it started. Its coverage grows sub-linearly with path length while
-its displacement actually FALLS.
+confirmed-free path. It is also, measured properly, the best planner in this
+tree on every column named above -- it flies furthest, ends furthest from its
+spawn, covers the most ground and does not collide.
+
+THAT IS A CORRECTION. This file used to say freeM "buys that safety by
+circling", looping at 29.5x its own displacement and flying 201 m to finish
+6.8 m from where it started, with coverage growing sub-linearly while
+displacement FELL. All of that was a description of a broken collision check
+(see below): with `sphereClear` corrected, freeM loops at 8.0x and finishes
+29.3 m out. The circling was the veto waving through primitives that grazed
+obstacles and walked it into pockets it then had to turn out of.
 
 So quote it honestly. Held-out maze, seeds 101-106 x 2, 3000-step episodes,
 re-measured 2026-09-21 after `sphereClear` was corrected:

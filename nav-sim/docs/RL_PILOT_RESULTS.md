@@ -1582,3 +1582,95 @@ the policy and re-measures the tree. The evidence says it should be 0.45.
                   --policies cover freeM freeG novelG --corefrac 0.45
 
 Raw output of all six sweep points is in `docs/corefrac_sweep_maze_3000.txt`.
+
+## Re-measured on a working collision check: the result reverses
+
+`sphereClear` was wrong. It walked INTEGER cell offsets from the query's own
+cell and compared centre-to-centre distance against the body radius, so it
+missed 60 voxels that intersect the body -- worst overlap 0.185 m -- and tested
+that body as if it sat at its cell's centre, up to 0.217 m from where it was.
+Two copies of it, in `voxel_traj.cpp` and `voxel_planner.cpp`, with the same two
+defects. **Every number above this section was measured through it.**
+
+Corrected, and the whole comparison re-run on the same episodes -- maze seeds
+101-106 x 2, 3000 steps, one command.
+
+| planner | travel | net | cells | loops | crash | net x cells |
+|---------|--------|-----|-------|-------|-------|-------------|
+| **freeM** | **232.7 m** | **29.3 m** | **156** | 8.0x | **0/12** | **4549** |
+| freeG | 185.3 m | 18.6 m | 120 | 10.0x | 0/12 | 2232 |
+| policy (base3k) | 150.8 m | 18.8 m | 72 | 8.0x | 0/12 | 1365 |
+| novelG | 168.2 m | 19.4 m | 70 | 8.7x | 0/12 | 1360 |
+| cover | 152.5 m | 18.7 m | 56 | 8.1x | 0/12 | 1049 |
+| random | 135.7 m | 15.8 m | 62 | 8.6x | 0/12 | 982 |
+| frontRaw | 138.5 m | 12.5 m | 54 | 11.1x | 2/12 | 674 |
+| score | 27.2 m | 18.4 m | 30 | 1.5x | 10/12 | 555 |
+| goal | 80.2 m | 16.9 m | 22 | 4.8x | 4/12 | 371 |
+| circler | 112.4 m | 9.5 m | 17 | 11.9x | 2/12 | 164 |
+
+### The safety effect is enormous and it was a bug, not a policy
+
+Pooled over all ten planners: **48 collisions in 13.7 km became 18 in 16.6 km**.
+58.1 were expected at the old rate, so P(<= 18) = **7.7e-10**. Six of the ten
+now collide zero times in twelve episodes, where before only freeM did.
+
+For scale: the `coreFrac` sweep, the best deliberate safety result in this
+document, moved 12 collisions in 4357 m to 1 in 5125 m. Fixing the collision
+check did more, across every planner at once, and it was not an improvement --
+it was the removal of a defect.
+
+### The headline claim reverses, with significance both times
+
+Paired on `net x cells`, against the policy, on the fixed veto:
+
+    freeM    +3382 +/- 1059   RESOLVED
+    freeG     +660 +/-  403   not resolved
+    novelG    -148 +/-  350   not resolved
+    cover     -299 +/-  666   not resolved
+    random    -150 +/-  659   not resolved
+
+The earlier table had the policy beating freeM by **-892 +/- 307**, and that was
+the basis of "THE FIRST TIME A LEARNED POLICY HAS BEATEN freeM ON THIS
+OBJECTIVE". It is now **+3382 +/- 1059 the other way**. The finding did not
+weaken into noise; it changed sign, and was resolved in both directions.
+
+**The policy is not distinguishable from random.** -150 +/- 659 against a
+uniform draw over the admissible primitives. At this sample size, on this
+objective, 150k steps of PPO cannot be told apart from a coin flip.
+
+### What moved, and why freeM moved most
+
+| planner | composite broken -> fixed | cells |
+|---------|---------------------------|-------|
+| freeM | 752 -> **4549** | 110 -> 156 |
+| freeG | 2138 -> 2232 | 102 -> 120 |
+| policy | 1551 -> 1365 | 86 -> 72 |
+| novelG | 2197 -> 1360 | 124 -> 70 |
+| cover | 1541 -> 1049 | 77 -> 56 |
+| random | 737 -> 982 | 57 -> 62 |
+
+freeM gained sixfold. Its old behaviour -- 201 m flown to finish 6.8 m from the
+spawn, looping at 29.5x -- was the broken veto waving through primitives that
+grazed obstacles, walking it into pockets it then had to turn out of. With a
+correct check it goes 232.7 m to finish 29.3 m out, at 8.0x, covering more
+ground than anything else here. Every sentence this document wrote about
+freeM's pathological circling, and about that circling being what kept it
+alive, was a description of a bug.
+
+**novelG's advantage was an artefact too.** It was the one classical planner
+with a resolved edge -- 89.8 cells per 100 m against the policy's 54.5,
+intervals disjoint -- and on the corrected veto it drops from 124 cells to 70
+and lands level with the policy.
+
+### What this does and does not say about learning
+
+It does not say learning cannot work here. It says **nothing measured so far is
+evidence that it has**, because the bar was crippled in a way that flattered
+the policy, and because base3k was also TRAINED against the broken veto -- its
+action mask was wrong for every one of its 150k steps.
+
+The first honest experiment is a retrain on the corrected veto. Until that
+exists, the correct description of the learned policy on this objective is
+"not distinguishable from random".
+
+Raw output: `docs/bar10_maze_3000_fixedveto.csv`.

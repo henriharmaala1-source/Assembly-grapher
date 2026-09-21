@@ -51,95 +51,62 @@ displacement, at 3000 steps it loops at **29.5x**, flying 201 m to finish 6.8 m
 from where it started. Its coverage grows sub-linearly with path length while
 its displacement actually FALLS.
 
-### EVERY NUMBER BELOW WAS MEASURED AGAINST A BROKEN COLLISION CHECK
-
-`sphereClear` walked integer cell offsets from the query's own cell and
-compared centre-to-centre distance, so it missed 60 voxels that intersect the
-body (worst overlap 0.185 m) and tested the body as if it sat at its cell's
-centre, up to 0.217 m from where it was. Corrected 2026-09-21. Re-measured on
-maze 101-110, 3000 steps, same command:
+So quote it honestly. Held-out maze, seeds 101-106 x 2, 3000-step episodes,
+re-measured 2026-09-21 after `sphereClear` was corrected:
 
 | planner | travel | net | cells | loops | crashes | net x cells |
 |---------|--------|-----|-------|-------|---------|-------------|
-| freeM broken | 199.0 m | 6.2 m | 95 | 32.1x | 0/10 | 589 |
-| **freeM fixed** | **227.5 m** | **27.3 m** | **142** | **8.3x** | 0/10 | **3877** |
-| freeG broken | 147.1 m | 17.7 m | 102 | 8.3x | 4/10 | 1805 |
-| freeG fixed | 186.8 m | 15.4 m | 116 | 12.1x | **0/10** | 1786 |
-| novelG broken | 150.7 m | 16.6 m | 129 | 9.1x | 5/10 | 2141 |
-| novelG fixed | 178.4 m | 19.3 m | 104 | 9.2x | **1/10** | 2007 |
-| cover broken | 137.9 m | 16.0 m | 71 | 8.6x | 3/10 | 1136 |
-| cover fixed | 157.5 m | 19.3 m | 64 | 8.2x | **0/10** | 1235 |
+| **freeM** | **232.7 m** | **29.3 m** | **156** | 8.0x | **0/12** | **4549** |
+| freeG | 185.3 m | 18.6 m | 120 | 10.0x | 0/12 | 2232 |
+| learned (base3k) | 150.8 m | 18.8 m | 72 | 8.0x | 0/12 | 1365 |
+| novelG | 168.2 m | 19.4 m | 70 | 8.7x | 0/12 | 1360 |
+| cover | 152.5 m | 18.7 m | 56 | 8.1x | 0/12 | 1049 |
+| random | 135.7 m | 15.8 m | 62 | 8.6x | 0/12 | 982 |
+| frontRaw | 138.5 m | 12.5 m | 54 | 11.1x | 2/12 | 674 |
+| score | 27.2 m | 18.4 m | 30 | 1.5x | 10/12 | 555 |
+| goal | 80.2 m | 16.9 m | 22 | 4.8x | 4/12 | 371 |
+| circler | 112.4 m | 9.5 m | 17 | 11.9x | 2/12 | 164 |
 
-Pooled: **12 collisions in 6347 m became 1 in 7502 m**, P(<= 1) = 1.1e-5.
+### THE LEARNED POLICY DOES NOT BEAT THE BAR. IT DID, AGAINST A BROKEN VETO.
 
-THREE CLAIMS THIS DOCUMENT MADE ARE NOW FALSE:
+`sphereClear` walked integer cell offsets from the query's own cell and
+compared centre-to-centre distance, so it missed 60 voxels that intersect the
+body and tested that body as if it sat at its cell's centre, up to 0.217 m from
+where it was. Every number this file has ever carried was measured through it.
+Corrected, and everything re-run on the same episodes:
 
-1. **freeM does not loop at 29.5x.** It loops at 8.3x and finishes 27.3 m from
-   its spawn, not 6.8 m. The old figure was a planner grazing obstacles a
-   broken veto waved through, walking itself into pockets it had to turn out
-   of.
-2. **"freeM's circling is what keeps it alive" is dead.** It circles a quarter
-   as much and still never collides.
-3. **freeM is not last on the composite, it is first** -- 3877 against the
-   learned policy's 1551. The policy's number is also pre-fix, so the
-   comparison has to be re-run before anything is claimed either way; but the
-   direction of the correction is against the policy, not for it.
+- **Collisions across all ten planners: 48 in 13.7 km became 18 in 16.6 km.**
+  58.1 were expected at the old rate; P(<= 18) = 7.7e-10. This is the largest
+  safety effect ever measured here, and it was a bug in the collision check.
+- **freeM now beats the learned policy by +3382 +/- 1059 on `net x cells`,
+  paired, RESOLVED.** The old table had the policy beating freeM by -892 +/-
+  307. The result did not weaken; it reversed, with significance both times.
+- **The policy is indistinguishable from novelG (-148 +/- 350), cover
+  (-299 +/- 666) and RANDOM (-150 +/- 659).** On this objective, at this
+  sample size, 150k steps of PPO cannot be told apart from a coin flip over
+  the admissible primitives.
+- **novelG's coverage advantage is gone**: 124 cells to 70, composite 2197 to
+  1360. It was the one classical planner with a resolved edge, and the edge was
+  an artefact.
+- The policy itself got slightly worse, 1551 to 1365, and its safety margin
+  vanished because everything is safe now: six of the ten planners collide zero
+  times in twelve episodes.
 
-The coreFrac sweep below was also run against the broken veto. Its result may
-now be redundant: the corrected veto alone achieves the same 12 -> 1.
+freeM wins on every column that matters. It flies furthest, ends furthest from
+its spawn, covers the most ground, never collides, and its looping -- the thing
+this file spent months holding against it -- is 8.0x, not 29.5x. The circling
+was the broken veto letting it graze obstacles and walk into pockets it then
+had to turn out of.
 
-The table that follows is kept as the record of what was believed, not as the
-bar. DO NOT QUOTE IT until the re-measurement lands.
+WHAT THIS MEANS FOR THE POLICY. It is not that learning cannot work here. It is
+that nothing measured so far is evidence that it has, because the bar it was
+measured against was crippled in a way that flattered it. base3k was also
+TRAINED against the broken veto, so its action mask was wrong throughout
+training; a retrain on the corrected one is the first honest experiment, and
+until it exists the right description of the learned policy is "not
+distinguishable from random".
 
-So quote it honestly. Held-out maze, 3000-step episodes:
-
-| planner | net disp | cells | loops | collisions | m before a crash |
-|---------|----------|-------|-------|------------|------------------|
-| novelG | 17.8 m | **124** | 7.7x | 6/12 | 275 m |
-| freeG | **20.9 m** | 102 | **6.1x** | 6/12 | 256 m |
-| learned (base3k) | 18.0 m | 86 | 8.8x | 2/12 | **948 m** |
-| cover | 19.9 m | 77 | 7.3x | 2/12 | 875 m |
-| freeM | 6.8 m | 110 | 29.5x | **0/12** | **never** |
-
-AND QUOTE IT AGAINST A BAR THAT IS MATCHED TO IT. The four planners this was
-first measured against were written when reaching a goal was the score, and two
-of them optimise a goal nothing pays for. Against that set the learned policy
-led on `net x cells`, 1551 to freeM's 752, and that was read as the first
-learned win on this objective. Against planners aimed at what IS scored it is
-third on the point estimates: novelG 2197, freeG 2138, base3k 1551, cover 1541.
-
-**SIX MAPS CANNOT RANK THOSE FOUR, AND SAYING OTHERWISE IS THE STANDING ERROR
-HERE.** Paired episode by episode, novelG leads the policy by 620 +/- 828 and
-freeG by 481 +/- 705 -- neither clears its own error bar. The policy's own net
-displacement varies 13.7x between two draws on the SAME map. What IS resolved:
-the policy beats freeM (-892 +/- 307), novelG covers ground faster than the
-policy (89.8 vs 54.5 cells per 100 m, intervals disjoint), and `cover` --
-frontier-seeking with a gate, a dozen lines, never trained -- is
-indistinguishable from 150k steps of PPO at +11 +/- 521 on the same 2 collisions
-in 12. Before quoting any other ordering, run more MAPS; repeats of a
-deterministic planner are bit-identical and add nothing.
-
-`net x cells` IS ALSO THE WRONG NUMBER, and that is the more useful half. It
-multiplies two of the three columns named above and cannot see the third, so it
-ranks a planner that crashes every 256 m over one that has never crashed. On
-metres-before-a-crash the point estimates are freeM never, base3k 948 m, cover
-875 m, and nothing else over 470 m -- but two crashes buys a 95% interval of 340
-to 3065 m, so that column is not resolved either. Use the columns, not their
-product, and quote the interval with the column.
-
-TWO MORE TRAPS IN THE TABLE. **Per-episode means mix rate with survival**: a
-planner that dies at step 700 banked 700 steps of coverage, not 3000, so compare
-per metre flown. Do that and **the policy covers ground at exactly freeM's rate**
--- 54.5 against 54.7 cells per 100 m -- meaning its 86 cells against freeM's 110
-is a shorter path, not worse coverage. And **`min_clear_m` is a tautology**:
-crashed episodes max out at 0.60 m, survivors start at 0.60 m, `robotR` is 0.60.
-It records contact, never margin, and is not a safety score.
-
-The other thing that came out of that measurement: **freeM's circling is what
-keeps it alive.** freeG is freeM plus a charge on yaw rate, and that single term
-takes the loop ratio 29.5x -> 6.1x and the displacement 6.8 -> 20.9 m -- and the
-collisions 0/12 -> 6/12. A hard turn is short and stays inside mapped air. "Orbits
-too much" and "never crashes" are one property of that planner, not two.
+Raw: docs/bar10_maze_3000_fixedveto.csv.
 
 A GOAL-SHAPED REWARD WILL NOT PRODUCE THIS. Progress-to-goal pays for closing
 distance to one point and stops paying when the aircraft is there; it says

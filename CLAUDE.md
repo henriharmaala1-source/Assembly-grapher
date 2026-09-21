@@ -51,6 +51,46 @@ displacement, at 3000 steps it loops at **29.5x**, flying 201 m to finish 6.8 m
 from where it started. Its coverage grows sub-linearly with path length while
 its displacement actually FALLS.
 
+### EVERY NUMBER BELOW WAS MEASURED AGAINST A BROKEN COLLISION CHECK
+
+`sphereClear` walked integer cell offsets from the query's own cell and
+compared centre-to-centre distance, so it missed 60 voxels that intersect the
+body (worst overlap 0.185 m) and tested the body as if it sat at its cell's
+centre, up to 0.217 m from where it was. Corrected 2026-09-21. Re-measured on
+maze 101-110, 3000 steps, same command:
+
+| planner | travel | net | cells | loops | crashes | net x cells |
+|---------|--------|-----|-------|-------|---------|-------------|
+| freeM broken | 199.0 m | 6.2 m | 95 | 32.1x | 0/10 | 589 |
+| **freeM fixed** | **227.5 m** | **27.3 m** | **142** | **8.3x** | 0/10 | **3877** |
+| freeG broken | 147.1 m | 17.7 m | 102 | 8.3x | 4/10 | 1805 |
+| freeG fixed | 186.8 m | 15.4 m | 116 | 12.1x | **0/10** | 1786 |
+| novelG broken | 150.7 m | 16.6 m | 129 | 9.1x | 5/10 | 2141 |
+| novelG fixed | 178.4 m | 19.3 m | 104 | 9.2x | **1/10** | 2007 |
+| cover broken | 137.9 m | 16.0 m | 71 | 8.6x | 3/10 | 1136 |
+| cover fixed | 157.5 m | 19.3 m | 64 | 8.2x | **0/10** | 1235 |
+
+Pooled: **12 collisions in 6347 m became 1 in 7502 m**, P(<= 1) = 1.1e-5.
+
+THREE CLAIMS THIS DOCUMENT MADE ARE NOW FALSE:
+
+1. **freeM does not loop at 29.5x.** It loops at 8.3x and finishes 27.3 m from
+   its spawn, not 6.8 m. The old figure was a planner grazing obstacles a
+   broken veto waved through, walking itself into pockets it had to turn out
+   of.
+2. **"freeM's circling is what keeps it alive" is dead.** It circles a quarter
+   as much and still never collides.
+3. **freeM is not last on the composite, it is first** -- 3877 against the
+   learned policy's 1551. The policy's number is also pre-fix, so the
+   comparison has to be re-run before anything is claimed either way; but the
+   direction of the correction is against the policy, not for it.
+
+The coreFrac sweep below was also run against the broken veto. Its result may
+now be redundant: the corrected veto alone achieves the same 12 -> 1.
+
+The table that follows is kept as the record of what was believed, not as the
+bar. DO NOT QUOTE IT until the re-measurement lands.
+
 So quote it honestly. Held-out maze, 3000-step episodes:
 
 | planner | net disp | cells | loops | collisions | m before a crash |

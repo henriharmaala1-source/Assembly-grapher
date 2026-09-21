@@ -193,6 +193,11 @@ int cmdTrack(std::vector<std::string> args) {
     if (out) std::fprintf(out, "frame,state,x,y,w,h,conf\n");
 
     int n = 0, locked = 0, coasting = 0, searching = 0, lost = 0;
+    // 30 fps. Only the two numbers derived from it -- how long the tracker
+    // coasts before giving up, and how fast it believes the target is moving --
+    // depend on this being right, and for an offline pass over a sequence
+    // neither is a claim about the world.
+    constexpr double TRACK_NOMINAL_DT = 1.0 / 30.0;
     while (src.next(frame)) {
         track::GrayFrame g = toGray(frame, d, u, v);
         if (n == 0) {
@@ -201,7 +206,18 @@ int cmdTrack(std::vector<std::string> args) {
             std::printf("[track] designated (%.0f, %.0f) size %.0f in %dx%d\n",
                         bx, by, bsize, frame.cols, frame.rows);
         }
-        const track::LockTracker::Result r = trk.update(g);
+        // A SEQUENCE HAS NO CLOCK, and saying so is better than inventing a
+        // convincing one. `track` reads a folder of stills or a video decoded
+        // as fast as it will go; neither carries capture times, and the
+        // tracker now needs them because its timeouts, velocity and adaptation
+        // are per SECOND. So this states the assumption -- frames are one
+        // nominal interval apart -- rather than hiding it inside a rate the
+        // tracker would otherwise have assumed silently anyway.
+        //
+        // A live camera path must NOT do this. It has real capture times and
+        // the whole point of the parameter is to carry them.
+        const double captureSec = double(n) * TRACK_NOMINAL_DT;
+        const track::LockTracker::Result r = trk.update(g, captureSec);
         switch (r.state) {
             case track::LockTracker::State::LOCKED:    ++locked; break;
             case track::LockTracker::State::COASTING:  ++coasting; break;

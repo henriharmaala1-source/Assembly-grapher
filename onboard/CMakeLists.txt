@@ -183,6 +183,17 @@ if(BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME lock_tracker_fused COMMAND test_lock_tracker_fused)
 
+  # CoastFlow used to answer a featureless frame with a constant -18,-18 --
+  # not noise, the negative corner of its own search window, every point every
+  # frame. This pins that it refuses instead, and that refusing did not cost it
+  # the ability to measure a real shift.
+  add_executable(test_coast_flow_flat
+    test/test_coast_flow_flat.cpp
+    src/optical_flow.cpp
+    src/gray_frame.cpp)
+  target_include_directories(test_coast_flow_flat PRIVATE include)
+  add_test(NAME coast_flow_flat COMMAND test_coast_flow_flat)
+
   # The OLD tracker -- the one perception.hpp still instantiates, and so the
   # one that actually flies. It had no test at all until a review found the
   # template scale-convention bug this pins.

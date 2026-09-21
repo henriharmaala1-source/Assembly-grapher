@@ -93,6 +93,14 @@ public:
     float minEig  = 8.f;   // SSD_MINEIG -- min-eigenvalue corner gate
     int   maxPts  = 12;    // LK_MAX_PTS -- median over 12, chosen for cost
     int   minPts  = 4;     // LK_MIN_PTS -- fewer survivors = no verdict
+    // THE CURRENT FRAME MUST HAVE SOMETHING IN IT. minEig gates the frame a
+    // point is SEEDED from; nothing gated the frame it is matched INTO, and an
+    // SSD landscape over a featureless region is perfectly flat -- every offset
+    // scores the same, so the first one tested wins by default and that is the
+    // negative corner of the search window. Measured before this gate existed:
+    // a uniform frame produced exactly -18,-18 on every point, every frame.
+    // Variance of the searched region at full resolution, in luma^2.
+    float minVar  = 6.f;   // LK_MIN_VAR
     float inner   = 1.0f;  // LK_INNER   -- seed from this fraction of the box
 
     // Pick textured points inside the box and remember the frame they came from.

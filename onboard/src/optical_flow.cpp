@@ -132,6 +132,33 @@ bool CoastFlow::matchPoint(const std::vector<std::vector<float>>& pa,
                            int cx, int cy, int& odx, int& ody) const {
     const int p = patch;
     const int L = int(pa.size()) - 1;
+    // CAN ANYTHING HERE BE MATCHED AT ALL? Over a region with no variation the
+    // SSD is identical at every offset -- sum of (patch - constant)^2 does not
+    // depend on where the patch is put -- so the search returns not noise but a
+    // CONSTANT, MAXIMAL displacement: no candidate ever beats the first tested,
+    // and the first tested is the window's negative corner. The caller replaces
+    // its prediction with that, so a COASTING tracker's search box walks 18 px
+    // a frame, diagonally, for as long as the scene stays blank.
+    //
+    // Full resolution, over the reachable region rather than the patch alone:
+    // the question is whether anything the search can land on differs from
+    // anything else it can land on.
+    {
+        const std::vector<float>& b0 = pb[0];
+        const int w0 = bw[0], h0 = bh[0];
+        const int rx0 = std::max(0, cx - p - search), ry0 = std::max(0, cy - p - search);
+        const int rx1 = std::min(w0 - 1, cx + p + search);
+        const int ry1 = std::min(h0 - 1, cy + p + search);
+        if (rx1 <= rx0 || ry1 <= ry0) return false;
+        double s1 = 0, s2 = 0; int n = 0;
+        for (int y = ry0; y <= ry1; ++y)
+            for (int x = rx0; x <= rx1; ++x) {
+                const float v = b0[size_t(y) * w0 + x];
+                s1 += v; s2 += double(v) * v; ++n;
+            }
+        const double mean = s1 / n;
+        if (s2 / n - mean * mean < minVar) return false;
+    }
     int dx = 0, dy = 0;
     for (int lv = L; lv >= 0; --lv) {
         const int sc = 1 << lv;
@@ -148,7 +175,22 @@ bool CoastFlow::matchPoint(const std::vector<std::vector<float>>& pa,
         const int x0 = px + dx - p - rad, y0 = py + dy - p - rad;
         const int x1 = px + dx + p + rad + 1, y1 = py + dy + p + rad + 1;
         if (x0 < 0 || y0 < 0 || x1 > bw[lv] || y1 > bh[lv]) return false;
-        float best = FMAX; int bi = 0, bj = 0;
+        // A TIE RESOLVES TO NO MOTION. The comparison below is a strict
+        // improvement, so whichever offset is scored first keeps the win --
+        // and scoring the window in raster order makes that the negative
+        // corner. Seeding the search at ZERO displacement means an
+        // uninformative landscape leaves the point where it is, which is the
+        // only safe default, instead of hurling it at a corner.
+        float best = FMAX; int bi = rad, bj = rad;
+        {
+            float s = 0.f;
+            for (int j = -p; j <= p; ++j) {
+                const float* ar = &a[size_t(py + j) * aw[lv] + (px - p)];
+                const float* br = &b[size_t(y0 + rad + j + p) * bw[lv] + (x0 + rad)];
+                for (int i = 0; i <= 2 * p; ++i) { const float d = ar[i] - br[i]; s += d * d; }
+            }
+            best = s;
+        }
         for (int oy = 0; oy <= 2 * rad; ++oy)
             for (int ox = 0; ox <= 2 * rad; ++ox) {
                 float s = 0.f;

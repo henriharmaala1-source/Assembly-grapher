@@ -175,6 +175,24 @@ ScanMatch ScanMatcher::match(const VoxelMap& map, const cv::Mat& depth,
     const float gate = std::max(p_.minCurvatureFrac, p_.relCurvatureFrac * bestTrans);
     for (int a = 0; a < 4; ++a) out.axisObserved[a] = out.curv[a] >= gate;
 
+    // AN AXIS IT CANNOT RESOLVE IS ONE IT MUST NOT CLAIM, and until now that
+    // was only true by accident for yaw. `valid` covers the three translation
+    // axes, so a caller that honours it cannot act on a degenerate dE/dN/dU --
+    // but dYawDeg sits outside `valid` entirely, and the search returned its
+    // best grid point whatever the landscape looked like.
+    //
+    // It passed its test because the landscape was DEGENERATE: with the old
+    // unnormalised deprojection the pillar case scored curvature -0.0037 -- a
+    // negative number, meaning the neighbours beat the peak -- and the search
+    // happened to land on 0.00. Fixing the deprojection made the cloud correct,
+    // the curvature +0.0030, and the same unresolvable case started claiming
+    // 2.00 degrees. Neither is a heading fix; one of them merely looked like a
+    // refusal.
+    //
+    // So refuse explicitly. A heading below what the map can resolve now
+    // returns zero because it is zeroed, not because the search wandered there.
+    if (!out.axisObserved[3]) out.dYawDeg = 0.f;
+
     out.valid = out.hitFrac >= p_.minHitFrac
              && out.axisObserved[0] && out.axisObserved[1] && out.axisObserved[2];
     return out;

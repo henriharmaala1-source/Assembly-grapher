@@ -89,8 +89,8 @@ struct TrajParams {
     // already spent 638 of 700 steps stationary learning that. So the idea was
     // to split it -- CORE confirmed free, outer margin merely unoccupied.
     //
-    // IT DOES NOT WORK, AND IS OFF BY DEFAULT. Swept against trunk visibility,
-    // 400 steps, 4 seeds:
+    // IT WORKS. THE EARLIER MEASUREMENT SAID OTHERWISE AND COULD NOT HAVE SEEN
+    // IT. That sweep was forest, 400 steps, 4 seeds, scored in goal-era columns:
     //
     //     trunkTex  coreFrac   coll/4  travel  endDist  stopped
     //     0.70      0.00         0/4     68.3    107.9      169
@@ -100,17 +100,52 @@ struct TrajParams {
     //     0.15      0.00         4/4      6.9    169.1        0
     //     0.15      0.65         4/4     57.9    118.9        1
     //
-    // Never safer, usually slower. At 0.25 it is the arm that collides while
-    // the arm without it does not -- one run of four, so not significant, but
-    // certainly no evidence for it. At 0.15 both fail totally; coreFrac only
-    // delays the crash, which is cosmetic.
+    // It concluded "never safer, usually slower". Two of its three rows have NO
+    // DISCRIMINATING POWER -- 0/4 against 0/4, and 4/4 against 4/4 -- and the
+    // third turns on a single collision. It could not have detected a
+    // difference of any size. "Slower" was read off endDist and stopped, which
+    // score a goal this project no longer scores.
     //
-    // The reasoning behind it still looks right: unknown space inside your own
-    // body's volume is exactly where an unmatched obstacle hides. The
-    // measurement disagrees, and the measurement wins. Kept behind --corefrac
-    // with the numbers attached, because the next person will think of it too.
+    // Re-swept under the TRAVEL objective, maze, seeds 101-110, 3000 steps,
+    // metres per collision with the exposure being metres actually flown:
     //
-    // Intermediate values were NOT tested; only 0 and 0.65.
+    //     planner  coreFrac  travel  cells  crash   m/crash   minClr
+    //     cover      0.00    137.9m    71   3/10      460 m    0.57
+    //     cover      0.45    166.6m   127   0/10      never    0.61
+    //     freeG      0.00    147.1m   102   4/10      368 m    0.58
+    //     freeG      0.45    185.9m   118   0/10      never    0.63
+    //     novelG     0.00    150.7m   129   5/10      301 m    0.58
+    //     novelG     0.45    160.0m   122   1/10     1600 m    0.60
+    //     freeM      0.00    199.0m    95   0/10      never    0.64
+    //     freeM      0.45    198.3m   104   0/10      never    0.64
+    //
+    // Pooled over the three planners that collide at all: 12 collisions in
+    // 4357 m becomes 1 in 5125 m. At the old rate 14.1 were expected, so
+    // P(<= 1) = 1.1e-5. That is not a sampling accident.
+    //
+    // AND IT IS NOT SLOWER. The travel column above rises, but that is
+    // SURVIVORSHIP -- a collision ends an episode, so removing collisions
+    // leaves the full budget to fly. Comparing only episodes that survived,
+    // travel is flat: cover 160.9 -> 166.6, freeG 183.2 -> 185.9, novelG
+    // 192.8 -> 172.1, freeM 199.0 -> 198.3. The safety is free, not a gain.
+    //
+    // QUANTISED BY THE VOXEL, so the number is not continuous. sphereClear
+    // walks INTEGER cell offsets and the core condition fires at d2 <=
+    // (robotR*coreFrac)^2 with d2 = k*cell^2, so behaviour only changes as the
+    // parameter crosses sqrt(k)*cell/robotR: 0.417, 0.589, 0.722, 0.833,
+    // 0.932 at 0.25 m cells and a 0.6 m body. Below 0.417 only the centre cell
+    // is tested and nothing happens -- 0.30 is bit-identical to 0 over all
+    // forty episodes above. 0.65, the only value the old sweep tried, is the
+    // 19-cell regime; 0.45 is the 7-cell one and is enough.
+    //
+    // 1.00 DEADLOCKS, as the paragraph above predicted: the whole ball must be
+    // confirmed free, the map starts empty, so nothing is ever admissible and
+    // the vehicle flies 0.2 m. That bound is real and this is where it is.
+    //
+    // STILL 0 BY DEFAULT, for one reason only: base3k and every number in
+    // docs/ were produced at 0, and the action mask is what the policy learned
+    // against. Changing this default retrains the policy and re-measures the
+    // tree. The evidence says it should be 0.45.
     float coreFrac   = 0.0f;    // 1.0 = whole ball must be FREE, 0 = off
     // How far along the winning rollout to aim. This is NOT a free parameter:
     // commanding a straight bearing to a point on a curved path flies a CHORD,

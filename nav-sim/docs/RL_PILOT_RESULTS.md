@@ -1479,3 +1479,106 @@ behaviour the objective names outright as unwanted.
 The first is the same draw that makes seed 103 the 13.7x variance case: the
 other repeat on that map flew 189.7 m and survived. The policy's worst failure
 and its median behaviour are the same weights on the same world.
+
+## The veto let unknown space through, and closing it removes the collisions
+
+Every collision this project has ever measured has been into UNKNOWN space --
+48 of 48 in the run above, 0 into anything the map had marked occupied. That
+was read for a long time as a sensing limit: the camera cannot see far enough,
+so the fix is range. It is not. `sphereClear` rejects a cell whose log-odds are
+above `occThresh` and lets everything else pass, so a primitive may sweep
+through air NOTHING HAS MEASURED and the veto approves it. The sensor never
+lied. The veto permitted the motion.
+
+`coreFrac` is the switch that closes it -- the fraction of the body's own
+radius that must be CONFIRMED free rather than merely not-known-occupied -- and
+it has been 0 since it was written, on the strength of one sweep that could not
+have detected its effect.
+
+### The old sweep had no discriminating power
+
+Forest, 400 steps, 4 seeds, scored on `travel / endDist / stopped`:
+
+| trunkTex | coreFrac | coll/4 | travel | endDist | stopped |
+|----------|----------|--------|--------|---------|---------|
+| 0.70 | 0.00 | 0/4 | 68.3 | 107.9 | 169 |
+| 0.70 | 0.65 | 0/4 | 53.9 | 122.4 | 217 |
+| 0.25 | 0.00 | 0/4 | 56.1 | 120.6 | 210 |
+| 0.25 | 0.65 | 1/4 | 36.9 | 139.5 | 180 |
+| 0.15 | 0.00 | 4/4 | 6.9 | 169.1 | 0 |
+| 0.15 | 0.65 | 4/4 | 57.9 | 118.9 | 1 |
+
+It concluded "never safer, usually slower". **Two of the three rows are 0/4
+against 0/4 and 4/4 against 4/4** -- no difference of any size could have shown
+there -- and the third turns on one collision. "Slower" came from `endDist` and
+`stopped`, which score a goal nothing is scored on any more.
+
+### Re-swept in metres per collision
+
+Maze, seeds 101-110, 3000 steps, truth depth, `--objective range`. Exposure is
+metres actually flown, because a planner that dies early gets less opportunity
+to die again.
+
+| planner | coreFrac | travel | cells | crash | m/crash | 95% interval | minClr |
+|---------|----------|--------|-------|-------|---------|--------------|--------|
+| cover | 0.00 | 137.9 m | 71 | 3/10 | 460 m | 191 - 1265 m | 0.57 |
+| cover | 0.45 | 166.6 m | **127** | **0/10** | never | 451 - inf | 0.61 |
+| cover | 0.62 | 152.7 m | 71 | **0/10** | never | 414 - inf | 0.63 |
+| cover | 0.80 | 152.0 m | 86 | 1/10 | 1520 m | 412 - 6277 m | 0.60 |
+| freeG | 0.00 | 147.1 m | 102 | 4/10 | 368 m | 168 - 906 m | 0.58 |
+| freeG | 0.45 | **185.9 m** | 118 | **0/10** | never | 504 - inf | 0.63 |
+| novelG | 0.00 | 150.7 m | 129 | 5/10 | 301 m | 147 - 684 m | 0.58 |
+| novelG | 0.45 | 160.0 m | 122 | 1/10 | 1600 m | 434 - 6606 m | 0.60 |
+| novelG | 0.80 | 155.7 m | 92 | **0/10** | never | 422 - inf | 0.60 |
+| freeM | 0.00 | 199.0 m | 95 | 0/10 | never | 540 - inf | 0.64 |
+| freeM | 0.45 | 198.3 m | 104 | 0/10 | never | 538 - inf | 0.64 |
+
+**Pooled over the three planners that collide at all: 12 collisions in 4357 m
+becomes 1 in 5125 m.** At the old rate 14.1 were expected; P(<= 1) = **1.1e-5**.
+Unlike almost everything else measured in this tree, this one is not close.
+
+`freeM` is the control and behaves like one -- it never collided at any
+setting, because it never goes anywhere near anything.
+
+### It is not faster, and the travel column says otherwise
+
+The travel numbers rise by 20-26%, and that is **survivorship**. A collision
+ends an episode, so removing collisions leaves the full budget to fly.
+Comparing only the episodes that survived:
+
+| planner | survivor travel at 0.00 | at 0.45 |
+|---------|-------------------------|---------|
+| cover | 160.9 m (7/10) | 166.6 m (10/10) |
+| freeG | 183.2 m (6/10) | 185.9 m (10/10) |
+| novelG | 192.8 m (5/10) | 172.1 m (9/10) |
+| freeM | 199.0 m (10/10) | 198.3 m (10/10) |
+
+Flat, and slightly down for novelG. **The safety is free in travel terms. It is
+not a speed gain, and reporting the first table alone would have claimed one.**
+
+### The parameter is quantised, and most of its range does nothing
+
+`sphereClear` walks INTEGER cell offsets, so the squared distances it can test
+are `k * cell^2`. The core condition fires at `d2 <= (robotR * coreFrac)^2`, so
+behaviour only changes as the parameter crosses `sqrt(k) * cell / robotR` --
+0.417, 0.589, 0.722, 0.833, 0.932 at 0.25 m cells and a 0.6 m body.
+
+Below 0.417 only the centre cell is tested, and an admissible rollout's own
+cell is already free: **`--corefrac 0.30` is bit-identical to 0 across all
+forty episodes.** 0.65, the only value the old sweep tried, is the 19-cell
+regime. 0.45 is the 7-cell one and is enough.
+
+At **1.00 the vehicle never leaves the spawn** -- 0.2 m flown. The whole ball
+must be confirmed free, the map starts empty, so nothing is ever admissible.
+The header's own warning about deadlock was right; this is where the bound is.
+
+### It is still 0 by default
+
+For one reason: base3k and every number in this document were produced at 0,
+and the action mask is what the policy learned against. Adopting 0.45 retrains
+the policy and re-measures the tree. The evidence says it should be 0.45.
+
+    kestrel bench --worlds maze --seeds 101 110 --steps 3000 \
+                  --policies cover freeM freeG novelG --corefrac 0.45
+
+Raw output of all six sweep points is in `docs/corefrac_sweep_maze_3000.txt`.

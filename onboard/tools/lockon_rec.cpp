@@ -508,7 +508,13 @@ int main(int argc, char** argv) {
             tr.conf = 1.f;
             tr.aimX = float(centre.x); tr.aimY = float(centre.y);
         } else if (trk.hasTarget()) {
-            tr = trk.update(gf);
+            // CAPTURE TIME, from the same steady clock the recording is
+            // stamped with. A recorder is the one place that certainly has
+            // this, and the tracker needs it: its timeouts, velocity and
+            // adaptation are all per SECOND now, so a replay at a different
+            // rate must produce the same behaviour as the live run it came
+            // from, and only a real timestamp makes that true.
+            tr = trk.update(gf, nowS());
         }
 
         // ---- overlay

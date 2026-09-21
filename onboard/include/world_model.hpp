@@ -61,7 +61,13 @@ struct WorldState {
     float       targetConf   = 0.f;
     long        targetAge    = 0;
     int         targetLosses = 0;
-    double      targetStampS = -1e9;  // monoNowS at last tracker publish
+    double      targetStampS = -1e9;  // capture time of the frame just tracked
+    // Seconds since the last ACCEPTED observation; < 0 when there has never
+    // been one. targetStampS advances every frame the tracker speaks, which it
+    // does while coasting on extrapolation, so it cannot answer "is this box
+    // still a measurement".
+    float       targetFixAgeS = -1.f;
+    const char* targetCore     = "";   // which tracker core produced this
 
     // --- Navigate (monocular corridor) ---
     bool        corridorValid    = false;

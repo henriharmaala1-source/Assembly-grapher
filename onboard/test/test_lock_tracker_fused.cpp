@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <cstdlib>
 #include <vector>
 
@@ -21,6 +22,13 @@ static int failures = 0;
     std::printf("\n"); ++failures; } } while (0)
 
 namespace {
+// A NOMINAL 30 fps CLOCK. update() now requires a capture time; these cases
+// were all written against a fixed rate, so feeding them one preserves exactly
+// what they were asserting. The cases that care about elapsed time set their
+// own gaps.
+double g_t = 0.0;
+double tick(double dt = 1.0 / 30.0) { g_t += dt; return g_t; }
+
 
 // Deterministic PRNG -- a fixed seed matters more than quality here.
 struct Rng {
@@ -105,7 +113,113 @@ float boxErr(const LockTracker::Result& r, float tx, float ty) {
     return std::hypot(r.x + r.w / 2.f - tx, r.y + r.h / 2.f - ty);
 }
 
+
+// --- recovery, measured rather than assumed ------------------------------
+// The suite used to pass while printing "re-acquire err 19.4 px, state IDLE":
+// the only assertion was that the error was FINITE. hasTarget() is no better,
+// because it is true in COASTING and SEARCHING -- states in which the tracker
+// is explicitly NOT holding the target. A recovery check has to name the
+// state, the error and the time.
+//
+// The bounds below are MEASURED, not wished for: each case prints what the
+// tracker actually did and then asserts against it, so the capability is
+// described by the same numbers that pin it.
+void testRecoveryReach() {
+    struct Case { const char* name; int gapFrames; float reappearDx; };
+    const Case cases[] = {
+        {"same place, 8 frame gap",   8,   0.f},
+        {"same place, 30 frame gap", 30,   0.f},
+        {"25 px away, 8 frame gap",   8,  25.f},
+        {"60 px away, 8 frame gap",   8,  60.f},
+    };
+    std::printf("  -- recovery reach --\n");
+    for (const Case& c : cases) {
+        Rng rng;
+        LockTracker t;
+        GrayFrame f0 = makeFrame(320, 240, 160, 120, 40, rng, true);
+        t.designate(f0, 160, 120, 40);
+        for (int i = 0; i < 10; ++i) {
+            GrayFrame g = makeFrame(320, 240, 160, 120, 40, rng, true);
+            t.update(g, tick());
+        }
+        for (int i = 0; i < c.gapFrames; ++i) {
+            GrayFrame g = makeFrame(320, 240, -999, -999, 40, rng, true);
+            t.update(g, tick());
+        }
+        const float rx = 160.f + c.reappearDx;
+        int lockedAt = -1; float err = 1e9f;
+        for (int i = 0; i < 20; ++i) {
+            GrayFrame g = makeFrame(320, 240, rx, 120, 40, rng, true);
+            const auto r = t.update(g, tick());
+            err = boxErr(r, rx, 120);
+            if (lockedAt < 0 && t.state() == LockTracker::State::LOCKED) lockedAt = i;
+        }
+        std::printf("     %-24s -> state %-9s err %6.1f px  locked after %s frames\n",
+                    c.name, LockTracker::stateName(t.state()), err,
+                    lockedAt < 0 ? "never" : (std::to_string(lockedAt)).c_str());
+        if (c.gapFrames <= 8) {
+            // WITHIN REACH: a gap under about a third of a second is recovered
+            // from whatever the displacement, because the search widens around
+            // a prediction that is still riding with the target. Measured: 0,
+            // 25 and 60 px all re-LOCK on the first frame back, within 1.4 px.
+            CHECK(t.state() == LockTracker::State::LOCKED, c.name);
+            CHECK(lockedAt >= 0 && lockedAt <= 2, "re-LOCK took too long");
+            CHECK(err <= 5.f, "re-LOCKed away from the target");
+        } else {
+            // PAST REACH, and this is the boundary worth pinning. SEARCHING is
+            // LOCAL recovery: it expands around the prediction and matches the
+            // original anchor, so a gap long enough for the prediction to drift
+            // off is not recoverable by design. What the tracker must not do is
+            // claim a lock anyway -- giving up is the correct answer and a
+            // confident wrong box is the dangerous one.
+            CHECK(!(t.state() == LockTracker::State::LOCKED && err > 8.f),
+                  "claims LOCKED past its documented reach");
+        }
+    }
+}
+
+// THE LOSS TIMEOUT IS 1.5 SECONDS, not 45 frames. Fed at 10 fps it must give
+// up after about 15 frames, not 45 -- which is the whole point of putting the
+// tracker on a capture clock, and is the case the old frame-counting code got
+// exactly three times wrong.
+void testLossTimeoutIsSeconds() {
+    std::printf("  -- loss timeout, in SECONDS --\n");
+    for (double fps : {30.0, 10.0}) {
+        Rng rng;
+        LockTracker t;
+        GrayFrame f0 = makeFrame(320, 240, 160, 120, 40, rng, true);
+        t.designate(f0, 160, 120, 40);
+        double clock = 0.0;
+        for (int i = 0; i < 10; ++i) {
+            GrayFrame g = makeFrame(320, 240, 160, 120, 40, rng, true);
+            t.update(g, clock += 1.0 / fps);
+        }
+        // THE RETURNED state, not the tracker's. On LOST the tracker resets
+        // itself to IDLE and reports LOST once, in that frame's Result -- so a
+        // loop watching t.state() waits for a value that is never observable
+        // and runs to its cap. My first version of this probe did exactly that
+        // and read 13.3 s where the answer was 1.5.
+        int n = 0; double t0 = clock; bool lost = false;
+        while (!lost && n < 400) {
+            GrayFrame g = makeFrame(320, 240, -999, -999, 40, rng, true);
+            const auto r = t.update(g, clock += 1.0 / fps);
+            lost = (r.state == LockTracker::State::LOST);
+            ++n;
+        }
+        const double held = clock - t0;
+        std::printf("     %4.0f fps: LOST after %3d frames = %.2f s\n",
+                    fps, n, held);
+        // THE TIMEOUT IS 1.5 SECONDS AT EVERY RATE. As a 45-frame count it was
+        // 1.5 s at 30 fps and 4.5 s at 10 -- so the tracker held a target it
+        // could not see three times longer exactly when the machine was too
+        // busy to deliver frames, which is the opposite of what a timeout is
+        // for. This is the regression test for that.
+        CHECK(held > 1.3 && held < 1.8, "loss timeout is not 1.5 s at this rate");
+    }
+}
+
 // --- tests ---------------------------------------------------------------
+
 
 void testTracksLinearMotion() {
     Rng rng;
@@ -120,7 +234,7 @@ void testTracksLinearMotion() {
     for (int i = 0; i < 40; ++i) {
         tx += 2.0f; ty += 1.0f;
         GrayFrame g = makeFrame(320, 240, tx, ty, 40, rng, false);
-        const auto r = t.update(g);
+        const auto r = t.update(g, tick());
         if (i > 3) worst = std::max(worst, boxErr(r, tx, ty));
     }
     CHECK(t.state() == LockTracker::State::LOCKED, "lost a clean linear target");
@@ -143,7 +257,7 @@ void testCoastThenSearchThenLost() {
     for (int i = 0; i < 60; ++i) {
         // Blank-ish frame: background only, target removed.
         GrayFrame g = makeFrame(320, 240, -999, -999, 40, rng, false);
-        last = t.update(g).state;
+        last = t.update(g, tick()).state;
         if (last == LockTracker::State::COASTING)  sawCoast = true;
         if (last == LockTracker::State::SEARCHING) sawSearch = true;
         if (last == LockTracker::State::LOST) break;
@@ -171,7 +285,7 @@ void testFlatPatchDoesNotProduceSpuriousPeak() {
     flat.w = 320; flat.h = 240;
     flat.ownD = std::make_shared<std::vector<float>>(320 * 240, 128.f);
     flat.d = flat.ownD->data();
-    const auto r = t.update(flat);
+    const auto r = t.update(flat, tick());
     CHECK(std::isfinite(r.conf), "confidence went non-finite on a flat frame");
     CHECK(r.conf >= 0.f && r.conf <= 1.f, "confidence %.3f out of range", r.conf);
     CHECK(std::isfinite(float(r.x)) && std::abs(r.x) < 10000,
@@ -194,7 +308,7 @@ void testHistogramCueColourAndLumaOnly() {
         for (int i = 0; i < 20; ++i) {
             tx += 1.5f;
             GrayFrame g = makeFrame(320, 240, tx, ty, 40, rng, colour != 0);
-            const auto r = t.update(g);
+            const auto r = t.update(g, tick());
             if (i > 3) worst = std::max(worst, boxErr(r, tx, ty));
         }
         CHECK(t.state() == LockTracker::State::LOCKED,
@@ -218,23 +332,29 @@ void testOcclusionRecovery() {
     for (int i = 0; i < 10; ++i) {                       // establish a clean lock
         tx += 2.f;
         GrayFrame g = makeFrame(320, 240, tx, ty, 40, rng, true);
-        t.update(g);
+        t.update(g, tick());
     }
     for (int i = 0; i < 8; ++i) {                        // occluded
         tx += 2.f;
         GrayFrame g = makeFrame(320, 240, -999, -999, 40, rng, true);
-        t.update(g);
+        t.update(g, tick());
     }
     float err = 1e9f;
     for (int i = 0; i < 12; ++i) {                       // reappears
         tx += 2.f;
         GrayFrame g = makeFrame(320, 240, tx, ty, 40, rng, true);
-        const auto r = t.update(g);
+        const auto r = t.update(g, tick());
         err = boxErr(r, tx, ty);
     }
-    CHECK(t.hasTarget(), "did not survive an 8-frame occlusion");
+    // hasTarget() IS NOT RECOVERY. It is true in COASTING and SEARCHING,
+    // states in which the tracker is explicitly not holding the target -- so
+    // the old assertion passed for a tracker that had lost it and was still
+    // looking. Recovery means the LOCKED state at the right place.
     std::printf("  occlusion: final err %.1f px, state %s\n",
                 err, LockTracker::stateName(t.state()));
+    CHECK(t.state() == LockTracker::State::LOCKED,
+          "did not re-LOCK after an 8-frame occlusion");
+    CHECK(err <= 5.f, "re-locked, but not on the target");
 }
 
 // Scale must not ratchet down on a static target -- the dead-band exists because
@@ -248,7 +368,7 @@ void testScaleDoesNotRatchet() {
     LockTracker::Result r{};
     for (int i = 0; i < 50; ++i) {
         GrayFrame g = makeFrame(320, 240, 160, 120, 40, rng, false);
-        r = t.update(g);
+        r = t.update(g, tick());
     }
     CHECK(r.w >= 40 && r.w <= 60, "box ratcheted to %d px from 48", r.w);
     std::printf("  scale stability: 48 -> %d px over 50 static frames\n", r.w);
@@ -265,14 +385,14 @@ void testCueSwitchKeepsLock() {
     for (int i = 0; i < 8; ++i) {
         tx += 1.5f;
         GrayFrame g = makeFrame(320, 240, tx, ty, 40, rng, true);
-        t.update(g);
+        t.update(g, tick());
     }
     t.setCues({CropFilter::EDGE, CropFilter::CHROMA});
     CHECK(t.hasTarget(), "cue switch dropped the target");
     for (int i = 0; i < 10; ++i) {
         tx += 1.5f;
         GrayFrame g = makeFrame(320, 240, tx, ty, 40, rng, true);
-        t.update(g);
+        t.update(g, tick());
     }
     CHECK(t.state() == LockTracker::State::LOCKED, "lost lock after cue switch");
     std::printf("  cue switch: survived, state %s\n",
@@ -292,7 +412,7 @@ void testWideSearchScratchReuse() {
     int  framesToWide = -1;                 // LATENCY, not just whether
     for (int i = 0; i < 30; ++i) {          // force the wide search open
         GrayFrame g = makeFrame(320, 240, -999, -999, 40, rng, false);
-        const auto r = t.update(g);
+        const auto r = t.update(g, tick());
         if (r.state == LockTracker::State::SEARCHING) {
             if (!sawWide) framesToWide = i;
             sawWide = true;
@@ -329,12 +449,19 @@ void testWideSearchScratchReuse() {
     float err = 1e9f;
     for (int i = 0; i < 15; ++i) {          // put it back and re-acquire
         GrayFrame g = makeFrame(320, 240, 160, 120, 40, rng, false);
-        const auto r = t.update(g);
+        const auto r = t.update(g, tick());
         err = boxErr(r, 160, 120);
     }
     std::printf("  wide search: re-acquire err %.1f px, state %s\n",
                 err, LockTracker::stateName(t.state()));
     CHECK(std::isfinite(err), "re-acquire produced a non-finite box");
+    // AND IT MUST NOT CLAIM A LOCK IT DOES NOT HAVE. This scenario is past the
+    // tracker's documented reach -- 30 frames of empty scene, see
+    // testRecoveryReach -- so the honest outcomes are COASTING, SEARCHING or
+    // LOST. What would be a defect is LOCKED on the wrong thing, and nothing
+    // here checked for that: the old assertion was that the error was FINITE.
+    CHECK(!(t.state() == LockTracker::State::LOCKED && err > 8.f),
+          "claims LOCKED while far from the target");
 }
 
 // A caller that REUSES its conversion buffers -- which every real caller does,
@@ -379,7 +506,7 @@ void testCallerBufferReuse() {
     for (int i = 0; i < 30; ++i) {
         tx += 2.0f; ty += 1.0f;
         GrayFrame g = fill(tx, ty);           // overwrites the buffer designate saw
-        const auto r = t.update(g);
+        const auto r = t.update(g, tick());
         if (i > 3) worst = std::max(worst, boxErr(r, tx, ty));
     }
     CHECK(t.state() == LockTracker::State::LOCKED,
@@ -420,6 +547,8 @@ void testCoastFlowMeasuresKnownShift() {
 }  // namespace
 
 int main() {
+    testRecoveryReach();
+    testLossTimeoutIsSeconds();
     std::printf("fused lock tracker -- headless checks\n");
     testTracksLinearMotion();
     testCoastThenSearchThenLost();

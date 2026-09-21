@@ -28,6 +28,13 @@ add_executable(kestrel
   src/mavlink_backend.cpp
   src/lock_tracker.cpp
   src/kalman_center.cpp
+  # One seam over both tracker cores, so the runtime, the recorder and
+  # replay drive the same thing. See include/tracker_core.hpp.
+  src/tracker_core.cpp
+  src/lock_tracker_fused.cpp
+  src/gray_frame.cpp
+  src/crop_filters.cpp
+  src/optical_flow.cpp
   src/depth_nav.cpp
   src/i2c_hal.cpp
   src/vl53_tof_source.cpp
@@ -193,6 +200,13 @@ if(BUILD_TESTS)
     src/gray_frame.cpp)
   target_include_directories(test_coast_flow_flat PRIVATE include)
   add_test(NAME coast_flow_flat COMMAND test_coast_flow_flat)
+
+  # BOTH cores through the one interface they now share. Until this existed, a
+  # green tracker suite said nothing about the tracker running inside kestrel.
+  kestrel_test(test_tracker_core
+    src/tracker_core.cpp src/lock_tracker.cpp src/kalman_center.cpp
+    src/lock_tracker_fused.cpp src/gray_frame.cpp src/crop_filters.cpp
+    src/optical_flow.cpp)
 
   # The OLD tracker -- the one perception.hpp still instantiates, and so the
   # one that actually flies. It had no test at all until a review found the

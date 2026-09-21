@@ -34,37 +34,53 @@ void TrackModule::requestLock(cv::Point center) {
     pendingLock_ = true;
 }
 
-void TrackModule::setBackend(Backend b) {
-    backend_ = b;
-    trk_.reset();
+void TrackModule::rebuild() {
+    core_ = (coreKind_ == Core::Fused) ? track::makeFusedCore()
+                                       : track::makeLegacyCore(backend_);
 }
 
-void TrackModule::reset() { trk_.reset(); }
+void TrackModule::setCore(Core c) { coreKind_ = c; rebuild(); }
+
+void TrackModule::setBackend(Backend b) {
+    backend_ = b;
+    rebuild();
+}
+
+void TrackModule::reset() { if (core_) core_->reset(); }
 
 void TrackModule::run(const cv::Mat& frame, WorldModel& wm) {
+    if (!core_) rebuild();
+    // THIS IS THE PROCESSING CLOCK, NOT THE CAPTURE CLOCK, and the difference
+    // is the one the tracker was just taught to care about. run() is handed a
+    // cv::Mat with no timestamp on it, so the best available answer is "now",
+    // which silently folds however long the frame spent in the camera stack
+    // and the queue into zero. Closing that means carrying a capture time on
+    // the frame itself, from the source; until then this is an upper bound on
+    // freshness and is labelled as one rather than being called capture time.
+    const double tNow = monoNowS();
     if (pendingLock_) {
         pendingLock_ = false;
-        trk_.init(frame, pendingPt_, backend_, boxSize_);
+        core_->designate(frame, pendingPt_, boxSize_);
     }
-    if (trk_.hasTarget())
-        trk_.update(frame);
-
-    const bool      has = trk_.hasTarget();
-    const cv::Rect  b   = trk_.bbox();
-    const cv::Point ctr = (b.tl() + b.br()) / 2;
-    const cv::Point2f vel = trk_.locked()
-        ? trk_.projected(1.f) - cv::Point2f(ctr) : cv::Point2f(0, 0);
+    const track::TrackObs o = core_->update(frame, tNow);
 
     wm.with([&](WorldState& s) {
-        s.targetValid  = has;
-        s.targetLocked = trk_.locked();
-        s.targetCoast  = trk_.coasting();
-        s.targetBox    = b;
-        s.targetVel    = vel;
-        s.targetConf   = trk_.confidence();
-        s.targetAge    = trk_.age();
-        s.targetLosses = trk_.totalLosses();
-        s.targetStampS = monoNowS();
+        s.targetValid  = o.valid;
+        s.targetLocked = o.locked;
+        s.targetCoast  = o.coasting;
+        s.targetBox    = o.box;
+        s.targetVel    = o.vel;
+        s.targetConf   = o.conf;
+        s.targetAge    = o.age;
+        s.targetLosses = o.losses;
+        s.targetStampS = o.captureSec;
+        // HOW LONG SINCE ANYTHING WAS ACTUALLY SEEN. targetStampS only says
+        // when the tracker last SPOKE, and it speaks every frame whether or
+        // not it has measured anything -- COASTING and SEARCHING both produce
+        // a box from extrapolation. A consumer deciding how much to trust one
+        // needs this, and could not previously compute it.
+        s.targetFixAgeS = o.ageOfFixSec;
+        s.targetCore    = o.core;
     });
 }
 

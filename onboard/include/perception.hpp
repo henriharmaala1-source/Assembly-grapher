@@ -7,7 +7,8 @@
 #include <vector>
 
 #include "world_model.hpp"
-#include "lock_tracker.hpp"   // rpi5_tracker/src
+#include "lock_tracker.hpp"
+#include "tracker_core.hpp"
 #include "depth_nav.hpp"      // rpi5_tracker/src
 #include "tof_source.hpp"
 
@@ -38,8 +39,18 @@ public:
     void setBackend(Backend b);
     void reset();
 
+    // WHICH CORE. Defaults to the one that has always flown; the fused core
+    // is selectable and not yet the default, because switching what flies is
+    // a decision to take on recorded-footage evidence rather than as a side
+    // effect of building the seam that makes the switch possible.
+    enum class Core { Legacy, Fused };
+    void setCore(Core c);
+    const char* coreName() const { return core_ ? core_->name() : "none"; }
+
 private:
-    LockOnTracker trk_;
+    void rebuild();
+    std::unique_ptr<track::ITrackerCore> core_;
+    Core          coreKind_ = Core::Legacy;
     Backend       backend_;
     int           boxSize_;
     bool          pendingLock_ = false;

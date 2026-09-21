@@ -53,6 +53,7 @@ void LockTracker::reset() {
     lumaTmpl_.clear();  lumaNorm_ = 0.f;
     histFg_.clear();    histBg_.clear();
     haveLastCrop_ = false; havePrev_ = false; prevLuma_.clear(); coast_.clear();
+    coastSec_ = 0.f; haveTime_ = false; haveFix_ = false;
     state_ = State::IDLE; badFrames_ = 0; conf_ = 0.f; psrEma_ = 0.f; occLow_ = 0;
 }
 
@@ -70,15 +71,31 @@ void LockTracker::designate(const GrayFrame& frame, float px, float py, float si
     haveLastCrop_ = true;
     buildTemplates(lastRawCrop_);
     cf_.start(px, py);
-    badFrames_ = 0; conf_ = 1.f; state_ = State::LOCKED;
+    badFrames_ = 0; coastSec_ = 0.f; conf_ = 1.f; state_ = State::LOCKED;
+    haveTime_ = false; haveFix_ = false;
     psrEma_ = 0.f; occLow_ = 0;
     stashPrev(frame);
     coast_.clear();
     if (lkAssist) coast_.seed(frame, bcx_, bcy_, bsize_);
 }
 
-LockTracker::Result LockTracker::update(const GrayFrame& frame) {
+LockTracker::Result LockTracker::update(const GrayFrame& frame,
+                                        double captureSec) {
     if (templates_.empty()) { stashPrev(frame); return Result{}; }
+
+    // ELAPSED TIME, from the CAPTURE clock. The first frame has no predecessor
+    // so it gets the nominal; after that the gap is whatever it really was.
+    //
+    // CLAMPED, and the bound is doing real work. A clock that jumps, a process
+    // that was descheduled for a second, a recording seeked backwards -- each
+    // would otherwise multiply straight into a velocity extrapolation and
+    // throw the crop off the frame. Beyond the bound the honest reading is
+    // that the motion estimate no longer describes the target, so the gap is
+    // capped and the coast clock still advances by the full amount.
+    const double raw = haveTime_ ? (captureSec - tLast_) : double(NOMINAL_DT);
+    const float dt = float(std::min(0.5, std::max(1e-3, raw)));
+    if (!haveTime_) { tFix_ = captureSec; haveTime_ = true; }
+    tLast_ = captureSec;
 
     // --- P1-A ego-motion feed-forward -------------------------------------
     // Gated on flow CONSENSUS: high on a rigid pan, low under noise or a large
@@ -105,7 +122,7 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame) {
     // REPLACE the extrapolation rather than add to it.
     prex_ = cf_.x(); prey_ = cf_.y();
     float pcx = 0, pcy = 0;
-    cf_.predict(edx, edy, pcx, pcy);
+    cf_.predict(edx, edy, dt, pcx, pcy);
 
     // --- P0-A zoom the search out, but only once coasting has clearly FAILED --
     // For the first few lost frames the constant-velocity prediction still rides
@@ -114,9 +131,10 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame) {
     // FOV_DELAY misses, widen the FOV (to ~3x) by covering more frame area in a
     // proportionally larger buffer -- the target keeps its apparent SIZE so the
     // template still matches -- with a coarser stride to hold cost flat.
-    const bool wide = badFrames_ >= FOV_DELAY;
+    const bool wide = coastSec_ >= FOV_DELAY_S;
     const float fov = wide
-        ? std::min(1.f + 0.3f * (badFrames_ - FOV_DELAY + 1), 3.f) : 1.f;
+        ? std::min(1.f + 0.3f * ((coastSec_ - FOV_DELAY_S) / NOMINAL_DT + 1.f), 3.f)
+        : 1.f;
     const int cropPix = (fov > 1.f) ? ((int(CROP * fov) / 2) * 2) : CROP;   // even
     const int strideEff = std::max(1, int(STRIDE * fov));
     const float regionW = bsize_ * MARGIN * fov;
@@ -261,19 +279,24 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame) {
         const float cyCrop = g0 + sy * strideEff;
         const float nx = pcx + (cxCrop / cropPix - 0.5f) * regionW;
         const float ny = pcy + (cyCrop / cropPix - 0.5f) * regionW;
-        cf_.correct(nx, ny);
+        cf_.correct(nx, ny, dt);
         // A real target cannot cross more than ~0.9x its own size per frame at
         // 30 fps; anything faster is a noisy peak pumping the velocity.
-        cf_.clampSpeed(bsize_ * 0.9f);
+        cf_.clampSpeed(bsize_ * MAX_SPEED_BOX_PER_S);
         bcx_ = cf_.x(); bcy_ = cf_.y();
         if (!occluded) updateScale(crop, cxCrop, cyCrop);
-        if (conf_ >= confLock() && !occluded) adaptTemplates(crop, cxCrop, cyCrop);
-        state_ = State::LOCKED; badFrames_ = 0;
+        if (conf_ >= confLock() && !occluded) adaptTemplates(crop, cxCrop, cyCrop, dt);
+        state_ = State::LOCKED; badFrames_ = 0; coastSec_ = 0.f;
+        tFix_ = captureSec; haveFix_ = true;
     } else {
-        cf_.decay(0.6f);                  // coast decelerates instead of flying off
+        cf_.decay(COAST_TAU_S, dt);       // coast decelerates instead of flying off
         bcx_ = pcx; bcy_ = pcy;
         ++badFrames_;
-        state_ = (badFrames_ >= LOSS_TIMEOUT) ? State::LOST
+        // The COUNT stays a count -- "did the last frame miss" is about
+        // consecutive evidence, not elapsed time -- and the DURATION is what
+        // the timeout and the zoom-out are measured in.
+        coastSec_ += dt;
+        state_ = (coastSec_ >= LOSS_TIMEOUT_S) ? State::LOST
                : wide                        ? State::SEARCHING
                                              : State::COASTING;
         if (state_ == State::LOST) { Result r = result(); reset(); r.state = State::LOST; return r; }
@@ -337,7 +360,19 @@ void LockTracker::buildTemplates(const GrayFrame& rawCrop) {
     else { histFg_.clear(); histBg_.clear(); }
 }
 
-void LockTracker::adaptTemplates(const GrayFrame& rawCrop, float cx, float cy) {
+// THE EMA RATES WERE PER FRAME and are now per second. An appearance model
+// that adapts 0.08 per update forgets three times faster at 30 fps than at 10,
+// so the same footage processed on a busier machine produces a different
+// template -- and the sweep that chose 0.08 was run at 30. Converting against
+// NOMINAL_DT keeps that sweep's meaning and makes it hold at any rate.
+static inline float emaRate(float perFrame, float dt, float nominalDt) {
+    return 1.f - std::pow(1.f - perFrame, dt / nominalDt);
+}
+
+void LockTracker::adaptTemplates(const GrayFrame& rawCrop, float cx, float cy,
+                                 float dt) {
+    const float aT = emaRate(TMPL_EMA, dt, NOMINAL_DT);
+    const float aH = emaRate(HIST_EMA, dt, NOMINAL_DT);
     // Only bank on a very clean lock -- a partial-occlusion / ambiguous view has
     // degraded PSR, so this gate keeps a contaminated patch out of the bank (sim:
     // without it an occluder-half keyframe wrecked recovery).
@@ -348,13 +383,13 @@ void LockTracker::adaptTemplates(const GrayFrame& rawCrop, float cx, float cy) {
         const Patch fresh = normPatch(f, cx, cy, TMPL);
         Patch& cur = templates_[ci];
         for (size_t i = 0; i < cur.size(); ++i)
-            cur[i] = (1.f - TMPL_EMA) * cur[i] + TMPL_EMA * fresh[i];
+            cur[i] = (1.f - aT) * cur[i] + aT * fresh[i];
         tmplNorms_[ci] = normOf(cur);
         if (canBank) maybeBankKeyframe((int)ci, fresh);
     }
     const Patch fl = normPatch(rawCrop, cx, cy, TMPL);
     for (size_t i = 0; i < lumaTmpl_.size(); ++i)
-        lumaTmpl_[i] = (1.f - TMPL_EMA) * lumaTmpl_[i] + TMPL_EMA * fl[i];
+        lumaTmpl_[i] = (1.f - aT) * lumaTmpl_[i] + aT * fl[i];
     lumaNorm_ = normOf(lumaTmpl_);
     // Refresh the histogram only on the same very-clean gate -- an
     // occlusion-tainted frame must not corrupt the cumulative fg/bg model.
@@ -362,8 +397,8 @@ void LockTracker::adaptTemplates(const GrayFrame& rawCrop, float cx, float cy) {
         Patch fg, bg;
         histCountsAt(rawCrop, cx, cy, fg, bg);
         for (int i = 0; i < HIST_BINS; ++i) {
-            histFg_[i] = (1.f - HIST_EMA) * histFg_[i] + HIST_EMA * fg[i];
-            histBg_[i] = (1.f - HIST_EMA) * histBg_[i] + HIST_EMA * bg[i];
+            histFg_[i] = (1.f - aH) * histFg_[i] + aH * fg[i];
+            histBg_[i] = (1.f - aH) * histBg_[i] + aH * bg[i];
         }
     }
 }
@@ -685,8 +720,8 @@ LockTracker::Result LockTracker::result() const {
     out.x = int(bcx_ - half); out.y = int(bcy_ - half);
     out.w = int(bsize_);      out.h = int(bsize_);
     out.conf = conf_;
-    cf_.project(2, out.predX, out.predY);
-    cf_.project(int(latencyFrames + 0.5f), out.aimX, out.aimY);
+    cf_.project(2.f * NOMINAL_DT, out.predX, out.predY);
+    cf_.project(latencySec, out.aimX, out.aimY);
     return out;
 }
 

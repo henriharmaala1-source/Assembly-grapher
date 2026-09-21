@@ -92,7 +92,10 @@ public:
     // --- tunables (see header note before touching) --------------------------
     float psrLock       = 5.5f;
     float psrWarn       = 3.8f;
-    float latencyFrames = 4.5f;   // ~150 ms at 30 fps -- output aim leads by this
+    // SECONDS, not frames. It was 4.5 "frames", rounded to five prediction
+    // steps -- a number that meant 150 ms only while the camera happened to
+    // run at 30, and that could not express 150 ms at all once it did not.
+    float latencySec    = 0.15f;  // output aim leads the estimate by this
     bool  lkAssist      = true;   // LK coast assist (mode 2)
 
     void setCues(const std::vector<CropFilter>& c);
@@ -100,7 +103,19 @@ public:
 
     void reset();
     void designate(const GrayFrame& frame, float px, float py, float size = 64.f);
-    Result update(const GrayFrame& frame);
+    // CAPTURE TIME, in seconds, from any steady clock. Not the time update()
+    // was reached: the age of the frame is the whole point, and a planner
+    // acting quickly on an old frame is acting on old information.
+    //
+    // There is deliberately no overload that omits it. One that invented a
+    // timestamp from a nominal rate would reintroduce exactly the assumption
+    // this replaced, and would do it silently.
+    Result update(const GrayFrame& frame, double captureSec);
+
+    // Elapsed time since the last ACCEPTED observation, seconds; < 0 when
+    // there has never been one. A consumer needs this to decide how much to
+    // trust a COASTING output, and could not previously compute it.
+    float ageOfFixSec() const { return haveFix_ ? float(tLast_ - tFix_) : -1.f; }
 
     State state() const { return state_; }
     float conf()  const { return conf_; }
@@ -124,8 +139,22 @@ private:
     static constexpr float MARGIN = 2.2f;
     static constexpr int   SEARCH = 22;
     static constexpr int   STRIDE = 3;
-    static constexpr int   LOSS_TIMEOUT = 45;  // coasting frames before giving up
-    static constexpr int   FOV_DELAY    = 6;   // coasting frames before zooming out
+    // EVERY TIME-LIKE CONSTANT IS IN SECONDS. As frame counts they meant
+    // 1.5 s and 0.2 s at 30 fps, 4.5 s and 0.6 s at 10 -- so a tracker sharing
+    // a Pi with depth and mapping gave up after three times as long precisely
+    // when the machine was busiest, which is the opposite of what a timeout is
+    // for.
+    static constexpr float LOSS_TIMEOUT_S = 1.5f;  // coasting before giving up
+    static constexpr float FOV_DELAY_S    = 0.2f;  // coasting before zooming out
+    // THE RATE THE SWEPT CONSTANTS WERE SWEPT AT. TMPL_EMA, HIST_EMA and the
+    // coast decay were all tuned on 30 fps footage, so this is where those
+    // numbers came from rather than an assumption about what comes next: they
+    // are converted to per-second rates against it and then hold at any rate.
+    static constexpr float NOMINAL_DT    = 1.f / 30.f;
+    // 0.6 per frame at 30 fps is a 65 ms time constant.
+    static constexpr float COAST_TAU_S   = 0.0653f;
+    // A real target cannot cross ~0.9x its own size per frame at 30 fps.
+    static constexpr float MAX_SPEED_BOX_PER_S = 0.9f / NOMINAL_DT;
     static constexpr float TMPL_EMA     = 0.08f;
     static constexpr int   K_KEYFRAMES  = 2;
     static constexpr float KF_THRESH    = 0.55f;
@@ -147,7 +176,7 @@ private:
     using Patch = std::vector<float>;
 
     void  buildTemplates(const GrayFrame& rawCrop);
-    void  adaptTemplates(const GrayFrame& rawCrop, float cx, float cy);
+    void  adaptTemplates(const GrayFrame& rawCrop, float cx, float cy, float dt);
     void  maybeBankKeyframe(int ci, const Patch& fresh);
     void  updateScale(const GrayFrame& crop, float cx, float cy);
     void  applyDistractorPrior(std::vector<float>& fused, int gw, float cc) const;
@@ -209,6 +238,10 @@ private:
     // measured 14 % vs 62 % on the manoeuvre clip.
     CoastFlow coast_;
     float prex_ = 0, prey_ = 0;   // position BEFORE the prediction step
+    // SECONDS OF COASTING, not a frame count.
+    float coastSec_ = 0.f;
+    double tLast_ = 0.0, tFix_ = 0.0;
+    bool   haveTime_ = false, haveFix_ = false;
     int   badFrames_ = 0;
     float psrEma_ = 0.f;
     int   occLow_ = 0;

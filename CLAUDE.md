@@ -135,7 +135,8 @@ detect an effect smaller than their own noise. Before running another one:
 **at least four seeds per arm**, which is 11 minutes a run and was simply never
 done.
 
-Raw: docs/bar10_maze_3000_fixedveto.csv.
+Raw: docs/bar10_maze_3000_fixedveto.csv (the ten-planner table),
+docs/retrain_seeds_maze_3000.csv (the four retrains, 48 episodes).
 
 A GOAL-SHAPED REWARD WILL NOT PRODUCE THIS. Progress-to-goal pays for closing
 distance to one point and stops paying when the aircraft is there; it says

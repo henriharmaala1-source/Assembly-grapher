@@ -1734,3 +1734,74 @@ this budget needs at least four seeds per arm to say anything at all, which at
 11 minutes a run is affordable -- it simply was never done.
 
 Raw: `docs/retrain_seeds_maze_3000.csv`.
+
+## 3M steps, a flat curve, and an evaluation that was never like-for-like
+
+150k was 0.75% of where the reference run was said to peak, so the obvious
+objection to everything above is budget. Seed 7 -- the seed that collapsed
+worst at 150k, chosen deliberately -- was rerun at **3,000,000 steps**, 20x the
+budget, 5.56 hours, checkpoints every 250k.
+
+### The collapse modes went away. The gap did not.
+
+| steps | travel | net | cells | loops | stopped | crash | net x cells |
+|-------|--------|-----|-------|-------|---------|-------|-------------|
+| 150k | 71.3 m | 3.1 m | 14 | 23.0x | 519 | 4/12 | 43 |
+| 250k | 111.2 m | 17.5 m | 59 | 6.3x | 582 | 2/12 | 1034 |
+| 750k | 43.0 m | 8.2 m | 15 | 5.2x | 1076 | 5/12 | **124** |
+| 1.5M | 171.9 m | 19.4 m | 69 | 8.9x | 0 | 0/12 | 1337 |
+| 2.25M | 143.5 m | 20.6 m | 37 | 7.0x | 0 | 0/12 | 769 |
+| 3M | 154.6 m | 22.0 m | 66 | 7.0x | 209 | 1/12 | **1453** |
+| freeM | 232.7 m | 29.3 m | 156 | 8.0x | 0 | 0/12 | **4571** |
+
+The orbiting and hovering are gone -- 154 m flown instead of 71, 7.0x looping
+instead of 23.0x, 209 stopped steps instead of 519. That is a real change and
+budget bought it.
+
+**IT IS NOT A LEARNING CURVE.** From 250k on, mean 943, standard error 237:
+**+0.2 se from random**, and 15.3 se below freeM. 3M is not distinguishable
+from 250k. And the swing WITHIN this single run -- 124 at 750k against 1453 at
+3M, a factor of 12 -- is the same order as the 39x swing across seeds at 150k.
+The instability is not a property of short runs. It survives every budget
+measured.
+
+### The comparison was never like-for-like
+
+Every classical planner here is DETERMINISTIC by construction: freeM takes the
+argmax of o[0], every time, forever. Every learned-policy number this project
+has ever quoted was SAMPLED from the action distribution. A deployed aircraft
+would fly the argmax.
+
+| policy | sampled | deterministic |
+|--------|---------|---------------|
+| base3k | 1365 (0/12 crashes) | **434** (2/6 crashes) |
+| 3M seed 7 | 1453 (1/12) | **514** (0/6) |
+
+**Sampling is worth roughly 2x**, and it is worth it by supplying exploration:
+coverage halves when it is removed, 66 cells to 35 and 72 to 34. The entropy in
+the action distribution is doing work the learned preferences are not.
+
+**Deterministically, both policies score BELOW RANDOM** -- 434 and 514 against
+980. The greedy action of the trained network is worse than a uniform draw over
+the primitives geometry admits.
+
+### So the original claim had three independent problems
+
+"The first time a learned policy has beaten freeM on this objective" rested on:
+
+1. a collision check that missed 60 voxels intersecting the body, which
+   flattered the policy and crippled freeM;
+2. one lucky seed out of a distribution spanning 39x; and
+3. an evaluation that gave the policy stochastic exploration its competitor did
+   not get and a deployment would not use.
+
+Each alone would have been enough to void it.
+
+### Limits of this section
+
+One seed at 3M, not four. Deterministic evaluation is n=6, because repeats of a
+deterministic policy are identical. Maze only. And `random` has no argmax, so
+"below random" compares a deterministic policy against an inherently stochastic
+one -- which is the right comparison for deployment, and worth naming anyway.
+
+Raw: `docs/long3m_maze_3000.csv`.

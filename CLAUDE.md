@@ -127,6 +127,31 @@ random is +0.6 se, base3k's 1365 is +1.6 se, freeM's 4549 is **+10.0 se**.
 - The learned runs also collide more -- 1, 2, 4 and 6 in 12, where freeM,
   freeG, cover, novelG and random all collide zero times on the same episodes.
 
+### 3M STEPS DID NOT CLOSE IT, AND THE EVALUATION WAS NEVER LIKE-FOR-LIKE
+
+Seed 7 -- the worst collapse -- rerun at 3,000,000 steps, 20x the budget. The
+collapse modes went away (154 m flown not 71, 7.0x looping not 23.0x) and the
+gap did not: 1453 against freeM's 4571, inside the range the 150k seeds already
+covered. From 250k on the curve is FLAT: mean 943, se 237, **+0.2 se from
+random**. The swing within that one run, 124 at 750k to 1453 at 3M, is the same
+order as the 39x swing across seeds.
+
+**AND EVERY POLICY NUMBER EVER QUOTED HERE WAS SAMPLED.** The classical
+planners are deterministic by construction -- freeM takes an argmax, every time.
+A deployed aircraft would too. Evaluated the same way:
+
+| policy | sampled | deterministic |
+|--------|---------|---------------|
+| base3k | 1365 (0/12 crashes) | **434** (2/6) |
+| 3M seed 7 | 1453 (1/12) | **514** (0/6) |
+| random | 980 | -- |
+
+Sampling is worth ~2x, and it buys it with exploration: coverage halves without
+it. **Deterministically both policies score below RANDOM.** So the original
+claim had three independent defects -- a broken veto, one lucky seed, and an
+evaluation that handed the policy exploration noise its competitor never got.
+Any one would have voided it.
+
 **THE METHODOLOGICAL CONSEQUENCE IS THE LARGER ONE.** Every 150k-step A/B in
 docs/ compared single draws from a distribution with a 39x spread: the five
 reward-term experiments recorded as "five losses", the base3k/far3k/revisit3k

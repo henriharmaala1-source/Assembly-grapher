@@ -1674,3 +1674,63 @@ exists, the correct description of the learned policy on this objective is
 "not distinguishable from random".
 
 Raw output: `docs/bar10_maze_3000_fixedveto.csv`.
+
+## The retrain: 150k steps does not learn this task, and never did
+
+The corrected veto made every earlier measurement suspect, so base3k's training
+was repeated on it. One run collapsed -- 3.1 m of net displacement, 14 cells,
+23x looping, 4 collisions in 12, a composite of 43 against random's 982. That
+is worse than a coin flip by a factor of 23.
+
+One run settles nothing, and this document has had to relearn that repeatedly.
+So it was run four times, identical but for the seed:
+
+| training seed | travel | net | cells | loops | stopped | crash | net x cells |
+|---------------|--------|-----|-------|-------|---------|-------|-------------|
+| 7 | 71.3 m | 3.1 m | 14 | 23.0x | 519 | 4/12 | **43** |
+| 10 | 85.8 m | 8.7 m | 28 | 9.9x | 58 | 6/12 | 245 |
+| 8 | 146.0 m | 15.7 m | 66 | 9.3x | 0 | 2/12 | 1038 |
+| 9 | 151.4 m | 22.5 m | 75 | 6.7x | 0 | 1/12 | **1696** |
+
+**A 39x spread between seeds.** Mean 756, standard error 380.
+
+### What that answers
+
+- **The collapse was the seed, not the veto.** Seed 7 was an unlucky draw from
+  a distribution that also contains 1696.
+- **base3k was a lucky draw.** Its 1365 sits inside this range, +1.6 standard
+  errors from the mean of runs trained on the corrected veto. It is not a
+  different kind of policy; it is the same process, sampled once, at the
+  favourable end.
+- **The mean is below random.** 756 against 982, which is +0.6 se -- so
+  "indistinguishable from random" was right, and generous.
+- **None of them approaches freeM.** 4549 is +10.0 standard errors above the
+  mean of the learned runs. The best of four seeds is still 2.7x below it.
+- **They are also less SAFE than the classical planners.** 1, 2, 4 and 6
+  collisions in 12, where freeM, freeG, cover, novelG and random all collide
+  zero times on the same episodes.
+
+### The methodological consequence, which is the larger one
+
+**Every 150k-step A/B in this document compared single draws from a
+distribution with a 39x spread.** The five reward-term experiments -- coverage
+0.45, seen 0.30, seen 0.03, far 1.0, revisit 0.05, recorded here as "FIVE
+REWARD-TERM EXPERIMENTS, FIVE LOSSES" -- were one run each. So were the
+base3k / far3k / revisit3k sweep and the objective and episode-length
+comparisons that were called "TWO STRUCTURAL CHANGES, TWO WINS".
+
+None of those comparisons had the power to detect anything smaller than the
+noise, and the noise is larger than any effect they claimed. They are not
+evidence that the shaping weights do not matter; they are not evidence of
+anything. The two "structural wins" may well be real -- goal to range is a
+change of what is being optimised, not a tuning nudge -- but they were not
+demonstrated by those runs.
+
+### What would settle it
+
+More steps, or more seeds, and the repository has been doing neither. 150k is
+0.75% of the 20 M where the reference run was said to peak. A comparison at
+this budget needs at least four seeds per arm to say anything at all, which at
+11 minutes a run is affordable -- it simply was never done.
+
+Raw: `docs/retrain_seeds_maze_3000.csv`.

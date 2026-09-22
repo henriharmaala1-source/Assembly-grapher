@@ -104,13 +104,36 @@ this file spent months holding against it -- is 8.0x, not 29.5x. The circling
 was the broken veto letting it graze obstacles and walk into pockets it then
 had to turn out of.
 
-WHAT THIS MEANS FOR THE POLICY. It is not that learning cannot work here. It is
-that nothing measured so far is evidence that it has, because the bar it was
-measured against was crippled in a way that flattered it. base3k was also
-TRAINED against the broken veto, so its action mask was wrong throughout
-training; a retrain on the corrected one is the first honest experiment, and
-until it exists the right description of the learned policy is "not
-distinguishable from random".
+### AND THE RETRAIN SETTLED IT: 150k STEPS DOES NOT LEARN THIS TASK
+
+base3k was trained against the broken veto too, so the retrain was the first
+honest experiment. It was run FOUR times on the corrected veto, identical but
+for the seed:
+
+| seed | net | cells | crash | net x cells |
+|------|-----|-------|-------|-------------|
+| 7 | 3.1 m | 14 | 4/12 | **43** |
+| 10 | 8.7 m | 28 | 6/12 | 245 |
+| 8 | 15.7 m | 66 | 2/12 | 1038 |
+| 9 | 22.5 m | 75 | 1/12 | **1696** |
+
+**A 39x spread between seeds.** Mean 756, standard error 380. Against that:
+random is +0.6 se, base3k's 1365 is +1.6 se, freeM's 4549 is **+10.0 se**.
+
+- base3k was a LUCKY DRAW, not a better policy. Same process, sampled once, at
+  the favourable end of its own distribution.
+- The mean is BELOW random.
+- The best of four seeds is still 2.7x below freeM.
+- The learned runs also collide more -- 1, 2, 4 and 6 in 12, where freeM,
+  freeG, cover, novelG and random all collide zero times on the same episodes.
+
+**THE METHODOLOGICAL CONSEQUENCE IS THE LARGER ONE.** Every 150k-step A/B in
+docs/ compared single draws from a distribution with a 39x spread: the five
+reward-term experiments recorded as "five losses", the base3k/far3k/revisit3k
+sweep, and the comparisons called "two structural wins". None had the power to
+detect an effect smaller than their own noise. Before running another one:
+**at least four seeds per arm**, which is 11 minutes a run and was simply never
+done.
 
 Raw: docs/bar10_maze_3000_fixedveto.csv.
 

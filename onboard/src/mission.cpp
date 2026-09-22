@@ -164,6 +164,7 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             break;                  // hover (all-zero)
         }
         case Phase::THINK: {
+            if (p_.useVoxel) { thinkVoxel_(s); break; }
             // Read the (think-tier) plan and commit a leg. A FRESH corridor is
             // required to do anything but hover: valid-but-stale is a latched
             // value from a stalled perception tier, not a plan. Fresh + open →
@@ -180,6 +181,7 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             break;                  // hover this tick
         }
         case Phase::SCAN: {
+            if (p_.useVoxel) { scanVoxel_(s, c); break; }
             // Rotate in place (no translation) toward the openest side until a
             // corridor opens up ahead, then re-plan. Give up after ~a full turn.
             // Scanning blind is pointless — stale perception drops us to SETTLE.
@@ -224,6 +226,7 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             break;                  // yaw only, no pitch
         }
         case Phase::MOVE: {
+            if (p_.useVoxel) { moveVoxel_(s, c); break; }
             // Leg ends after stepM travelled (then stop & re-SLAM), on timeout,
             // when the way ahead closes below the keep threshold — or when the
             // corridor goes STALE mid-leg (perception died: flying blind → stop).
@@ -281,4 +284,79 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
     s.missionWpE   = wpE_;
     s.missionWpN   = wpN_;
     return c;
+}
+
+// ------------------------------------------------------------ voxel layer
+//
+// THINK: act only on a fresh map that has had frames enough to mark anything.
+// Fresh and young -> keep hovering (the map is still filling); fresh, mature
+// and a certified leg worth flying -> commit it; fresh, mature and nothing ->
+// turn to look. Stale -> re-settle, exactly as the corridor path does.
+void MissionController::thinkVoxel_(const WorldState& s) {
+    if (!s.voxFresh(p_.voxStaleSec)) {
+        // The module starts a NEW map on entry to THINK (SETTLE is not a
+        // vantage -- voxel_nav.hpp), so the first result of this vantage is
+        // up to a frame away. Give it the stale window before calling it dead.
+        if (tPhase_ > p_.voxStaleSec) { phase_ = Phase::SETTLE; tPhase_ = 0.f; }
+        return;
+    }
+    if (s.voxFrames < p_.voxMinFrames) return;     // still filling: hover, wait
+    const float len = std::min(p_.stepM, s.voxLegFreeM - p_.voxStopMarginM);
+    // The certificate alone decides. It is independent evidence: a straight
+    // leg the map confirms free is flyable even when no curved primitive at
+    // the planner's speeds survived, and `blocked` with no leg means no leg.
+    if (len >= p_.voxMinLegM) {
+        legBearing_ = s.voxLegBearingDeg;
+        legLenM_    = len;
+        legE_ = s.estPe; legN_ = s.estPn;
+        const float b = legBearing_ * kPi / 180.f;
+        wpE_ = s.estPe + legLenM_ * std::sin(b);
+        wpN_ = s.estPn + legLenM_ * std::cos(b);
+        haveWp_ = true;
+        phase_ = Phase::MOVE; tPhase_ = 0.f;
+    } else {
+        phase_ = Phase::SCAN; tPhase_ = 0.f; scanDir_ = 0.f;
+    }
+}
+
+// SCAN: yaw in place. Rotation about a fixed point keeps the voxel map honest
+// -- attitude describes it completely -- so the map ACCUMULATES through the
+// turn rather than restarting, and a leg found mid-sweep is certified against
+// everything seen so far. Same timeout and stuck accounting as the corridor.
+void MissionController::scanVoxel_(const WorldState& s, ControlCmd& c) {
+    if (!s.voxFresh(p_.voxStaleSec)) {
+        phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f;
+        return;
+    }
+    const float len = std::min(p_.stepM, s.voxLegFreeM - p_.voxStopMarginM);
+    if (s.voxFrames >= p_.voxMinFrames && len >= p_.voxMinLegM) {
+        phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f;   // commit next tick
+        return;
+    }
+    if (tPhase_ >= p_.scanTimeoutSec) {
+        scanDir_ = 0.f; tPhase_ = 0.f;
+        phase_ = tallyStuck_(s.estPe, s.estPn) ? Phase::STUCK : Phase::SETTLE;
+        return;
+    }
+    if (scanDir_ == 0.f) scanDir_ = (roundSign_ != 0.f) ? roundSign_ : -1.f;
+    c.yaw = scanDir_ * p_.scanYawRate;
+}
+
+// MOVE: fly the certified leg and nothing else. Turn onto its bearing first --
+// the certificate covers that line, not the arc a pitching, yawing aircraft
+// would sweep while turning -- then go. The leg does NOT re-steer: the voxel
+// layer is blind while translating by design, and re-steering off the
+// certified line is flying through space nobody checked. The corridor, if one
+// is running, can still stop it.
+void MissionController::moveVoxel_(const WorldState& s, ControlCmd& c) {
+    const float legDist = std::hypot(s.estPe - legE_, s.estPn - legN_);
+    const bool  blocked = s.corridorFresh(p_.corridorStaleSec) &&
+                          s.corridorOpen < p_.minOpenToKeep;
+    if (legDist >= legLenM_ || tPhase_ >= p_.moveTimeoutSec || blocked) {
+        phase_ = Phase::ARRIVE; tPhase_ = 0.f;
+        return;
+    }
+    const float err = wrap180(legBearing_ - s.vehYawDeg);
+    c.yaw = clampf(p_.kpYaw * (err / 90.f), -1.f, 1.f);
+    if (std::fabs(err) <= p_.voxAlignDeg) c.pitch = p_.cruise;
 }

@@ -74,6 +74,31 @@ public:
         // crawls). Applied to map.robotR in enable().
         float          planBerthM = 3.5f;
         LocalMap::Params map;
+
+        // D435i VOXEL PLAN (VoxelNavModule). When on, THINK and SCAN decide on
+        // the voxel layer instead of the monocular corridor, and a leg is only
+        // as long as the straight line the voxel map has CONFIRMED free on the
+        // chosen bearing, less a stopping margin. Off by default: which planner
+        // flies is a flight-test decision, and turning it on is one config key
+        // (nav.use_voxel) or --voxel.
+        //
+        // WHY IT FITS THIS CYCLE AND NOTHING ELSE. The voxel module has no
+        // position estimate, so its map is valid only while the aircraft is
+        // not translating -- SETTLE, THINK and SCAN. That is exactly when this
+        // cycle decides. MOVE then flies a leg that was certified before it
+        // began, and the next SETTLE starts a new map from the new vantage.
+        bool  useVoxel        = false;
+        float voxStaleSec     = 0.8f;  // older than this = blind
+        int   voxMinFrames    = 6;     // the map needs several hits per cell
+                                       // before a surface is OCCUPIED; acting
+                                       // on one frame acts on a map that has
+                                       // not yet had the chance to see anything
+        float voxStopMarginM  = 0.5f;  // leg ends this short of confirmed-free
+        float voxMinLegM      = 0.75f; // a shorter certified leg is not worth
+                                       // flying -- turn to look instead
+        float voxAlignDeg     = 10.f;  // no forward pitch until the nose is
+                                       // within this of the leg bearing: the
+                                       // leg is certified on ITS line only
     };
 
     MissionController() = default;
@@ -100,6 +125,11 @@ private:
 
     void  updateMap_(WorldState& s);   // integrate the scan + (re)plan (P5b)
 
+    // Voxel-layer versions of THINK / SCAN / MOVE (Params::useVoxel).
+    void  thinkVoxel_(const WorldState& s);
+    void  scanVoxel_(const WorldState& s, ControlCmd& c);
+    void  moveVoxel_(const WorldState& s, ControlCmd& c);
+
     Params  p_;
     LocalMap map_;
     bool   enabled_ = false;
@@ -119,4 +149,6 @@ private:
     float  stuckAnchorN_ = 0.f;        // (ENU) — net-displacement stuck detector
     bool   haveAnchor_ = false;
     bool   haveWp_  = false;
+    float  legBearing_ = 0.f;           // voxel leg: certified bearing (deg, 0=N)
+    float  legLenM_    = 0.f;           // voxel leg: certified length (m)
 };

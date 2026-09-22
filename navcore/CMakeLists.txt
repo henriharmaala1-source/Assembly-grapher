@@ -40,7 +40,8 @@ if(NOT TARGET navcore)
     voxel_planner.cpp
     voxel_traj.cpp
     scan_match.cpp
-    depth_vis.cpp)
+    depth_vis.cpp
+    nav_pipeline.cpp)
 
   target_compile_features(navcore PUBLIC cxx_std_17)
   # PUBLIC, so anything that links navcore finds its headers by basename --

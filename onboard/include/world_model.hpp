@@ -106,6 +106,31 @@ struct WorldState {
     bool        planValid   = false;  // a grid route exists this cycle
     float       planBearing = 0.f;    // routed direction, deg (0 = North)
 
+    // --- Voxel navigation (D435i stereo -> voxel map -> swept-volume plan) ---
+    // VoxelNavModule; the same pipeline as nav-sim's voxel_live. Valid only
+    // while the aircraft is still: it has no position estimate, so it builds a
+    // map per vantage (see voxel_nav.hpp). voxMoving says "blind because
+    // translating", which is expected, rather than "blind because broken".
+    bool        voxValid      = false;
+    bool        voxMoving     = false;
+    bool        voxBlocked    = false; // nothing survived the veto -> turn to look
+    float       voxBearingDeg = 0.f;   // chosen direction, deg (0 = North, cw)
+    float       voxElDeg      = 0.f;   // + up
+    float       voxSpeed      = 0.f;   // m/s it may fly, stoppable within freeM
+    float       voxFreeM      = 0.f;   // CONFIRMED-free distance on that bearing
+    float       voxOpenM      = 0.f;   // unknown-discounted openness (choice only)
+    // The longest CERTIFIED straight, level leg in view, and its bearing -- the
+    // geometry a move-stop-sense leg actually flies. voxFreeM is measured
+    // along a curved primitive and does not certify a straight line, so the
+    // mission flies these two, not voxBearingDeg/voxFreeM.
+    float       voxLegFreeM   = 0.f;
+    float       voxLegBearingDeg = 0.f; // the bearing that leg is on (0 = N, cw)
+    int         voxFrames     = 0;     // frames in the current vantage's map
+    double      voxStampS     = -1e9;  // monoNowS at last publish
+    bool voxFresh(float maxAgeS) const {
+        return voxValid && (tickMonoS - voxStampS) <= maxAgeS;
+    }
+
     // --- Mission: move-stop-sense autonomous cycle ---
     bool        missionActive = false;
     std::string missionPhase;         // ARMED / SETTLE / THINK / MOVE / ARRIVE

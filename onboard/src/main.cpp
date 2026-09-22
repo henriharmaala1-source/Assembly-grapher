@@ -56,6 +56,7 @@
 #include "road_follow.hpp"
 #include "scheduler.hpp"
 #include "state_estimator.hpp"
+#include "voxel_nav.hpp"
 #include "world_model.hpp"
 
 namespace {
@@ -190,6 +191,10 @@ int main(int argc, char** argv) {
         "{lock-aux       | -1    | RC channel idx (0-based) that locks onto frame centre on a high switch; -1 = off }"
         "{lock-aux-us    | 1700  | µs threshold above which the lock switch reads high }"
         "{depth-model    |       | ONNX depth model (enables navigate) }"
+        "{voxel          | false | D435i stereo -> voxel map -> swept-volume plan; the mission flies it (nav.use_voxel) }"
+        "{voxel-width    | 848   | D435i depth width }"
+        "{voxel-height   | 480   | D435i depth height }"
+        "{voxel-fps      | 15    | D435i depth rate }"
         "{depth-backend  | midas | midas|dav2 }"
         "{detect-model   |       | ONNX YOLOv8 model (enables detect) }"
         "{detect-labels  | drone,bird | comma-separated class labels }"
@@ -217,7 +222,7 @@ int main(int argc, char** argv) {
     Config   cfg;
     if (!parser.get<std::string>("config").empty())
         cfg.load(parser.get<std::string>("config"));
-    const Tunables tune = load_tunables(cfg);
+    Tunables tune = load_tunables(cfg);
     cfg.warnUnused();
     if (parser.get<bool>("dump-config")) { cfg.dump(); return 0; }
 
@@ -267,6 +272,43 @@ int main(int argc, char** argv) {
     deliberator.scheduler().setBudgetMs(parser.get<float>("budget"));
     deliberator.scheduler().add({&navigate, false, 12, 3, Behavior::NAVIGATE});
     deliberator.scheduler().add({&detect,   false, 10, 4, Behavior::SEARCH});
+
+    // D435i -> voxel. Its own sensor, so it ignores the colour frame and
+    // blocks on the next depth frame -- which is why it is on the Deliberator
+    // and never the fly loop. --voxel both starts it and tells the mission to
+    // fly its plan; a voxel layer nobody acts on would be a display.
+    std::unique_ptr<VoxelNavModule> voxnav;
+    if (parser.get<bool>("voxel")) {
+        VoxelNavModule::Params vp;
+        vp.stillSpeedMs = tune.mission.settleSpeedMs;
+        vp.mountTiltDeg = tune.cameraMountTiltDeg;
+        vp.legMaxM      = std::max(tune.mission.stepM + tune.mission.voxStopMarginM, 1.f);
+        std::string err;
+        voxnav = VoxelNavModule::live(vp, parser.get<int>("voxel-width"),
+                                      parser.get<int>("voxel-height"),
+                                      parser.get<int>("voxel-fps"), &err);
+        if (voxnav->isReady()) {
+            deliberator.scheduler().add({voxnav.get(), true, 1, 1, Behavior::NAVIGATE});
+            tune.mission.useVoxel = true;
+            std::printf("[voxel] D435i -> voxel -> plan ON (%s); the mission flies its plan\n",
+                        voxnav->source()->name());
+        } else {
+            // Not silently: a flag that was asked for and did nothing reads,
+            // in the air, exactly like a planner that saw nothing.
+            std::fprintf(stderr, "[voxel] --voxel asked for, no D435i: %s\n"
+                                 "        the mission stays on the corridor planner\n",
+                         err.c_str());
+        }
+    }
+    // nav.use_voxel in a config file with no voxel layer running would park
+    // the mission in THINK for ever, waiting on a module that does not exist.
+    // Hovering for ever is safe and looks exactly like a planner that sees
+    // nothing, so say so and fall back.
+    if (tune.mission.useVoxel && !(voxnav && voxnav->isReady())) {
+        std::fprintf(stderr, "[voxel] nav.use_voxel is set but no voxel layer is "
+                             "running (pass --voxel with a D435i); using the corridor\n");
+        tune.mission.useVoxel = false;
+    }
 
     // ---- flight controller backend
     std::unique_ptr<IFlightController> fc;

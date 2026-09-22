@@ -58,6 +58,18 @@ std::string WorldState::brief() const {
     }
     os << "]";
 
+    // Only when the module has ever spoken; a build without the D435i has no
+    // voxel layer and should not print one.
+    if (voxValid || voxMoving) {
+        os << " vox=";
+        if (voxMoving)       os << "MOVING";
+        else os << "(leg" << int(voxLegBearingDeg) << ":" << int(voxLegFreeM * 10) / 10.f
+                << "m,plan" << (voxBlocked ? std::string("BLOCKED")
+                                           : std::to_string(int(voxBearingDeg)))
+                << ",f" << voxFrames << ")";
+        if ((tickMonoS - voxStampS) > 1.0) os << "!STALE";
+    }
+
     if (estValid) {
         os << " est(" << int(estPe) << "," << int(estPn) << "," << int(estPu) << "m"
            << ",v" << int(estSpeed) << ",e" << int(estEphM);

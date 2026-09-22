@@ -60,6 +60,7 @@
 #include "depth_vis.hpp"
 #include "frame_source.hpp"
 #include "scan_match.hpp"
+#include "nav_pipeline.hpp"
 #include "voxel_map.hpp"
 #include "voxel_traj.hpp"
 #include "bearing_field.hpp"
@@ -781,19 +782,15 @@ static int runSession(Config C) {
     const CamParams& cp = src->params();
 
     // --- map, sized from the camera that is actually producing the frames ---
-    VoxelMapParams mp;
-    mp.cell = cell;
-    mp.depthSigCoef = 0.25f / (cam.fpx() * cp.baselineM);
-    mp.maxIntegM = std::sqrt(cell * cam.fpx() * cp.baselineM / 0.25f) * 0.75f;
-    if (maxIntegOverride > 0.f) mp.maxIntegM = maxIntegOverride;
-    mp.integrateStride = C.stride;
-    // MINIMUM RANGE IS A FORMULA, NOT A GUESS. Intel's own:
+    // ONE COPY of the formulas, shared with the aircraft (navcore's
+    // fineMapParams -- onboard's VoxelNavModule builds its map from the same
+    // call). MINIMUM RANGE IS A FORMULA, NOT A GUESS: Intel's own
     //     MinZ(mm) = focal length(px) * baseline(mm) / 126
     // which at 848x480 on a D435 gives ~16.8 cm and matches their published
-    // figure. 1.2x margin, because the number is where depth *starts* being
-    // possible rather than where it starts being trustworthy. Beats the 0.25 m
-    // that was there, which was a sensible guess and nothing more.
-    mp.minIntegM = cam.fpx() * cp.baselineM / 126.f * 1.2f;
+    // figure, with a 1.2x margin because that is where depth *starts* being
+    // possible rather than where it starts being trustworthy.
+    VoxelMapParams mp = fineMapParams(cam, cell, C.stride);
+    if (maxIntegOverride > 0.f) mp.maxIntegM = maxIntegOverride;
 
     // The camera sits at the middle of the grid looking +y (North), so the map
     // has room behind it as well -- a mapper that can only grow forwards would
@@ -1119,17 +1116,13 @@ static int runSession(Config C) {
                     if (b < 0) continue;
                     ++auditSeen[b];
                     float dx, dy, dz; cam.rayFor(pose, u, v, dx, dy, dz);
-                    // NORMALISE. rayFor returns the pinhole ray with a forward
-                    // component of 1, not a unit vector, and the depth value is
-                    // a RANGE along the ray (VoxelWorld::raycast normalises
-                    // before marching, so what it reports is metric distance).
-                    // Skipping this multiplies every off-axis point by 1/cos t
-                    // -- 24 % at the corner of an 87 deg frame -- and the audit
-                    // then probes a cell two behind the one the mapper wrote,
-                    // which reads exactly like a mapper that marks nothing.
-                    // It cost an hour and it was the instrument, not the map.
-                    const float dl = std::sqrt(dx*dx + dy*dy + dz*dz);
-                    dx /= dl; dy /= dl; dz /= dl;
+                    // rayFor returns a UNIT ray and the depth is a RANGE along
+                    // it, so the product is the surface point. (It once
+                    // returned a forward-component-1 ray, and an audit that
+                    // skipped normalising probed a cell two behind the one the
+                    // mapper wrote -- which read exactly like a mapper that
+                    // marks nothing. It was the instrument, not the map. The
+                    // fix now lives in rayFor itself; see depth_camera.cpp.)
                     const float wx = pose.e + dx * r, wy = pose.n + dy * r,
                                 wz = pose.u + dz * r;
                     // The layer that OWNS this range -- the same arbitration the

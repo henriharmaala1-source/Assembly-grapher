@@ -124,6 +124,12 @@ Tunables load_tunables(Config& c) {
     // P5b occupancy grid + planner
     t.mission.useMap           = c.b("nav.use_map",        t.mission.useMap);
     t.mission.planBerthM       = c.f("nav.plan_berth_m",   t.mission.planBerthM);
+    t.mission.useVoxel         = c.b("nav.use_voxel",        t.mission.useVoxel);
+    t.mission.voxStaleSec      = c.f("nav.vox_stale_sec",    t.mission.voxStaleSec);
+    t.mission.voxMinFrames     = c.i("nav.vox_min_frames",   t.mission.voxMinFrames);
+    t.mission.voxStopMarginM   = c.f("nav.vox_stop_margin_m", t.mission.voxStopMarginM);
+    t.mission.voxMinLegM       = c.f("nav.vox_min_leg_m",    t.mission.voxMinLegM);
+    t.mission.voxAlignDeg      = c.f("nav.vox_align_deg",    t.mission.voxAlignDeg);
     t.mission.map.sizeM        = c.f("nav.grid_size_m",    t.mission.map.sizeM);
     t.mission.map.cellM        = c.f("nav.grid_cell_m",    t.mission.map.cellM);
 

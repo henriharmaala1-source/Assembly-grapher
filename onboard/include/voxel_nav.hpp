@@ -1,0 +1,97 @@
+#pragma once
+// ---------------------------------------------------------------------------
+// VoxelNavModule -- D435i stereo depth -> voxel map -> swept-volume plan.
+//
+// The navigation loop from nav-sim's voxel_live, aboard. It does not reimplement
+// any of it: sim::NavPipeline (navcore/nav_pipeline.hpp) is the loop, built
+// from navcore's map, bearing field and planner -- the same objects voxel_live
+// runs, configured by the same fineMapParams(). A bug seen on the desk is a bug
+// in the code that flies.
+//
+// WHAT IT PUBLISHES is the output contract onboard already has -- a bearing and
+// a speed -- plus the two numbers that make it safe to act on: freeM, the
+// contiguous CONFIRMED-FREE distance along that bearing (unknown space earns
+// none), and `blocked`, which means no primitive survived the veto.
+//
+// THE POSE, and why this module is honest without odometry. Onboard is
+// architecture C: nobody estimates position. A world-anchored map needs one,
+// EXCEPT while the aircraft is not translating -- and move-stop-sense is built
+// around exactly that. SETTLE and THINK hover in position hold; SCAN rotates in
+// place. Rotation about a fixed point is fully described by attitude, which the
+// module has (the D435i's own IMU for roll/pitch, the FC for heading). So:
+//
+//   still      -> integrate every frame into ONE map at a fixed origin
+//   translating-> integrate nothing, publish nothing valid
+//   still again-> reset() -- a new vantage is a new map
+//
+// "Still" is the mission in THINK or SCAN (not SETTLE: that is where the last
+// leg's speed is still bleeding off), or, with no mission, the ground speed
+// under stillSpeedMs -- which also vetoes in every case. The map this produces is never wrong
+// by construction; it is only ever missing. That is the trade architecture C
+// makes, and it is why THINK waits for minFrames before acting on it.
+//
+// THE D435i IS ITS OWN SENSOR. run() ignores the colour frame the scheduler
+// passes; depth comes from this module's FrameSource, which blocks for the next
+// depth frame. It therefore belongs on the Deliberator thread, never the fly
+// loop -- the scheduler slot in main.cpp puts it there.
+// ---------------------------------------------------------------------------
+
+#include <memory>
+#include <string>
+
+#include "frame_source.hpp"   // navcore
+#include "nav_pipeline.hpp"   // navcore
+#include "perception.hpp"
+
+class VoxelNavModule : public IPerceptionModule {
+public:
+    struct Params {
+        sim::NavPipelineParams nav;       // voxel_live's configuration
+        float stillSpeedMs = 0.4f;        // above this the aircraft is moving
+        float mountTiltDeg = 0.f;         // camera elevation vs airframe, + up
+        // Roll/pitch from the D435i's IMU when it has settled, else from the FC.
+        // The camera's own IMU measures the CAMERA, mount tilt included, so it
+        // is the better source; the FC is the fallback, never the other way.
+        bool  preferCameraImu = true;
+        float legMaxM = 8.f;              // how far a straight leg is certified
+        // The airframe. Its own volume is seeded FREE at each vantage (it is
+        // standing in it), and a straight leg's horizontal core of this
+        // radius must be CONFIRMED free, not merely unknown -- see
+        // NavPipelineParams::legCoreM for the wall that made this necessary.
+        float bodyR = 0.35f;
+        // The leg search: bearings across the camera's view, every legStepDeg,
+        // keeping legFovMarginDeg off each edge (the edge of the frame is the
+        // least-observed air in it). legTieM is what 90 deg of departure from
+        // the planner's bearing costs, in metres of leg -- a tie-breaker, not
+        // a preference strong enough to buy a shorter certificate.
+        float legStepDeg      = 3.f;
+        float legFovMarginDeg = 8.f;
+        float legTieM         = 0.25f;
+    };
+
+    // Own a source. `src` null means "no camera": isReady() is false and the
+    // scheduler never runs it -- the same contract every other module has.
+    VoxelNavModule(std::unique_ptr<sim::FrameSource> src, const Params& p);
+
+    // The D435i, through librealsense loaded at run time. Returns a module
+    // that is not ready (and says why in `err`) when there is no camera.
+    static std::unique_ptr<VoxelNavModule> live(const Params& p, int width,
+                                                int height, int fps,
+                                                std::string* err);
+
+    const char* name()    const override { return "voxel-nav"; }
+    float       costMs()  const override { return 40.f; }
+    bool        isReady() const override { return src_ && src_->ok(); }
+    void        run(const cv::Mat& frame, WorldModel& wm) override;
+
+    const sim::NavPipeline& pipeline() const { return nav_; }
+    const sim::FrameSource* source()   const { return src_.get(); }
+    int resets() const { return resets_; }   // vantages started, for telemetry
+
+private:
+    std::unique_ptr<sim::FrameSource> src_;
+    Params            p_;
+    sim::NavPipeline  nav_;
+    bool              still_ = false;        // integrating into the current map
+    int               resets_ = 0;
+};

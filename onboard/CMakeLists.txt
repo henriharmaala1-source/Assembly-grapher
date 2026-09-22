@@ -14,8 +14,17 @@ find_package(OpenCV REQUIRED COMPONENTS
 # looked up separately and the tool is skipped rather than failing the build.
 find_package(OpenCV QUIET COMPONENTS calib3d)
 
+# THE NAVIGATION CORE, shared with nav-sim: camera model, frame sources (the
+# D435i through librealsense loaded at RUN time, so this builds and runs with no
+# SDK installed), voxel map, bearing field, primitive planner and swept-volume
+# veto. One copy -- see ../navcore/CMakeLists.txt.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../navcore
+                 ${CMAKE_CURRENT_BINARY_DIR}/navcore)
+
 add_executable(kestrel
   src/main.cpp
+  # D435i stereo -> voxel map -> swept-volume plan (navcore's NavPipeline).
+  src/voxel_nav.cpp
   src/world_model.cpp
   src/perception.cpp
   src/scheduler.cpp
@@ -54,7 +63,7 @@ target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${OpenCV_INCLUDE_DIRS})
 
-target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} Threads::Threads)
+target_link_libraries(kestrel PRIVATE navcore ${OpenCV_LIBS} Threads::Threads)
 
 # Offline black-box decoder — a ground tool, not flight code. Links only the
 # format code + world_model (for monoNowS / WorldState), no threads/no camera.
@@ -207,6 +216,13 @@ if(BUILD_TESTS)
     src/tracker_core.cpp src/lock_tracker.cpp src/kalman_center.cpp
     src/lock_tracker_fused.cpp src/gray_frame.cpp src/crop_filters.cpp
     src/optical_flow.cpp)
+
+  # The voxel layer aboard: the module against a simulated D435i in a world
+  # with a known wall, and the mission flying its plan. Needs no camera -- the
+  # module takes any FrameSource, and the sim one has ground truth.
+  kestrel_test(test_voxel_nav src/voxel_nav.cpp src/mission.cpp
+               src/nav_map.cpp src/world_model.cpp)
+  target_link_libraries(test_voxel_nav PRIVATE navcore)
 
   # The OLD tracker -- the one perception.hpp still instantiates, and so the
   # one that actually flies. It had no test at all until a review found the

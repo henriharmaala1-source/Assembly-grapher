@@ -193,8 +193,14 @@ cmake -B build
 cmake --build build -j4
 ```
 
-Self-contained — all perception sources (lock-on tracker, depth nav, Kalman)
-live under `onboard/` directly; there is no external project dependency.
+All perception sources (lock-on tracker, depth nav, Kalman) live under
+`onboard/`, except the navigation core: `../navcore` (camera model, D435i
+frame source, voxel map, bearing field, primitive planner, swept-volume veto)
+is shared with `nav-sim` and built in by `add_subdirectory`. It needs only
+OpenCV core + imgproc. librealsense is loaded at RUN time, so the build needs
+no RealSense SDK and `--voxel` simply reports "no D435i" where there is none.
+
+Tests: `cmake -B build -DBUILD_TESTS=ON && cmake --build build && ctest --test-dir build`.
 
 ## Run
 
@@ -212,6 +218,39 @@ live under `onboard/` directly; there is no external project dependency.
 ./build/kestrel --depth-model=models/midas_small.onnx \
                 --detect-model=models/dvb.onnx --display
 ```
+
+### D435i stereo -> voxel -> plan (`--voxel`)
+
+```bash
+./build/kestrel --voxel --fc=mavlink --auto        # the mission flies the voxel plan
+```
+
+The same pipeline as `nav-sim`'s `voxel_live` (`navcore/nav_pipeline.hpp`):
+each depth frame is integrated into a 0.25 m three-state voxel map (unknown is
+never free), the far field goes into a bearing field, and the primitive
+planner picks a direction under the swept-volume veto. `VoxelNavModule`
+(`include/voxel_nav.hpp`) runs it on the Deliberator thread.
+
+**No position estimate, by design (architecture C).** The map is built only
+while the aircraft is not translating -- THINK and SCAN, which hover or rotate
+in place -- at a fixed origin plus attitude (roll/pitch from the D435i's IMU,
+heading from the FC). Every new vantage starts a new map. While moving, the
+layer publishes nothing valid (`vox=MOVING` on the telemetry line).
+
+**What the mission flies** is not the planner's curved primitive but a straight,
+level leg, so the leg is certified on its own geometry
+(`NavPipeline::straightFreeM`): the body-sized ball clear, the centre line
+confirmed FREE, a horizontal core of the airframe's radius confirmed FREE, and
+never past the map's honest marking range. The module searches the bearings in
+view for the longest such leg; the mission flies it less a 0.5 m stopping
+margin, turning onto the bearing before pitching forward, then stops and looks
+again. Tunables: `nav.vox_*` (see `--dump-config`).
+
+`test/test_voxel_nav.cpp` checks all of this with no camera -- including a
+closed loop through a pillar field, fed attitude only, scored on ground-truth
+clearance. Over four worlds it flies 59-64 m in 150 s with perfect depth and
+20-46 m through the simulated stereo matcher, never closer than 0.51 m to a
+surface.
 
 ### Telemetry line
 Headless, the runtime prints one compact world-state line ~2×/sec — this is

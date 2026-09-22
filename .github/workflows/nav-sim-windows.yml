@@ -25,8 +25,15 @@ name: build nav-sim (Windows exe)
 
 on:
   push:
+    # EVERYTHING nav-sim COMPILES, not just its own directory. It builds
+    # ../navcore (the shared navigation core) and ../onboard's tracker sources,
+    # so a change to either can break it -- and with only 'nav-sim/**' here, a
+    # commit touching nothing but navcore/ would never have run this at all.
     paths:
       - 'nav-sim/**'
+      - 'navcore/**'
+      - 'onboard/src/**'
+      - 'onboard/include/**'
       - '.github/workflows/nav-sim-windows.yml'
   workflow_dispatch: {}
 

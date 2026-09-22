@@ -13,6 +13,13 @@ endif()
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(OpenCV QUIET COMPONENTS highgui)
 find_package(OpenCV QUIET OPTIONAL_COMPONENTS videoio)
+
+# THE NAVIGATION CORE lives in ../navcore and is shared with onboard, which is
+# the whole point of it: the pipeline voxel_live runs is the pipeline the
+# aircraft runs. Every target below links it instead of listing its sources.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../navcore
+                 ${CMAKE_CURRENT_BINARY_DIR}/navcore)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../navcore)
 # OPTIONAL, AND THE DEMO DEGRADES RATHER THAN FAILING. objdetect carries the
 # trained HOG people detector, so it is the one that needs no model file; dnn
 # runs an exported policy and an ONNX person detector when either is supplied.
@@ -62,9 +69,9 @@ endif()
 # --- 3D voxel world / stereo depth / voxel map -------------------------------
 add_executable(voxel_demo
   voxel_demo.cpp
-  voxel_world.cpp
-  depth_camera.cpp
-  voxel_map.cpp)
+
+)
+target_link_libraries(voxel_demo PRIVATE navcore)
 target_include_directories(voxel_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_demo PRIVATE ${OpenCV_LIBS})
 
@@ -73,9 +80,9 @@ target_link_libraries(voxel_demo PRIVATE ${OpenCV_LIBS})
 # invisible in every other test and obvious in its output.
 add_executable(iso_render_check
   test/iso_render_check.cpp
-  voxel_world.cpp
-  depth_camera.cpp
-  voxel_map.cpp)
+
+)
+target_link_libraries(iso_render_check PRIVATE navcore)
 target_include_directories(iso_render_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(iso_render_check PRIVATE ${OpenCV_LIBS})
 
@@ -84,9 +91,9 @@ target_link_libraries(iso_render_check PRIVATE ${OpenCV_LIBS})
 # show range -- it shows what is close, which is the part both maps agree on.
 add_executable(far_map_demo
   test/far_map_demo.cpp
-  voxel_world.cpp
-  depth_camera.cpp
-  voxel_map.cpp)
+
+)
+target_link_libraries(far_map_demo PRIVATE navcore)
 target_include_directories(far_map_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(far_map_demo PRIVATE ${OpenCV_LIBS})
 
@@ -110,7 +117,8 @@ endif()
 # found two off-by-one errors that the render did not.
 add_executable(gallery_lattice_check
   test/gallery_lattice_check.cpp
-  voxel_world.cpp)
+)
+target_link_libraries(gallery_lattice_check PRIVATE navcore)
 target_include_directories(gallery_lattice_check PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(gallery_lattice_check PRIVATE ${OpenCV_LIBS})
@@ -158,13 +166,11 @@ endif()
 add_executable(voxel_sim
   voxel_sim.cpp
   ompl_planner.cpp
-  voxel_world.cpp
-  depth_camera.cpp
+
   depth_improve.cpp
-  voxel_map.cpp
-  voxel_planner.cpp
-  voxel_traj.cpp
-  bearing_field.cpp)
+
+)
+target_link_libraries(voxel_sim PRIVATE navcore)
 target_include_directories(voxel_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_sim PRIVATE ${OpenCV_LIBS})
 if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
@@ -182,12 +188,10 @@ endif()
 add_executable(gui_preview
   test/gui_preview.cpp
   ompl_planner.cpp
-  voxel_world.cpp
-  depth_camera.cpp
-  voxel_map.cpp
-  voxel_planner.cpp
-  voxel_traj.cpp
-  bearing_field.cpp)
+
+
+)
+target_link_libraries(gui_preview PRIVATE navcore)
 target_include_directories(gui_preview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(gui_preview PRIVATE ${OpenCV_LIBS})
 if(ompl_FOUND)
@@ -200,13 +204,11 @@ endif()
 if(OpenCV_highgui_FOUND OR TARGET opencv_highgui)
   add_executable(voxel_gui
     voxel_gui.cpp
-    voxel_world.cpp
-    depth_camera.cpp
-    voxel_map.cpp
-    voxel_planner.cpp
-    voxel_traj.cpp
-    bearing_field.cpp
+
+
+
     ompl_planner.cpp)
+  target_link_libraries(voxel_gui PRIVATE navcore)
   target_include_directories(voxel_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(voxel_gui PRIVATE ${OpenCV_LIBS})
   if(ompl_FOUND)
@@ -225,18 +227,14 @@ endif()
 # an SDK that WAS installed; a dependency only needed at runtime should not be
 # able to break a build at all.
 add_executable(voxel_live
-  voxel_live.cpp depth_vis.cpp
-  scan_match.cpp
-  bearing_field.cpp
-  frame_source.cpp
-  realsense_dyn.cpp
-  depth_record.cpp
-  voxel_world.cpp
-  depth_camera.cpp
-  voxel_map.cpp
-  voxel_planner.cpp
-  voxel_traj.cpp
-  bearing_field.cpp)
+  voxel_live.cpp
+
+
+
+
+
+)
+target_link_libraries(voxel_live PRIVATE navcore)
 target_include_directories(voxel_live PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(voxel_live PRIVATE ${OpenCV_LIBS})
 if(NOT WIN32)
@@ -252,11 +250,10 @@ message(STATUS "nav_sim: voxel_live -- librealsense loaded at runtime, "
 # source rebuilds a camera from the file's own intrinsics.
 add_executable(depth_record_check
   test/depth_record_check.cpp
-  depth_record.cpp
-  frame_source.cpp
-  realsense_dyn.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+
+
+)
+target_link_libraries(depth_record_check PRIVATE navcore)
 target_include_directories(depth_record_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(depth_record_check PRIVATE ${OpenCV_LIBS})
 if(NOT WIN32)
@@ -281,8 +278,8 @@ endif()
 # f*B*(1/Zn - 1/Zf).
 add_executable(occlusion_check
   test/occlusion_check.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+)
+target_link_libraries(occlusion_check PRIVATE navcore)
 target_include_directories(occlusion_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(occlusion_check PRIVATE ${OpenCV_LIBS})
 if(BUILD_TESTS)
@@ -295,9 +292,9 @@ endif()
 # because on a forest a mirrored render looks entirely plausible.
 add_executable(overlay_align_check
   test/overlay_align_check.cpp
-  voxel_map.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+
+)
+target_link_libraries(overlay_align_check PRIVATE navcore)
 target_include_directories(overlay_align_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(overlay_align_check PRIVATE ${OpenCV_LIBS})
 if(BUILD_TESTS)
@@ -311,9 +308,9 @@ endif()
 # the chain could invert without any single view looking wrong.
 add_executable(bearing_field_check
   test/bearing_field_check.cpp
-  bearing_field.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+
+)
+target_link_libraries(bearing_field_check PRIVATE navcore)
 target_include_directories(bearing_field_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(bearing_field_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME bearing_field_check COMMAND bearing_field_check)
@@ -324,8 +321,8 @@ add_test(NAME bearing_field_check COMMAND bearing_field_check)
 add_executable(flow_velocity_check
   test/flow_velocity_check.cpp
   flow_velocity.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+)
+target_link_libraries(flow_velocity_check PRIVATE navcore)
 target_include_directories(flow_velocity_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(flow_velocity_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME flow_velocity_check COMMAND flow_velocity_check)
@@ -339,8 +336,9 @@ if(pybind11_FOUND)
   pybind11_add_module(voxelenv
     python/voxelenv_py.cpp
     kestrel_report.cpp
-    rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
-    depth_camera.cpp bearing_field.cpp)
+    rl_env.cpp
+)
+  target_link_libraries(voxelenv PRIVATE navcore)
   target_include_directories(voxelenv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(voxelenv PRIVATE ${OpenCV_LIBS})
   message(STATUS "nav_sim: pybind11 found - building the voxelenv python module")
@@ -376,7 +374,8 @@ endif()
 add_executable(cuda_depth_check
   test/cuda_depth_check.cpp
   ${NAVSIM_DEPTH_CUDA_SRC}
-  depth_camera.cpp voxel_world.cpp)
+)
+target_link_libraries(cuda_depth_check PRIVATE navcore)
 target_include_directories(cuda_depth_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(cuda_depth_check PRIVATE ${OpenCV_LIBS} ${NAVSIM_CUDA_LIBS})
 add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
@@ -403,15 +402,13 @@ add_executable(kestrel
   voxel_live.cpp
   # The demo: four panes, four threads, no second implementation of anything.
   kestrel_demo.cpp
-  scan_match.cpp frame_source.cpp realsense_dyn.cpp depth_record.cpp
-  depth_vis.cpp
-  voxel_planner.cpp
-  rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
-  depth_camera.cpp bearing_field.cpp
+
+  rl_env.cpp
   ../onboard/src/lock_tracker_fused.cpp
   ../onboard/src/crop_filters.cpp
   ../onboard/src/gray_frame.cpp
   ../onboard/src/optical_flow.cpp)
+target_link_libraries(kestrel PRIVATE navcore)
 target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
   ${OpenCV_INCLUDE_DIRS})
@@ -481,14 +478,16 @@ endif()
 
 add_executable(rl_bench
   rl_bench.cpp
-  rl_env.cpp voxel_traj.cpp voxel_map.cpp voxel_world.cpp
-  depth_camera.cpp bearing_field.cpp)
+  rl_env.cpp
+)
+target_link_libraries(rl_bench PRIVATE navcore)
 target_include_directories(rl_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(rl_bench PRIVATE ${OpenCV_LIBS})
 
 add_executable(loop_closure_check
   test/loop_closure_check.cpp
-  place_descriptor.cpp voxel_map.cpp voxel_world.cpp depth_camera.cpp)
+  place_descriptor.cpp)
+target_link_libraries(loop_closure_check PRIVATE navcore)
 target_include_directories(loop_closure_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(loop_closure_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME loop_closure_check COMMAND loop_closure_check)
@@ -496,20 +495,19 @@ add_test(NAME loop_closure_check COMMAND loop_closure_check)
 add_executable(rl_env_check
   test/rl_env_check.cpp
   rl_env.cpp
-  voxel_traj.cpp
-  voxel_map.cpp
-  voxel_world.cpp
-  depth_camera.cpp
-  bearing_field.cpp)
+
+
+)
+target_link_libraries(rl_env_check PRIVATE navcore)
 target_include_directories(rl_env_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(rl_env_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME rl_env_check COMMAND rl_env_check)
 
 add_executable(lookaround_check
   test/lookaround_check.cpp
-  depth_camera.cpp
-  voxel_map.cpp
-  voxel_world.cpp)
+
+)
+target_link_libraries(lookaround_check PRIVATE navcore)
 target_include_directories(lookaround_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(lookaround_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME lookaround_check COMMAND lookaround_check)
@@ -520,10 +518,9 @@ add_test(NAME attitude_check COMMAND attitude_check)
 
 add_executable(scan_match_check
   test/scan_match_check.cpp
-  scan_match.cpp
-  depth_camera.cpp
-  voxel_map.cpp
-  voxel_world.cpp)
+
+)
+target_link_libraries(scan_match_check PRIVATE navcore)
 target_include_directories(scan_match_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(scan_match_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME scan_match_check COMMAND scan_match_check)
@@ -531,8 +528,8 @@ add_test(NAME scan_match_check COMMAND scan_match_check)
 add_executable(flow_odometry_check
   test/flow_odometry_check.cpp
   flow_velocity.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+)
+target_link_libraries(flow_odometry_check PRIVATE navcore)
 target_include_directories(flow_odometry_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(flow_odometry_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME flow_odometry_check COMMAND flow_odometry_check)
@@ -543,23 +540,20 @@ add_test(NAME imu_odometry_check COMMAND imu_odometry_check)
 
 add_executable(sky_open_check
   test/sky_open_check.cpp
-  voxel_map.cpp
-  voxel_traj.cpp
-  bearing_field.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+
+
+)
+target_link_libraries(sky_open_check PRIVATE navcore)
 target_include_directories(sky_open_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(sky_open_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME sky_open_check COMMAND sky_open_check)
 
 add_executable(chase_turn_check
   test/chase_turn_check.cpp
-  voxel_map.cpp
-  voxel_traj.cpp
-  bearing_field.cpp
-  voxel_planner.cpp
-  depth_camera.cpp
-  voxel_world.cpp)
+
+
+)
+target_link_libraries(chase_turn_check PRIVATE navcore)
 target_include_directories(chase_turn_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(chase_turn_check PRIVATE ${OpenCV_LIBS})
 if(BUILD_TESTS)

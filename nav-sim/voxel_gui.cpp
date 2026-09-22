@@ -231,8 +231,7 @@ static int fly(const Cfg& cfg) {
     VoxelMapParams mp; mp.cell = cell;
     mp.depthSigCoef = cp.subpixelPx / (cam.fpx() * cp.baselineM);
     VoxelMap M; M.init(mp, px, py, pz);
-    GeneralParams gp; gp.robotR = 0.6f;
-    GeneralPlanner gen(gp);
+    GeneralParams gp; gp.robotR = 0.6f;   // the defaults TrajParams copies below
     // Same reactive layer the harness measures. A window that flies differently
     // from the thing being measured is worse than no window -- it looks like
     // evidence.
@@ -312,7 +311,6 @@ static int fly(const Cfg& cfg) {
         gfilt.update(std::atan2(tE-px, tN-py) * 180.f/sim::PI_F,
                      std::atan2(tU-pz, std::hypot(tE-px, tN-py)) * 180.f/sim::PI_F, 0.25f);
         GeneralResult gr = traj.plan(M, px, py, pz, yaw, gfilt.azDeg, gfilt.elDeg);
-        (void)gen;
 
         float a = gr.azDeg*sim::PI_F/180.f, e = gr.elDeg*sim::PI_F/180.f;
         float dx = std::cos(e)*std::sin(a), dy = std::cos(e)*std::cos(a), dz = std::sin(e);

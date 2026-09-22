@@ -1,5 +1,13 @@
 # nav-sim — a path-planning testbench
 
+> **This file documents the ORIGINAL 2-D grid simulator (`nav_sim`)**, kept
+> because `test_nav` and the Android visualiser still build its sources. The
+> current tool is the 3-D voxel sim: build and run `kestrel` (`kestrel sim`,
+> `kestrel gui`), documented in [`RUN_ME_windows.txt`](RUN_ME_windows.txt). Its
+> navigation core lives in [`../navcore`](../navcore) and is the same code the
+> aircraft flies. The Windows CI artifact is `kestrel-voxel-sim-windows-x64`,
+> not the `nav_sim` one named below.
+
 A small, self-contained desktop simulator for **comparing path-planning methods**
 on a drone driving to a goal through obstacles, over an occupancy grid it builds
 from its own forward scan as it moves (partial observability → replanning).

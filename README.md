@@ -12,16 +12,22 @@
 > problem, architecture, engineering process, and an honest account of what's
 > validated vs. not yet flight-tested.
 
-Two **independent** tools in one repo — they share no code and build separately:
+One autonomy stack and its tools. The navigation core is shared: `navcore/`
+is built into both the aircraft (`onboard/`) and the simulator (`nav-sim/`),
+so what is measured in simulation is the code that flies.
 
 | Directory | What it is | Runs on | Language |
 |-----------|-----------|---------|----------|
 | **`onboard/`** | **The on-drone autonomy OS** (named *kestrel*): capture → perception → world model → mode arbiter → controller → flight-controller backend. | Raspberry Pi 5, **on the aircraft** | C++ (OpenCV) |
+| **`navcore/`** | **The navigation core**, one copy: D435i/sim/replay frame sources, 0.25 m three-state voxel map, far-field bearing field, primitive planner with the swept-volume veto, and `NavPipeline` (the loop `nav-sim`'s `voxel_live` runs). | linked into both of the above and below | C++ (OpenCV core) |
+| **`nav-sim/`** | **The simulator and desk tool** (`kestrel.exe`): live voxel sim over sim/replay/D435i depth, planner baselines, RL training env. The measurements in `CLAUDE.md` come from here. | desktop / laptop | C++ + Python |
 | **`desktop/`** | **A workstation app** for prototyping the perception backends off the drone: DINOv2 + SAM 2 + CV lock-on tracker (`main.py` + the `tracker/` package). | desktop / laptop, **never flies** | Python (PyTorch) |
+| `android/`, `android-tracker/` | Phone apps: a nav visualiser and a field lock-on test rig. | Android | Kotlin |
 
-`onboard/` is the Pi / on-drone system; `desktop/` is a development tool that
-stays on the ground. Each is self-contained with its own build, deps, and README:
-[`onboard/README.md`](onboard/README.md) and [`desktop/README.md`](desktop/README.md).
+`onboard/` is the Pi / on-drone system; the rest stay on the ground. Each has
+its own README: [`onboard/README.md`](onboard/README.md),
+[`nav-sim/RUN_ME_windows.txt`](nav-sim/RUN_ME_windows.txt),
+[`desktop/README.md`](desktop/README.md).
 
 ## onboard — the on-drone OS (kestrel)
 
@@ -29,8 +35,9 @@ A modular real-time runtime (CPU-only, no ROS) that orchestrates the perception
 modules behind one compute-budgeted scheduler, maintains a shared world model,
 fuses a state estimate, and drives the flight controller.
 
-- **Perception** — lock-on tracking (CSRT/KCF/flow/MOSSE + Kalman), monocular
-  depth corridor, appearance road-follow (CIELab), YOLO detection.
+- **Perception** — D435i stereo depth → voxel map → swept-volume plan
+  (`--voxel`, navcore), lock-on tracking (CSRT/KCF/flow/MOSSE + Kalman),
+  monocular depth corridor, appearance road-follow (CIELab), YOLO detection.
 - **State estimation** — loosely-coupled ENU Kalman filter fusing FC GPS + baro,
   with VIO/SLAM hooks, plus synthetic-GPS feedback into iNAV (`MSP2_SENSOR_GPS`)
   so the FC's own nav works GPS-denied.

@@ -15,15 +15,13 @@
 //     layer that keeps the aircraft alive, and it is deliberately the one that
 //     governs SPEED, because it is the one reading the live sensor.
 //
-// PrecisePlanner  — "fly to that point."
-//     3D A* over a coarsened copy of the map, with obstacle inflation and an
-//     explicit cost for traversing UNKNOWN. Runs occasionally, produces a
-//     waypoint list. Its output is a SUGGESTION, handed to the general planner
-//     as a direction to prefer.
+// (PrecisePlanner, 3-D A* to a point, lived here too. Nothing ever called it
+// and it was removed; git history has it if a point-goal planner is wanted.)
 //
-// THE ARBITRATION RULE, which is the whole safety argument:
-//     The precise planner never commands the vehicle. It only changes which
-//     direction the general planner is biased toward. So a stale, wrong or
+// THE ARBITRATION RULE it was built under, and the rule for anything that
+// replaces it -- the whole safety argument:
+//     A point-goal planner never commands the vehicle. It only changes which
+//     direction the reactive planner is biased toward. So a stale, wrong or
 //     empty path can slow the aircraft down or send it the long way round, but
 //     it can never drive it into something the live map can see. This mirrors
 //     the rule the 2D stack in this directory already follows, and it is the
@@ -32,7 +30,7 @@
 // UNKNOWN IS NOT FREE, and it is not blocked either. Treating it as free flies
 // you into untextured walls; treating it as blocked means you can never enter
 // space you have not already seen, which on a forward-facing camera means you
-// can never move. Both planners therefore price it: traversable, expensive.
+// can never move. The planner therefore prices it: traversable, expensive.
 // ---------------------------------------------------------------------------
 
 #include <cmath>
@@ -246,45 +244,6 @@ private:
     float lastAz_ = 0, lastEl_ = 0;
     bool  haveLast_ = false;
     int   held_ = 0;             // steps the current heading has been held
-};
-
-// --- precise (A* to a point) planner ----------------------------------------
-
-struct PreciseParams {
-    int   coarsen      = 2;     // plan on every Nth voxel; 0.25 m -> 0.5 m
-    float robotR       = 0.6f;  // physical clearance
-    // Plan with a WIDER margin than the reactive layer uses. If they are equal,
-    // the planned path skims obstacle faces, the reactive layer then fights it
-    // every frame, and the aircraft crawls. The 2D stack in this directory
-    // learned this the same way.
-    float planMarginM  = 0.9f;
-    float unknownCost  = 2.5f;  // multiplier on step cost through unknown space
-    int   maxExpand    = 250000;
-    float goalTolM     = 1.5f;
-};
-
-struct PrecisePath {
-    std::vector<std::array<float, 3>> pts;   // world ENU waypoints
-    bool  found = false;
-    int   expanded = 0;
-    float costM = 0;
-    // Set when the start cell itself was blocked and had to be nudged. Worth
-    // surfacing rather than hiding: it usually means the map thinks you are
-    // inside an obstacle, which is either drift or a bad inflation radius.
-    bool  startWasBlocked = false;
-};
-
-class PrecisePlanner {
-public:
-    explicit PrecisePlanner(const PreciseParams& p = PreciseParams()) : p_(p) {}
-    const PreciseParams& params() const { return p_; }
-
-    PrecisePath plan(const VoxelMap& m,
-                     float sx, float sy, float sz,
-                     float gx, float gy, float gz);
-
-private:
-    PreciseParams p_;
 };
 
 }  // namespace sim

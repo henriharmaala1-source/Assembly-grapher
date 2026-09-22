@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Cross-language check for the .kdr recording format.
 
-    python3 test/kdr_crosscheck.py [path/to/voxel_live]
+    python3 test/kdr_crosscheck.py [path/to/kestrel sim]
+
+The trailing arguments are the command that runs the live sim: `kestrel sim`
+(what ctest passes) or any binary that takes voxel_live's flags.
 
 A round trip inside one language proves only that the language is
 self-consistent with itself. The format exists so that a Python capture on a
 Windows laptop can be replayed by a C++ binary through the real map and
 planner, so BOTH directions are checked here:
 
-    Python writes -> C++ reads       (run voxel_live --replay on it)
+    Python writes -> C++ reads       (run `kestrel sim --replay` on it)
     C++ writes    -> Python reads    (read the file depth_record_check made)
 
 The second direction is the one that catches an endianness or padding mistake,
@@ -94,27 +97,28 @@ def main():
           "a truncated recording yields only COMPLETE frames", tm["frames"])
 
     # --- and the app actually replays the Python file ----------------------
-    exe = sys.argv[1] if len(sys.argv) > 1 else "./voxel_live"
+    cmd = sys.argv[1:] or ["./kestrel", "sim"]
+    exe = cmd[0]
     if os.path.exists(exe):
         # TIMEOUT, always. Without one this hung a CI build for 17 minutes:
         # a child that never exits takes the whole job with it, and "the build
         # is slow today" is how that gets misread.
         try:
-            r = subprocess.run([exe, "--replay", path, "--headless", "--frames", str(N),
+            r = subprocess.run(cmd + ["--replay", path, "--headless", "--frames", str(N),
                                 "--out", "kdr_xcheck"],
                                capture_output=True, text=True, timeout=120)
         except subprocess.TimeoutExpired:
-            check(False, "voxel_live replays the PYTHON-written recording",
+            check(False, "the live sim replays the PYTHON-written recording",
                   "TIMED OUT after 120 s")
             print(f"{'FAILED' if fails else 'all checks passed'} ({fails})")
             return 1
         ok = r.returncode == 0 and "frames from replay" in r.stdout
-        check(ok, "voxel_live replays the PYTHON-written recording",
+        check(ok, "the live sim replays the PYTHON-written recording",
               (r.stdout + r.stderr).strip().splitlines()[-1] if not ok else "")
         # And that it used the intrinsics from the file rather than a default.
         check("fx 425.3" in r.stdout, "and reports the file's own intrinsics")
     else:
-        check(False, f"voxel_live present at {exe}", "build it first")
+        check(False, f"live sim present at {exe}", "build kestrel first")
 
     print(f"{'FAILED' if fails else 'all checks passed'} "
           f"({fails} failure{'' if fails == 1 else 's'})")

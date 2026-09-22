@@ -81,10 +81,9 @@ of them. To get them:
 
   voxel_gui.exe    point-and-click front end: fly a synthetic forest
   voxel_sim.exe    the scriptable batch version of the same sim
-  voxel_live.exe   the standalone build of what `kestrel sim` now runs
 
 VOXEL_LIVE - the real map and planner over real depth
-(`kestrel sim` and voxel_live.exe are the same code and the same flags)
+(`kestrel sim`; the flags below are its flags)
 
 
 VOXEL_LIVE - the real map and planner over real depth

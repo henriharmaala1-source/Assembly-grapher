@@ -2165,10 +2165,9 @@ static int runSession(Config C) {
 
 
 // ---------------------------------------------------------------------------
-// ENTRY POINT, NAMED SO IT CAN BE LINKED IN. kestrel builds this translation
-// unit with VOXEL_LIVE_NO_MAIN and calls voxelLiveMain() directly, so the live
-// sim runs INSIDE that binary rather than being spawned as a second one. The
-// standalone voxel_live executable keeps its own main() below.
+// ENTRY POINT, NAMED SO IT CAN BE LINKED IN. kestrel calls voxelLiveMain()
+// directly (`kestrel sim`), so the live sim runs INSIDE that binary rather than
+// being spawned as a second one. There is no standalone voxel_live any more.
 int voxelLiveMain(int argc, char** argv) {
     // Any argument at all -> the old command-line behaviour, so the headless
     // tests, ctest and the sweep scripts are untouched by the menu existing.
@@ -2266,6 +2265,3 @@ int voxelLiveMain(int argc, char** argv) {
 #endif
 }
 
-#ifndef VOXEL_LIVE_NO_MAIN
-int main(int argc, char** argv) { return voxelLiveMain(argc, argv); }
-#endif

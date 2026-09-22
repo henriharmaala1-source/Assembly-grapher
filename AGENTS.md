@@ -9,7 +9,10 @@ why the architecture is shaped this way, not just what's where — see
 
 ## 0. What this repo is
 
-A small-drone autonomy stack, in **two independent parts** (no shared code):
+A small-drone autonomy stack. The two parts below were once independent; the
+navigation core is now shared -- `navcore/` (D435i frame source, voxel map,
+bearing field, primitive planner, swept-volume veto) is built into `onboard/`
+and into the simulator `nav-sim/`. The main parts:
 
 | Dir | What | Runs on | Language |
 | --- | ---- | ------- | -------- |

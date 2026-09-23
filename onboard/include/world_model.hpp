@@ -120,9 +120,9 @@ struct WorldState {
     float       voxFreeM      = 0.f;   // CONFIRMED-free distance on that bearing
     float       voxOpenM      = 0.f;   // unknown-discounted openness (choice only)
     // The CERTIFIED straight, level leg the module chose, and its bearing --
-    // the geometry a move-stop-sense leg actually flies. Chosen near tier
-    // first (legs within 90 % of the longest), then by how far the far tier
-    // sees along it (voxel_nav.hpp: farChoose). voxFreeM is measured along a
+    // the geometry a move-stop-sense leg actually flies: the longest, ties to
+    // the planner's bearing (voxel_nav.hpp: farChoose is the measured-worse
+    // alternative that lets the far tier pick). voxFreeM is measured along a
     // curved primitive and does not certify a straight line, so the mission
     // flies these two, not voxBearingDeg/voxFreeM.
     float       voxLegFreeM   = 0.f;

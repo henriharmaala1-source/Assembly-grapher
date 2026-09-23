@@ -306,8 +306,8 @@ int main() {
         // perfect depth for the simulated stereo matcher (holes, speckle,
         // range-dependent noise); VOXTEST_BIG=1 is a 48 m field with walls
         // that make dead ends, where seeing past the near map should matter;
-        // VOXTEST_FAR=0 turns off the far tier's choice among safe legs.
-        // CI runs the defaults (24 m room, perfect depth, far tier on).
+        // VOXTEST_FAR=1 turns on the far tier's choice among safe legs (off
+        // by default: measured worse, voxel_nav.hpp). CI runs the defaults.
         const bool big = std::getenv("VOXTEST_BIG") != nullptr;
         if (const char* f = std::getenv("VOXTEST_FAR")) vp.farChoose = std::atoi(f) != 0;
         const float sizeM = big ? 48.f : 24.f;

@@ -246,11 +246,18 @@ view for the longest such leg; the mission flies it less a 0.5 m stopping
 margin, turning onto the bearing before pitching forward, then stops and looks
 again. Tunables: `nav.vox_*` (see `--dump-config`).
 
+The far tier (bearing field) informs the planner's direction but does not pick
+the leg. Letting it choose among the safe legs was built and measured
+(`VoxelNavModule::Params::farChoose`) and made things worse -- see there.
+
 `test/test_voxel_nav.cpp` checks all of this with no camera -- including a
-closed loop through a pillar field, fed attitude only, scored on ground-truth
-clearance. Over four worlds it flies 59-64 m in 150 s with perfect depth and
-20-46 m through the simulated stereo matcher, never closer than 0.51 m to a
-surface.
+closed loop, fed attitude only, scored on ground-truth clearance, net
+displacement and 1 m cells visited. In 150 s over four worlds of a 48 m field
+with pillars and dead-end walls, at 848x480 (`VOXTEST_BIG=1
+VOXTEST_FULLRES=1`): 76-83 m flown with perfect depth, 76-79 m through the
+simulated stereo matcher, never closer than 0.57 m to a surface, never stuck.
+At the suite's default 424x240 the marking range is ~2.5 m and stereo runs in
+open ground can strand -- a test-resolution effect, not the flight config.
 
 ### Telemetry line
 Headless, the runtime prints one compact world-state line ~2×/sec — this is

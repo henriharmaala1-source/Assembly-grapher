@@ -67,7 +67,8 @@ public:
         float legStepDeg      = 3.f;
         float legFovMarginDeg = 8.f;
         float legTieM         = 0.25f;
-        // THE FAR TIER CHOOSES AMONG SAFE LEGS. Two steps, near first:
+        // THE FAR TIER CHOOSING AMONG SAFE LEGS -- OFF, BECAUSE IT MEASURED
+        // WORSE. Two steps, near first:
         //   1. every bearing whose certified leg is within legKeepFrac of the
         //      longest one is a candidate -- the near map has no real
         //      preference between them (legs saturate at the marking range,
@@ -79,7 +80,18 @@ public:
         // untouched -- every candidate carries its own certificate, and the
         // far tier only reorders legs the near map already cleared.
         // false = the near tier alone (longest leg, ties to the planner).
-        bool  farChoose   = true;
+        //
+        // MEASURED, test_voxel_nav closed loop, 150 s, 4 worlds paired, the
+        // 48 m field with dead-end walls (VOXTEST_BIG) at the 848x480 that
+        // flies -- the scene this was meant to help in:
+        //   perfect depth  net displacement -9.7 +/- 1.7 m (se), net x cells
+        //                  -840 +/- 184; travel and coverage unchanged
+        //   stereo         no resolved difference (travel -5.5 +/- 3.0 m)
+        // and no resolved gain anywhere at 424x240 either, room or field.
+        // Chasing the longest sight line from each stop ends the flight
+        // closer to where it began; why is not established. Safety was the
+        // same in both arms (every run >= 0.44 m from truth surfaces).
+        bool  farChoose   = false;
         float legKeepFrac = 0.9f;
     };
 

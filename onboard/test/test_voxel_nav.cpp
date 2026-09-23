@@ -86,6 +86,14 @@ sim::CamParams d435i() {
     return p;
 }
 
+// SURFACE TEXTURE, which the stereo model matches on. The first version of
+// this test set none: every surface was texture 0, below the matcher's 0.25
+// threshold, so under VOXTEST_STEREO the camera saw nothing but silhouette
+// edges -- the most pessimistic world there is, and every stereo number it
+// produced was measured in it. Values follow navcore's own worlds: plaster
+// walls 0.35 (voxel_world.hpp says why not 0.10), ground and bark richer.
+constexpr float kGroundTex = 0.5f, kWallTex = 0.35f, kPillarTex = 0.55f;
+
 // Ground slab + perimeter walls: returns everywhere, so free space can be
 // carved. Unknown is not free, and an empty world would be all unknown.
 void buildRoom(sim::VoxelWorld& w, float sizeM, float heightM, float cell) {
@@ -93,19 +101,20 @@ void buildRoom(sim::VoxelWorld& w, float sizeM, float heightM, float cell) {
     w.init(cell, 0.f, 0.f, 0.f, n, n, nz);
     for (int y = 0; y < n; ++y)
         for (int x = 0; x < n; ++x) {
-            w.set(x, y, 0);
+            w.set(x, y, 0); w.setTex(x, y, 0, kGroundTex);
             if (x < 2 || y < 2 || x >= n - 2 || y >= n - 2)
-                for (int z = 0; z < nz; ++z) w.set(x, y, z);
+                for (int z = 0; z < nz; ++z) { w.set(x, y, z); w.setTex(x, y, z, kWallTex); }
         }
 }
 
-void box(sim::VoxelWorld& w, float x0, float y0, float x1, float y1, float h) {
+void box(sim::VoxelWorld& w, float x0, float y0, float x1, float y1, float h,
+         float tex) {
     int ax, ay, az, bx, by, bz;
     w.worldToCell(x0, y0, 0.f, ax, ay, az);
     w.worldToCell(x1, y1, h, bx, by, bz);
     for (int z = 0; z <= bz; ++z)
         for (int y = ay; y <= by; ++y)
-            for (int x = ax; x <= bx; ++x) w.set(x, y, z);
+            for (int x = ax; x <= bx; ++x) { w.set(x, y, z); w.setTex(x, y, z, tex); }
 }
 
 // Distance from a point to the nearest solid voxel (box, not centre), up to
@@ -199,7 +208,7 @@ int main() {
     {
         sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
         // A wall 2 m ahead, 3 m wide, centred on the nose. Open either side.
-        box(w, 6.5f, 6.0f, 9.5f, 6.4f, 4.f);
+        box(w, 6.5f, 6.0f, 9.5f, 6.4f, 4.f, kWallTex);
         sim::CamPose truth; truth.e = 8.f; truth.n = 4.f; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
@@ -316,13 +325,13 @@ int main() {
             const float cx = std::max(x, std::min(spawnE, x1));
             const float cy = std::max(y, std::min(spawnN, y1));
             if (std::hypot(cx - spawnE, cy - spawnN) < 3.f) continue;   // spawn clear
-            box(w, x, y, x1, y1, 5.f);
+            box(w, x, y, x1, y1, 5.f, kWallTex);
             ++walls;
         }
         for (int i = 0; i < 400 && pillars < wantPillars; ++i) {
             const float x = U(rng), y = U(rng);
             if (std::hypot(x - spawnE, y - spawnN) < 2.5f) continue;   // spawn clear
-            box(w, x - 0.2f, y - 0.2f, x + 0.2f, y + 0.2f, 5.f);
+            box(w, x - 0.2f, y - 0.2f, x + 0.2f, y + 0.2f, 5.f, kPillarTex);
             ++pillars;
         }
         sim::CamPose truth; truth.e = spawnE; truth.n = spawnN; truth.u = 1.5f;

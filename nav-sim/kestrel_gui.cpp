@@ -872,7 +872,7 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     // WHICH WORLD THE POLICY FLIES IN, and it is a single choice rather than
     // the multi-select the measuring panels use: a demo shows one thing at a
     // time and a checklist would imply otherwise.
-    txt(im, "world for the planner pane", x, 292, 0.5, DIM);
+    txt(im, "world for the SIM pane", x, 292, 0.5, DIM);
     bs.push_back({cv::Rect(x, 304, 250, 38),
                   std::string("world: ") + DEMO_WORLD[c.dWorld], ID_D_WORLD, true});
     txt(im, "click to cycle", x, 358, 0.42, DIM);
@@ -910,12 +910,12 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                   ID_D_EXPORT, false});
 
     // WHICH POLICY, and "none" is a real choice rather than the absence of one:
-    // the pane is then captioned "classical: <name>" and nobody can come away
-    // thinking they watched the learned policy.
-    txt(im, "policy for the planner pane", x, 478, 0.5, DIM);
+    // the pane is then captioned "flying freeM (classical)" and nobody can
+    // come away thinking they watched the learned policy.
+    txt(im, "policy for the SIM pane", x, 478, 0.5, DIM);
     {
         const int n = std::min<int>(3, int(g_models.size()));
-        bs.push_back({cv::Rect(x, 486, 180, 32), "none (classical)",
+        bs.push_back({cv::Rect(x, 486, 180, 32), "none: freeM",
                       ID_D_MODEL, c.dModel < 0});
         for (int i = 0; i < n; ++i)
             bs.push_back({cv::Rect(x + 190 + i * 200, 486, 190, 32),

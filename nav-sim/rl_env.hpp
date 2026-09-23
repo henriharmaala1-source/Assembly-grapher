@@ -428,6 +428,13 @@ public:
     // very little about whether the sensor is seeing anything at all.
     std::vector<uint8_t> renderDepth(int w = 320, int h = 240) const;
 
+    // FPV FOOTAGE: the TRUE world from the aircraft, lit and hazed -- what a
+    // camera on it would film (navcore/footage.hpp). The one picture here that
+    // is not what the aircraft believes, which is exactly why it is worth
+    // showing beside renderFrame: the gap between them is the map. Never an
+    // input to anything.
+    std::vector<uint8_t> renderFootage(int w = 320, int h = 240) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> im_;

@@ -1,4 +1,5 @@
 #include "rl_env.hpp"
+#include "footage.hpp"
 
 #include <cstring>
 
@@ -891,6 +892,17 @@ std::vector<uint8_t> VoxelEnv::renderDepth(int w, int h) const {
         std::memcpy(buf.data() + size_t(y) * out.cols * 3, out.ptr(y),
                     size_t(out.cols) * 3);
     return buf;
+}
+
+std::vector<uint8_t> VoxelEnv::renderFootage(int w, int h) const {
+    const Impl& I = *im_;
+    w = std::max(80, std::min(1600, w));
+    h = std::max(60, std::min(1200, h));
+    CamPose pose;
+    pose.e = I.px; pose.n = I.py; pose.u = I.pz; pose.yawDeg = I.yaw;
+    const cv::Mat img = sim::renderFootage(I.world, pose, w, h, I.cp.hfovDeg,
+                                           60.f, I.world.oz() + 0.3f);
+    return std::vector<uint8_t>(img.data, img.data + size_t(w) * h * 3);
 }
 
 std::vector<uint8_t> VoxelEnv::renderFrame(int w, int h, bool topDown) const {

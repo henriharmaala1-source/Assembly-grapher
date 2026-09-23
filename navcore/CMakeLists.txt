@@ -41,7 +41,8 @@ if(NOT TARGET navcore)
     voxel_traj.cpp
     scan_match.cpp
     depth_vis.cpp
-    nav_pipeline.cpp)
+    nav_pipeline.cpp
+    footage.cpp)
 
   target_compile_features(navcore PUBLIC cxx_std_17)
   # PUBLIC, so anything that links navcore finds its headers by basename --

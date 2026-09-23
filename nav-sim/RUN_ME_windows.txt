@@ -279,10 +279,14 @@ columns as the classical ones, on seeds it never trained on.
     kestrel demo     THE SHOWCASE, and the only command here whose job is to
                      be watched rather than measured. Four panes at once:
 
-                       LEARNED PLANNER  the policy flying in the sim, drawn as
-                                        the first-person VOXEL view -- what it
-                                        BELIEVES, not the world. Pale is
-                                        UNKNOWN. Needs no camera.
+                       SIM DEMONSTRATION  a planner flying the simulated
+                                        world, filmed: FPV FOOTAGE of the true
+                                        scene, with the map it is building
+                                        inset -- first-person as it BELIEVES
+                                        (pale is UNKNOWN) and from above with
+                                        its track. The gap between footage and
+                                        map is what it has measured. Needs no
+                                        camera.
                        LIVE DEPTH       what the real sensor returns,
                                         colourised, with the fraction of pixels
                                         that came back at all
@@ -390,8 +394,9 @@ columns as the classical ones, on seeds it never trained on.
                      checkpoint and flies it through OpenCV's dnn, so there is
                      no python at demo time and nothing to install on the
                      machine you are showing it on. Without one it flies the
-                     classical planner named by --fallback (default cover) and
-                     the pane says "classical: cover" rather than "learned".
+                     classical planner named by --fallback (default freeM, the
+                     best planner measured here) and the pane says "flying
+                     freeM (classical)" rather than "learned".
 
                      GETTING A POLICY INTO IT. The pane says "learned"
                      only when it is flying one, so a checkpoint has to
@@ -415,8 +420,8 @@ columns as the classical ones, on seeds it never trained on.
                        kestrel demo --model final.onnx
 
                      Without --model the pane flies the planner named by
-                     --fallback (default cover) and is captioned
-                     "classical: cover" -- never "learned".
+                     --fallback (default freeM) and is captioned
+                     "flying freeM (classical)" -- never "learned".
 
                      CUDA, FOR THE TWO NETWORKS AND NOTHING ELSE.
 

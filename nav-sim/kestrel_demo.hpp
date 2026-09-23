@@ -6,10 +6,14 @@
 //
 // WHAT IT SHOWS, and why these four:
 //
-//   LEARNED PLANNER   the trained policy flying in the sim, drawn as the
-//                     first-person VOXEL view -- what it BELIEVES, not the
-//                     world. Pale is UNKNOWN. This is the thing the project is
-//                     for, and it is the only pane that needs no camera.
+//   SIM DEMONSTRATION a planner flying the simulated world: FPV FOOTAGE of
+//                     the true scene (navcore/footage.hpp), with the map it is
+//                     building inset -- first-person, as it BELIEVES, and from
+//                     above with its track. Pale is UNKNOWN. The gap between
+//                     footage and map is what the aircraft has measured. It is
+//                     the only pane that needs no camera. Flies freeM, the
+//                     best planner measured here, unless --model names a
+//                     learned policy -- and the caption always says which.
 //   LIVE DEPTH        what the real sensor returns, colourised. The one part
 //                     of the stack that can lie, and the one that has to be
 //                     watched rather than trusted.
@@ -53,12 +57,15 @@ struct Options {
     int         source = SIM;
     std::string replayPath;
 
-    // The policy for the planner pane. Empty means "no network available" and
-    // the pane falls back to a classical planner, saying so on screen -- see
-    // plannerLabel(). A demo that silently shows freeM while the caption says
-    // "learned" is the worst thing this file could do.
+    // The policy for the sim pane. Empty means "no network available" and the
+    // pane flies a classical planner, saying so on screen. A demo that silently
+    // shows freeM while the caption says "learned" is the worst thing this
+    // file could do.
     std::string model;          // .onnx exported from the checkpoint
-    std::string fallback = "cover";   // a BaselinePolicy name
+    // freeM, not cover: it is the planner CLAUDE.md measures as best on every
+    // column that matters -- travel, net displacement, coverage, no crashes.
+    // cover was fifth of ten. The showcase flies the best thing there is.
+    std::string fallback = "freeM";   // a BaselinePolicy name
 
     // GALLERY BY DEFAULT, not forest. Through the 2.0/1.0/0.25 m FPV ladder a
     // forest is mush -- a 0.3 m trunk is one voxel on the fine rung and absent

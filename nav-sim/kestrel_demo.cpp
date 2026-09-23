@@ -32,6 +32,7 @@
 
 #include "depth_vis.hpp"
 #include "frame_source.hpp"
+#include "nav_pipeline.hpp"
 #include "rl_env.hpp"
 #include "voxel_map.hpp"
 
@@ -349,8 +350,41 @@ private:
     unsigned long gen_ = 0;
 };
 
+// THE SIM PANE: FPV footage of the simulated scene, with the map the
+// aircraft is building inset beside it -- first-person, then from above.
+// Footage alone would show a scene the aircraft cannot see; the map alone is
+// mostly fog, correctly, and a viewer cannot tell fog from failure. Together
+// the gap between them IS the demonstration: what is there, and how much of
+// it the aircraft has actually measured.
+struct SimInsets { cv::Rect fpv, top; };
+SimInsets simInsets(int iw, int ih) {
+    const int m = std::max(4, iw / 80);
+    const int W = iw * 36 / 100, H = W * 3 / 4;
+    const int S = std::min(H, ih - H - 3 * m);          // top-down is square
+    SimInsets r;
+    r.fpv = cv::Rect(iw - W - m, m, W, H);
+    r.top = cv::Rect(iw - S - m, m + H + m, S, S);
+    return r;
+}
+cv::Mat composeSim(const cv::Mat& footage, const cv::Mat& belief,
+                   const cv::Mat& topDown, int iw, int ih) {
+    cv::Mat out = footage.empty() ? cv::Mat(ih, iw, CV_8UC3, BG)
+                                  : letterbox(footage, iw, ih);
+    const SimInsets r = simInsets(iw, ih);
+    auto inset = [&](const cv::Mat& src, const cv::Rect& at, const char* label) {
+        if (!src.empty()) letterbox(src, at.width, at.height).copyTo(out(at));
+        cv::rectangle(out, at, INK, 1);
+        txt(out, label, at.x + 4, at.y + at.height - 5, 0.36, INK, 1);
+    };
+    inset(belief, r.fpv, "MAP: what it believes");
+    inset(topDown, r.top, "MAP from above");
+    // Never mistakable for a sensor: this is the true scene, rendered.
+    txt(out, "SIMULATED SCENE (truth)", 8, 18, 0.42, INK, 1);
+    return out;
+}
+
 struct PlannerFrame {
-    cv::Mat fpv, depth;
+    cv::Mat fpv, depth, top, footage;
     float   travelM = 0, netM = 0;
     int     steps = 0, cells = 0, collisions = 0;
 };
@@ -569,9 +603,24 @@ int check() {
     }
     // Every caption this demo can show must survive fit() with its FIRST WORD
     // intact at the narrowest pane, or the pane cannot say what it is.
-    const char* caps[] = {"LEARNED PLANNER", "LIVE DEPTH", "LIVE VOXEL MAP",
-                          "HUMANS", "classical: cover", "learned policy (onnx)",
-                          "no detector in this build"};
+    // THE SIM PANE'S INSETS must sit inside its image, clear of each other
+    // and of the caption burned into the footage's top-left corner.
+    for (int pw : {320, 480, 640}) {
+        const int iw = pw, ih = pw * 3 / 4;
+        const SimInsets r = simInsets(iw, ih);
+        const cv::Rect img(0, 0, iw, ih), caption(0, 0, iw / 2, 26);
+        if ((r.fpv & img) != r.fpv || (r.top & img) != r.top)
+            fail(cv::format("sim inset off its pane at paneW=%d", pw));
+        if ((r.fpv & r.top).area() > 0)
+            fail(cv::format("sim insets overlap at paneW=%d", pw));
+        if ((r.fpv & caption).area() > 0 || (r.top & caption).area() > 0)
+            fail(cv::format("sim inset covers the SIMULATED caption at paneW=%d", pw));
+        if (r.top.width < 60)
+            fail(cv::format("top-down inset too small to read at paneW=%d", pw));
+    }
+    const char* caps[] = {"SIM DEMONSTRATION", "LIVE DEPTH", "LIVE VOXEL MAP",
+                          "HUMANS", "flying freeM (classical)",
+                          "learned policy (onnx)", "no detector in this build"};
     for (const char* c : caps) {
         const std::string f = fit(c, 320 - 20, 0.56);
         if (f.size() < 4 || f.substr(0, 3) == "...")
@@ -620,11 +669,13 @@ int shot(const Options& o, const std::string& prefix) {
                    : cv::Mat(h, w, CV_8UC3, BG);
     };
     Pane p[4];
-    p[0].title = "LEARNED PLANNER";
+    p[0].title = "SIM DEMONSTRATION";
     p[0].sub   = learned ? polNote
-                         : std::string("classical: ") + sim::baselineName(fb);
-    p[0].subColour = learned ? OK : WARN;
-    p[0].img   = toMat(env.renderFrame(iw, ih, false), iw, ih);
+                         : std::string("flying ") + sim::baselineName(fb) + " (classical)";
+    p[0].subColour = learned ? OK : DIM;
+    p[0].img   = composeSim(toMat(env.renderFootage(iw, ih), iw, ih),
+                            toMat(env.renderFrame(iw, ih, false), iw, ih),
+                            toMat(env.renderFrame(ih, ih, true), ih, ih), iw, ih);
 
     const cv::Mat dRaw = syntheticDepth(iw, ih);
     p[1].title = "LIVE DEPTH";
@@ -656,7 +707,7 @@ int shot(const Options& o, const std::string& prefix) {
         L.strip.x + 4, L.strip.y + 18, 0.44, DIM, 1);
 
     int n = 0;
-    const char* names[4] = {"planner", "depth", "voxel", "humans"};
+    const char* names[4] = {"sim", "depth", "voxel", "humans"};
     for (int i = 0; i < 4; ++i)
         n += cv::imwrite(prefix + "_" + names[i] + ".png", p[i].img) ? 1 : 0;
     n += cv::imwrite(prefix + "_window.png", canvas) ? 1 : 0;
@@ -750,7 +801,7 @@ int run(const Options& o) {
     bool fbFound = false;
     const sim::BaselinePolicy fb = baselineByName(o.fallback, &fbFound);
     const std::string polLabel =
-        learned ? polNote : std::string("classical: ") + sim::baselineName(fb);
+        learned ? polNote : std::string("flying ") + sim::baselineName(fb) + " (classical)";
     if (!learned && !o.model.empty())
         std::printf("[demo] %s\n       flying %s instead, and the pane says so.\n",
                     polNote.c_str(), sim::baselineName(fb));
@@ -765,6 +816,8 @@ int run(const Options& o) {
             PlannerFrame f;
             f.fpv = matFrom(env.renderFrame(iw, ih, false), iw, ih);
             f.depth = matFrom(env.renderDepth(iw, ih), iw, ih);
+            f.top = matFrom(env.renderFrame(ih, ih, true), ih, ih);
+            f.footage = matFrom(env.renderFootage(iw, ih), iw, ih);
             f.travelM = st.travelM; f.netM = st.netDispM;
             f.steps = st.steps; f.cells = st.cellsVisited; f.collisions = st.collisions;
             planSlot.publish(std::move(f));
@@ -815,7 +868,17 @@ int run(const Options& o) {
                 // pose and says so. Inventing motion here would produce a map
                 // that looks plausible and means nothing.
                 const sim::CamPose pose = hint.valid ? hint.pose : sim::CamPose{};
-                if (!inited) { map.init(mp, pose.e, pose.n, pose.u); inited = true; }
+                // THE AIRCRAFT'S MAP, not a default one. This used bare
+                // VoxelMapParams: marking to 8 m, no stereo noise model -- a
+                // cleaner, more confident map than the one that flies, which
+                // on a D435i at 848x480 is honest to ~3.5 m. fineMapParams
+                // derives it from THIS camera, exactly as onboard and
+                // voxel_live do.
+                if (!inited) {
+                    mp = sim::fineMapParams(src->camera(), 0.25f, 2);
+                    map.init(mp, pose.e, pose.n, pose.u);
+                    inited = true;
+                }
                 map.integrate(depth, src->camera(), pose);
                 int valid = 0;
                 for (int y = 0; y < depth.rows; ++y) {
@@ -922,10 +985,10 @@ int run(const Options& o) {
         txt(canvas, "kestrel demo", 12, 28, 0.62, INK, 1);
 
         Pane p[4];
-        p[0].title = "LEARNED PLANNER";
+        p[0].title = "SIM DEMONSTRATION";
         p[0].sub = polLabel;
-        p[0].subColour = learned ? OK : WARN;
-        p[0].img = pf.fpv;
+        p[0].subColour = learned ? OK : DIM;
+        p[0].img = composeSim(pf.footage, pf.fpv, pf.top, iw, ih);
         p[1].title = "LIVE DEPTH";
         p[1].sub = srcNote + (cf.validFrac > 0.f
                        ? cv::format("   %.0f%% of pixels returned", cf.validFrac * 100.f)

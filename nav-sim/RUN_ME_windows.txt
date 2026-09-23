@@ -122,6 +122,14 @@ In the view:  space pause   v first-person <-> overlay   s save PNG
                 how far free space is CARVED. They are deliberately different.
   PLAN          faint = primitives that are flyable, green = the one chosen.
 
+THE SIMULATED CAMERA LOOKS 20 DEG DOWN. Level, at the sim's 2.5 m, its
+lowest ray meets the ground 4.7 m ahead -- beyond the ~3.5 m the map marks --
+so the floor never appeared near the observer (and a low log inside 4.7 m
+was invisible too). Tilted 20 deg the floor is mapped from 2.2 m out. The
+startup [geom] line prints this for whatever tilt is set. Change it with
+"camera tilt" in the window or --pitch; a real camera's tilt comes from its
+IMU instead.
+
 THE CAMERA IS ASSUMED TO BE HELD STILL. There is no odometry yet, so if you
 walk around with it the map will be wrong. That is a missing subsystem, not a
 bug in this program.

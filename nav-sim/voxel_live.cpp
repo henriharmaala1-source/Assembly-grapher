@@ -93,6 +93,25 @@ struct Config {
     std::string mode = "replay", path, out = "/tmp/voxel_live";
     float cell = 0.25f, robotR = 0.6f, vmax = 1.5f;
     float yawRateDps = 0.f, pitchDeg = 0.f, maxIntegOverride = -1.f;
+    // THE SIM CAMERA LOOKS 20 DEG DOWN unless --pitch says otherwise. Level,
+    // at the default 2.5 m, the D435i's lowest ray (58 deg vertical FoV) meets
+    // the ground 4.7 m ahead -- past the 0.25 m map's ~4.1 m reach -- so the
+    // floor was never in the map at all: [geom] reported 0 % of the frame, and
+    // the first-person pane had no voxels anywhere near the observer. It is
+    // not only a picture: a log or stump inside 4.7 m was invisible too.
+    //
+    //   tilt    nearest floor seen   floor in reach   top of view
+    //     0         4.7 m                 0 %           +29 deg
+    //   -15         2.7 m                 9 %           +14 deg
+    //   -20         2.25 m               17 %            +9 deg
+    //   -25         1.9 m                26 %            +4 deg
+    //
+    // -20 buys a floor band from 2.25 m out at the cost of what is above: the
+    // top of the frame drops to +9 deg. SIM only: a live camera's pitch comes
+    // from its IMU, or --pitch, and a guess here would be wrong the moment the
+    // camera is mounted level.
+    float simPitchDeg = -20.f;
+    bool  pitchGiven = false;
     int   camW = 848, camH = 480, fps = 30, steps = -1;
     // RAY STRIDE. Integration cost is linear in rays and it dominates
     // everything else; the planner is 1.5 ms against 59 ms of mapping at
@@ -608,7 +627,7 @@ int mainCli(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--vmax")) vmax = float(std::atof(next("1.5")));
         else if (!std::strcmp(argv[i], "--robot")) robotR = float(std::atof(next("0.6")));
         else if (!std::strcmp(argv[i], "--yawrate")) yawRateDps = float(std::atof(next("0")));
-        else if (!std::strcmp(argv[i], "--pitch")) pitchDeg = float(std::atof(next("0")));
+        else if (!std::strcmp(argv[i], "--pitch")) { pitchDeg = float(std::atof(next("0"))); C.pitchGiven = true; }
         else if (!std::strcmp(argv[i], "--maxinteg")) maxIntegOverride = float(std::atof(next("-1")));
         else if (!std::strcmp(argv[i], "--camw")) camW = std::atoi(next("848"));
         else if (!std::strcmp(argv[i], "--camh")) camH = std::atoi(next("480"));
@@ -675,7 +694,8 @@ int mainCli(int argc, char** argv) {
                 "  --sim               the raycaster, as a control\n"
                 "  --cell 0.25         voxel size, m\n"
                 "  --yawrate 0         camera rotation in place, deg/s (KNOWN rate only)\n"
-                "  --pitch 0           camera pitch, deg (nose-up positive)\n"
+                "  --pitch 0           camera pitch, deg (nose-up positive);\n"
+                "                      --sim defaults to -20 so the floor is mapped\n"
                 "  --vmax 1.5          speed cap for the planner's budget\n"
                 "  --emitter           IR projector on (default off: the outdoor case)\n"
                 "  --stride 2          use every Nth pixel when mapping. 1 is\n"
@@ -730,6 +750,7 @@ static int runSession(Config C) {
     // two agree until the moment the camera is actually tilted, which is the
     // only moment the number matters.
     float pitchDeg = C.pitchDeg;
+    if (mode == "sim" && !C.pitchGiven) pitchDeg = C.simPitchDeg;
     const float maxIntegOverride = C.maxIntegOverride;
     const int camW = C.camW, camH = C.camH, fps = C.fps, steps = C.steps;
     const bool emitter = C.emitter, headless = C.headless, showTruth = C.showTruth;
@@ -933,14 +954,20 @@ static int runSession(Config C) {
                          * 180.f / 3.14159265f;
         const float h = C.altM;
         if (mode == "sim" && h < R) {
+            // The bottom ray's depression is half the vertical FoV PLUS the
+            // down-tilt. This used to ignore pitch, so it reported 0 % of the
+            // frame for a tilted camera that was mapping the floor.
             const float dep = std::asin(h / R) * 180.f / 3.14159265f;
-            const float band = std::max(0.f, vfov * 0.5f - dep);
-            std::printf("[geom] ground within reach to %.1f m ahead, in the bottom "
-                        "%.1f deg of a %.0f deg frame (%.0f %% of it). "
-                        "A trunk past %.1f m horizontally is out of range at EVERY "
-                        "height.\n",
-                        std::sqrt(std::max(0.f, R*R - h*h)), band, vfov,
-                        100.f * band / vfov, R);
+            const float bottom = vfov * 0.5f - pitchDeg;      // pitch + = nose up
+            const float band = std::max(0.f, std::min(vfov, bottom - dep));
+            const float nearest = bottom > 0.5f
+                ? h / std::tan(bottom * 3.14159265f / 180.f) : -1.f;
+            std::printf("[geom] camera pitch %+.0f deg: ground seen from %.1f m ahead, "
+                        "within reach to %.1f m, in the bottom %.1f deg of a %.0f deg "
+                        "frame (%.0f %% of it). A trunk past %.1f m horizontally is "
+                        "out of range at EVERY height.\n",
+                        pitchDeg, nearest, std::sqrt(std::max(0.f, R*R - h*h)),
+                        band, vfov, 100.f * band / vfov, R);
         }
     }
 
@@ -1546,7 +1573,11 @@ static int runSession(Config C) {
             char t[112], spd[40];
             if (gr.speed < 0.05f) std::snprintf(spd, sizeof(spd), "STOPPED  %.1f m free", gr.freeM);
             else                  std::snprintf(spd, sizeof(spd), "%.1f m/s", gr.speed);
-            const char* climb = relEl > 5.f ? "  CLIMB" : (relEl < -5.f ? "  DESCEND" : "");
+            // WORLD elevation, not relative to the camera: with the camera
+            // tilted down a level plan is +20 deg in the image, and read
+            // "CLIMB". The arrow is drawn in the camera frame (relEl); the
+            // word describes what the aircraft would do.
+            const char* climb = gr.elDeg > 5.f ? "  CLIMB" : (gr.elDeg < -5.f ? "  DESCEND" : "");
             if (std::fabs(rel) < 3.f)
                 std::snprintf(t, sizeof(t), "AHEAD   %s%s", spd, climb);
             else

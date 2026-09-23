@@ -423,6 +423,15 @@ std::string trimNum(float v) {
     return std::string(b);
 }
 
+// CAMERA TILT for `sim`. Index 0 passes nothing: the sim's own default
+// (-20 deg down, so the floor is inside the map's reach -- voxel_live.cpp says
+// why). The rest pass --pitch explicitly, level included.
+const int   NSIM_TILT = 5;
+const char* SIM_TILT_ARG[NSIM_TILT]   = {nullptr, "0", "-10", "-20", "-30"};
+const char* SIM_TILT_LABEL[NSIM_TILT] = {"camera tilt: default (-20)", "camera tilt: level",
+                                         "camera tilt: -10 deg", "camera tilt: -20 deg",
+                                         "camera tilt: -30 deg"};
+
 struct Cfg {
     int mode = TRACK;
 
@@ -453,6 +462,7 @@ struct Cfg {
     // sim
     int   simSource = 0;          // 0 raycaster, 1 live, 2 replay
     bool  simNear = false;        // --nearcell 0.10: the render-only near layer
+    int   simTilt = 0;            // index into SIM_TILT; 0 = the sim's default
     int   replay = -1;
 
     // train
@@ -573,6 +583,9 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 a.push_back("--replay"); a.push_back(recs[c.replay]);
             }
             if (c.simNear) { a.push_back("--nearcell"); a.push_back("0.10"); }
+            if (c.simTilt > 0 && c.simTilt < NSIM_TILT) {
+                a.push_back("--pitch"); a.push_back(SIM_TILT_ARG[c.simTilt]);
+            }
             break;
         case DEMO:
             if (c.dSource == 1) a.push_back("--live");
@@ -738,6 +751,7 @@ enum {
     ID_SIM_SRC = 300,     // +0..2
     ID_SIM_REPLAY = 310,  // +index
     ID_SIM_NEAR = 335,
+    ID_SIM_TILT = 336,
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY, ID_TRAIN_SVM, ID_TRAIN_SVP,
@@ -963,6 +977,12 @@ void panelSim(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                   ID_SIM_NEAR, c.simNear});
     txt(im, "render only -- the planner never reads it,", x + 290, 272, 0.42, DIM);
     txt(im, "and its seam blinds the centre past 2.2 m", x + 290, 292, 0.42, DIM);
+    // The DEFAULT differs by source: the sim looks 20 deg down; a real camera's
+    // tilt is measured by its IMU, and nothing is assumed.
+    bs.push_back({cv::Rect(x + 290, 306, 300, 38),
+                  c.simTilt == 0 && c.simSource != 0 ? "camera tilt: from its IMU"
+                                                     : SIM_TILT_LABEL[c.simTilt],
+                  ID_SIM_TILT, c.simTilt != 0});
 
     if (c.simSource == 1) {
         txt(im, "librealsense is loaded at RUN time, so this build needs no SDK.",
@@ -1471,6 +1491,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     }
     if (id >= ID_SIM_SRC && id < ID_SIM_SRC + 3) { c.simSource = id - ID_SIM_SRC; return; }
     if (id == ID_SIM_NEAR) { c.simNear = !c.simNear; return; }
+    if (id == ID_SIM_TILT) { c.simTilt = (c.simTilt + 1) % NSIM_TILT; return; }
     if (id >= ID_SIM_REPLAY && id < ID_SIM_REPLAY + 20) {
         c.replay = id - ID_SIM_REPLAY; return;
     }
@@ -1801,6 +1822,7 @@ int check() {
             if (variant == 3) { c.input = -1; c.replay = -1; }
             c.simSource = variant;
             c.simNear = (variant == 2);      // lay out both toggle captions
+            c.simTilt = variant % NSIM_TILT; // and the tilt captions
             c.designate = c.csv = (variant != 1);
             // Vary the world rows too, and include an ALL-OFF state -- without
             // one, blocker() returned "" in every checked variant and the

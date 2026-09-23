@@ -394,14 +394,32 @@ cv::Mat composeSim(const cv::Mat& footage, const cv::Mat& belief,
 // 424x240: a real D435i depth mode, and what a laptop can stereo-match at a
 // usable rate here (45 ms; 848x480 is 194 ms). Its honest marking range is
 // shorter, ~2.5 m against ~3.5 m, and the caption says which camera it is.
+//
+// MOUNTED 20 DEG DOWN, like the sim's camera (voxel_live.cpp says why). Level,
+// at the forest's 1.5 m, the first floor this camera sees is 2.7 m ahead and
+// its map reaches 2.5 m -- so the floor never registered at all. Tilted, the
+// floor is in view from 1.3 m and marked out to its reach.
+constexpr float kSimEyeTiltDeg = -20.f;
+
+// THE DEPTH PANE IS ON AN ABSOLUTE SCALE: red is 0 m, blue is 8 m and beyond,
+// grey is no return. It was histogram-equalised, which makes red mean "the
+// nearest thing in THIS frame" -- so floor 5-6 m away, well past the map's
+// reach, painted the bottom of the pane red beside a voxel pane with nothing
+// there, and read as a close-range blind spot in the map. Measured at that
+// pose: every one of those returns was 5-6.4 m out. Equalising suits a
+// scene you are inspecting; beside a map with a fixed reach, the colour has
+// to mean a distance.
+constexpr float kDepthScaleM = 8.f;
 class SimEye {
 public:
     explicit SimEye(const sim::EnvConfig& cfg) : cfg_(cfg) {
         cp_.width = 424; cp_.height = 240; cp_.hfovDeg = 87.f; cp_.baselineM = 0.05f;
     }
     // One frame from `pose` in world `seed`. Returns false if nothing drawn.
-    bool frame(const sim::CamPose& pose, unsigned seed, int outW, int outH,
+    bool frame(const sim::CamPose& aircraft, unsigned seed, int outW, int outH,
                cv::Mat& depthVis, cv::Mat& mapFpv, float& validFrac) {
+        sim::CamPose pose = aircraft;
+        pose.pitchDeg += kSimEyeTiltDeg;      // the camera's mount, not the airframe
         if (!twin_ || seed != seed_) {
             sim::EnvConfig c = cfg_; c.seed = seed;
             twin_.reset(new sim::VoxelEnv(c));
@@ -421,7 +439,8 @@ public:
             for (int x = 0; x < depth.cols; ++x) valid += (r[x] > 0.f);
         }
         validFrac = float(valid) / std::max(1, depth.rows * depth.cols);
-        depthVis = letterbox(sim::colourDepthEq(depth, 8.f), outW, outH);
+        // ABSOLUTE colour, not equalised -- see kDepthScaleM.
+        depthVis = letterbox(sim::colourDepth(depth, kDepthScaleM), outW, outH);
         // BOTH TIERS, as voxel_live draws them: the fine map to its honest
         // range and the bearing field beyond. The fine map alone is fog past
         // 2.5-3.5 m, which from flying height is nearly the whole frame.
@@ -748,13 +767,13 @@ int shot(const Options& o, const std::string& prefix) {
         }
         eye.frame(at, cfg.seed, iw, ih, dv, mf, vf);
         p[1].img = dv; p[2].img = mf;
-        p[1].sub = cv::format("simulated D435i 424x240 -- no camera attached   %.0f%% returned",
+        p[1].sub = cv::format("simulated D435i 424x240, red 0 m .. blue 8 m   %.0f%% returned",
                               vf * 100.f);
     }
     p[1].title = "LIVE DEPTH";
     p[1].subColour = WARN;
     p[2].title = "LIVE VOXEL -- first person";
-    p[2].sub   = "simulated D435i. Grey is UNKNOWN, and unknown is not free";
+    p[2].sub   = "sim D435i: voxels to 2.5 m, far tier beyond; grey is UNKNOWN";
     p[2].subColour = WARN;
 
     PersonDetector det;
@@ -959,7 +978,7 @@ int run(const Options& o) {
                 }
                 f.validFrac = float(valid) / std::max(1, depth.rows * depth.cols);
                 f.depthRaw = depth.clone();
-                f.depthVis = sim::colourDepthEq(depth, 8.f);
+                f.depthVis = sim::colourDepth(depth, kDepthScaleM);
                 // THE IMAGE THE DEPTH WAS MEASURED IN, when the source has
                 // one. Registered with the depth by construction, so a box
                 // found here indexes straight into f.depthRaw -- which is what
@@ -1064,15 +1083,15 @@ int run(const Options& o) {
         p[0].subColour = learned ? OK : DIM;
         p[0].img = composeSim(pf.footage, pf.fpv, pf.top, iw, ih);
         p[1].title = "LIVE DEPTH";
-        p[1].sub = srcNote + (cf.validFrac > 0.f
+        p[1].sub = srcNote + ", red 0 m .. blue 8 m" + (cf.validFrac > 0.f
                        ? cv::format("   %.0f%% of pixels returned", cf.validFrac * 100.f)
                        : std::string());
         p[1].subColour = (o.source == Options::LIVE && src) ? DIM : WARN;
         p[1].img = cf.depthVis.empty() ? pf.depth : cf.depthVis;
         p[2].title = "LIVE VOXEL -- first person";
         p[2].sub = (src && src->ok() ? std::string("")
-                                     : std::string("simulated D435i. "))
-                   + "Grey is UNKNOWN, and unknown is not free";
+                                     : std::string("sim D435i: "))
+                   + "voxels to the map's reach, far tier beyond; grey is UNKNOWN";
         p[2].subColour = (src && src->ok()) ? DIM : WARN;
         p[2].img = cf.mapFpv;
         p[3].title = "HUMANS";

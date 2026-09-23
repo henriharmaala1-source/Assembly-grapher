@@ -1,7 +1,9 @@
 #include "voxel_nav.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 VoxelNavModule::VoxelNavModule(std::unique_ptr<sim::FrameSource> src,
                                const Params& p)
@@ -78,24 +80,45 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
     // THE LEG. The mission flies a straight, level line, and the planner's
     // bearing is the endpoint of a curved primitive chosen for openness -- so
     // a straight leg on exactly that bearing is often short or clipped. Search
-    // the bearings the camera can actually see for the longest CERTIFIED
-    // straight leg (nav_pipeline.hpp: straightFreeM), ties going to the
-    // planner's choice. This is freeM's rule -- the longest confirmed-free
-    // path -- applied to the geometry that will be flown, and freeM is the
-    // planner this project measured as the one to beat.
-    float legBrg = r.azDeg, legFree = 0.f, bestScore = -1.f;
-    auto consider = [&](float brg) {
+    // the bearings the camera can actually see, certify each one on the
+    // straight line it would fly (nav_pipeline.hpp: straightFreeM), then let
+    // the far tier choose among the ones the near map cannot tell apart
+    // (Params::farChoose says why, and why that cannot cost safety).
+    struct Cand { float brg, len, far, dev; };
+    std::vector<Cand> cands;
+    auto add = [&](float brg) {
         const float len = nav_.straightFreeM(pose, brg, p_.legMaxM);
+        if (len <= 0.f) return;
         float d = brg - r.azDeg;
         while (d > 180.f) d -= 360.f;
         while (d <= -180.f) d += 360.f;
-        const float score = len - p_.legTieM * std::fabs(d) / 90.f;
-        if (len > 0.f && score > bestScore) { bestScore = score; legBrg = brg; legFree = len; }
+        const float fr = nav_.farRangeAt(brg, 0.f);
+        const float far = fr < 0.f ? 0.f : std::min(fr, p_.nav.farRangeM);
+        cands.push_back({brg, len, far, std::fabs(d)});
     };
-    if (!r.blocked) consider(r.azDeg);
+    if (!r.blocked) add(r.azDeg);
     const float half = src_->camera().params().hfovDeg * 0.5f - p_.legFovMarginDeg;
     for (float o = -half; o <= half + 1e-3f; o += p_.legStepDeg)
-        consider(pose.yawDeg + o);
+        add(pose.yawDeg + o);
+
+    float legBrg = r.azDeg, legFree = 0.f, legFar = 0.f;
+    if (!cands.empty()) {
+        float bestLen = 0.f;
+        for (const Cand& c : cands) bestLen = std::max(bestLen, c.len);
+        const Cand* best = nullptr;
+        float bestScore = -1e9f;
+        for (const Cand& c : cands) {
+            float score;
+            if (p_.farChoose) {
+                if (c.len < p_.legKeepFrac * bestLen) continue;   // near decides first
+                score = c.far - p_.legTieM * c.dev / 90.f;
+            } else {
+                score = c.len - p_.legTieM * c.dev / 90.f;
+            }
+            if (score > bestScore) { bestScore = score; best = &c; }
+        }
+        legBrg = best->brg; legFree = best->len; legFar = best->far;
+    }
 
     wm.with([&](WorldState& w) {
         w.voxValid      = true;
@@ -108,6 +131,7 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
         w.voxOpenM      = r.openM;
         w.voxLegFreeM   = legFree;
         w.voxLegBearingDeg = legBrg;
+        w.voxLegFarM    = legFar;
         w.voxFrames     = nav_.frames();
         w.voxStampS     = monoNowS();
     });

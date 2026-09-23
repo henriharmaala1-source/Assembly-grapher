@@ -32,6 +32,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "frame_source.hpp"
 #include "mission.hpp"
@@ -289,22 +290,42 @@ int main() {
     // ---------------------------------------------------------------- 4
     std::printf("closed loop: pillar field, attitude only\n");
     {
-        sim::VoxelWorld w; buildRoom(w, 24.f, 5.f, 0.2f);
-        // VOXTEST_WORLD=<n> re-rolls the pillar field; VOXTEST_STEREO=1 swaps
-        // the perfect depth for the simulated stereo matcher (holes, speckle,
-        // range-dependent noise). CI runs the defaults; the sweep in the
-        // commit that added this ran 4 worlds x both depths.
+        // VOXTEST_WORLD=<n> re-rolls the obstacles; VOXTEST_STEREO=1 swaps the
+        // perfect depth for the simulated stereo matcher (holes, speckle,
+        // range-dependent noise); VOXTEST_BIG=1 is a 48 m field with walls
+        // that make dead ends, where seeing past the near map should matter;
+        // VOXTEST_FAR=0 turns off the far tier's choice among safe legs.
+        // CI runs the defaults (24 m room, perfect depth, far tier on).
+        const bool big = std::getenv("VOXTEST_BIG") != nullptr;
+        if (const char* f = std::getenv("VOXTEST_FAR")) vp.farChoose = std::atoi(f) != 0;
+        const float sizeM = big ? 48.f : 24.f;
+        const float spawnE = sizeM * 0.5f, spawnN = 4.f;
+        sim::VoxelWorld w; buildRoom(w, sizeM, 5.f, 0.2f);
         const char* ws = std::getenv("VOXTEST_WORLD");
         std::mt19937 rng(ws ? unsigned(std::atoi(ws)) : 7u);
-        std::uniform_real_distribution<float> U(3.f, 21.f);
-        int pillars = 0;
-        for (int i = 0; i < 400 && pillars < 22; ++i) {
+        std::uniform_real_distribution<float> U(3.f, sizeM - 3.f);
+        int pillars = 0, walls = 0;
+        const int wantPillars = big ? 45 : 22, wantWalls = big ? 10 : 0;
+        for (int i = 0; i < 400 && walls < wantWalls; ++i) {
+            // 6 m walls, either axis: the shapes that make a dead end, which a
+            // 2.5 m near map walks into and a 20 m far tier can see.
             const float x = U(rng), y = U(rng);
-            if (std::hypot(x - 12.f, y - 4.f) < 2.5f) continue;   // spawn clear
+            const bool alongE = (rng() & 1u) != 0;
+            const float x1 = alongE ? x + 6.f : x + 0.4f, y1 = alongE ? y + 0.4f : y + 6.f;
+            if (x1 > sizeM - 1.f || y1 > sizeM - 1.f) continue;
+            const float cx = std::max(x, std::min(spawnE, x1));
+            const float cy = std::max(y, std::min(spawnN, y1));
+            if (std::hypot(cx - spawnE, cy - spawnN) < 3.f) continue;   // spawn clear
+            box(w, x, y, x1, y1, 5.f);
+            ++walls;
+        }
+        for (int i = 0; i < 400 && pillars < wantPillars; ++i) {
+            const float x = U(rng), y = U(rng);
+            if (std::hypot(x - spawnE, y - spawnN) < 2.5f) continue;   // spawn clear
             box(w, x - 0.2f, y - 0.2f, x + 0.2f, y + 0.2f, 5.f);
             ++pillars;
         }
-        sim::CamPose truth; truth.e = 12.f; truth.n = 4.f; truth.u = 1.5f;
+        sim::CamPose truth; truth.e = spawnE; truth.n = spawnN; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
 
@@ -319,6 +340,12 @@ int main() {
         int legs = 0, ticks = 0;
         std::string lastPhase, minPhase;
         float minT = 0.f;
+        // What this project scores on (CLAUDE.md): distance before a
+        // collision, and -- against the degenerate answer of circling in a
+        // safe clearing -- how far it ends from where it began and how much
+        // ground it covers, in 1 m cells.
+        std::vector<char> visited(size_t(sizeM) * size_t(sizeM), 0);
+        int cells = 0;
         const float simS = 150.f;
         for (float t = 0.f; t < simS; t += dt, ++ticks) {
             // Telemetry the aircraft would have: attitude, speed, and (for
@@ -366,12 +393,24 @@ int main() {
             travelled += std::fabs(v) * dt;
             const float cl = clearance(w, truth.e, truth.n, truth.u, 2.f);
             if (cl < minClear) { minClear = cl; minPhase = now; minT = t; }
+            const int ce = int(truth.e), cn = int(truth.n);
+            if (ce >= 0 && cn >= 0 && ce < int(sizeM) && cn < int(sizeM) &&
+                !visited[size_t(cn) * size_t(sizeM) + size_t(ce)]) {
+                visited[size_t(cn) * size_t(sizeM) + size_t(ce)] = 1; ++cells;
+            }
         }
-        std::printf("  %d pillars  %.0f s  travelled %.1f m  legs %d  "
-                    "min truth clearance %.2f m (in %s at %.1f s)  final %s  "
-                    "frames %d\n",
-                    pillars, simS, travelled, legs, minClear, minPhase.c_str(),
-                    minT, lastPhase.c_str(), src->frames);
+        const float net = std::hypot(truth.e - spawnE, truth.n - spawnN);
+        std::printf("  %d pillars %d walls  %.0f s  travelled %.1f m  net %.1f m  "
+                    "cells %d  legs %d  min truth clearance %.2f m (in %s at %.1f s)  "
+                    "final %s  frames %d\n",
+                    pillars, walls, simS, travelled, net, cells, legs, minClear,
+                    minPhase.c_str(), minT, lastPhase.c_str(), src->frames);
+        // One machine-readable line, for sweeps.
+        std::printf("RESULT far=%d big=%d stereo=%d world=%s travel=%.2f net=%.2f "
+                    "cells=%d legs=%d minclr=%.3f stuck=%d\n",
+                    int(vp.farChoose), int(big), int(std::getenv("VOXTEST_STEREO") != nullptr),
+                    ws ? ws : "7", travelled, net, cells, legs, minClear,
+                    int(lastPhase == "STUCK"));
         // The airframe is 0.3 m in radius; the planner's 0.6 m includes the
         // margin. Closer than 0.3 m to a solid voxel is a collision.
         CHECK(minClear >= 0.3f);

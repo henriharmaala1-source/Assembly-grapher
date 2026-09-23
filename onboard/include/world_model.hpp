@@ -119,12 +119,15 @@ struct WorldState {
     float       voxSpeed      = 0.f;   // m/s it may fly, stoppable within freeM
     float       voxFreeM      = 0.f;   // CONFIRMED-free distance on that bearing
     float       voxOpenM      = 0.f;   // unknown-discounted openness (choice only)
-    // The longest CERTIFIED straight, level leg in view, and its bearing -- the
-    // geometry a move-stop-sense leg actually flies. voxFreeM is measured
-    // along a curved primitive and does not certify a straight line, so the
-    // mission flies these two, not voxBearingDeg/voxFreeM.
+    // The CERTIFIED straight, level leg the module chose, and its bearing --
+    // the geometry a move-stop-sense leg actually flies. Chosen near tier
+    // first (legs within 90 % of the longest), then by how far the far tier
+    // sees along it (voxel_nav.hpp: farChoose). voxFreeM is measured along a
+    // curved primitive and does not certify a straight line, so the mission
+    // flies these two, not voxBearingDeg/voxFreeM.
     float       voxLegFreeM   = 0.f;
     float       voxLegBearingDeg = 0.f; // the bearing that leg is on (0 = N, cw)
+    float       voxLegFarM    = 0.f;   // far tier's confirmed range on it (0 = none)
     int         voxFrames     = 0;     // frames in the current vantage's map
     double      voxStampS     = -1e9;  // monoNowS at last publish
     bool voxFresh(float maxAgeS) const {

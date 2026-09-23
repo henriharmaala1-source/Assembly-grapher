@@ -67,6 +67,20 @@ public:
         float legStepDeg      = 3.f;
         float legFovMarginDeg = 8.f;
         float legTieM         = 0.25f;
+        // THE FAR TIER CHOOSES AMONG SAFE LEGS. Two steps, near first:
+        //   1. every bearing whose certified leg is within legKeepFrac of the
+        //      longest one is a candidate -- the near map has no real
+        //      preference between them (legs saturate at the marking range,
+        //      so in open ground most of the fan ties)
+        //   2. of those, the one the bearing field sees furthest along,
+        //      capped at nav.farRangeM; ties to the planner's bearing
+        // Unknown far bins earn 0, exactly as the planner's far term does:
+        // outdoors the biggest region of "no return" is the sky. Safety is
+        // untouched -- every candidate carries its own certificate, and the
+        // far tier only reorders legs the near map already cleared.
+        // false = the near tier alone (longest leg, ties to the planner).
+        bool  farChoose   = true;
+        float legKeepFrac = 0.9f;
     };
 
     // Own a source. `src` null means "no camera": isReady() is false and the

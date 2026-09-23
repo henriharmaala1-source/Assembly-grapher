@@ -134,6 +134,13 @@ public:
     // itself. Everything the leg sweeps INTO must have been seen.
     bool coreFree(float x, float y, float z, float r, float sx, float sy) const;
 
+    // THE FAR TIER, read-only: nearest confirmed surface on a WORLD bearing,
+    // < 0 where the bin holds nothing. Nothing is not open -- see
+    // TrajectoryPlanner's far term, which reads it the same way.
+    float farRangeAt(float azDeg, float elDeg = 0.f) const {
+        return bfield_.rangeAt(azDeg, elDeg);
+    }
+
     bool ready()  const { return cam_ != nullptr; }
     int  frames() const { return frames_; }
     const VoxelMap&          map()     const { return map_; }

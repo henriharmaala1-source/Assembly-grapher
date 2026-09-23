@@ -83,6 +83,9 @@ sim::CamParams d435i() {
     // honest range from THIS camera, so the map is configured for it.
     sim::CamParams p;
     p.width = 424; p.height = 240; p.hfovDeg = 87.f; p.baselineM = 0.05f;
+    // VOXTEST_FULLRES=1: the resolution onboard actually runs (848x480), which
+    // halves stereo error at range and lengthens the honest marking range.
+    if (std::getenv("VOXTEST_FULLRES")) { p.width = 848; p.height = 480; }
     return p;
 }
 

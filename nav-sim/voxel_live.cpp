@@ -223,7 +223,18 @@ struct Config {
     // the safety path is a change to the one piece of code that must not be
     // wrong, and it earns that only with a measurement behind it -- see NOTES
     // for why the MID rung of the coarse ladder was reverted.
-    float nearCell = 0.10f;    // 0 disables
+    //
+    // OFF BY DEFAULT, because it drew the CENTRE BLIND SPOT. The pane stitches
+    // this layer to the 0.25 m map at its 2.2 m honest range, and a surface
+    // just past the seam is rejected on-axis -- the 0.25 m cell's near face is
+    // inside the near layer's band -- and accepted off-axis where range grows
+    // as D/cos(theta). So a hedge at 2.3 m rendered as a pale disc in the
+    // middle of the first-person view with a solid ring round it (NOTES,
+    // 2026-08-12 and -25: a seam between cube grids, and not tunable away).
+    // With the layer off the same frame renders solid, the plan is identical
+    // (it never read this layer), and integration drops 12.3 -> 7.2 ms.
+    // The pane now shows exactly the map the planner flies on.
+    float nearCell = 0.f;      // 0 disables; --nearcell 0.10 brings it back
     // THE AUDIT. Every complaint about this map has taken the same form -- "the
     // depth image plainly shows a thing and the voxel pane does not" -- and
     // every time the argument that followed was conducted on screenshots. This
@@ -672,7 +683,8 @@ int mainCli(int argc, char** argv) {
                 "                      with a 30 fps camera; 2 is 19 ms\n"
                 "  --overlay           composite the voxel view ON the depth image\n"
                 "  --compare           voxel ladder BESIDE a bearing field, same instant\n"
-                "  --nearcell 0.10     fine near layer, 0 = off. Honest to 2.2 m\n"
+                "  --nearcell 0.10     fine near layer, display only; default\n"
+                "                      off (its seam blinds the pane's centre)\n"
                 "  --farcell 1.0       coarse far layer, 0 = off. Honest to 7 m\n"
                 "  --openness          score on room alone (default; no goal)\n"
                 "  --forward           score toward wherever the camera points\n"

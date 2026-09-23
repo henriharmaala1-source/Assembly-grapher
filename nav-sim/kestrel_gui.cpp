@@ -452,6 +452,7 @@ struct Cfg {
 
     // sim
     int   simSource = 0;          // 0 raycaster, 1 live, 2 replay
+    bool  simNear = false;        // --nearcell 0.10: the render-only near layer
     int   replay = -1;
 
     // train
@@ -571,6 +572,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             else if (c.replay >= 0 && c.replay < int(recs.size())) {
                 a.push_back("--replay"); a.push_back(recs[c.replay]);
             }
+            if (c.simNear) { a.push_back("--nearcell"); a.push_back("0.10"); }
             break;
         case DEMO:
             if (c.dSource == 1) a.push_back("--live");
@@ -735,6 +737,7 @@ enum {
     ID_RW = 760,          // +0..5
     ID_SIM_SRC = 300,     // +0..2
     ID_SIM_REPLAY = 310,  // +index
+    ID_SIM_NEAR = 335,
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY, ID_TRAIN_SVM, ID_TRAIN_SVP,
@@ -942,7 +945,7 @@ void panelSim(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     txt(im, "live voxel sim", x, 112, 0.62, INK, 1);
     txt(im, "The real map, planner and veto over depth. Runs in THIS process --",
         x, 136, 0.44, DIM);
-    txt(im, "it is the same code as the standalone voxel_live, not a copy.",
+    txt(im, "the same pipeline the aircraft flies (navcore), not a copy.",
         x, 156, 0.44, DIM);
 
     txt(im, "depth source", x, 200, 0.5, DIM);
@@ -950,6 +953,16 @@ void panelSim(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     for (int i = 0; i < 3; ++i)
         bs.push_back({cv::Rect(x, 212 + i * 46, 250, 38), src[i], ID_SIM_SRC + i,
                       c.simSource == i});
+
+    // OFF BY DEFAULT. The 0.10 m near layer is drawn but never planned on, and
+    // its seam with the 0.25 m map put a round blind spot in the middle of the
+    // first-person pane whenever a surface sat just past 2.2 m.
+    txt(im, "display", x + 290, 200, 0.5, DIM);
+    bs.push_back({cv::Rect(x + 290, 212, 300, 38),
+                  c.simNear ? "0.10 m near layer: ON" : "0.10 m near layer: off",
+                  ID_SIM_NEAR, c.simNear});
+    txt(im, "render only -- the planner never reads it,", x + 290, 272, 0.42, DIM);
+    txt(im, "and its seam blinds the centre past 2.2 m", x + 290, 292, 0.42, DIM);
 
     if (c.simSource == 1) {
         txt(im, "librealsense is loaded at RUN time, so this build needs no SDK.",
@@ -1457,6 +1470,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         c.input = id - ID_TRACK_INPUT; return;
     }
     if (id >= ID_SIM_SRC && id < ID_SIM_SRC + 3) { c.simSource = id - ID_SIM_SRC; return; }
+    if (id == ID_SIM_NEAR) { c.simNear = !c.simNear; return; }
     if (id >= ID_SIM_REPLAY && id < ID_SIM_REPLAY + 20) {
         c.replay = id - ID_SIM_REPLAY; return;
     }
@@ -1786,6 +1800,7 @@ int check() {
             // a runnable state.
             if (variant == 3) { c.input = -1; c.replay = -1; }
             c.simSource = variant;
+            c.simNear = (variant == 2);      // lay out both toggle captions
             c.designate = c.csv = (variant != 1);
             // Vary the world rows too, and include an ALL-OFF state -- without
             // one, blocker() returned "" in every checked variant and the

@@ -109,6 +109,11 @@ In the view:  space pause   v first-person <-> overlay   s save PNG
 
   DEPTH         what the camera returned. GREY IS NO RETURN, not far away.
   FIRST PERSON  the map from inside. Pale is UNKNOWN, drawn as fog, never air.
+                It shows the 0.25 m map the planner flies on. The 0.10 m near
+                layer (--nearcell 0.10, or "0.10 m near layer" in the window)
+                adds close-up detail but is OFF by default: where it hands
+                over to the 0.25 m map, at 2.2 m, a surface just past the seam
+                drew as a round pale hole in the middle of this pane.
   OVERLAY (v)   the same voxels composited ON the depth image they came from.
                 If they land on the trunks, the intrinsics, the frame
                 convention and the pose all agree. This is the fastest check

@@ -81,9 +81,10 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
     // bearing is the endpoint of a curved primitive chosen for openness -- so
     // a straight leg on exactly that bearing is often short or clipped. Search
     // the bearings the camera can actually see, certify each one on the
-    // straight line it would fly (nav_pipeline.hpp: straightFreeM), then let
-    // the far tier choose among the ones the near map cannot tell apart
-    // (Params::farChoose says why, and why that cannot cost safety).
+    // straight line it would fly (nav_pipeline.hpp: straightFreeM), and take
+    // the longest, ties to the planner's bearing. Params::farChoose instead
+    // lets the far tier pick among near-equal legs; it measured worse and is
+    // off -- the numbers are in voxel_nav.hpp.
     struct Cand { float brg, len, far, dev; };
     std::vector<Cand> cands;
     auto add = [&](float brg) {

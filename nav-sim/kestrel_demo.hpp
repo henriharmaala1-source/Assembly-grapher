@@ -17,9 +17,12 @@
 //   LIVE DEPTH        what the real sensor returns, colourised. The one part
 //                     of the stack that can lie, and the one that has to be
 //                     watched rather than trusted.
-//   LIVE VOXEL        the SAME VoxelMap, integrating that live depth. Grey is
-//                     unknown here too, and the honest-range ring says where
-//                     the mapper deliberately stops marking.
+//   LIVE VOXEL        FIRST PERSON, from the camera: that live depth through
+//                     navcore's NavPipeline -- the aircraft's own map and far
+//                     tier -- drawn as voxel_live draws it, the fine map to
+//                     its honest range and the bearing field beyond. Grey is
+//                     unknown here too. With no camera it is a simulated
+//                     D435i on the sim aircraft, running the same path.
 //   HUMANS            people found in the camera image, each labelled with a
 //                     range read out of the depth frame. A box alone is a
 //                     webcam trick; a box that says "2.3 m" is this stack.

@@ -290,8 +290,12 @@ columns as the classical ones, on seeds it never trained on.
                        LIVE DEPTH       what the real sensor returns,
                                         colourised, with the fraction of pixels
                                         that came back at all
-                       LIVE VOXEL MAP   the same VoxelMap integrating that live
-                                        depth. Grey is unknown here too
+                       LIVE VOXEL       FIRST PERSON: that live depth through
+                                        the aircraft's own pipeline, the fine
+                                        map up close and the far bearing field
+                                        beyond, as `kestrel sim` draws it. Grey
+                                        is unknown here too. No camera: a
+                                        simulated D435i on the sim aircraft
                        HUMANS           people found in the camera image, each
                                         labelled with a RANGE read out of the
                                         depth frame. A box alone is a webcam

@@ -894,6 +894,13 @@ std::vector<uint8_t> VoxelEnv::renderDepth(int w, int h) const {
     return buf;
 }
 
+const VoxelWorld& VoxelEnv::world() const { return im_->world; }
+CamPose VoxelEnv::pose() const {
+    CamPose p;
+    p.e = im_->px; p.n = im_->py; p.u = im_->pz; p.yawDeg = im_->yaw;
+    return p;
+}
+
 std::vector<uint8_t> VoxelEnv::renderFootage(int w, int h) const {
     const Impl& I = *im_;
     w = std::max(80, std::min(1600, w));

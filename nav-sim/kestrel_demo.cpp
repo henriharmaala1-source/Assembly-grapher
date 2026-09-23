@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -383,8 +384,63 @@ cv::Mat composeSim(const cv::Mat& footage, const cv::Mat& belief,
     return out;
 }
 
+// A SIMULATED D435i on the simulated aircraft, for when no camera is plugged
+// in. It runs the LIVE path unchanged -- stereo depth into navcore's
+// NavPipeline (the aircraft's own), both tiers in first person -- so the two live
+// panes show what --live will show, instead of repeating the SIM pane's own
+// belief view. It keeps its own copy of the world (same name, same seed, so the
+// same geometry) because the planner thread rebuilds its world on reset.
+//
+// 424x240: a real D435i depth mode, and what a laptop can stereo-match at a
+// usable rate here (45 ms; 848x480 is 194 ms). Its honest marking range is
+// shorter, ~2.5 m against ~3.5 m, and the caption says which camera it is.
+class SimEye {
+public:
+    explicit SimEye(const sim::EnvConfig& cfg) : cfg_(cfg) {
+        cp_.width = 424; cp_.height = 240; cp_.hfovDeg = 87.f; cp_.baselineM = 0.05f;
+    }
+    // One frame from `pose` in world `seed`. Returns false if nothing drawn.
+    bool frame(const sim::CamPose& pose, unsigned seed, int outW, int outH,
+               cv::Mat& depthVis, cv::Mat& mapFpv, float& validFrac) {
+        if (!twin_ || seed != seed_) {
+            sim::EnvConfig c = cfg_; c.seed = seed;
+            twin_.reset(new sim::VoxelEnv(c));
+            cam_.reset(new sim::SimFrameSource(twin_->world(), cp_, /*truth*/ false));
+            nav_.init(cam_->camera(), sim::NavPipelineParams(), pose);
+            seed_ = seed;
+        }
+        cam_->setPose(pose);
+        cv::Mat depth; sim::PoseHint hint;
+        if (!cam_->next(depth, hint) || depth.empty()) return false;
+        // The sim KNOWS its pose, so this map follows the aircraft (step()
+        // recentres on it); the real camera's cannot, and holds a fixed pose.
+        nav_.step(depth, pose);
+        int valid = 0;
+        for (int y = 0; y < depth.rows; ++y) {
+            const float* r = depth.ptr<float>(y);
+            for (int x = 0; x < depth.cols; ++x) valid += (r[x] > 0.f);
+        }
+        validFrac = float(valid) / std::max(1, depth.rows * depth.cols);
+        depthVis = letterbox(sim::colourDepthEq(depth, 8.f), outW, outH);
+        // BOTH TIERS, as voxel_live draws them: the fine map to its honest
+        // range and the bearing field beyond. The fine map alone is fog past
+        // 2.5-3.5 m, which from flying height is nearly the whole frame.
+        mapFpv = letterbox(nav_.renderFpv(pose, 320, 180, cp_.hfovDeg), outW, outH);
+        return true;
+    }
+private:
+    sim::EnvConfig cfg_;
+    sim::CamParams cp_;
+    std::unique_ptr<sim::VoxelEnv> twin_;
+    std::unique_ptr<sim::SimFrameSource> cam_;
+    sim::NavPipeline nav_;
+    unsigned seed_ = ~0u;
+};
+
 struct PlannerFrame {
     cv::Mat fpv, depth, top, footage;
+    sim::CamPose pose;           // where the aircraft is, for the sim D435i
+    unsigned     seed = 0;       // which world it is flying
     float   travelM = 0, netM = 0;
     int     steps = 0, cells = 0, collisions = 0;
 };
@@ -618,7 +674,7 @@ int check() {
         if (r.top.width < 60)
             fail(cv::format("top-down inset too small to read at paneW=%d", pw));
     }
-    const char* caps[] = {"SIM DEMONSTRATION", "LIVE DEPTH", "LIVE VOXEL MAP",
+    const char* caps[] = {"SIM DEMONSTRATION", "LIVE DEPTH", "LIVE VOXEL -- first person",
                           "HUMANS", "flying freeM (classical)",
                           "learned policy (onnx)", "no detector in this build"};
     for (const char* c : caps) {
@@ -677,15 +733,29 @@ int shot(const Options& o, const std::string& prefix) {
                             toMat(env.renderFrame(iw, ih, false), iw, ih),
                             toMat(env.renderFrame(ih, ih, true), ih, ih), iw, ih);
 
+    // THE LIVE PANES FROM A SIMULATED D435i on the same aircraft, so the shot
+    // shows the live path -- depth, map, and the map in FIRST PERSON -- rather
+    // than a stand-in. A short yaw sweep first, so the map has more than one
+    // frame's worth in it.
     const cv::Mat dRaw = syntheticDepth(iw, ih);
+    {
+        SimEye eye(cfg);
+        cv::Mat dv, mf; float vf = 0.f;
+        const sim::CamPose at = env.pose();
+        for (int k = -3; k <= 3; ++k) {
+            sim::CamPose q = at; q.yawDeg = at.yawDeg + 8.f * float(k);
+            eye.frame(q, cfg.seed, iw, ih, dv, mf, vf);
+        }
+        eye.frame(at, cfg.seed, iw, ih, dv, mf, vf);
+        p[1].img = dv; p[2].img = mf;
+        p[1].sub = cv::format("simulated D435i 424x240 -- no camera attached   %.0f%% returned",
+                              vf * 100.f);
+    }
     p[1].title = "LIVE DEPTH";
-    p[1].sub   = "synthetic -- no camera attached";
     p[1].subColour = WARN;
-    p[1].img   = sim::colourDepth(dRaw, 8.f);
-
-    p[2].title = "LIVE VOXEL MAP";
-    p[2].sub   = "grey is UNKNOWN, and unknown is not free";
-    p[2].img   = toMat(env.renderFrame(iw, ih, true), iw, ih);
+    p[2].title = "LIVE VOXEL -- first person";
+    p[2].sub   = "simulated D435i. Grey is UNKNOWN, and unknown is not free";
+    p[2].subColour = WARN;
 
     PersonDetector det;
     std::string dnote;
@@ -810,6 +880,7 @@ int run(const Options& o) {
     std::thread planThread([&] {
         sim::VoxelEnv env(cfg);
         unsigned rng = o.seed * 7919u + 13u;
+        unsigned seedNow = cfg.seed;
         while (!stop.load()) {
             const sim::EnvStep st = env.step(
                 pol.act(env.observation(), env.actionMask(), env.nPrims(), fb, rng));
@@ -818,6 +889,8 @@ int run(const Options& o) {
             f.depth = matFrom(env.renderDepth(iw, ih), iw, ih);
             f.top = matFrom(env.renderFrame(ih, ih, true), ih, ih);
             f.footage = matFrom(env.renderFootage(iw, ih), iw, ih);
+            f.pose = env.pose();
+            f.seed = seedNow;
             f.travelM = st.travelM; f.netM = st.netDispM;
             f.steps = st.steps; f.cells = st.cellsVisited; f.collisions = st.collisions;
             planSlot.publish(std::move(f));
@@ -828,6 +901,7 @@ int run(const Options& o) {
             if (st.done || st.truncated) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(700));
                 env.reset(o.world, ++rng);
+                seedNow = rng;
             }
         }
     });
@@ -846,13 +920,13 @@ int run(const Options& o) {
         if (r->open(o.replayPath, &err)) { srcNote = "replay " + o.replayPath; src = std::move(r); }
         else srcNote = "replay failed: " + err;
     } else {
-        srcNote = "sim -- the planner's own camera";
+        srcNote = "simulated D435i 424x240 on the sim aircraft";
     }
 
     Slot<CameraFrame> camSlot;
     std::thread camThread([&] {
-        sim::VoxelMap map;
-        sim::VoxelMapParams mp;
+        SimEye simEye(cfg);
+        sim::NavPipeline nav;
         bool inited = false;
         while (!stop.load()) {
             CameraFrame f;
@@ -868,18 +942,16 @@ int run(const Options& o) {
                 // pose and says so. Inventing motion here would produce a map
                 // that looks plausible and means nothing.
                 const sim::CamPose pose = hint.valid ? hint.pose : sim::CamPose{};
-                // THE AIRCRAFT'S MAP, not a default one. This used bare
-                // VoxelMapParams: marking to 8 m, no stereo noise model -- a
-                // cleaner, more confident map than the one that flies, which
-                // on a D435i at 848x480 is honest to ~3.5 m. fineMapParams
-                // derives it from THIS camera, exactly as onboard and
-                // voxel_live do.
+                // THE AIRCRAFT'S PIPELINE, not a default map: navcore's
+                // NavPipeline, as onboard runs it -- the map configured from
+                // THIS camera (it used bare VoxelMapParams: marking to 8 m with
+                // no stereo noise model, a more confident map than the one that
+                // flies), plus the bearing field. Fixed pose, as above.
                 if (!inited) {
-                    mp = sim::fineMapParams(src->camera(), 0.25f, 2);
-                    map.init(mp, pose.e, pose.n, pose.u);
+                    nav.init(src->camera(), sim::NavPipelineParams(), pose);
                     inited = true;
                 }
-                map.integrate(depth, src->camera(), pose);
+                nav.step(depth, pose);
                 int valid = 0;
                 for (int y = 0; y < depth.rows; ++y) {
                     const float* r = depth.ptr<float>(y);
@@ -896,19 +968,21 @@ int run(const Options& o) {
                 cv::Mat ir;
                 if (src->intensity(ir) && !ir.empty())
                     cv::cvtColor(ir, f.colour, cv::COLOR_GRAY2BGR);
-                f.mapFpv = map.fpvImage(pose.e, pose.n, pose.u, pose.yawDeg,
-                                        pose.pitchDeg, iw, 90.f, 8.f);
+                const float hf = src->camera().params().hfovDeg;
+                f.mapFpv = letterbox(nav.renderFpv(pose, 320, 320 * depth.rows
+                                                   / std::max(1, depth.cols), hf),
+                                     iw, ih);
             } else {
                 // No camera: mirror the planner's own sensor, which is the
                 // honest thing to show -- it IS simulated stereo from a real
                 // VoxelMap, just not from a real room.
                 PlannerFrame pf;
                 unsigned long seen = 0;
-                if (planSlot.take(pf, seen)) {
-                    f.depthVis = pf.depth;
-                    f.mapFpv = pf.fpv;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(33));
+                if (planSlot.take(pf, seen) && !pf.fpv.empty())
+                    simEye.frame(pf.pose, pf.seed, iw, ih, f.depthVis, f.mapFpv,
+                                 f.validFrac);
+                else
+                    std::this_thread::sleep_for(std::chrono::milliseconds(33));
             }
             camSlot.publish(std::move(f));
         }
@@ -995,9 +1069,12 @@ int run(const Options& o) {
                        : std::string());
         p[1].subColour = (o.source == Options::LIVE && src) ? DIM : WARN;
         p[1].img = cf.depthVis.empty() ? pf.depth : cf.depthVis;
-        p[2].title = "LIVE VOXEL MAP";
-        p[2].sub = "grey is UNKNOWN, and unknown is not free";
-        p[2].img = cf.mapFpv.empty() ? pf.fpv : cf.mapFpv;
+        p[2].title = "LIVE VOXEL -- first person";
+        p[2].sub = (src && src->ok() ? std::string("")
+                                     : std::string("simulated D435i. "))
+                   + "Grey is UNKNOWN, and unknown is not free";
+        p[2].subColour = (src && src->ok()) ? DIM : WARN;
+        p[2].img = cf.mapFpv;
         p[3].title = "HUMANS";
         p[3].sub = det.available()
                      ? cv::format("%s on %s   %d found   %.0f ms", det.kindName(),

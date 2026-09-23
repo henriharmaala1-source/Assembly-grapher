@@ -141,6 +141,17 @@ public:
         return bfield_.rangeAt(azDeg, elDeg);
     }
 
+    // THE FIRST-PERSON VIEW OF BOTH TIERS, as voxel_live draws it: the fine
+    // map up to its honest marking range, and the bearing field beyond it,
+    // filling only pixels the fine map had nothing to say about. Pale is
+    // UNKNOWN in both. BGR, w x h, from `pose` with horizontal FoV `hfovDeg`.
+    //
+    // One copy, so a demo pane, a ground station and voxel_live cannot drift
+    // into three different pictures of the same map. The far part is drawn
+    // from the aircraft only -- a bearing bin is a direction FROM it and has
+    // no position to re-project from anywhere else.
+    cv::Mat renderFpv(const CamPose& pose, int w, int h, float hfovDeg) const;
+
     bool ready()  const { return cam_ != nullptr; }
     int  frames() const { return frames_; }
     const VoxelMap&          map()     const { return map_; }

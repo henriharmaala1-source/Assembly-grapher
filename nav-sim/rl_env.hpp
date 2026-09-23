@@ -435,6 +435,12 @@ public:
     // input to anything.
     std::vector<uint8_t> renderFootage(int w = 320, int h = 240) const;
 
+    // The true world and where the aircraft is in it -- for pointing a SECOND
+    // simulated sensor at the same scene (the demo's simulated D435i). Read
+    // only; nothing the policy sees comes through here.
+    const VoxelWorld& world() const;
+    CamPose pose() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> im_;

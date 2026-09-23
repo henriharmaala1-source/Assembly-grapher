@@ -97,6 +97,28 @@ bool NavPipeline::coreFree(float x, float y, float z, float r,
     return true;
 }
 
+cv::Mat NavPipeline::renderFpv(const CamPose& pose, int w, int h,
+                               float hfovDeg) const {
+    const std::vector<VoxelMap::Layer> fine{{&map_, 0.f, mp_.maxIntegM}};
+    cv::Mat maskNear, maskFar;
+    cv::Mat fpv = VoxelMap::renderLadder(fine, pose.e, pose.n, pose.u,
+                                         pose.yawDeg, pose.pitchDeg, w, h,
+                                         hfovDeg, FpvStyle(), &maskNear);
+    const cv::Mat far_ = BearingField::render(bfield_, pose.yawDeg,
+                                              pose.pitchDeg, w, h, hfovDeg,
+                                              mp_.maxIntegM, p_.farRangeM,
+                                              pose.u, &maskFar);
+    for (int v = 0; v < fpv.rows; ++v) {
+        const uchar* mn = maskNear.ptr<uchar>(v);
+        const uchar* mf = maskFar.ptr<uchar>(v);
+        const cv::Vec3b* fr = far_.ptr<cv::Vec3b>(v);
+        cv::Vec3b* out = fpv.ptr<cv::Vec3b>(v);
+        for (int u = 0; u < fpv.cols; ++u)
+            if (!mn[u] && mf[u]) out[u] = fr[u];
+    }
+    return fpv;
+}
+
 GeneralResult NavPipeline::step(const cv::Mat& depthM, const CamPose& pose) {
     if (!cam_ || depthM.empty()) {
         GeneralResult r; r.blocked = true; return r;

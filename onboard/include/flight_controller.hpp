@@ -55,6 +55,10 @@ public:
     // Inject a companion-computed position into the FC's navigation estimator.
     // MSP backend: MSP2_SENSOR_GPS (no ACK). Requires gps_provider=MSP on the FC.
     virtual bool feedExternalGps(const ExtGps& /*fix*/) { return false; }
+    // PROXIMITY for the FC's OWN avoidance layer: `n` distances in metres by
+    // bearing, clockwise from the nose, < 0 unknown. False where the backend
+    // cannot carry it (MSP has no such message; the sim has no consumer).
+    virtual bool sendProximity(const float* /*distM*/, int /*n*/) { return false; }
 
     // Control blending:
     //   total autonomy (default) — sendControl() writes absolute sticks from

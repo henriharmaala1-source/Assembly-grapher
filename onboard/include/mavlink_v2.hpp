@@ -51,6 +51,7 @@ enum : uint32_t {
     MSG_SYS_STATUS                    = 1,
     MSG_GPS_RAW_INT                   = 24,
     MSG_ATTITUDE                      = 30,
+    MSG_LOCAL_POSITION_NED            = 32,
     MSG_GLOBAL_POSITION_INT           = 33,
     MSG_RC_CHANNELS                   = 65,
     MSG_RC_CHANNELS_OVERRIDE          = 70,

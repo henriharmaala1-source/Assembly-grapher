@@ -102,6 +102,9 @@ public:
     // nav-sim; this is the consumer side of that interface.
     bool sendObstacleDistance(const float* distM, int n,
                               float minM = 0.2f, float maxM = 30.f);
+    bool sendProximity(const float* distM, int n) override {
+        return sendObstacleDistance(distM, n, 0.2f, 20.f);
+    }
     void setRthChannel(int, int) override {}   // MAVLink has a real mode API
 
     // ExtGps is an MSP-shaped struct (lat/lon/alt). ArduPilot's supported

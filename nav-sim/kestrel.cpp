@@ -261,7 +261,7 @@ int cmdBench(std::vector<std::string> args) {
     // narrower set than the policy trains on is not a comparison.
     std::vector<std::string> worlds = {"forest", "maze", "corridor", "city", "road", "culdesac"};
     int s0 = 101, s1 = 104, maxSteps = 3000;   // the forest goal needs ~2500
-    bool stereo = false;
+    bool stereo = false, oracle = false;
     float coreFrac = 0.f;
     // WHICH PLANNERS, because a sweep does not want all nine. The veto is
     // shared by every one of them, so a question about the veto is answered by
@@ -287,13 +287,18 @@ int cmdBench(std::vector<std::string> args) {
         // the default everywhere -- lets a primitive sweep through air nothing
         // has measured; 1 demands the body's whole volume be confirmed free.
         else if (args[i] == "--corefrac") coreFrac = float(std::atof(next("0.3").c_str()));
+        // THE CEILING: the planner's fine map is the TRUTH within 8 m. What
+        // perfect map knowledge could be worth, measured before anyone builds a
+        // learned perception layer to approximate it.
+        else if (args[i] == "--oracle") oracle = true;
         else if (args[i] == "--policies") {
             while (i + 1 < args.size() && args[i + 1][0] != '-') only.push_back(args[++i]);
         }
     }
     std::printf("baselines through VoxelEnv -- the same harness a learned policy uses\n");
-    std::printf("corefrac %.2f   %s depth   %d steps\n", coreFrac,
-                stereo ? "simulated stereo" : "truth", maxSteps);
+    std::printf("corefrac %.2f   %s depth   %d steps%s\n", coreFrac,
+                stereo ? "simulated stereo" : "truth", maxSteps,
+                oracle ? "   ORACLE MAP (truth within 8 m) -- a ceiling, not a planner" : "");
     // THE COLUMNS ARE THE OBJECTIVE. travel/end-dist/closest/@step were what
     // this printed when reaching a goal was the score; three of them measure
     // the goal and none of them measures ground covered. What is wanted here
@@ -325,6 +330,7 @@ int cmdBench(std::vector<std::string> args) {
                 c.coreFrac = coreFrac;
                 c.world = w; c.seed = unsigned(s); c.maxSteps = maxSteps;
                 c.truthDepth = !stereo;
+                c.oracleMap = oracle;
                 c.horizonS = (w == "maze") ? 0.6f : 2.0f;
                 VoxelEnv env(c);
                 unsigned rng = unsigned(s) * 7919u + unsigned(pol) * 104729u;

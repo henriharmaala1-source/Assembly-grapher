@@ -51,6 +51,14 @@ struct FcTelemetry {
     float  ekfVelVar    = 0.f;    // >1.0 is ArduPilot's own "unhealthy" line
     float  ekfPosHorizVar = 0.f, ekfPosVertVar = 0.f, ekfCompassVar = 0.f;
     uint16_t ekfFlags   = 0;
+    // LOCAL_POSITION_NED: the FC's OWN estimate, local NED metres. Only as good
+    // as EKF3's horizontal source -- with an optical-flow sensor it is a
+    // drift-bounded-per-leg ODOMETRY, with nothing it is dead reckoning and
+    // EKF_STATUS will not set POS_HORIZ_REL. Read, never fed back: one filter.
+    bool   localValid   = false;
+    float  localN = 0.f, localE = 0.f, localD = 0.f;
+    float  localVn = 0.f, localVe = 0.f;
+    double localStampS  = -1e9;    // monoNowS-compatible steady seconds
     bool   linkUp       = false;   // FC serial link alive
 };
 

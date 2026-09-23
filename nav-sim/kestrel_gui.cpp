@@ -454,6 +454,7 @@ struct Cfg {
     // commands the policy is actually judged by.
     int   seed0 = 101, seed1 = 104, steps = 3000;
     bool  benchStereo = false;
+    bool  benchOracle = false;    // --oracle: truth map within 8 m (a ceiling)
     // Which planners bench runs, and how much of the body's volume the veto
     // insists is CONFIRMED free. Both default to what bench has always done.
     bool  bp[9] = {true, true, true, true, true, true, true, true, true};
@@ -560,6 +561,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back(std::to_string(c.seed1));
             a.push_back("--steps"); a.push_back(std::to_string(c.steps));
             if (c.benchStereo) a.push_back("--stereo");
+            if (c.benchOracle) a.push_back("--oracle");
             // Only when it is a SUBSET. Emitting all nine would be the same run
             // with a longer command line, and the strip is meant to be typed.
             {
@@ -744,7 +746,7 @@ enum {
     // like a two-world row to the code that counted it.
     ID_BW = 250,          // +0..5, the order of WORLD_NAME
     ID_BENCH_POL = 260,   // +0..8, the order of POLICY_NAME
-    ID_BENCH_CFM = 270, ID_BENCH_CFP,
+    ID_BENCH_CFM = 270, ID_BENCH_CFP, ID_BENCH_ORACLE,
     ID_WW = 560,          // +0..5
     ID_EW = 660,          // +0..5
     ID_RW = 760,          // +0..5
@@ -863,6 +865,11 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x, 486, 250, 36),
                   c.benchStereo ? "Simulated stereo" : "Perfect depth (control)",
                   ID_BENCH_STEREO, c.benchStereo});
+    // THE CEILING, not a planner: the fine map is the TRUTH within 8 m, so
+    // the row says what perfect map knowledge would be worth.
+    bs.push_back({cv::Rect(x + 270, 486, 250, 36),
+                  c.benchOracle ? "Oracle map: ON (ceiling)" : "Oracle map: off",
+                  ID_BENCH_ORACLE, c.benchOracle});
     txt(im, "Run both: a failure on perfect depth is the planner, a failure only on "
             "stereo is the sensor.", x, 546, 0.42, DIM);
 }
@@ -1297,6 +1304,7 @@ worldRow(im, bs, x, 228, ID_EW, c.ew);
 struct FlagBtn { int mode; int id; const char* flag; };
 const FlagBtn FLAG_BTNS[] = {
     {BENCH, ID_BENCH_STEREO,  "--stereo"},
+    {BENCH, ID_BENCH_ORACLE,  "--oracle"},
     {TRAIN, ID_TRAIN_STEREO,  "--stereo"},
     {TRAIN, ID_TRAIN_RESUME,  "--resume"},
     {TRAIN, ID_TRAIN_NOVETO,  "--no-veto"},
@@ -1520,6 +1528,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_BENCH_STM:    c.steps = std::max(100, c.steps - 100); break;
         case ID_BENCH_STP:    c.steps = std::min(5000, c.steps + 100); break;
         case ID_BENCH_STEREO: c.benchStereo = !c.benchStereo; break;
+        case ID_BENCH_ORACLE: c.benchOracle = !c.benchOracle; break;
 
         case ID_TRAIN_WM:     c.workers = std::max(1, c.workers - 1); break;
         case ID_TRAIN_WP:     c.workers = std::min(32, c.workers + 1); break;
@@ -1832,6 +1841,7 @@ int check() {
                 if (variant == 3) c.bw[w] = c.ww[w] = c.ew[w] = false;
             }
             c.benchStereo = c.trainStereo = c.cuda = (variant == 1);
+            c.benchOracle = (variant == 2);
             c.frameLimit = variant * 50;
             c.stepsIdx = variant;
 

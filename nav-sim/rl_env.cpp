@@ -555,6 +555,8 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
 
     last_ = EnvStep();
     last_.distToGoalM = I.startDist;
+    if (cfg_.oracleMap)
+        I.map.imprint(I.world, I.px, I.py, I.pz, cfg_.oracleRadiusM, 3.f);
     buildObservation();
 }
 
@@ -615,6 +617,8 @@ EnvStep VoxelEnv::step(int action) {
     I.mapMid.recentre(I.px, I.py, I.pz);
     I.mapFar.integrate(d, *I.cam, pose);
     I.mapFar.recentre(I.px, I.py, I.pz);
+    if (cfg_.oracleMap)
+        I.map.imprint(I.world, I.px, I.py, I.pz, cfg_.oracleRadiusM, 3.f);
     I.bfield.update(d, *I.cam, pose, 1);
 
     // --- reward ------------------------------------------------------------

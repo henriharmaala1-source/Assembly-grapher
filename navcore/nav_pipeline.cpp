@@ -5,22 +5,73 @@
 
 namespace sim {
 
-VoxelMapParams fineMapParams(const DepthCamera& cam, float cell, int stride) {
+VoxelMapParams fineMapParams(const DepthCamera& cam, float cell, int stride,
+                             float subpixelPx) {
     const CamParams& cp = cam.params();
+    const float s = std::max(0.02f, subpixelPx);
     VoxelMapParams mp;
     mp.cell = cell;
-    mp.depthSigCoef = 0.25f / (cam.fpx() * cp.baselineM);
-    mp.maxIntegM = std::sqrt(cell * cam.fpx() * cp.baselineM / 0.25f) * 0.75f;
+    mp.depthSigCoef = s / (cam.fpx() * cp.baselineM);
+    mp.maxIntegM = std::sqrt(cell * cam.fpx() * cp.baselineM / s) * 0.75f;
     mp.integrateStride = stride;
     mp.minIntegM = cam.fpx() * cp.baselineM / 126.f * 1.2f;
     return mp;
+}
+
+std::vector<float> obstacleDistanceFromFrame(const cv::Mat& depthM,
+                                             const DepthCamera& cam,
+                                             const CamPose& attitude,
+                                             int bins, float elBandDeg,
+                                             int minPixels, int stride,
+                                             float maxM) {
+    bins = std::max(1, bins);
+    std::vector<float> out(size_t(bins), -1.f);
+    if (depthM.empty() || depthM.type() != CV_32F) return out;
+    // Body frame: position at the origin, heading zero, so an azimuth is a
+    // bearing from the nose. Roll and pitch stay: they decide which pixels
+    // look level.
+    CamPose body;
+    body.rollDeg = attitude.rollDeg;
+    body.pitchDeg = attitude.pitchDeg;
+    // Per-sector histogram at 0.1 m: robust k-th nearest without sorting.
+    const float res = 0.1f;
+    const int nb = std::max(1, int(maxM / res) + 1);
+    std::vector<int> hist(size_t(bins) * nb, 0), count(size_t(bins), 0);
+    const float sinBand = std::sin(elBandDeg * 3.14159265f / 180.f);
+    stride = std::max(1, stride);
+    for (int v = 0; v < depthM.rows; v += stride) {
+        const float* row = depthM.ptr<float>(v);
+        for (int u = 0; u < depthM.cols; u += stride) {
+            const float r = row[u];
+            if (!(r > 0.f)) continue;
+            float dx, dy, dz;
+            cam.rayFor(body, u, v, dx, dy, dz);        // unit ray, body frame
+            if (std::fabs(dz) > sinBand) continue;       // not at our height
+            const float horiz = r * std::sqrt(std::max(0.f, 1.f - dz * dz));
+            if (horiz > maxM) continue;
+            float az = std::atan2(dx, dy) * 180.f / 3.14159265f;   // cw from nose
+            if (az < 0.f) az += 360.f;
+            const int b = int(az / (360.f / float(bins)) + 0.5f) % bins;
+            ++hist[size_t(b) * nb + std::min(nb - 1, int(horiz / res))];
+            ++count[size_t(b)];
+        }
+    }
+    for (int b = 0; b < bins; ++b) {
+        if (count[size_t(b)] < minPixels) continue;      // unknown, not clear
+        int acc = 0;
+        for (int i = 0; i < nb; ++i) {
+            acc += hist[size_t(b) * nb + i];
+            if (acc >= minPixels) { out[size_t(b)] = (float(i) + 0.5f) * res; break; }
+        }
+    }
+    return out;
 }
 
 void NavPipeline::init(const DepthCamera& cam, const NavPipelineParams& p,
                        const CamPose& origin) {
     cam_ = &cam;
     p_ = p;
-    mp_ = fineMapParams(cam, p.cell, p.stride);
+    mp_ = fineMapParams(cam, p.cell, p.stride, p.subpixelPx);
 
     TrajParams tp;
     tp.robotR = p.robotR;

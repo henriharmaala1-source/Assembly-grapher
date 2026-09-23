@@ -31,6 +31,27 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
 
     const WorldState s = wm.snapshot();
 
+    // PROXIMITY FIRST, and on EVERY frame -- before the stillness gate, because
+    // it needs only attitude and is most needed while the aircraft moves.
+    {
+        sim::CamPose att;
+        if (p_.preferCameraImu && hint.valid && hint.attitudeOnly) {
+            att.rollDeg = hint.pose.rollDeg; att.pitchDeg = hint.pose.pitchDeg;
+        } else if (hint.valid && !hint.attitudeOnly) {
+            att.rollDeg = hint.pose.rollDeg; att.pitchDeg = hint.pose.pitchDeg;
+        } else {
+            att.rollDeg = s.vehRollDeg; att.pitchDeg = s.vehPitchDeg + p_.mountTiltDeg;
+        }
+        const std::vector<float> prox =
+            sim::obstacleDistanceFromFrame(depth, src_->camera(), att,
+                                           WorldState::kProxBins);
+        wm.with([&](WorldState& w) {
+            for (int i = 0; i < WorldState::kProxBins; ++i) w.voxProx[i] = prox[size_t(i)];
+            w.voxProxN = WorldState::kProxBins;
+            w.voxProxStampS = monoNowS();
+        });
+    }
+
     // STILL OR NOT. Under a mission, only the phases the cycle defines as a
     // stable vantage count: THINK and SCAN (and ARMED, hovering for GO).
     // SETTLE does NOT -- it is the phase in which the aircraft is still
@@ -43,8 +64,9 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
     const bool vantage = !s.missionActive || ph == "THINK" || ph == "SCAN" ||
                          ph == "ARMED";
     const bool still = vantage && s.vehGroundspeed < p_.stillSpeedMs;
+    const bool persist = p_.persistMap && s.estValid;
 
-    if (!still) {
+    if (!still && !(persist && p_.integrateMoving)) {
         still_ = false;
         wm.with([&](WorldState& w) {
             w.voxValid  = false;
@@ -67,8 +89,19 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
     // A source that knows its pose outright (the sim) is believed entirely --
     // that is what makes the module testable against ground truth.
     if (hint.valid && !hint.attitudeOnly) pose = hint.pose;
+    if (persist) {                       // architecture B: odometry places it
+        pose.e = s.estPe; pose.n = s.estPn; pose.u = s.vehAltM;
+    }
 
-    if (!still_) {                       // a new vantage: start a new map
+    if (persist) {                       // ONE map, created once
+        if (!mapInit_) {
+            sim::CamPose origin; origin.e = pose.e; origin.n = pose.n; origin.u = pose.u;
+            nav_.reset(origin);
+            mapInit_ = true;
+            ++resets_;
+        }
+        still_ = true;
+    } else if (!still_) {                // a new vantage: start a new map
         sim::CamPose origin;             // architecture C: the origin is here
         origin.e = pose.e; origin.n = pose.n; origin.u = pose.u;
         nav_.reset(origin);

@@ -221,6 +221,17 @@ int main() {
         check(m.i8(30) == 77, "  battery_remaining = 77 % (int8 at offset 30)");
     }
     {
+        // LOCAL_POSITION_NED from pymavlink (common v2.0): time 123456 ms,
+        // x 1.5, y -2.25, z -3.0, vx 0.5, vy -0.25, vz 0.1. The Pi's leg
+        // odometry when EKF3 has an optical-flow source.
+        Msg m;
+        check(decode("fd1c000000010120000040e201000000c03f000010c0000040c00000003f000080becdcccc3d860b", m)
+              && m.id == MSG_LOCAL_POSITION_NED, "decode LOCAL_POSITION_NED");
+        check(m.u32(0) == 123456u, "  time_boot_ms");
+        check(m.f32(4) == 1.5f && m.f32(8) == -2.25f && m.f32(12) == -3.0f, "  x y z (NED m)");
+        check(m.f32(16) == 0.5f && m.f32(20) == -0.25f, "  vx vy");
+    }
+    {
         Msg m;
         check(decode("fd1c0000072abf210000e8030000871cd623f8dbd30ec0d40100983a00006400ceff19005046e022", m)
               && m.id == MSG_GLOBAL_POSITION_INT, "decode GLOBAL_POSITION_INT");

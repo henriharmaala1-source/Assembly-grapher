@@ -129,6 +129,14 @@ struct WorldState {
     float       voxLegBearingDeg = 0.f; // the bearing that leg is on (0 = N, cw)
     float       voxLegFarM    = 0.f;   // far tier's confirmed range on it (0 = none)
     int         voxFrames     = 0;     // frames in the current vantage's map
+    // PROXIMITY from the CURRENT depth frame (obstacleDistanceFromFrame):
+    // 72 horizontal distances, 5 deg each, clockwise from the nose, < 0 unknown.
+    // Unlike everything above it is valid WHILE MOVING -- it needs attitude,
+    // not position -- and it goes to the FC's own avoidance (OBSTACLE_DISTANCE).
+    static constexpr int kProxBins = 72;
+    float       voxProx[kProxBins] = {};
+    int         voxProxN      = 0;
+    double      voxProxStampS = -1e9;
     double      voxStampS     = -1e9;  // monoNowS at last publish
     bool voxFresh(float maxAgeS) const {
         return voxValid && (tickMonoS - voxStampS) <= maxAgeS;

@@ -44,6 +44,7 @@
 #include "controller.hpp"
 #include "deliberator.hpp"
 #include "fc_link.hpp"
+#include "fc_odometry.hpp"
 #include "rc_command.hpp"
 #include "realtime.hpp"
 #include "flight_controller.hpp"
@@ -283,6 +284,9 @@ int main(int argc, char** argv) {
         vp.stillSpeedMs = tune.mission.settleSpeedMs;
         vp.mountTiltDeg = tune.cameraMountTiltDeg;
         vp.legMaxM      = std::max(tune.mission.stepM + tune.mission.voxStopMarginM, 1.f);
+        vp.nav.subpixelPx = tune.mission.voxSubpixelPx;   // measured, not assumed
+        vp.persistMap      = tune.mission.voxPersistMap;
+        vp.integrateMoving = tune.mission.voxIntegrateMoving;
         std::string err;
         voxnav = VoxelNavModule::live(vp, parser.get<int>("voxel-width"),
                                       parser.get<int>("voxel-height"),
@@ -459,6 +463,15 @@ int main(int argc, char** argv) {
             });
         }
 
+        // ---- proximity to the FC's own avoidance (OBSTACLE_DISTANCE): a second,
+        // independent path that ArduPilot runs whatever our planner decides. The
+        // FcLink thread sends it only while fresh.
+        if (fcLink.haveFc()) {
+            const WorldState ps = wm.snapshot();
+            if (ps.voxProxN > 0)
+                fcLink.proximity(ps.voxProx, ps.voxProxN, ps.voxProxStampS);
+        }
+
         // ---- target designation: mouse click (display) or AUX switch (in-flight).
         // The AUX switch locks onto whatever is at the centre of the view — the
         // in-flight equivalent of a click, for designating a subject to the
@@ -524,6 +537,13 @@ int main(int argc, char** argv) {
             s.estSpeed = es.speedMs; s.estEphM = es.ephM;
             s.estGpsDenied = es.gpsDenied; s.estFeedingFc = feeding;
         });
+
+        // GNSS-DENIED THE PI-SIDE ESTIMATOR NEVER STARTS (it initialises from a
+        // GPS fix only), so without this the mission hovers in SETTLE(no-est)
+        // for ever. The FC's own flow-aided position is the displacement, when
+        // EKF3 vouches for it -- see fc_odometry.hpp.
+        if (!es.valid && haveTel)
+            wm.with([&](WorldState& s) { fcLocalEstimate(t, monoNowS(), s); });
 
         // Single control arbiter: safety layers (failsafe → iNAV RTH; obstacle →
         // HOLD) then the active mode module. Writes opMode/behavior/modeReason

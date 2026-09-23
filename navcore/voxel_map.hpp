@@ -270,6 +270,14 @@ public:
 
     void seedFree(float cx, float cy, float cz, float radiusM);
 
+    // THE ORACLE: overwrite every cell within `radiusM` horizontally and
+    // `halfHeightM` vertically of (cx,cy,cz) with the TRUTH -- OCCUPIED if any
+    // of the cell's 8 corner-inset samples is solid, FREE otherwise. For
+    // measuring what perfect map KNOWLEDGE is worth to a planner (a ceiling),
+    // never for flight. voxel_world.hpp is the only source of truth it reads.
+    void imprint(const VoxelWorld& truth, float cx, float cy, float cz,
+                 float radiusM, float halfHeightM);
+
     enum State : uint8_t { UNKNOWN = 0, FREE = 1, OCCUPIED = 2 };
     State stateAt(float wx, float wy, float wz) const;
     float logAt(int x, int y, int z) const {

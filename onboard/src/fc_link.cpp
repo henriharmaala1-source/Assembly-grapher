@@ -1,5 +1,6 @@
 #include "fc_link.hpp"
 
+#include <algorithm>
 #include <chrono>
 
 #include "realtime.hpp"
@@ -47,6 +48,13 @@ void FcLink::latchBaseline() {
     latchReq_ = true;
 }
 
+void FcLink::proximity(const float* distM, int n, double stampS) {
+    std::lock_guard<std::mutex> lk(mu_);
+    proxN_ = std::max(0, std::min(72, n));
+    for (int i = 0; i < proxN_; ++i) prox_[i] = distM[i];
+    proxStampS_ = stampS;
+}
+
 void FcLink::loop_() {
     using namespace std::chrono;
     // Elevate this thread so inference on the Deliberator can't delay RC — the
@@ -71,6 +79,24 @@ void FcLink::loop_() {
         fc_->tick();
         FcTelemetry t; fc_->poll(t);
         { std::lock_guard<std::mutex> lk(mu_); tel_ = t; }
+
+        // Proximity: the newest set, once, at <= 10 Hz, and only while fresh.
+        {
+            float d[72]; int n = 0; bool doProx = false;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                const double now = monoNowS();
+                if (proxN_ > 0 && proxStampS_ > proxSentStampS_ &&
+                    now - proxStampS_ <= proxStaleSec_ && now - proxLastTxS_ >= 0.1) {
+                    n = proxN_;
+                    for (int i = 0; i < n; ++i) d[i] = prox_[i];
+                    proxSentStampS_ = proxStampS_;
+                    proxLastTxS_ = now;
+                    doProx = true;
+                }
+            }
+            if (doProx && fc_->sendProximity(d, n)) proxSent_.fetch_add(1);
+        }
 
         // Marshalled one-shots.
         if (doLatch) fc_->latchBaseline();

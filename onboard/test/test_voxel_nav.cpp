@@ -238,6 +238,43 @@ int main() {
         }
     }
 
+    // ---------------------------------------------------------------- 2b
+    std::printf("proximity from one frame (OBSTACLE_DISTANCE shape)\n");
+    {
+        sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
+        box(w, 6.5f, 6.0f, 9.5f, 6.4f, 4.f, kWallTex);          // wall 2 m ahead
+        // A pillar 30 deg right of the nose, 3 m out -- behind the wall's end.
+        const float pe = 8.f + 3.f * std::sin(30.f * kPi / 180.f);
+        const float pn = 4.f + 3.f * std::cos(30.f * kPi / 180.f);
+        box(w, pe - 0.15f, pn - 0.15f, pe + 0.15f, pn + 0.15f, 4.f, kPillarTex);
+        sim::SimFrameSource cam(w, cp, true);
+        sim::CamPose at; at.e = 8.f; at.n = 4.f; at.u = 1.5f;
+        cam.setPose(at);
+        cv::Mat d; sim::PoseHint h;
+        cam.next(d, h);
+        std::vector<float> px = sim::obstacleDistanceFromFrame(d, cam.camera(), at);
+        std::printf("  nose %.2f m   30 deg right %.2f m   astern %.2f\n",
+                    px[0], px[6], px[36]);
+        CHECK(std::fabs(px[0] - 2.0f) < 0.2f);       // the wall face, horizontal
+        // 30 deg right the WALL is still in front of the pillar: its face is
+        // 2 / cos(30) = 2.31 m away, and the nearest surface is what counts.
+        CHECK(std::fabs(px[6] - 2.31f) < 0.15f);
+        CHECK(px[36] < 0.f);                         // behind: UNKNOWN, not clear
+        CHECK(px[18] < 0.f && px[54] < 0.f);         // abeam: outside the FoV
+        // One speckle pixel at 0.5 m in an otherwise empty frame is not an obstacle.
+        cv::Mat e(d.size(), CV_32F, cv::Scalar(-1.f));
+        e.at<float>(e.rows / 2, e.cols / 2) = 0.5f;
+        std::vector<float> ps = sim::obstacleDistanceFromFrame(e, cam.camera(), at);
+        CHECK(ps[0] < 0.f);
+        // Tilted 20 deg down, the SAME wall still reads as the same distance
+        // (only level returns count, measured horizontally).
+        sim::CamPose tilt = at; tilt.pitchDeg = -20.f;
+        cam.setPose(tilt); cam.next(d, h);
+        std::vector<float> pt = sim::obstacleDistanceFromFrame(d, cam.camera(), tilt);
+        std::printf("  tilted -20: nose %.2f m\n", pt[0]);
+        CHECK(std::fabs(pt[0] - 2.0f) < 0.25f);
+    }
+
     // ---------------------------------------------------------------- 3
     std::printf("mission gates on the voxel plan\n");
     {
@@ -337,6 +374,28 @@ int main() {
             box(w, x - 0.2f, y - 0.2f, x + 0.2f, y + 0.2f, 5.f, kPillarTex);
             ++pillars;
         }
+        // HOVER DRIFT (VOXTEST_DRIFT=<m/s>): architecture C maps while
+        // "still", but GPS-denied position hold is not still -- without an
+        // optical-flow sensor the FC does not even know it is drifting. An
+        // Ornstein-Uhlenbeck velocity (1-sigma per axis, 2 s correlation) is
+        // added to the truth position at all times and is NOT in the ground
+        // speed the module sees.
+        const char* dEnv = std::getenv("VOXTEST_DRIFT");
+        const float driftSig = dEnv ? float(std::atof(dEnv)) : 0.f;
+        // ODOMETRY (VOXTEST_ODOM=<fraction>): architecture B. The module keeps
+        // ONE map, placed by an estimate that drifts by this fraction of the
+        // distance moved (VIO-class ~1-3 %, flow ~1-3 %; dead reckoning far
+        // worse). VOXTEST_ODOM_MOVING=1 also maps during legs.
+        const char* oEnv = std::getenv("VOXTEST_ODOM");
+        const float odomFrac = oEnv ? float(std::atof(oEnv)) : -1.f;
+        if (odomFrac >= 0.f) {
+            vp.persistMap = true;
+            vp.integrateMoving = std::getenv("VOXTEST_ODOM_MOVING") != nullptr;
+        }
+        std::mt19937 nrng(ws ? unsigned(std::atoi(ws)) * 31u + 5u : 222u);
+        std::normal_distribution<float> N01(0.f, 1.f);
+        float dvE = 0.f, dvN = 0.f, errE = 0.f, errN = 0.f;
+        float biasDir = 6.2831853f * float(nrng() % 1000) / 1000.f;
         sim::CamPose truth; truth.e = spawnE; truth.n = spawnN; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
@@ -357,7 +416,8 @@ int main() {
         // safe clearing -- how far it ends from where it began and how much
         // ground it covers, in 1 m cells.
         std::vector<char> visited(size_t(sizeM) * size_t(sizeM), 0);
-        int cells = 0;
+        int cells = 0, collisions = 0, collMove = 0, collHover = 0;
+        bool inContact = false;
         const float simS = 150.f;
         for (float t = 0.f; t < simS; t += dt, ++ticks) {
             // Telemetry the aircraft would have: attitude, speed, and (for
@@ -365,8 +425,9 @@ int main() {
             wm.with([&](WorldState& s) {
                 s.tickMonoS = monoNowS();
                 s.vehYawDeg = truth.yawDeg; s.vehGroundspeed = std::fabs(v);
-                s.estValid = true; s.estPe = truth.e; s.estPn = truth.n;
+                s.estValid = true; s.estPe = truth.e + errE; s.estPn = truth.n + errN;
                 s.estSpeed = std::fabs(v); s.missionGo = true;
+                s.vehAltM = truth.u;
             });
             // The think tier runs at camera rate while a vantage is open, and
             // occasionally otherwise (it must still say "moving").
@@ -400,11 +461,44 @@ int main() {
             const float vCmd = c.pitch * vPerPitch;
             v += (vCmd - v) * dt / tau;
             const float a = truth.yawDeg * kPi / 180.f;
-            truth.e += std::sin(a) * v * dt;
-            truth.n += std::cos(a) * v * dt;
-            travelled += std::fabs(v) * dt;
+            // Drift: OU velocity, tau 2 s, stationary sigma driftSig per axis.
+            // With odometry the FC can HOLD POSITION on the estimate (that is
+            // what feeding VIO or flow into EKF3 is for), so free drift is
+            // replaced by estimator error. VOXTEST_ODOM_NOHOLD keeps both.
+            const bool held = odomFrac >= 0.f && !std::getenv("VOXTEST_ODOM_NOHOLD");
+            if (driftSig > 0.f && !held) {
+                const float tauD = 2.f, k = driftSig * std::sqrt(2.f * dt / tauD);
+                dvE += -dvE * dt / tauD + k * N01(nrng);
+                dvN += -dvN * dt / tauD + k * N01(nrng);
+            }
+            const float stepE = std::sin(a) * v * dt + dvE * dt;
+            const float stepN = std::cos(a) * v * dt + dvN * dt;
+            truth.e += stepE; truth.n += stepN;
+            // Odometry error grows with distance MOVED (drift included -- a
+            // visual odometer sees the drift, and errs on it like any motion).
+            // SYSTEMATIC, not white: VIO and flow odometry err by a scale and
+            // heading BIAS, so the error grows IN PROPORTION to distance. The
+            // first version drew independent noise per 5 cm step, which
+            // averages away as a random walk -- "10 %" came out as 0.15 m over
+            // 60 m, about 0.25 %, and flattered architecture B. Now: a bias of
+            // odomFrac per metre moved, whose direction wanders slowly
+            // (0.1 rad/sqrt(s)), so 10 % over 60 m is ~6 m of error.
+            if (odomFrac > 0.f) {
+                const float stepLen = std::hypot(stepE, stepN);
+                biasDir += 0.1f * std::sqrt(dt) * N01(nrng);
+                errE += odomFrac * stepLen * std::cos(biasDir);
+                errN += odomFrac * stepLen * std::sin(biasDir);
+            }
+            travelled += std::hypot(stepE, stepN);
             const float cl = clearance(w, truth.e, truth.n, truth.u, 2.f);
             if (cl < minClear) { minClear = cl; minPhase = now; minT = t; }
+            // A COLLISION is an ENTRY into the airframe's 0.3 m radius; the
+            // sim does not stop the aircraft, so it is counted, not ended.
+            if (cl < 0.3f && !inContact) {
+                ++collisions;
+                if (now == "MOVE") ++collMove; else ++collHover;
+            }
+            inContact = cl < 0.3f;
             const int ce = int(truth.e), cn = int(truth.n);
             if (ce >= 0 && cn >= 0 && ce < int(sizeM) && cn < int(sizeM) &&
                 !visited[size_t(cn) * size_t(sizeM) + size_t(ce)]) {
@@ -418,11 +512,14 @@ int main() {
                     pillars, walls, simS, travelled, net, cells, legs, minClear,
                     minPhase.c_str(), minT, lastPhase.c_str(), src->frames);
         // One machine-readable line, for sweeps.
-        std::printf("RESULT far=%d big=%d stereo=%d world=%s travel=%.2f net=%.2f "
-                    "cells=%d legs=%d minclr=%.3f stuck=%d\n",
+        std::printf("RESULT far=%d big=%d stereo=%d world=%s drift=%.2f odom=%.3f "
+                    "moving=%d travel=%.2f net=%.2f cells=%d legs=%d minclr=%.3f "
+                    "stuck=%d collisions=%d cmove=%d chover=%d odomerr=%.2f\n",
                     int(vp.farChoose), int(big), int(std::getenv("VOXTEST_STEREO") != nullptr),
-                    ws ? ws : "7", travelled, net, cells, legs, minClear,
-                    int(lastPhase == "STUCK"));
+                    ws ? ws : "7", driftSig, odomFrac, int(vp.integrateMoving),
+                    travelled, net, cells, legs, minClear,
+                    int(lastPhase == "STUCK"), collisions, collMove, collHover,
+                    std::hypot(errE, errN));
         // The airframe is 0.3 m in radius; the planner's 0.6 m includes the
         // margin. Closer than 0.3 m to a solid voxel is a collision.
         CHECK(minClear >= 0.3f);

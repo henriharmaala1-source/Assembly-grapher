@@ -107,3 +107,68 @@ Position still drifts without bound, because nothing measures it. Architecture C
 does not fix that — it declines to pretend otherwise. Optical flow plus a
 downward rangefinder is the v1.5 upgrade that bounds velocity error and makes
 `EK3_SRC1_VELXY = OpticalFlow` meaningful; external nav is v2.
+
+## 9. Optical flow is not optional for the voxel mission (measured, 2026-09-23)
+
+§8 called flow "the v1.5 upgrade". Two findings move it to **required** for
+`--voxel`:
+
+1. **The mission cannot fly a leg without a displacement.** The Pi-side
+   estimator initialises from a GPS fix only, so GNSS-denied `estValid` never
+   became true and the move-stop-sense cycle sat in `SETTLE(no-est)` for ever.
+   `fc_odometry.hpp` now takes the FC's own `LOCAL_POSITION_NED` as the
+   displacement **only when EKF3 vouches for it** (`POS_HORIZ_REL` set,
+   `CONST_POS_MODE` clear). With no horizontal source EKF3 never sets that
+   flag, so the aircraft hovers -- the safe failure, now a stated one.
+2. **The per-stop map assumes a stationary hover; ALT_HOLD is not stationary.**
+   In `test_voxel_nav`'s closed loop, unmeasured hover drift gave collisions
+   that grew with it -- 1 / 3 / 15 at 0.05 / 0.1 / 0.2 m/s on perfect depth,
+   3 / 3 / 16 on simulated stereo, 4 worlds x 150 s each -- and **all but two
+   happened while HOVERING**, not on certified legs. Nothing at the Pi can stop
+   an aircraft sliding into a pillar while it thinks; position hold can.
+   Estimates for tilt-only hover drift under a canopy are 0.1-0.5 m/s and
+   more in wind; flow-aided LOITER holds to roughly 5-10 cm (1 sigma).
+
+Parameters (flow + downward rangefinder, e.g. MicoAir MTF-01, which is one
+unit with an 8 m ToF -- prefer it to a VL53L0X-based board, whose ~2 m range
+caps the altitude EKF3 can use flow at):
+
+| param | value | why |
+|---|---|---|
+| `FLOW_TYPE` | per sensor (MAVLink for MTF-01) | |
+| `RNGFND1_TYPE` | per sensor | flow needs height above ground |
+| `EK3_SRC1_VELXY` | **5 (OpticalFlow)** | the velocity source |
+| `EK3_SRC1_POSXY` | 0 (None) | EKF3 integrates flow velocity into a relative position |
+| `EK3_SRC1_POSZ` | 1 (Baro) or 2 (RangeFinder) | |
+
+Known weak spots, from ArduPilot issues: flow needs light (>60 lux on the
+MTF-01) and texture -- grass and leaves moving in prop wash are the forest's
+version of a blank floor; above rangefinder range flow position is dropped;
+position-controller scaling can let flow LOITER drift in wind (#28242). Test
+over real forest litter before trusting it.
+
+## 10. A second, independent avoidance path: OBSTACLE_DISTANCE
+
+`--voxel` now computes, from EVERY depth frame, 72 horizontal distances
+clockwise from the nose (`obstacleDistanceFromFrame`: a level band of the
+depth image, the 12th-nearest return per 5 deg sector so a lone speckle is
+not an obstacle, unknown where nothing returned). It needs only attitude, so
+unlike the per-stop map it stays valid WHILE MOVING. `FcLink` forwards it as
+`OBSTACLE_DISTANCE` at <= 10 Hz while fresh and never repeats a stale set, so
+ArduPilot's own avoidance runs underneath our planner with different code and
+different failure modes -- the same shape ArduPilot's own RealSense script
+sends.
+
+| param | value | why |
+|---|---|---|
+| `PRX1_TYPE` | 2 (MAVLink) | proximity from the companion |
+| `AVOID_ENABLE` | 7 | fence + proximity |
+| `AVOID_MARGIN` | 1.0-1.5 m | keep-out distance from the proximity boundary |
+| `AVOID_BEHAVE` | 1 (Stop) to start | slide only once trusted |
+
+Where ArduPilot applies it (its simple-avoidance docs): LOITER shortens the
+commanded velocity (stop or slide), ALT_HOLD adds a lean-away angle, GUIDED
+applies it through the velocity controller. Whether it constrains
+`SET_ATTITUDE_TARGET` in GUIDED_NOGPS is NOT verified here -- check it on the
+bench before relying on it with the attitude uplink. The RC-override uplink in
+ALT_HOLD or LOITER is covered by the documented behaviour.

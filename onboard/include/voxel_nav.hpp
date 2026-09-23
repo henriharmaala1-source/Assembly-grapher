@@ -93,6 +93,16 @@ public:
         // same in both arms (every run >= 0.44 m from truth surfaces).
         bool  farChoose   = false;
         float legKeepFrac = 0.9f;
+
+        // KEEP ONE MAP ACROSS STOPS, positioned by an ODOMETRY estimate
+        // (WorldState estPe/estPn, altitude from vehAltM) instead of starting a
+        // new map at every vantage. This is ARCHITECTURE B -- it needs an
+        // ego-motion source (VIO, or optical flow into EKF3) -- and it exists
+        // here so what that source would buy, and what its drift would cost,
+        // can be MEASURED before anything is built. Off: architecture C.
+        bool  persistMap     = false;
+        // With persistMap, integrate during legs too, not only at stops.
+        bool  integrateMoving = false;
     };
 
     // Own a source. `src` null means "no camera": isReady() is false and the
@@ -119,5 +129,6 @@ private:
     Params            p_;
     sim::NavPipeline  nav_;
     bool              still_ = false;        // integrating into the current map
+    bool              mapInit_ = false;      // persistMap: the one map exists
     int               resets_ = 0;
 };

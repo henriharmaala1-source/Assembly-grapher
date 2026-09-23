@@ -34,6 +34,7 @@
 // ---------------------------------------------------------------------------
 
 #include <memory>
+#include <vector>
 
 #include <opencv2/core.hpp>
 
@@ -61,6 +62,8 @@ struct NavPipelineParams {
     float coreFrac  = 0.f;
     // 0 = openness only, no preferred direction. voxel_live's dirMode 0.
     float goalWeight = 0.f;
+    // Stereo disparity noise, 1 sigma, px -- see fineMapParams.
+    float subpixelPx = 0.25f;
     // THE AIRFRAME'S OWN VOLUME, marked FREE at every reset. Not a guess: the
     // aircraft is occupying it. Without it a map started in a hover has an
     // unobserved hole exactly where the aircraft is -- behind the minimum
@@ -87,6 +90,29 @@ struct NavPipelineParams {
     float legCoreM = 0.f;
 };
 
+// PROXIMITY FROM ONE FRAME, for the flight controller's own avoidance layer:
+// ArduPilot's OBSTACLE_DISTANCE shape -- `bins` sectors clockwise from the
+// NOSE, HORIZONTAL distance in metres, < 0 where nothing is known.
+//
+// ONE FRAME, NO MAP, NO POSITION, which is the point. It needs only the
+// camera's roll and pitch (set them in `attitude`; its position and yaw are
+// ignored), so it stays valid while the aircraft TRANSLATES -- which is when
+// the per-vantage voxel map publishes nothing, and exactly when a second,
+// independent avoidance path matters. It is what ArduPilot's own RealSense
+// script (d4xx_to_mavlink) does: a horizontal band of the depth image reduced
+// to a nearest distance per sector.
+//
+// A sector reports the `minPixels`-th nearest return in it, not the nearest:
+// a lone stereo speckle is by construction the nearest pixel in its sector,
+// and reporting it would stop the aircraft for nothing. Sectors outside the
+// field of view, or with too few returns, report unknown -- never "clear".
+std::vector<float> obstacleDistanceFromFrame(const cv::Mat& depthM,
+                                             const DepthCamera& cam,
+                                             const CamPose& attitude,
+                                             int bins = 72, float elBandDeg = 8.f,
+                                             int minPixels = 12, int stride = 2,
+                                             float maxM = 20.f);
+
 // THE MAP CONFIGURATION, ONE COPY. Every number is derived from the camera
 // that is actually producing the frames rather than typed in:
 //   maxIntegM   honest marking range, sqrt(cell * f * B / sigma) -- the range
@@ -94,7 +120,16 @@ struct NavPipelineParams {
 //               through real obstacles
 //   minIntegM   Intel's own minimum range, f * B / 126, with 1.2x margin
 //   depthSigCoef stereo error growth, Z^2 * sigma / (f * B)
-VoxelMapParams fineMapParams(const DepthCamera& cam, float cell, int stride);
+//   subpixelPx  the stereo matcher's 1-sigma disparity noise. 0.25 px is a
+//               literature figure this project has NEVER measured on its unit;
+//               Intel quotes 0.08-0.11 with the projector on a textured
+//               target. It sets the honest range as 1/sqrt(subpixelPx): 0.25
+//               gives ~3.5 m at 848x480, 0.1 gives ~5.5 m. Measure it with
+//               onboard/tools/d435i_probe.py (sigma_d_px) and set it -- never
+//               guess it DOWN, because an optimistic value marks surfaces
+//               further out than the sensor can place them.
+VoxelMapParams fineMapParams(const DepthCamera& cam, float cell, int stride,
+                             float subpixelPx = 0.25f);
 
 class NavPipeline {
 public:

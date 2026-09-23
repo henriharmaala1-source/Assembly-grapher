@@ -105,12 +105,13 @@ int main() {
     {
         auto msgs = decodeAll(drainMaster(mfd));
         CHECK(findMsg(msgs, mav::MSG_HEARTBEAT) != nullptr);
-        // Five SET_MESSAGE_INTERVAL commands, one per stream it consumes.
+        // Six SET_MESSAGE_INTERVAL commands, one per stream it consumes --
+        // LOCAL_POSITION_NED is the sixth, the flow-aided leg odometry.
         int intervals = 0;
         for (const mav::Msg& m : msgs)
             if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_SET_MESSAGE_INTERVAL)
                 ++intervals;
-        CHECK(intervals == 5);
+        CHECK(intervals == 6);
         std::printf("  connect: heartbeat + %d stream requests\n", intervals);
     }
 

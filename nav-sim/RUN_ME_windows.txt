@@ -256,6 +256,12 @@ columns as the classical ones, on seeds it never trained on.
                                            for the other six at every point of
                                            a sweep is most of a day.
 
+                       --oracle            THE CEILING: the planner's fine map
+                                           is the TRUE world within 8 m. Not a
+                                           planner -- it says what perfect map
+                                           knowledge would be worth, before
+                                           anything is built to approximate it.
+
                        --corefrac F        how much of the body's own volume
                                            the veto insists is CONFIRMED FREE,
                                            as a fraction of robotR. 0, the

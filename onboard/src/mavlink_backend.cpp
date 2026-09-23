@@ -84,6 +84,7 @@ void MavlinkBackend::requestStreams() {
     struct { uint32_t id; int hz; } want[] = {
         { mav::MSG_ATTITUDE,             50 },   // the control loop's own rate
         { mav::MSG_GLOBAL_POSITION_INT,   5 },
+        { mav::MSG_LOCAL_POSITION_NED,   10 },   // leg odometry (flow-aided EKF3)
         { mav::MSG_GPS_RAW_INT,           2 },
         { mav::MSG_SYS_STATUS,            2 },   // battery, and the failsafe reads it
         { mav::MSG_RC_CHANNELS,          10 },   // assist-mode baseline comes from here
@@ -181,6 +182,17 @@ void MavlinkBackend::onMessage(const mav::Msg& m) {
         tel_.baroAltM = m.i32(16) * 1e-3f;      // relative_alt: what ALT_HOLD holds
         tel_.groundspeedMs = std::hypot(m.i16(20) * 0.01f, m.i16(22) * 0.01f);
         if (m.u16(26) != 0xFFFF) tel_.groundCourseDeg = m.u16(26) * 0.01f;
+        break;
+    case mav::MSG_LOCAL_POSITION_NED:
+        // time_boot_ms, then x y z vx vy vz -- all 4 bytes, so wire order is
+        // declaration order. Pinned against a pymavlink golden frame.
+        tel_.localN  = m.f32(4);
+        tel_.localE  = m.f32(8);
+        tel_.localD  = m.f32(12);
+        tel_.localVn = m.f32(16);
+        tel_.localVe = m.f32(20);
+        tel_.localStampS = nowS();
+        tel_.localValid  = true;
         break;
     case mav::MSG_GPS_RAW_INT:
         tel_.fixType = m.u8(28);

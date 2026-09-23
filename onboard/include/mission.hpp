@@ -96,6 +96,18 @@ public:
         float voxStopMarginM  = 0.5f;  // leg ends this short of confirmed-free
         float voxMinLegM      = 0.75f; // a shorter certified leg is not worth
                                        // flying -- turn to look instead
+        // Measured stereo noise for the D435i's map (d435i_probe.py
+        // sigma_d_px); sets the voxel map's honest range. Carried here only so
+        // config can reach it -- main copies it into VoxelNavModule.
+        float voxSubpixelPx   = 0.25f;
+        // ARCHITECTURE B for the voxel layer (VoxelNavModule::persistMap): one
+        // map kept across stops, placed by the displacement estimate -- only
+        // meaningful with an ego-motion source (flow into EKF3). Measured in
+        // test_voxel_nav: with position hold on the estimate, 0 collisions at
+        // up to 10 % odometry drift; mapping during legs too (voxIntegrateMoving)
+        // roughly doubled stereo coverage. Off by default: needs the sensor.
+        bool  voxPersistMap   = false;
+        bool  voxIntegrateMoving = false;
         float voxAlignDeg     = 10.f;  // no forward pitch until the nose is
                                        // within this of the leg bearing: the
                                        // leg is certified on ITS line only

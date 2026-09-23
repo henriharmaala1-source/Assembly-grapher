@@ -56,6 +56,13 @@ public:
     void commandRth(bool live);
     void feedGps(const ExtGps& g);
     void latchBaseline();
+    // PROXIMITY for the FC's own avoidance (OBSTACLE_DISTANCE on MAVLink). The
+    // I/O thread forwards the LATEST set at <= 10 Hz while it is fresher than
+    // proxStaleSec; a stale set is not repeated -- ArduPilot then times the
+    // sensor out, which is the correct failure, rather than trusting a frozen
+    // picture of the world. Counted, so a log can show it was really sent.
+    void proximity(const float* distM, int n, double stampS);
+    long proximitySent() const { return proxSent_.load(); }
 
 private:
     void loop_();
@@ -72,9 +79,14 @@ private:
     bool       latchReq_  = false;
     bool       gpsReq_    = false;
     ExtGps     gps_{};
+    float      prox_[72] = {};
+    int        proxN_    = 0;
+    double     proxStampS_ = -1e9, proxSentStampS_ = -1e9, proxLastTxS_ = -1e9;
+    float      proxStaleSec_ = 0.5f;
     FcTelemetry tel_{};
 
     std::atomic<bool> run_{false};
     std::atomic<long> framesSent_{0};
+    std::atomic<long> proxSent_{0};
     std::thread       thr_;
 };

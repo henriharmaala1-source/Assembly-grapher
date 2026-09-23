@@ -40,6 +40,29 @@ void VoxelMap::cellCentre(int x, int y, int z, float& wx, float& wy, float& wz) 
     wz = oz_ + (z + 0.5f) * p_.cell;
 }
 
+void VoxelMap::imprint(const VoxelWorld& truth, float cx, float cy, float cz,
+                       float radiusM, float halfHeightM) {
+    int x0, y0, z0, x1, y1, z1;
+    worldToCell(cx - radiusM, cy - radiusM, cz - halfHeightM, x0, y0, z0);
+    worldToCell(cx + radiusM, cy + radiusM, cz + halfHeightM, x1, y1, z1);
+    const float q = p_.cell * 0.3f;          // corner-inset sample offsets
+    const float r2 = radiusM * radiusM;
+    for (int z = std::max(0, z0); z <= std::min(p_.nz - 1, z1); ++z)
+        for (int y = std::max(0, y0); y <= std::min(p_.ny - 1, y1); ++y)
+            for (int x = std::max(0, x0); x <= std::min(p_.nx - 1, x1); ++x) {
+                float wx, wy, wz; cellCentre(x, y, z, wx, wy, wz);
+                if ((wx - cx) * (wx - cx) + (wy - cy) * (wy - cy) > r2) continue;
+                bool solid = false;
+                for (int k = 0; k < 8 && !solid; ++k) {
+                    int tx, ty, tz;
+                    truth.worldToCell(wx + ((k & 1) ? q : -q), wy + ((k & 2) ? q : -q),
+                                      wz + ((k & 4) ? q : -q), tx, ty, tz);
+                    solid = truth.solid(tx, ty, tz);
+                }
+                log_[idx(x, y, z)] = solid ? p_.lClamp : -p_.lClamp;
+            }
+}
+
 void VoxelMap::seedFree(float cx, float cy, float cz, float radiusM) {
     int x0, y0, z0, x1, y1, z1;
     worldToCell(cx - radiusM, cy - radiusM, cz - radiusM, x0, y0, z0);

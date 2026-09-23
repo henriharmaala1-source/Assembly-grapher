@@ -47,6 +47,13 @@ struct EnvConfig {
     float cell        = 0.25f;
     int   camW        = 160, camH = 120;   // training res; validate at 320x240
     bool  truthDepth  = false;             // cheap render for stage 1
+    // THE PRIVILEGED CEILING (bench --oracle): after sensing, the fine map
+    // within oracleRadiusM is overwritten with the TRUE world, so the planner
+    // knows everything nearby -- occluded, out of range, behind it. Measures
+    // what better map knowledge could possibly be worth BEFORE anyone builds a
+    // learned perception layer to get it. Never a flight configuration.
+    bool  oracleMap   = false;
+    float oracleRadiusM = 8.f;
     float robotR      = 0.6f;
     // HOW MUCH OF THE BODY'S OWN VOLUME MUST BE CONFIRMED FREE, as a fraction
     // of robotR. 0 lets UNKNOWN pass the veto, which is the shipped default and

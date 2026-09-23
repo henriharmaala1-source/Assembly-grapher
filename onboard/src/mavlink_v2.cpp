@@ -12,6 +12,7 @@ constexpr Row kMsgs[] = {
     { MSG_SYS_STATUS,                    124,  31 },
     { MSG_GPS_RAW_INT,                    24,  52 },
     { MSG_ATTITUDE,                       39,  28 },
+    { MSG_LOCAL_POSITION_NED,            185,  28 },
     { MSG_GLOBAL_POSITION_INT,           104,  28 },
     { MSG_RC_CHANNELS,                   118,  42 },
     { MSG_RC_CHANNELS_OVERRIDE,          124,  38 },

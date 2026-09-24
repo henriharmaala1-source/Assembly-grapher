@@ -5,7 +5,7 @@
 //   kestrel-orbslam --vocab ORBvoc.txt [--socket /tmp/kestrel-slam.sock]
 //                   [--features 1000] [--settings-out FILE]
 //
-// Serves one client at a time on a local socket (onboard/include/slam_link.hpp):
+// Serves one client at a time on a local socket (navcore/slam_link.hpp):
 // a stereo IR pair (+ IMU) in, the left camera's pose and ORB-SLAM3's tracking
 // state out, one reply per frame. The ORB-SLAM3 settings are WRITTEN from the
 // first frame's intrinsics -- no calibration file to drift out of step with

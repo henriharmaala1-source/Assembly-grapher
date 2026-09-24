@@ -41,6 +41,7 @@
 //      working, not failing
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -60,6 +61,7 @@
 #include "depth_vis.hpp"
 #include "frame_source.hpp"
 #include "scan_match.hpp"
+#include "visual_pose.hpp"
 #include "nav_pipeline.hpp"
 #include "voxel_map.hpp"
 #include "voxel_traj.hpp"
@@ -291,6 +293,14 @@ struct Config {
     // track or fail to, not to test the search radius.
     float odomVelE = 0.f, odomVelN = 0.3f, odomVelU = 0.f;
     float dtS = 0.1f;
+    // WHERE THE CAMERA IS: --pose fixed | vio | slam (navcore VisualPose, the
+    // object the aircraft runs). fixed is the old behaviour -- the map built
+    // where the camera stands. vio = DepthVio on the IR image; slam =
+    // ORB-SLAM3 through a running kestrel-orbslam. In --sim the truth then
+    // MOVES (at odomVel*, --move) and the estimate has to follow it; its
+    // drift against truth is on the plan pane.
+    sim::PoseMode poseMode = sim::PoseMode::Fixed;
+    std::string   slamSocket = "/tmp/kestrel-slam.sock";
     // Which synthetic world. "forest" is the general case; "hedge" is the one
     // the field disagreed with -- a porous bush fence at four metres with a
     // street behind it, which produced no voxels at all on real hardware.
@@ -363,25 +373,40 @@ void onMouse(int event, int x, int y, int, void*) {
 }
 #endif
 
+// THE LOOK, shared with the kestrel launcher (kestrel_gui.cpp): dark, one
+// accent for "selected", green for the action. BGR.
+const cv::Scalar kBg{34, 30, 27}, kHeader{44, 39, 35}, kSurface{62, 56, 51},
+                 kInk{242, 240, 238}, kDim{160, 152, 146}, kLabel{196, 170, 132},
+                 kAccent{214, 146, 60}, kGo{92, 170, 78}, kWarn{90, 120, 240};
+
+void roundRect(cv::Mat& im, const cv::Rect& r, int rad, const cv::Scalar& c) {
+    rad = std::max(0, std::min(rad, std::min(r.width, r.height) / 2));
+    cv::rectangle(im, {r.x + rad, r.y, r.width - 2 * rad, r.height}, c, cv::FILLED);
+    cv::rectangle(im, {r.x, r.y + rad, r.width, r.height - 2 * rad}, c, cv::FILLED);
+    for (const cv::Point& q : {cv::Point(r.x + rad, r.y + rad),
+                               cv::Point(r.x + r.width - 1 - rad, r.y + rad),
+                               cv::Point(r.x + rad, r.y + r.height - 1 - rad),
+                               cv::Point(r.x + r.width - 1 - rad, r.y + r.height - 1 - rad)})
+        cv::circle(im, q, rad, c, cv::FILLED, cv::LINE_AA);
+}
+
 void drawButton(cv::Mat& img, const Button& b) {
-    const cv::Scalar face = !b.enabled ? cv::Scalar(232, 232, 232)
-                          : b.selected ? cv::Scalar(215, 240, 215)
-                                       : cv::Scalar(252, 252, 252);
-    const cv::Scalar edge = !b.enabled ? cv::Scalar(200, 200, 200)
-                          : b.selected ? cv::Scalar(60, 150, 60)
-                                       : cv::Scalar(150, 150, 150);
-    cv::rectangle(img, b.r, face, cv::FILLED);
-    cv::rectangle(img, b.r, edge, b.selected ? 2 : 1);
-    const cv::Scalar ink = b.enabled ? cv::Scalar(30, 30, 30) : cv::Scalar(150, 150, 150);
-    cv::putText(img, b.label, {b.r.x + 12, b.r.y + (b.sub.empty() ? b.r.height / 2 + 6 : 26)},
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, ink, 1, cv::LINE_AA);
+    const bool start = b.id == 20;
+    const cv::Scalar face = !b.enabled ? cv::Scalar(46, 42, 38)
+                          : start      ? kGo
+                          : b.selected ? kAccent : kSurface;
+    roundRect(img, b.r, 8, face);
+    const cv::Scalar ink = b.enabled ? kInk : cv::Scalar(110, 104, 98);
+    cv::putText(img, b.label, {b.r.x + 14, b.r.y + (b.sub.empty() ? b.r.height / 2 + 6 : 26)},
+                cv::FONT_HERSHEY_SIMPLEX, start ? 0.7 : 0.56, ink, start ? 2 : 1, cv::LINE_AA);
     if (!b.sub.empty())
-        cv::putText(img, b.sub, {b.r.x + 12, b.r.y + 48},
-                    cv::FONT_HERSHEY_SIMPLEX, 0.42, {110, 110, 110}, 1, cv::LINE_AA);
+        cv::putText(img, b.sub, {b.r.x + 14, b.r.y + 48},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.42,
+                    b.selected ? kInk : kDim, 1, cv::LINE_AA);
 }
 
 void label(cv::Mat& img, const std::string& t, int x, int y, double sc = 0.5,
-           cv::Scalar c = {70, 70, 70}) {
+           cv::Scalar c = kDim) {
     cv::putText(img, t, {x, y}, cv::FONT_HERSHEY_SIMPLEX, sc, c, 1, cv::LINE_AA);
 }
 
@@ -468,16 +493,21 @@ void applyStartupDefaults(Config& C, const std::vector<Recording>& recs) {
 cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                    std::vector<Button>& btns, const std::string& note) {
     const int W = 1000, H = 740;
-    cv::Mat img(H, W, CV_8UC3, cv::Scalar(246, 246, 248));
+    cv::Mat img(H, W, CV_8UC3, kBg);
     btns.clear();
 
-    cv::rectangle(img, {0, 0, W, 62}, {60, 70, 90}, cv::FILLED);
-    cv::putText(img, "voxel_live", {20, 40}, cv::FONT_HERSHEY_SIMPLEX, 0.9,
-                {245, 245, 245}, 2, cv::LINE_AA);
-    cv::putText(img, "the real map and planner, over real depth", {230, 40},
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, {200, 205, 215}, 1, cv::LINE_AA);
+    cv::rectangle(img, {0, 0, W, 62}, kHeader, cv::FILLED);
+    cv::line(img, {0, 62}, {W, 62}, {84, 77, 70}, 1);
+    roundRect(img, {18, 16, 30, 30}, 7, kAccent);
+    {
+        const std::vector<cv::Point> k{{26, 22}, {26, 40}, {31, 35}, {40, 40}, {34, 31}, {40, 22}};
+        cv::polylines(img, k, false, kInk, 2, cv::LINE_AA);
+    }
+    cv::putText(img, "voxel_live", {60, 41}, cv::FONT_HERSHEY_SIMPLEX, 0.85, kInk, 2, cv::LINE_AA);
+    cv::putText(img, "the real map and planner, over real depth", {236, 41},
+                cv::FONT_HERSHEY_SIMPLEX, 0.48, kDim, 1, cv::LINE_AA);
 
-    label(img, "1.  WHERE DO THE FRAMES COME FROM", 20, 92, 0.55, {40, 40, 40});
+    label(img, "1.  WHERE DO THE FRAMES COME FROM", 20, 92, 0.5, kLabel);
 
     const bool liveOk = haveLiveSupport();
     Button live{{20, 106, 290, 66}, "LIVE CAMERA",
@@ -499,13 +529,12 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
         const size_t nl = d.find('\n');
         if (nl != std::string::npos) d = d.substr(0, nl);
         if (d.size() > 90) d = d.substr(0, 90) + "...";
-        label(img, d, 20, 190, 0.40, liveOk ? cv::Scalar(120, 140, 120)
-                                            : cv::Scalar(60, 60, 190));
+        label(img, d, 20, 190, 0.40, liveOk ? cv::Scalar(120, 190, 120) : kWarn);
     }
-    label(img, "2.  RECORDINGS FOUND", 20, 210, 0.55, {40, 40, 40});
+    label(img, "2.  RECORDINGS FOUND", 20, 212, 0.5, kLabel);
     if (recs.empty()) {
         label(img, "None. Put a .kdr beside this program, or record one with", 20, 230);
-        label(img, "d435i_probe.py --record 600 --record-every 6", 20, 252, 0.5, {40, 90, 160});
+        label(img, "d435i_probe.py --record 600 --record-every 6", 20, 252, 0.5, kAccent);
     }
     for (size_t i = 0; i < recs.size(); ++i) {
         const Recording& r = recs[i];
@@ -513,69 +542,40 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                               "", 100 + int(i), r.ok, C.path == r.path});
         label(img, r.ok ? r.detail : ("UNREADABLE: " + r.detail),
               500, 238 + int(i) * 40, 0.42,
-              r.ok ? cv::Scalar(120, 120, 120) : cv::Scalar(60, 60, 190));
+              r.ok ? kDim : kWarn);
         if (r.ok) label(img, humanSize(r.path), 860, 238 + int(i) * 40, 0.42,
-                        {150, 150, 150});
+                        kDim);
     }
 
     const int yset = 216 + int(std::max<size_t>(recs.size(), 1)) * 40 + 24;
-    label(img, "3.  SETTINGS", 20, yset, 0.55, {40, 40, 40});
+    label(img, "3.  SETTINGS", 20, yset, 0.5, kLabel);
 
+    // A GRID, three columns by four rows, every button the same size: the
+    // old free placement put "far layer" and "view" on top of "odometry"
+    // (only its first letters showed). Explanations go below the grid.
+    auto cell = [&](int col, int row) {
+        return cv::Rect(20 + col * 322, yset + 12 + row * 50, 310, 40);
+    };
     char b[80];
     std::snprintf(b, sizeof(b), "voxel  %.2f m", C.cell);
-    btns.push_back(Button{{20, yset + 12, 150, 40}, b, "", 10});
-    label(img, "click to cycle", 178, yset + 38, 0.42, {140, 140, 140});
-
+    btns.push_back(Button{cell(0, 0), b, "", 10});
     std::snprintf(b, sizeof(b), "speed cap  %.1f m/s", C.vmax);
-    btns.push_back(Button{{300, yset + 12, 210, 40}, b, "", 11});
+    btns.push_back(Button{cell(1, 0), b, "", 11});
+    btns.push_back(Button{cell(2, 0), C.emitter ? "emitter ON" : "emitter OFF (outdoor case)",
+                          "", 12, true, C.emitter});
 
-    btns.push_back(Button{{530, yset + 12, 180, 40},
-                          C.emitter ? "emitter ON" : "emitter OFF", "", 12, true, C.emitter});
-    label(img, "off = the outdoor case", 718, yset + 38, 0.42, {140, 140, 140});
-
-    // Three buttons per row and NO inline explanations on the crowded rows.
-    // The labels used to sit at x = 218 and x = 530 on this row and were simply
-    // painted over by the buttons beside them -- legible only because nothing
-    // had been added to the right-hand column yet. The explanations moved below
-    // the block, where they have the width they need.
     std::snprintf(b, sizeof(b), "ray stride  %d", C.stride);
-    btns.push_back(Button{{20, yset + 62, 190, 40}, b, "", 14, true, C.stride > 1});
-
-    btns.push_back(Button{{240, yset + 62, 260, 40},
+    btns.push_back(Button{cell(0, 1), b, "", 14, true, C.stride > 1});
+    btns.push_back(Button{cell(1, 1),
                           C.dirMode == 0 ? "steer: OPENNESS only"
                                          : "steer: general direction", "", 15,
                           true, C.dirMode == 1});
-
-    std::snprintf(b, sizeof(b), "spin  %.0f deg/s", C.yawRateDps);
-    btns.push_back(Button{{20, yset + 112, 210, 40}, b, "", 13, true, C.yawRateDps != 0.f});
-
-    btns.push_back(Button{{260, yset + 112, 280, 40},
-                          C.odom ? "odometry: SCAN MATCH"
-                                 : "odometry: OFF (rotation only)", "", 19,
-                          true, C.odom});
-    label(img, "spin: only at a rate you KNOW", 20, yset + 196, 0.42,
-          {140, 140, 140});
-    label(img, "ray stride 1 cannot keep up at 30 fps;  no goal on a bench, so do not steer toward one",
-          20, yset + 176, 0.42, {140, 140, 140});
-    label(img, "far layer is AWARENESS ONLY -- it never grants permission to fly",
-          300, yset + 196, 0.42, {140, 140, 140});
-    label(img, "odometry: a DEMO. per-axis, refuses what it cannot see, known +Z bias",
-          300, yset + 212, 0.42, {140, 140, 140});
-
-    btns.push_back(Button{{20, H - 78, 250, 56}, "START", "", 20,
-                          C.mode != "replay" || !C.path.empty()});
-    btns.push_back(Button{{286, H - 78, 140, 56}, "QUIT", "", 21});
-    label(img, "window feels large?  run with  --ui 1.0  (or 0.6)", 20, H - 12, 0.42,
-          {150, 150, 150});
-    btns.push_back(Button{{530, yset + 112, 300, 40},
-                          C.viewMode == 0 ? "view: FIRST PERSON"
-                                          : C.viewMode == 1 ? "view: OVERLAY on depth"
-                                                            : "view: CHASE (3D plan)",
-                          "", 16, true, C.viewMode == 1});
-    btns.push_back(Button{{520, yset + 62, 310, 40},
+    btns.push_back(Button{cell(2, 1),
                           C.turnHud ? "command arrow: ON" : "command arrow: off", "", 17,
                           true, C.turnHud});
 
+    std::snprintf(b, sizeof(b), "spin  %.0f deg/s", C.yawRateDps);
+    btns.push_back(Button{cell(0, 2), b, "", 13, true, C.yawRateDps != 0.f});
     // The coarse layer's cell size, with the range it buys printed on the
     // button -- the number people actually want is the metres, not the cell.
     if (C.farCell > 0.f)
@@ -583,18 +583,45 @@ cv::Mat renderMenu(const Config& C, const std::vector<Recording>& recs,
                       C.farCell, std::sqrt(C.farCell * 447.f * 0.05f / 0.25f) * 0.75f);
     else
         std::snprintf(b, sizeof(b), "far layer: OFF");
-    btns.push_back(Button{{240, yset + 112, 260, 40}, b, "", 18, true, C.farCell > 0.f});
+    btns.push_back(Button{cell(1, 2), b, "", 18, true, C.farCell > 0.f});
+    btns.push_back(Button{cell(2, 2),
+                          C.viewMode == 0 ? "view: FIRST PERSON"
+                                          : C.viewMode == 1 ? "view: OVERLAY on depth"
+                                                            : "view: CHASE (3D plan)",
+                          "", 16, true, C.viewMode == 1});
 
+    // WHERE THE CAMERA IS -- navcore's VisualPose, the aircraft's own.
+    btns.push_back(Button{cell(0, 3),
+                          C.poseMode == sim::PoseMode::Vio  ? "position: VIO"
+                        : C.poseMode == sim::PoseMode::Slam ? "position: ORB-SLAM3"
+                                                            : "position: FIXED",
+                          "", 22, true, C.poseMode != sim::PoseMode::Fixed});
+    btns.push_back(Button{cell(1, 3),
+                          C.odom ? "scan-match odometry: ON" : "scan-match odometry: off",
+                          "", 19, true, C.odom});
+
+    const int ynote = yset + 12 + 4 * 50 + 16;
+    label(img, "spin: only at a rate you KNOW.  ray stride 1 cannot keep up at 30 fps.",
+          20, ynote, 0.42);
+    label(img, "no goal on a bench, so do not steer toward one.  the far layer is AWARENESS "
+               "ONLY -- it never grants permission to fly.", 20, ynote + 18, 0.42);
+    label(img, C.poseMode == sim::PoseMode::Slam
+                   ? "position: ORB-SLAM3 needs kestrel-orbslam running (onboard/orbslam)."
+             : C.poseMode == sim::PoseMode::Vio
+                   ? "position: DepthVio on the IR image -- in this process."
+                   : "position FIXED: move the camera and the map is wrong. VIO or ORB-SLAM3 track it.",
+          20, ynote + 36, 0.42, C.poseMode == sim::PoseMode::Fixed ? kWarn : kDim);
+
+    btns.push_back(Button{{20, H - 78, 250, 56}, "START", "", 20,
+                          C.mode != "replay" || !C.path.empty()});
+    btns.push_back(Button{{286, H - 78, 140, 56}, "QUIT", "", 21});
+    label(img, "window feels large?  run with  --ui 1.0  (or 0.6)", 20, H - 12, 0.42);
     label(img, "In the view:  space  v view  a arrow  s save PNG  m menu  q quit",
-          446, H - 62, 0.46, {110, 110, 110});
-    label(img, "Camera pose is assumed FIXED. Move it and the map",
-          446, H - 42, 0.42, {150, 110, 60});
-    label(img, "will be wrong -- that is the missing odometry.",
-          446, H - 24, 0.42, {150, 110, 60});
+          446, H - 44, 0.46);
 
     if (!note.empty())
         cv::putText(img, note, {20, H - 96}, cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                    {40, 40, 200}, 1, cv::LINE_AA);
+                    kWarn, 1, cv::LINE_AA);
 
     for (const Button& bt : btns) drawButton(img, bt);
     return img;
@@ -639,6 +666,19 @@ int mainCli(int argc, char** argv) {
             C.odomVelN = float(std::atof(next("0.3")));
             C.odomVelU = float(std::atof(next("0")));
             C.odom = true;
+        }
+        else if (!std::strcmp(argv[i], "--pose")) {
+            const char* m = next("fixed");
+            if (!sim::parsePoseMode(m, C.poseMode)) {
+                std::fprintf(stderr, "voxel_live: --pose takes fixed, vio or slam (got '%s')\n", m);
+                return 2;
+            }
+        }
+        else if (!std::strcmp(argv[i], "--slam-socket")) C.slamSocket = next("/tmp/kestrel-slam.sock");
+        else if (!std::strcmp(argv[i], "--move")) {
+            C.odomVelE = float(std::atof(next("0")));
+            C.odomVelN = float(std::atof(next("0.3")));
+            C.odomVelU = float(std::atof(next("0")));
         }
         else if (!std::strcmp(argv[i], "--forward")) dirMode = 1;
         else if (!std::strcmp(argv[i], "--openness")) dirMode = 0;
@@ -697,7 +737,14 @@ int mainCli(int argc, char** argv) {
                 "  --pitch 0           camera pitch, deg (nose-up positive);\n"
                 "                      --sim defaults to -20 so the floor is mapped\n"
                 "  --vmax 1.5          speed cap for the planner's budget\n"
-                "  --emitter           IR projector on (default off: the outdoor case)\n"
+                "  --emitter           IR projector on (default off: the outdoor case);\n"
+                "                      with --pose vio|slam it STROBES instead\n"
+                "  --pose fixed        where the camera is: fixed (the map is built\n"
+                "                      where it stands), vio (DepthVio on the IR),\n"
+                "                      slam (ORB-SLAM3 via kestrel-orbslam)\n"
+                "  --slam-socket P     kestrel-orbslam's socket (/tmp/kestrel-slam.sock)\n"
+                "  --move E N U        SIM: truth velocity for --pose vio|slam, m/s\n"
+                "                      (default 0 0.3 0)\n"
                 "  --stride 2          use every Nth pixel when mapping. 1 is\n"
                 "                      59 ms/frame at 848x480 and cannot keep up\n"
                 "                      with a 30 fps camera; 2 is 19 ms\n"
@@ -772,7 +819,11 @@ static int runSession(Config C) {
                     (h.flags & DepthRecordHeader::FLAG_EMITTER_ON) ? "ON" : "off");
         src = std::move(r);
     } else if (mode == "live") {
-        src = makeLiveSource(camW, camH, fps, emitter, &err);
+        // Tracking wants dot-free IR: with the emitter asked for, it STROBES
+        // (VisualPose picks the dark frames); SLAM also needs the right imager.
+        const bool track = C.poseMode != sim::PoseMode::Fixed;
+        src = makeLiveSource(camW, camH, fps, emitter, &err, emitter && track,
+                             C.poseMode == sim::PoseMode::Slam);
         if (!src) { std::fprintf(stderr, "[live] %s\n", err.c_str()); return 2; }
         std::printf("[live] streaming %dx%d @ %d, emitter %s\n",
                     camW, camH, fps, emitter ? "ON" : "off");
@@ -803,7 +854,9 @@ static int runSession(Config C) {
         }
         CamParams cp;
         cp.width = camW; cp.height = camH; cp.hfovDeg = 87.f; cp.baselineM = 0.05f;
+        cp.irBandLimit = true;               // what a tracker should see (depth_camera.hpp)
         auto s = std::unique_ptr<SimFrameSource>(new SimFrameSource(*world, cp, showTruth));
+        if (C.poseMode != sim::PoseMode::Fixed) s->enableIR(C.poseMode == sim::PoseMode::Slam);
         CamPose p0; p0.e = 15.f; p0.n = 10.f; p0.u = 6.f;
         s->setPose(p0);
         src = std::move(s);
@@ -978,9 +1031,25 @@ static int runSession(Config C) {
                 mp.cell, mp.maxIntegM, cam.fpx(), cp.baselineM * 1000.f,
                 mp.integrateStride,
                 (cp.width / mp.integrateStride) * (cp.height / mp.integrateStride));
-    if (mode != "sim" && !C.odom)
+    // THE POSE SOURCE (navcore VisualPose -- the aircraft's own).
+    sim::VisualPose visual;
+    {
+        sim::VisualPoseParams vp;
+        vp.mode = C.poseMode;
+        vp.emitter = emitter ? sim::EmitterMode::Strobe : sim::EmitterMode::Off;
+        vp.slamSocket = C.slamSocket;
+        vp.fps = mode == "sim" ? 1.f / C.dtS : float(fps);
+        visual.init(*src, vp);
+    }
+    const float originE = px, originN = py, originU = pz;   // where tracking starts
+    if (C.poseMode != sim::PoseMode::Fixed)
+        std::printf("[pose] %s: the map is placed by the estimate%s\n",
+                    C.poseMode == sim::PoseMode::Vio ? "DepthVio on the IR image"
+                                                     : ("ORB-SLAM3 via " + C.slamSocket).c_str(),
+                    mode == "sim" ? "; the truth moves (--move) and drift is shown" : "");
+    if (mode != "sim" && !C.odom && C.poseMode == sim::PoseMode::Fixed)
         std::printf("[pose] %s -- NO translation is estimated. Move the camera and the\n"
-                    "       map is wrong; that is the missing odometry, not a bug here.\n",
+                    "       map is wrong; --pose vio or slam estimates it.\n",
                     yawRateDps != 0.f ? "spin at a stated rate" : "fixed");
     if (C.odom)
         std::printf("[pose] scan-match odometry ON. Translation comes from registering\n"
@@ -1058,6 +1127,11 @@ static int runSession(Config C) {
     // is the only arrangement in which the drift number means anything. With
     // one pose for both, the demo would be scoring the estimate against itself.
     float tE = px, tN = py, tU = pz;
+    float tYaw = 0.f;             // the truth's own heading, for --pose in --sim
+    // Truth by frame time, so an estimate that arrives LATE (SLAM) is scored
+    // against where the camera was when that frame was taken, and its lag
+    // shown separately -- lag is real, but it is not drift.
+    std::vector<std::array<double, 4>> truthHist;
 
     auto auditBucket = [&](float r) {
         for (int i = 0; i < kAuditN; ++i)
@@ -1076,11 +1150,27 @@ static int runSession(Config C) {
         // the two -- everywhere else truth and estimate are the same object.
         CamPose truth = pose;
         const bool simTruth = (mode == "sim");
-        if (C.odom && simTruth) {
+        const bool tracking = C.poseMode != sim::PoseMode::Fixed;
+        // The camera waits on the ground until the tracker has its first
+        // pose (a SLAM loads its vocabulary for seconds).
+        const bool moving = !tracking || visual.ready();
+        if ((C.odom || tracking) && simTruth && moving) {
             tE += C.odomVelE * C.dtS; tN += C.odomVelN * C.dtS; tU += C.odomVelU * C.dtS;
             truth.e = tE; truth.n = tN; truth.u = tU;
         }
-        if (auto* s = dynamic_cast<SimFrameSource*>(src.get())) s->setPose(truth);
+        // Under a tracker the loop's `yaw` is the ESTIMATE's; the truth keeps
+        // its own, or the estimator's error would steer the world it is
+        // scored against.
+        if (tracking && simTruth && moving) {
+            truthHist.push_back({double(n) * C.dtS, tE, tN, tU});
+            if (truthHist.size() > 600) truthHist.erase(truthHist.begin());
+            truth.yawDeg = tYaw;
+            tYaw = std::fmod(tYaw + yawRateDps * C.dtS + 360.f, 360.f);
+        }
+        if (auto* s = dynamic_cast<SimFrameSource*>(src.get())) {
+            s->setPose(truth);
+            s->setTimeS(double(n) * C.dtS);
+        }
         if (!src->next(depth, hint)) break;
 
         // ATTITUDE-ONLY HINTS CARRY NO POSITION, and taking the whole pose from
@@ -1102,9 +1192,27 @@ static int runSession(Config C) {
                 // when the camera does not. A renderer limit, not a mapping
                 // error, and it wants fixing before anyone reads these panes in
                 // flight.
+            } else if (tracking) {
+                // The sim knows everything; a tracker is only told attitude.
+                pose.rollDeg = hint.pose.rollDeg;
+                pose.pitchDeg = hint.pose.pitchDeg;
+                pose.yawDeg = hint.pose.yawDeg;
             } else if (!C.odom) {
                 pose = hint.pose;
             }
+        }
+
+        // POSITION FROM THE ESTIMATE. VisualPose is ENU from where tracking
+        // started; the map's origin is where the camera was put.
+        if (tracking) {
+            const double tNow = simTruth ? double(n) * C.dtS
+                : double(cv::getTickCount()) / cv::getTickFrequency();
+            const sim::PoseEstimate& ve = visual.step(*src, depth, pose, yaw, tNow);
+            if (ve.valid) {
+                px = originE + ve.e; py = originN + ve.n; pz = originU + ve.u;
+                yaw = ve.yawDeg; pose.yawDeg = yaw;
+            }
+            pose.e = px; pose.n = py; pose.u = pz;
         }
 
         if (eyeAttached) {
@@ -1386,8 +1494,34 @@ static int runSession(Config C) {
                           traj.candidates().size(), gr.freeM, gr.speed,
                           gr.blocked ? "  BLOCKED" : "");
             banner(pPane, b, 44);
-            if (!C.odom) {
-                banner(pPane, "ODOM off -- rotation only  ('o' to try it)", 66);
+            if (tracking) {
+                // WHERE THE MAP IS PLACED FROM, and how well: the estimator's
+                // own state line, and -- in the sim, where truth is known --
+                // how far it has drifted.
+                const sim::PoseEstimate& ve = visual.last();
+                char o[192];
+                std::snprintf(o, sizeof(o), "POSE %s %s  %d pts  lost %d  resets %d",
+                              sim::poseModeName(C.poseMode), ve.status.c_str(), ve.tracked,
+                              ve.lost, ve.resets);
+                banner(pPane, o, 66);
+                if (simTruth && ve.frameTimeS >= 0.0) {
+                    // Truth AT THE ESTIMATE'S FRAME.
+                    double qE = tE, qN = tN, qU = tU;
+                    for (const auto& h : truthHist)
+                        if (std::fabs(h[0] - ve.frameTimeS) < 0.5 * C.dtS) {
+                            qE = h[1]; qN = h[2]; qU = h[3];
+                        }
+                    const float eE = float(px - qE), eN = float(py - qN), eU = float(pz - qU);
+                    const float tr = float(std::sqrt((qE - originE) * (qE - originE) +
+                                                     (qN - originN) * (qN - originN)));
+                    const int lagFrames = int((double(n - 1) * C.dtS - ve.frameTimeS) / C.dtS + 0.5);
+                    char e[192];
+                    std::snprintf(e, sizeof(e), "DRIFT %.2f m in %.1f m   lag %d frames",
+                                  std::sqrt(eE*eE + eN*eN + eU*eU), tr, lagFrames);
+                    banner(pPane, e, 88);
+                }
+            } else if (!C.odom) {
+                banner(pPane, "POSE fixed -- rotation only  (--pose vio|slam to track)", 66);
             }
             if (C.odom) {
                 // Per-axis, because that is the honest unit here: a letter is
@@ -2288,6 +2422,11 @@ int voxelLiveMain(int argc, char** argv) {
         else if (id == 17) { C.turnHud = !C.turnHud; }
         else if (id == 18) { iFar = (iFar + 1) % 5; C.farCell = FARS[iFar]; }
         else if (id == 19) { C.odom = !C.odom; }
+        else if (id == 22) {
+            C.poseMode = C.poseMode == sim::PoseMode::Fixed ? sim::PoseMode::Vio
+                       : C.poseMode == sim::PoseMode::Vio   ? sim::PoseMode::Slam
+                                                            : sim::PoseMode::Fixed;
+        }
         else if (id == 21) break;
         else if (id == 20) {
             cv::destroyWindow(WIN);

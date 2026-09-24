@@ -26,9 +26,9 @@ find_package(Eigen3 3.1 REQUIRED NO_MODULE)
 
 add_executable(kestrel-orbslam
   kestrel_orbslam.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../src/slam_link.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../navcore/slam_link.cpp)
 target_include_directories(kestrel-orbslam PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../navcore
   ${CMAKE_CURRENT_SOURCE_DIR}/headless
   ${ORB_SLAM3_DIR}
   ${ORB_SLAM3_DIR}/include

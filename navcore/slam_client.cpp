@@ -1,7 +1,6 @@
 #include "slam_client.hpp"
 
 #include <chrono>
-#include <unistd.h>
 
 SlamClient::SlamClient(std::string socketPath) : path_(std::move(socketPath)) {
     thr_ = std::thread([this] { loop(); });
@@ -67,7 +66,7 @@ void SlamClient::loop() {
         slamlink::PoseReply rep;
         if (!slamlink::sendFrame(fd, h, l.data(), r.data(), imu.data()) ||
             !slamlink::recvPose(fd, rep)) {
-            ::close(fd);
+            slamlink::closeFd(fd);
             fd = -1;
             connected_.store(false);
             continue;
@@ -77,5 +76,5 @@ void SlamClient::loop() {
         reply_ = rep;
         haveReply_ = true;
     }
-    if (fd >= 0) ::close(fd);
+    if (fd >= 0) slamlink::closeFd(fd);
 }

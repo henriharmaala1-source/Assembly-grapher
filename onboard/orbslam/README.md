@@ -12,11 +12,11 @@ metric scale from the 50 mm baseline without needing motion to initialise.
  D435i ──► onboard (kestrel --voxel --voxel-slam)
              │  depth ──► voxel map, proximity        (as before)
              │  IR left + IR right (+ IMU), dark frames only
-             ▼  Unix socket, include/slam_link.hpp
+             ▼  Unix socket, navcore/slam_link.hpp
           kestrel-orbslam  (this directory, GPLv3)
              │  pose + tracking state, one reply per frame
              ▼
-          onboard: anchored into ENU (include/slam_anchor.hpp) ──► WorldState vio*
+          onboard: anchored into ENU (navcore/slam_anchor.hpp) ──► WorldState vio*
              ──► the mission's displacement (fc_odometry.hpp)
              ──► EKF3 as ExternalNav with --voxel-vio-fc (VISION_POSITION_ESTIMATE)
 ```
@@ -29,7 +29,7 @@ metric scale from the 50 mm baseline without needing motion to initialise.
   ORB-SLAM3 settings from the first frame, so there is no calibration file to
   keep in step with the camera.
 - **Flow control:** at most one frame in flight, newest wins, IMU samples are
-  never dropped (`include/slam_client.hpp`). ORB-SLAM3 on a Pi 5 is slower than
+  never dropped (`navcore/slam_client.hpp`). ORB-SLAM3 on a Pi 5 is slower than
   the camera; at walking pace tracking every second or third frame is fine.
 - **Emitter:** the projector's dots move with the camera and must not be
   tracked. `nav.vox_emitter = strobe` (default) alternates them and a gate

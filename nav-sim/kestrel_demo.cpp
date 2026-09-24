@@ -34,6 +34,7 @@
 #include "depth_vis.hpp"
 #include "frame_source.hpp"
 #include "nav_pipeline.hpp"
+#include "visual_pose.hpp"
 #include "rl_env.hpp"
 #include "voxel_map.hpp"
 
@@ -41,8 +42,10 @@ namespace kdemo {
 namespace {
 
 // ------------------------------------------------------------------ painting
-const cv::Scalar INK{240, 240, 240}, DIM{150, 150, 150}, EDGE{70, 70, 70};
-const cv::Scalar BG{24, 24, 24}, WARN{60, 160, 250}, OK{120, 210, 120};
+// The launcher's palette (kestrel_gui.cpp), so the two windows read as one app.
+const cv::Scalar INK{242, 240, 238}, DIM{160, 152, 146}, EDGE{84, 77, 70};
+const cv::Scalar BG{34, 30, 27}, WARN{60, 160, 250}, OK{120, 210, 120};
+const cv::Scalar CARD{44, 39, 35}, HEADER{44, 39, 35}, ACCENT{214, 146, 60};
 
 void txt(cv::Mat& im, const std::string& s, int x, int y, double sc,
          const cv::Scalar& c, int th = 1) {
@@ -92,14 +95,30 @@ struct Pane {
 const int CAPTION_H = 46;   // title + subtitle strip under each image
 
 void drawPane(cv::Mat& canvas, const cv::Rect& r, const Pane& p) {
-    cv::rectangle(canvas, r, BG, cv::FILLED);
+    cv::rectangle(canvas, r, CARD, cv::FILLED);                 // a card
     const cv::Rect img(r.x, r.y, r.width, r.height - CAPTION_H);
     letterbox(p.img, img.width, img.height).copyTo(canvas(img));
+    cv::rectangle(canvas, {r.x, r.y + r.height - CAPTION_H, 3, CAPTION_H}, ACCENT,
+                  cv::FILLED);                                  // caption marker
     cv::rectangle(canvas, r, EDGE, 1);
     txt(canvas, fit(p.title, r.width - 20, 0.56),
         r.x + 10, r.y + r.height - 26, 0.56, INK, 1);
     txt(canvas, fit(p.sub, r.width - 20, 0.42),
         r.x + 10, r.y + r.height - 8, 0.42, p.subColour, 1);
+}
+
+// The window's header bar: the app mark, the title, and what the input is.
+void drawHeader(cv::Mat& canvas, const std::string& title, const std::string& note) {
+    cv::rectangle(canvas, {0, 0, canvas.cols, 38}, HEADER, cv::FILLED);
+    cv::line(canvas, {0, 38}, {canvas.cols, 38}, EDGE, 1);
+    cv::rectangle(canvas, {10, 8, 22, 22}, ACCENT, cv::FILLED);
+    const std::vector<cv::Point> k{{16, 12}, {16, 26}, {20, 22}, {27, 26}, {22, 19}, {27, 12}};
+    cv::polylines(canvas, k, false, INK, 2, cv::LINE_AA);
+    cv::putText(canvas, title, {40, 26}, cv::FONT_HERSHEY_SIMPLEX, 0.62, INK, 2, cv::LINE_AA);
+    int base = 0;
+    const int tw = cv::getTextSize(title, cv::FONT_HERSHEY_SIMPLEX, 0.62, 2, &base).width;
+    cv::putText(canvas, note, {52 + tw, 26}, cv::FONT_HERSHEY_SIMPLEX, 0.44, DIM, 1,
+                cv::LINE_AA);
 }
 
 // THE LAYOUT, as data, so `check` can assert it without a display and without
@@ -467,6 +486,8 @@ struct CameraFrame {
     cv::Mat depthVis, mapFpv, colour;
     cv::Mat depthRaw;            // CV_32F metres, for the detector's range
     float   validFrac = 0;
+    std::string poseNote;        // what placed the map, for the pane caption
+    bool    poseOk = true;
 };
 struct PeopleFrame {
     cv::Mat  image;
@@ -618,6 +639,13 @@ bool parse(const std::vector<std::string>& args, Options& o, std::string& err) {
         else if (a == "--pane")   { o.paneW = std::stoi(next("--pane")); o.paneH = o.paneW * 3 / 4; }
         else if (a == "--no-mirror") o.mirror = false;
         else if (a == "--no-emitter") o.emitter = false;
+        else if (a == "--pose") {
+            o.pose = next("--pose");
+            sim::PoseMode m;
+            if (err.empty() && !sim::parsePoseMode(o.pose, m))
+                err = "--pose takes fixed, vio or slam (got '" + o.pose + "')";
+        }
+        else if (a == "--slam-socket") o.slamSocket = next("--slam-socket");
         else if (a == "--cuda")     o.cuda = Options::CUDA_ON;
         else if (a == "--no-cuda")  o.cuda = Options::CUDA_OFF;
         else { err = "unknown argument: " + a; return false; }
@@ -787,8 +815,7 @@ int shot(const Options& o, const std::string& prefix) {
     p[3].img   = colour;
 
     cv::Mat canvas(L.canvas, CV_8UC3, BG);
-    txt(canvas, "kestrel demo -- synthetic input, nothing measured here",
-        12, 28, 0.62, INK, 1);
+    drawHeader(canvas, "kestrel demo", "synthetic input -- nothing measured here");
     for (int i = 0; i < 4; ++i) drawPane(canvas, L.pane[i], p[i]);
     txt(canvas, "source: shot (no device)   planner: "
                 + std::string(learned ? pol.backend() : "classical")
@@ -931,7 +958,11 @@ int run(const Options& o) {
     std::unique_ptr<sim::FrameSource> src;
     if (o.source == Options::LIVE) {
         std::string err;
-        src = sim::makeLiveSource(o.camW, o.camH, o.camFps, o.emitter, &err);
+        sim::PoseMode pm = sim::PoseMode::Fixed;
+        sim::parsePoseMode(o.pose, pm);
+        const bool track = pm != sim::PoseMode::Fixed;
+        src = sim::makeLiveSource(o.camW, o.camH, o.camFps, o.emitter, &err,
+                                  o.emitter && track, pm == sim::PoseMode::Slam);
         srcNote = src ? "RealSense" : ("no live camera: " + err);
     } else if (o.source == Options::REPLAY) {
         auto r = std::make_unique<sim::ReplayFrameSource>();
@@ -947,6 +978,20 @@ int run(const Options& o) {
         SimEye simEye(cfg);
         sim::NavPipeline nav;
         bool inited = false;
+        // THE POSE SOURCE for the live pane (VisualPose, as the aircraft).
+        sim::VisualPose visual;
+        sim::PoseMode poseMode = sim::PoseMode::Fixed;
+        sim::parsePoseMode(o.pose, poseMode);
+        if (src && src->ok()) {
+            sim::VisualPoseParams vp;
+            vp.mode = poseMode;
+            vp.emitter = o.emitter ? sim::EmitterMode::Strobe : sim::EmitterMode::Off;
+            vp.slamSocket = o.slamSocket;
+            vp.fps = float(o.camFps);
+            visual.init(*src, vp);
+        }
+        sim::CamPose origin, lastEst;
+        const auto t0 = std::chrono::steady_clock::now();
         while (!stop.load()) {
             CameraFrame f;
             if (src && src->ok()) {
@@ -960,7 +1005,31 @@ int run(const Options& o) {
                 // handheld camera has none, so the map is built from a FIXED
                 // pose and says so. Inventing motion here would produce a map
                 // that looks plausible and means nothing.
-                const sim::CamPose pose = hint.valid ? hint.pose : sim::CamPose{};
+                sim::CamPose pose = hint.valid ? hint.pose : sim::CamPose{};
+                if (poseMode != sim::PoseMode::Fixed) {
+                    // Attitude from the camera's IMU; POSITION (and heading)
+                    // from the tracker, relative to where the map was begun.
+                    const double tNow = std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - t0).count();
+                    const sim::PoseEstimate& ve = visual.step(*src, depth, pose,
+                                                              pose.yawDeg, tNow);
+                    if (ve.valid) {
+                        pose.e = origin.e + ve.e; pose.n = origin.n + ve.n;
+                        pose.u = origin.u + ve.u; pose.yawDeg = ve.yawDeg;
+                        lastEst = pose;
+                    } else if (inited) {
+                        // No pose this frame: HOLD the last one (the map does
+                        // not jump back to where it began).
+                        pose.e = lastEst.e; pose.n = lastEst.n; pose.u = lastEst.u;
+                    }
+                    f.poseNote = std::string("pose ") + sim::poseModeName(poseMode) + ": " +
+                                 ve.status + cv::format("   lost %d  resets %d", ve.lost,
+                                                        ve.resets);
+                    f.poseOk = ve.valid;
+                } else {
+                    f.poseNote = "pose FIXED: move the camera and the map smears";
+                    f.poseOk = true;
+                }
                 // THE AIRCRAFT'S PIPELINE, not a default map: navcore's
                 // NavPipeline, as onboard runs it -- the map configured from
                 // THIS camera (it used bare VoxelMapParams: marking to 8 m with
@@ -968,6 +1037,7 @@ int run(const Options& o) {
                 // flies), plus the bearing field. Fixed pose, as above.
                 if (!inited) {
                     nav.init(src->camera(), sim::NavPipelineParams(), pose);
+                    origin = pose; lastEst = pose;
                     inited = true;
                 }
                 nav.step(depth, pose);
@@ -1075,7 +1145,9 @@ int run(const Options& o) {
         pplSlot.take(hf, g2);
 
         canvas.setTo(BG);
-        txt(canvas, "kestrel demo", 12, 28, 0.62, INK, 1);
+        drawHeader(canvas, "kestrel demo",
+                   o.source == Options::LIVE ? "live D435i" :
+                   o.source == Options::REPLAY ? "replay" : "simulated input");
 
         Pane p[4];
         p[0].title = "SIM DEMONSTRATION";
@@ -1089,10 +1161,11 @@ int run(const Options& o) {
         p[1].subColour = (o.source == Options::LIVE && src) ? DIM : WARN;
         p[1].img = cf.depthVis.empty() ? pf.depth : cf.depthVis;
         p[2].title = "LIVE VOXEL -- first person";
-        p[2].sub = (src && src->ok() ? std::string("")
-                                     : std::string("sim D435i: "))
-                   + "voxels to the map's reach, far tier beyond; grey is UNKNOWN";
-        p[2].subColour = (src && src->ok()) ? DIM : WARN;
+        p[2].sub = (src && src->ok())
+                   ? cf.poseNote
+                   : std::string("sim D435i: voxels to the map's reach, far tier beyond; "
+                                 "grey is UNKNOWN");
+        p[2].subColour = (src && src->ok() && cf.poseOk) ? DIM : WARN;
         p[2].img = cf.mapFpv;
         p[3].title = "HUMANS";
         p[3].sub = det.available()

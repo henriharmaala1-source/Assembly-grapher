@@ -141,11 +141,26 @@ public:
     void setPose(const CamPose& p) { pose_ = p; }
     bool next(cv::Mat& depth, PoseHint& hint) override;
 
+    // OPT-IN infrared, for a visual pose estimator on the desk (VisualPose):
+    // the left IR image and, with `right`, the right one a baseline to its +x,
+    // rendered with navcore's IR model at each next(). Off by default -- it
+    // costs a raycast per pixel per image, and a consumer that reads
+    // intensity() whenever it exists (the demo's person detector) should not
+    // start doing so by accident. `timeS` is the frame time handed to a SLAM.
+    void enableIR(bool right) { irOn_ = true; irRight_ = right; }
+    void setTimeS(double t) { timeS_ = t; }
+    bool   intensity(cv::Mat& out) const override;
+    bool   intensityRight(cv::Mat& out) const override;
+    double intensityTimeS() const override { return irOn_ ? timeS_ : -1.0; }
+
 private:
     const VoxelWorld& w_;
     DepthCamera cam_;
     bool    truth_;
     CamPose pose_;
+    bool    irOn_ = false, irRight_ = false;
+    double  timeS_ = -1.0;
+    cv::Mat irL_, irR_;
 };
 
 // --- replay ---------------------------------------------------------------

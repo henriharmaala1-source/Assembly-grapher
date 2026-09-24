@@ -103,6 +103,14 @@ struct Options {
     int  camW = 640, camH = 480, camFps = 30;
     bool emitter = true;
 
+    // WHERE THE CAMERA IS for the live voxel pane: "fixed" (the map is built
+    // where the camera stands -- move it and the map smears), "vio" (DepthVio
+    // on its IR), "slam" (ORB-SLAM3 via a running kestrel-orbslam). navcore's
+    // VisualPose, the object the aircraft runs. With the emitter on and a
+    // tracker, the emitter STROBES and only dark frames are tracked.
+    std::string pose = "fixed";
+    std::string slamSocket = "/tmp/kestrel-slam.sock";
+
     int  paneW = 480, paneH = 360;   // one pane; the window is 2x2 of these
     bool mirror = true;              // the human pane, so waving matches
 };

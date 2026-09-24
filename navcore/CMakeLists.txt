@@ -45,14 +45,23 @@ if(NOT TARGET navcore)
     depth_vis.cpp
     nav_pipeline.cpp
     footage.cpp
-    vio.cpp)
+    vio.cpp
+    # External SLAM over a local socket (kestrel-orbslam), and the one pose
+    # layer onboard and the desktop tools share.
+    slam_link.cpp
+    slam_client.cpp
+    visual_pose.cpp)
 
   target_compile_features(navcore PUBLIC cxx_std_17)
   # PUBLIC, so anything that links navcore finds its headers by basename --
   # the way every file in both trees already includes them.
   target_include_directories(navcore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
-  target_link_libraries(navcore PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
+  find_package(Threads REQUIRED)
+  target_link_libraries(navcore PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
+  if(WIN32)
+    target_link_libraries(navcore PUBLIC ws2_32)   # slam_link.cpp's sockets
+  endif()
   # The python extension module is a shared object that links this, so the
   # objects must be position-independent. It costs nothing measurable.
   set_target_properties(navcore PROPERTIES POSITION_INDEPENDENT_CODE ON)

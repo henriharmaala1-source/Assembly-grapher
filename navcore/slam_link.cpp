@@ -1,16 +1,56 @@
 #include "slam_link.hpp"
 
 #include <cerrno>
+#include <cstdio>
+
+// PLATFORM SEAM: one-line calls only (CLAUDE.md). Windows 10 1803+ has
+// AF_UNIX sockets through Winsock; the SLAM bridge itself is Linux-only, but
+// the client builds and fails politely everywhere.
+#ifdef _WIN32
+#include <winsock2.h>
+#include <afunix.h>
+#else
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#endif
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 
 namespace slamlink {
+
+namespace {
+void netInit() {
+#ifdef _WIN32
+    static const bool ok = [] { WSADATA d; return WSAStartup(MAKEWORD(2, 2), &d) == 0; }();
+    (void)ok;
+#endif
+}
+}  // namespace
+
+void closeFd(int fd) {
+#ifdef _WIN32
+    closesocket(SOCKET(fd));
+#else
+    ::close(fd);
+#endif
+}
+
+void removePath(const std::string& path) { std::remove(path.c_str()); }
+
+void shutdownFd(int fd) {
+#ifdef _WIN32
+    ::shutdown(SOCKET(fd), SD_BOTH);
+#else
+    ::shutdown(fd, SHUT_RDWR);
+#endif
+}
 
 bool writeAll(int fd, const void* p, size_t n) {
     const uint8_t* b = static_cast<const uint8_t*>(p);
     while (n > 0) {
-        const ssize_t k = ::send(fd, b, n, MSG_NOSIGNAL);
+        const long k = long(::send(fd, reinterpret_cast<const char*>(b), int(n), MSG_NOSIGNAL));
         if (k < 0 && errno == EINTR) continue;
         if (k <= 0) return false;
         b += k; n -= size_t(k);
@@ -21,7 +61,7 @@ bool writeAll(int fd, const void* p, size_t n) {
 bool readAll(int fd, void* p, size_t n) {
     uint8_t* b = static_cast<uint8_t*>(p);
     while (n > 0) {
-        const ssize_t k = ::recv(fd, b, n, 0);
+        const long k = long(::recv(fd, reinterpret_cast<char*>(b), int(n), 0));
         if (k < 0 && errno == EINTR) continue;
         if (k <= 0) return false;
         b += k; n -= size_t(k);
@@ -71,12 +111,13 @@ bool fillAddr(const std::string& path, sockaddr_un& a, std::string* err) {
 int listenUnix(const std::string& path, std::string* err) {
     sockaddr_un a;
     if (!fillAddr(path, a, err)) return -1;
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    netInit();
+    const int fd = int(::socket(AF_UNIX, SOCK_STREAM, 0));
     if (fd < 0) { if (err) *err = "socket failed"; return -1; }
-    ::unlink(path.c_str());
+    removePath(path);
     if (::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(fd, 1) != 0) {
         if (err) *err = "cannot listen on " + path;
-        ::close(fd);
+        closeFd(fd);
         return -1;
     }
     return fd;
@@ -85,14 +126,19 @@ int listenUnix(const std::string& path, std::string* err) {
 int connectUnix(const std::string& path, std::string* err) {
     sockaddr_un a;
     if (!fillAddr(path, a, err)) return -1;
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    netInit();
+    const int fd = int(::socket(AF_UNIX, SOCK_STREAM, 0));
     if (fd < 0) { if (err) *err = "socket failed"; return -1; }
     if (::connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
         if (err) *err = "cannot connect to " + path;
-        ::close(fd);
+        closeFd(fd);
         return -1;
     }
     return fd;
+}
+
+int acceptOne(int listenFd) {
+    return int(::accept(listenFd, nullptr, nullptr));
 }
 
 }  // namespace slamlink

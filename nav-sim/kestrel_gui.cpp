@@ -45,16 +45,33 @@ namespace {
 const char* WIN = "kestrel";
 const int W = 1060, H = 660;
 
-const cv::Scalar BG   {30, 30, 36};
-const cv::Scalar INK  {238, 238, 240};
-const cv::Scalar DIM  {150, 150, 160};
-const cv::Scalar EDGE {120, 120, 130};
-const cv::Scalar OFFB {58, 58, 66};
-const cv::Scalar ONB  {70, 140, 60};
-const cv::Scalar GO   {170, 110, 40};   // BGR: blue
+// THE LOOK. BGR. A dark app palette: one accent (blue) for "selected", one
+// (green) for the action, and everything else in greys, so colour always
+// means something.
+const cv::Scalar BG      {34, 30, 27};     // content
+const cv::Scalar HEADER  {44, 39, 35};
+const cv::Scalar SIDEBAR {40, 35, 32};
+const cv::Scalar SURFACE {62, 56, 51};     // an idle button
+const cv::Scalar HOVER   {80, 73, 66};
+const cv::Scalar INK     {242, 240, 238};
+const cv::Scalar DIM     {160, 152, 146};
+const cv::Scalar LABEL   {196, 170, 132};  // section headings
+const cv::Scalar EDGE    {84, 77, 70};
+const cv::Scalar ACCENT  {214, 146, 60};   // selected
+const cv::Scalar OFFB    = SURFACE;
+const cv::Scalar ONB     = ACCENT;
+const cv::Scalar GO      {92, 170, 78};    // RUN
+const cv::Scalar CONSOLE {24, 21, 19};
+
+// Layout of the chrome, shared by compose() and the check.
+const int HEADER_H = 84;
+const int SIDEBAR_W = 252;
+const int NAV_Y0 = 100, NAV_PITCH = 46;
 
 // ------------------------------------------------------------------ widgets
-struct Btn { cv::Rect r; std::string label; int id; bool on = false; bool go = false; };
+// kind: 0 a button, 1 a sidebar navigation row.
+struct Btn { cv::Rect r; std::string label; int id; bool on = false; bool go = false;
+             int kind = 0; };
 
 struct { int x = 0, y = 0; bool clicked = false; } g_mouse;
 void onMouse(int ev, int x, int y, int, void*) {
@@ -96,14 +113,59 @@ std::string fit(const std::string& s, int maxPx, double sc, bool keepTail = true
     return t;
 }
 
+// A filled rounded rectangle (OpenCV has none): two crossing rectangles and
+// four anti-aliased corner discs.
+void roundRect(cv::Mat& im, const cv::Rect& r, int rad, const cv::Scalar& c) {
+    rad = std::max(0, std::min(rad, std::min(r.width, r.height) / 2));
+    cv::rectangle(im, {r.x + rad, r.y, r.width - 2 * rad, r.height}, c, cv::FILLED);
+    cv::rectangle(im, {r.x, r.y + rad, r.width, r.height - 2 * rad}, c, cv::FILLED);
+    for (const cv::Point& p : {cv::Point(r.x + rad, r.y + rad),
+                               cv::Point(r.x + r.width - 1 - rad, r.y + rad),
+                               cv::Point(r.x + rad, r.y + r.height - 1 - rad),
+                               cv::Point(r.x + r.width - 1 - rad, r.y + r.height - 1 - rad)})
+        cv::circle(im, p, rad, c, cv::FILLED, cv::LINE_AA);
+}
+
+bool hovered(const cv::Rect& r) { return r.contains({g_mouse.x, g_mouse.y}); }
+
+// A section heading: small capitals in the heading colour.
+void section(cv::Mat& im, const std::string& s, int x, int y) {
+    std::string u = s;
+    for (char& ch : u) ch = char(std::toupper((unsigned char)ch));
+    txt(im, u, x, y, 0.42, LABEL, 1);
+}
+
 void drawBtn(cv::Mat& im, const Btn& b) {
     std::vector<cv::Rect>* keep = g_textBoxes;
     g_textBoxes = nullptr;                       // a label belongs in its button
     struct Restore { std::vector<cv::Rect>*& g; std::vector<cv::Rect>* v;
                      ~Restore() { g = v; } } restore{g_textBoxes, keep};
-    cv::rectangle(im, b.r, b.go ? GO : (b.on ? ONB : OFFB), cv::FILLED);
-    cv::rectangle(im, b.r, EDGE, 1);
-    const double sc = b.go ? 0.62 : 0.52;
+    const bool hov = hovered(b.r);
+    if (b.kind == 1) {
+        // SIDEBAR ROW: no box unless selected or hovered; the selected one
+        // gets a lighter row and an accent bar, like any app's navigation.
+        if (b.on || hov) roundRect(im, b.r, 6, b.on ? SURFACE : HOVER);
+        if (b.on) roundRect(im, {b.r.x, b.r.y + 8, 4, b.r.height - 16}, 2, ACCENT);
+        std::string u = b.label;
+        if (!u.empty()) u[0] = char(std::toupper((unsigned char)u[0]));
+        int base = 0;
+        const cv::Size ts = cv::getTextSize(u, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
+        txt(im, u, b.r.x + 20, b.r.y + (b.r.height + ts.height) / 2, 0.56,
+            b.on ? INK : DIM, b.on ? 2 : 1);
+        return;
+    }
+    if (b.go) {
+        // THE ACTION: green when it can run, a flat grey when it cannot.
+        roundRect(im, b.r, 10, hov ? cv::Scalar(110, 190, 96) : GO);
+        const int cy = b.r.y + b.r.height / 2, cx = b.r.x + b.r.width / 2 - 34;
+        const std::vector<cv::Point> tri{{cx, cy - 11}, {cx, cy + 11}, {cx + 17, cy}};
+        cv::fillConvexPoly(im, tri, INK, cv::LINE_AA);
+        txt(im, b.label, cx + 28, cy + 9, 0.72, INK, 2);
+        return;
+    }
+    roundRect(im, b.r, 7, b.on ? (hov ? cv::Scalar(230, 166, 86) : ONB)
+                               : (hov ? HOVER : OFFB));
+    const double sc = 0.52;
     // KEEP THE FRONT OF A BUTTON LABEL. fit() defaults to keeping the TAIL,
     // which is right for a file path -- you want the filename -- and exactly
     // wrong for a two-state toggle, where the FIRST word is the state. The
@@ -124,7 +186,7 @@ void drawBtn(cv::Mat& im, const Btn& b) {
 void stepper(cv::Mat& im, std::vector<Btn>& bs, int x, int y, const char* label,
              const std::string& value, int idMinus, int idPlus,
              const char* hint = nullptr, int w = 130) {
-    txt(im, label, x, y - 10, 0.5, DIM);
+    section(im, label, x, y - 10);
     bs.push_back({cv::Rect(x, y, 34, 34), "-", idMinus});
     bs.push_back({cv::Rect(x + w, y, 34, 34), "+", idPlus});
     int base = 0;
@@ -356,7 +418,7 @@ int nWorldsOn(const bool* w) {
 
 void worldRow(cv::Mat& im, std::vector<Btn>& bs, int x, int y, int idBase,
               const bool* w) {
-    txt(im, "worlds", x, y - 12, 0.5, DIM);
+    section(im, "worlds", x, y - 12);
     for (int i = 0; i < NWORLDS; ++i)
         bs.push_back({cv::Rect(x + i * 126, y, 118, 36), WORLD_LABEL[i],
                       idBase + i, w[i]});
@@ -432,6 +494,14 @@ const char* SIM_TILT_LABEL[NSIM_TILT] = {"camera tilt: default (-20)", "camera t
                                          "camera tilt: -10 deg", "camera tilt: -20 deg",
                                          "camera tilt: -30 deg"};
 
+// WHERE THE CAMERA IS: the three pose sources (navcore VisualPose).
+const char* POSE_ARG[3]   = {"fixed", "vio", "slam"};
+const char* POSE_LABEL[3] = {"Fixed", "VIO", "ORB-SLAM3"};
+const char* POSE_HINT[3]  = {
+    "the map is built where the camera stands; move it and the map smears",
+    "DepthVio on the IR image + depth: this build, no other process",
+    "ORB-SLAM3 on the stereo IR pair: start kestrel-orbslam first"};
+
 struct Cfg {
     int mode = TRACK;
 
@@ -464,6 +534,9 @@ struct Cfg {
     int   simSource = 0;          // 0 raycaster, 1 live, 2 replay
     bool  simNear = false;        // --nearcell 0.10: the render-only near layer
     int   simTilt = 0;            // index into SIM_TILT; 0 = the sim's default
+    // WHERE THE CAMERA IS (--pose): 0 fixed, 1 vio, 2 slam -- navcore's
+    // VisualPose, the aircraft's own. Same meaning in the demo's live pane.
+    int   simPose = 0;
     int   replay = -1;
 
     // train
@@ -521,6 +594,7 @@ struct Cfg {
     // "take the GPU if it is there" and "I am relying on the GPU" are different
     // intentions, and only the second should refuse to start without one.
     int   dCuda = 0;
+    int   dPose = 0;            // 0 fixed, 1 vio, 2 slam (--pose)
     // -1 means "no model": fly the classical fallback, captioned as one.
     int   dModel = -1;
     bool  rDet = false, rProgress = false, rBaselines = false, rRandom = false;
@@ -588,6 +662,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.simTilt > 0 && c.simTilt < NSIM_TILT) {
                 a.push_back("--pitch"); a.push_back(SIM_TILT_ARG[c.simTilt]);
             }
+            if (c.simPose > 0) { a.push_back("--pose"); a.push_back(POSE_ARG[c.simPose]); }
             break;
         case DEMO:
             if (c.dSource == 1) a.push_back("--live");
@@ -601,6 +676,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.dNoPeople)  a.push_back("--no-people");
             if (c.dNoMirror)  a.push_back("--no-mirror");
             if (c.dNoEmitter) a.push_back("--no-emitter");
+            if (c.dPose > 0) { a.push_back("--pose"); a.push_back(POSE_ARG[c.dPose]); }
             if (c.dModel >= 0 && c.dModel < int(g_models.size())) {
                 a.push_back("--model"); a.push_back(g_models[c.dModel]);
             }
@@ -754,6 +830,7 @@ enum {
     ID_SIM_REPLAY = 310,  // +index
     ID_SIM_NEAR = 335,
     ID_SIM_TILT = 336,
+    ID_SIM_POSE = 340,    // +0..2
     ID_TRAIN_WM = 400, ID_TRAIN_WP, ID_TRAIN_SM, ID_TRAIN_SP,
     ID_TRAIN_STEREO, ID_TRAIN_CUDA, ID_TRAIN_INSTALL, ID_TRAIN_PYTHONS,
     ID_TRAIN_RESUME, ID_TRAIN_NOVETO, ID_TRAIN_EPM, ID_TRAIN_EPP, ID_TRAIN_VARY, ID_TRAIN_SVM, ID_TRAIN_SVP,
@@ -780,16 +857,17 @@ enum {
     ID_D_EXPORT,
     // A RANGE, like ID_SIM_REPLAY: one id per .onnx found, plus one for "none".
     ID_D_MODEL = 830,
+    ID_D_POSE = 840,      // +0..2
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                 const std::vector<TrackInput>& inputs) {
     const int x = 266;
-    txt(im, "object lock over recorded frames", x, 112, 0.62, INK, 1);
+    txt(im, "object lock over recorded frames", x, 112, 0.66, INK, 2);
     txt(im, "The tracker that runs on the aircraft, over frames you already have.",
         x, 136, 0.44, DIM);
 
-    txt(im, "input", x, 176, 0.5, DIM);
+    section(im, "input", x, 176);
     if (inputs.empty()) {
         txt(im, "nothing found in ./ , ./frames , ./captures", x, 206, 0.46, DIM);
         txt(im, "a folder of .png/.jpg is a sequence; a .mp4 needs a videoio build",
@@ -822,7 +900,7 @@ void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
 
 void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
-    txt(im, "path-planner baselines", x, 112, 0.62, INK, 1);
+    txt(im, "path-planner baselines", x, 112, 0.66, INK, 2);
     txt(im, "NINE classical planners through the SAME environment a learned policy",
         x, 136, 0.44, DIM);
     txt(im, "uses. Four optimise a goal nothing is scored on any more; five are",
@@ -832,7 +910,7 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 
     worldRow(im, bs, x, 206, ID_BW, c.bw);        // label 194, buttons 206-242
 
-    txt(im, "planners", x, 268, 0.5, DIM);
+    section(im, "planners", x, 268);
     for (int i = 0; i < NPOLICY; ++i)             // two rows, 280-314 and 320-354
         bs.push_back({cv::Rect(x + (i % 5) * 158, 280 + (i / 5) * 40, 150, 34),
                       POLICY_NAME[i], ID_BENCH_POL + i, c.bp[i]});
@@ -876,15 +954,15 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                const std::vector<std::string>& recs) {
     const int x = 266;
-    txt(im, "the demo -- four things at once", x, 112, 0.62, INK, 1);
+    txt(im, "the demo -- four things at once", x, 112, 0.66, INK, 2);
     txt(im, "The policy flying, the depth a real camera returns, the map built from",
-        x, 134, 0.44, DIM);
+        x, 144, 0.44, DIM);
     txt(im, "it, and people found in the camera image with a RANGE read off the depth",
-        x, 152, 0.44, DIM);
+        x, 162, 0.44, DIM);
     txt(im, "frame. Four threads, because the detector is the slowest stage.",
-        x, 170, 0.44, DIM);
+        x, 180, 0.44, DIM);
 
-    txt(im, "depth for the two live panes", x, 208, 0.5, DIM);
+    section(im, "depth for the two live panes", x, 208);
     const char* src[3] = {"Simulated raycaster", "Live D435i", "Replay a recording"};
     for (int i = 0; i < 3; ++i)
         bs.push_back({cv::Rect(x + i * 260, 220, 250, 38), src[i],
@@ -893,10 +971,18 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     // WHICH WORLD THE POLICY FLIES IN, and it is a single choice rather than
     // the multi-select the measuring panels use: a demo shows one thing at a
     // time and a checklist would imply otherwise.
-    txt(im, "world for the SIM pane", x, 292, 0.5, DIM);
+    section(im, "world for the SIM pane", x, 292);
     bs.push_back({cv::Rect(x, 304, 250, 38),
                   std::string("world: ") + DEMO_WORLD[c.dWorld], ID_D_WORLD, true});
     txt(im, "click to cycle", x, 358, 0.42, DIM);
+
+    // WHERE THE CAMERA IS for the live voxel pane (--pose): fixed, DepthVio,
+    // or ORB-SLAM3 through kestrel-orbslam. Only a real source is tracked.
+    section(im, "live pane position", x + 520, 292);
+    const char* poseShort[3] = {"Fixed", "VIO", "SLAM"};
+    for (int i = 0; i < 3; ++i)
+        bs.push_back({cv::Rect(x + 520 + i * 84, 304, 80, 38), poseShort[i],
+                      ID_D_POSE + i, c.dPose == i});
     stepper(im, bs, x + 300, 304, "pane px",
             std::to_string(DEMO_PANE[c.dPane]), ID_D_PANEM, ID_D_PANEP,
             "one of the four", 100);
@@ -933,13 +1019,13 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     // WHICH POLICY, and "none" is a real choice rather than the absence of one:
     // the pane is then captioned "flying freeM (classical)" and nobody can
     // come away thinking they watched the learned policy.
-    txt(im, "policy for the SIM pane", x, 478, 0.5, DIM);
+    section(im, "policy for the SIM pane", x, 486);
     {
         const int n = std::min<int>(3, int(g_models.size()));
-        bs.push_back({cv::Rect(x, 486, 180, 32), "none: freeM",
+        bs.push_back({cv::Rect(x, 494, 180, 32), "none: freeM",
                       ID_D_MODEL, c.dModel < 0});
         for (int i = 0; i < n; ++i)
-            bs.push_back({cv::Rect(x + 190 + i * 200, 486, 190, 32),
+            bs.push_back({cv::Rect(x + 190 + i * 200, 494, 190, 32),
                           fs::path(g_models[i]).filename().string(),
                           ID_D_MODEL + 1 + i, c.dModel == i});
     }
@@ -947,78 +1033,84 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     // BELOW the buttons, not beside them: at x+520 four lines of this length
     // ran 200 px off a 1060 px canvas, and gui --check caught it.
     txt(im, "cuda moves the POLICY and an --detector onnx onto the GPU; the default "
-            "HOG detector has none.", x, 536, 0.42, DIM);
+            "HOG detector has none.", x, 541, 0.42, DIM);
 
     if (c.dSource == 1) {
         txt(im, "librealsense loads at RUN time; with no camera the two live panes "
-                "fall back to the sim.", x, 554, 0.42, DIM);
+                "fall back to the sim.", x, 557, 0.42, DIM);
     } else if (c.dSource == 2 && recs.empty()) {
-        txt(im, "no .kdr recordings found in ./ or ./recordings", x, 554, 0.42, DIM);
+        txt(im, "no .kdr recordings found in ./ or ./recordings", x, 557, 0.42, DIM);
     } else {
         txt(im, "q quit, r restart. Every pane names what it is ACTUALLY showing.",
-            x, 554, 0.42, DIM);
+            x, 557, 0.42, DIM);
     }
 }
 
 void panelSim(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
               const std::vector<std::string>& recs) {
     const int x = 266;
-    txt(im, "live voxel sim", x, 112, 0.62, INK, 1);
-    txt(im, "The real map, planner and veto over depth. Runs in THIS process --",
-        x, 136, 0.44, DIM);
-    txt(im, "the same pipeline the aircraft flies (navcore), not a copy.",
-        x, 156, 0.44, DIM);
+    txt(im, "live voxel sim", x, 112, 0.66, INK, 2);
+    txt(im, "The real map, planner and veto over depth, in THIS process -- the same",
+        x, 142, 0.44, DIM);
+    txt(im, "pipeline the aircraft flies (navcore), not a copy.", x, 160, 0.44, DIM);
 
-    txt(im, "depth source", x, 200, 0.5, DIM);
-    const char* src[3] = {"Simulated raycaster", "Live D435i", "Replay a recording"};
+    // THREE CHOICES, one row each, as segmented controls: where the depth
+    // comes from, where the camera is, and how it is drawn.
+    section(im, "depth source", x, 194);
+    const char* src[3] = {"Simulated", "Live D435i", "Replay"};
     for (int i = 0; i < 3; ++i)
-        bs.push_back({cv::Rect(x, 212 + i * 46, 250, 38), src[i], ID_SIM_SRC + i,
+        bs.push_back({cv::Rect(x + i * 172, 204, 168, 36), src[i], ID_SIM_SRC + i,
                       c.simSource == i});
 
+    section(im, "camera position", x, 268);
+    for (int i = 0; i < 3; ++i)
+        bs.push_back({cv::Rect(x + i * 172, 278, 168, 36), POSE_LABEL[i], ID_SIM_POSE + i,
+                      c.simPose == i});
+    txt(im, POSE_HINT[c.simPose], x, 334, 0.42, DIM);
+
+    section(im, "display", x, 368);
     // OFF BY DEFAULT. The 0.10 m near layer is drawn but never planned on, and
     // its seam with the 0.25 m map put a round blind spot in the middle of the
     // first-person pane whenever a surface sat just past 2.2 m.
-    txt(im, "display", x + 290, 200, 0.5, DIM);
-    bs.push_back({cv::Rect(x + 290, 212, 300, 38),
+    bs.push_back({cv::Rect(x, 378, 252, 36),
                   c.simNear ? "0.10 m near layer: ON" : "0.10 m near layer: off",
                   ID_SIM_NEAR, c.simNear});
-    txt(im, "render only -- the planner never reads it,", x + 290, 272, 0.42, DIM);
-    txt(im, "and its seam blinds the centre past 2.2 m", x + 290, 292, 0.42, DIM);
     // The DEFAULT differs by source: the sim looks 20 deg down; a real camera's
     // tilt is measured by its IMU, and nothing is assumed.
-    bs.push_back({cv::Rect(x + 290, 306, 300, 38),
+    bs.push_back({cv::Rect(x + 260, 378, 252, 36),
                   c.simTilt == 0 && c.simSource != 0 ? "camera tilt: from its IMU"
                                                      : SIM_TILT_LABEL[c.simTilt],
                   ID_SIM_TILT, c.simTilt != 0});
+    txt(im, "the near layer is render only -- the planner never reads it", x, 432,
+        0.4, DIM);
 
     if (c.simSource == 1) {
-        txt(im, "librealsense is loaded at RUN time, so this build needs no SDK.",
-            x, 370, 0.42, DIM);
-        txt(im, "If it is missing the sim says where it looked.", x, 390, 0.42, DIM);
+        txt(im, "librealsense loads at RUN time, so this build needs no SDK;",
+            x, 470, 0.42, DIM);
+        txt(im, "if it is missing, the sim says where it looked.", x, 490, 0.42, DIM);
     } else if (c.simSource == 2) {
         if (recs.empty()) {
-            txt(im, "no .kdr files in ./ or ./recordings", x, 370, 0.44, DIM);
+            txt(im, "no .kdr files in ./ or ./recordings", x, 470, 0.44, DIM);
         } else {
-            int y = 366;
-            for (size_t i = 0; i < recs.size() && i < 4; ++i) {
-                bs.push_back({cv::Rect(x, y, 400, 34),
+            // Three at most, so the list cannot run into the key line below.
+            section(im, "recording", x, 452);
+            for (size_t i = 0; i < recs.size() && i < 3; ++i)
+                bs.push_back({cv::Rect(x + int(i) * 172, 462, 168, 34),
                               fs::path(recs[i]).filename().string(),
                               ID_SIM_REPLAY + int(i), c.replay == int(i)});
-                y += 40;
-            }
         }
     } else {
-        txt(im, "No camera needed. The raycaster is the control case: if the", x, 370, 0.42, DIM);
-        txt(im, "planner fails here, the sensor is not what is wrong.", x, 390, 0.42, DIM);
+        txt(im, "No camera needed. The raycaster is the control case: if the planner",
+            x, 470, 0.42, DIM);
+        txt(im, "fails here, the sensor is not what is wrong.", x, 490, 0.42, DIM);
     }
-    txt(im, "In the sim window:  space pause   v first-person / overlay   s save PNG",
+    txt(im, "In the sim window:  space pause   v view   s save PNG   m menu   q back",
         x, 540, 0.42, DIM);
-    txt(im, "                    m its own menu   q back to here", x, 560, 0.42, DIM);
 }
 
 void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
-    txt(im, "RL path-policy training", x, 106, 0.62, INK, 1);
+    txt(im, "RL path-policy training", x, 106, 0.66, INK, 2);
     // BESIDE THE TITLE, not buried in the switch grid. This decides what the
     // policy is being paid for, and every other control on the panel is a
     // detail by comparison. The blurb below runs to about x+400, so this sits
@@ -1158,7 +1250,7 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     // Fitting to it rather than trusting the text to be short is the fix for a
     // status line that ran straight under "Install the RL stack".
     const int col = 250;
-    txt(im, "python", x, 506, 0.5, DIM);
+    section(im, "python", x, 506);
     if (!g_py.probed) {
         txt(im, fit("not checked yet", col, 0.44, false), x, 524, 0.44, DIM);
     } else if (b && b->rl) {
@@ -1191,7 +1283,7 @@ void panelTrain(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 
 void panelWatch(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
-    txt(im, "watch the policy fly while it trains", x, 112, 0.62, INK, 1);
+    txt(im, "watch the policy fly while it trains", x, 112, 0.66, INK, 2);
     txt(im, "A grid of live episodes in the FIRST-PERSON VOXEL VIEW -- what the",
         x, 136, 0.44, DIM);
     txt(im, "aircraft believes it can see. Run this beside a training run.",
@@ -1241,7 +1333,7 @@ worldRow(im, bs, x, 208, ID_WW, c.ww);
 
 void panelEval(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
-    txt(im, "score a trained policy", x, 112, 0.62, INK, 1);
+    txt(im, "score a trained policy", x, 112, 0.66, INK, 2);
     txt(im, "The SAME columns `bench` reports the classical planners in, on",
         x, 136, 0.44, DIM);
     txt(im, "seeds held out from training. A comparison on new metrics is worth",
@@ -1340,7 +1432,7 @@ const int NFLAG_BTNS = int(sizeof FLAG_BTNS / sizeof *FLAG_BTNS);
 
 void panelReport(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
-    txt(im, "how it fails, as pictures", x, 106, 0.62, INK, 1);
+    txt(im, "how it fails, as pictures", x, 106, 0.66, INK, 2);
     txt(im, "Every other view here reports the policy as numbers, and a table "
             "cannot say", x, 128, 0.44, DIM);
     txt(im, "WHY. Six episodes came back as five rows all reading 'ran out of "
@@ -1423,19 +1515,41 @@ void panelReport(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
                 const std::vector<std::string>& recs, std::vector<Btn>& bs) {
     cv::Mat im(H, W, CV_8UC3, BG);
-    txt(im, "kestrel", 28, 48, 0.95, INK, 2);
-    txt(im, "one binary: object lock, planner baselines, the live voxel sim, RL training",
-        28, 74, 0.44, DIM);
+    // HEADER: the app's name, what it is, and which mode is open.
+    cv::rectangle(im, {0, 0, W, HEADER_H}, HEADER, cv::FILLED);
+    cv::line(im, {0, HEADER_H}, {W, HEADER_H}, EDGE, 1);
+    roundRect(im, {26, 22, 34, 34}, 8, ACCENT);                  // the mark
+    {
+        const std::vector<cv::Point> k{{35, 30}, {35, 48}, {40, 43}, {50, 48}, {44, 39}, {50, 30}};
+        cv::polylines(im, k, false, INK, 2, cv::LINE_AA);
+    }
+    txt(im, "kestrel", 72, 46, 0.95, INK, 2);
+    txt(im, "object lock, planner baselines, the live voxel sim, RL training",
+        74, 70, 0.44, DIM);
+    {
+        std::string m = MODE_NAME[c.mode];
+        for (char& ch : m) ch = char(std::toupper((unsigned char)ch));
+        int base = 0;
+        const cv::Size ts = cv::getTextSize(m, cv::FONT_HERSHEY_SIMPLEX, 0.46, 1, &base);
+        const cv::Rect pill(W - 28 - ts.width - 28, 30, ts.width + 28, 26);
+        roundRect(im, pill, 13, SURFACE);
+        txt(im, m, pill.x + 14, pill.y + 18, 0.46, INK, 1);
+    }
+
+    // SIDEBAR: navigation, then the action.
+    cv::rectangle(im, {0, HEADER_H + 1, SIDEBAR_W, H - HEADER_H - 1}, SIDEBAR, cv::FILLED);
+    cv::line(im, {SIDEBAR_W, HEADER_H + 1}, {SIDEBAR_W, H}, EDGE, 1);
 
     bs.clear();
-    for (int i = 0; i < NMODES; ++i)
-        // PITCH 48, NOT 54. runY is derived as 100 + NMODES*pitch + 16 and the
-        // refusal line sits 78 below it, so at 54 a seventh mode would put that
-        // line at y=572 -- through the command strip at 564. Deriving runY
-        // already stopped a button landing on RUN; this is the same arithmetic
-        // one row further down.
-        bs.push_back({cv::Rect(28, 100 + i * 48, 210, 42), MODE_NAME[i],
-                      ID_MODE + i, c.mode == i});
+    for (int i = 0; i < NMODES; ++i) {
+        // Derived, not constants: runY below is computed from the same
+        // numbers, which is what keeps a new mode from landing on RUN (it
+        // once did, and `gui --check` caught it).
+        Btn nb{cv::Rect(14, NAV_Y0 + i * NAV_PITCH, SIDEBAR_W - 28, 40), MODE_NAME[i],
+               ID_MODE + i, c.mode == i};
+        nb.kind = 1;
+        bs.push_back(nb);
+    }
 
     switch (c.mode) {
         case TRACK: panelTrack(im, bs, c, inputs); break;
@@ -1452,22 +1566,23 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
     // Below the LAST mode button, computed rather than a constant: adding the
     // fifth mode put a button straight through RUN, and `gui --check` caught it
     // on the first run. Derive it and it cannot happen again.
-    const int runY = 100 + NMODES * 48 + 16;
-    Btn runBtn{cv::Rect(28, runY, 210, 58), "RUN", ID_RUN};
+    const int runY = NAV_Y0 + NMODES * NAV_PITCH + 14;
+    Btn runBtn{cv::Rect(14, runY, SIDEBAR_W - 28, 54), "RUN", ID_RUN};
     runBtn.go = why.empty();
     bs.push_back(runBtn);
-    if (!why.empty()) txt(im, why, 28, runY + 78, 0.4, DIM);
-    txt(im, "q or esc  quit", 28, H - 26, 0.44, DIM);
+    if (!why.empty()) txt(im, why, 14, runY + 74, 0.4, cv::Scalar(90, 150, 230));
+    txt(im, "q / esc  quit", 20, H - 22, 0.42, DIM);
 
-    // The command strip. Not decoration: it is what RUN executes.
-    cv::rectangle(im, {266, H - 96, W - 294, 44}, {22, 22, 26}, cv::FILLED);
-    cv::rectangle(im, {266, H - 96, W - 294, 44}, EDGE, 1);
+    // The command strip, a console line. Not decoration: it is what RUN
+    // executes, and you can type it instead.
+    roundRect(im, {266, H - 98, W - 294, 48}, 8, CONSOLE);
+    txt(im, "$", 278, H - 68, 0.5, GO, 2);
     std::vector<std::string> tok{"kestrel", MODE_NAME[c.mode]};
     for (const std::string& a : buildArgs(c, inputs, recs)) tok.push_back(a);
     if (c.mode == TRACK && c.designate) tok.push_back("(+ --box from your click)");
     int dropped = 0;
     const std::vector<std::string> lines =
-        wrapCmd(tok, W - 318, 0.44, 2, &dropped);
+        wrapCmd(tok, W - 336, 0.44, 2, &dropped);
     {
         // The strip's own lines live INSIDE the strip by construction, so they
         // must not be measured against it -- the same reason drawBtn keeps a
@@ -1477,10 +1592,10 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
         struct Restore { std::vector<cv::Rect>*& g; std::vector<cv::Rect>* v;
                          ~Restore() { g = v; } } restore{g_textBoxes, keep};
         for (size_t i = 0; i < lines.size(); ++i)
-            txt(im, lines[i], 278, H - 78 + int(i) * 18, 0.44, INK);
+            txt(im, lines[i], 296, H - 78 + int(i) * 18, 0.44, INK);
     }
-    txt(im, "this is the command RUN executes -- you can type it instead",
-        266, H - 34, 0.4, DIM);
+    txt(im, "the command RUN executes -- you can type it instead",
+        268, H - 30, 0.4, DIM);
 
     for (const Btn& b : bs) drawBtn(im, b);
     return im;
@@ -1500,6 +1615,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     if (id >= ID_SIM_SRC && id < ID_SIM_SRC + 3) { c.simSource = id - ID_SIM_SRC; return; }
     if (id == ID_SIM_NEAR) { c.simNear = !c.simNear; return; }
     if (id == ID_SIM_TILT) { c.simTilt = (c.simTilt + 1) % NSIM_TILT; return; }
+    if (id >= ID_SIM_POSE && id < ID_SIM_POSE + 3) { c.simPose = id - ID_SIM_POSE; return; }
+    if (id >= ID_D_POSE && id < ID_D_POSE + 3) { c.dPose = id - ID_D_POSE; return; }
     if (id >= ID_SIM_REPLAY && id < ID_SIM_REPLAY + 20) {
         c.replay = id - ID_SIM_REPLAY; return;
     }
@@ -1889,7 +2006,7 @@ int check() {
                 for (const std::string& g : buildArgs(c, inputs, recs))
                     tok.push_back(g);
                 int dropped = 0;
-                wrapCmd(tok, W - 318, 0.44, 2, &dropped);
+                wrapCmd(tok, W - 336, 0.44, 2, &dropped);
                 if (dropped) {
                     std::printf("%s: command strip drops %d argument(s)\n",
                                 tag.c_str(), dropped);

@@ -53,6 +53,12 @@ text menu rather than dying. A build without OpenCV highgui does the same.
   kestrel sim [args...]
         the live voxel sim, running IN this process. Takes voxel_live's
         flags unchanged: --replay FILE.kdr, --live, --rs-check, --sim.
+        --pose fixed|vio|slam says WHERE THE CAMERA IS (the window's
+        "camera position" row): fixed builds the map where the camera
+        stands; vio tracks it with DepthVio on the IR image; slam with
+        ORB-SLAM3 through a running kestrel-orbslam (Linux; see
+        onboard/orbslam/README.md). In --sim the camera then moves (--move
+        E N U, m/s) and the plan pane shows the estimate's drift and lag.
 
   kestrel train [args...]
         RL training. This is the one command that leaves the process, and
@@ -396,6 +402,10 @@ columns as the classical ones, on seeds it never trained on.
                        kestrel demo --world maze       which world it flies in
                        kestrel demo --pane 640         bigger panes
                        kestrel demo --no-people        drop the detector pane
+                       kestrel demo --live --pose vio  the live voxel pane
+                                                       placed by DepthVio (or
+                                                       slam: ORB-SLAM3) instead
+                                                       of a fixed position
                        kestrel demo --shot PREFIX      every pane to PNG, with
                                                        no camera and no display
                        kestrel demo --check            assert the layout. Runs

@@ -25,9 +25,6 @@ add_executable(kestrel
   src/main.cpp
   # D435i stereo -> voxel map -> swept-volume plan (navcore's NavPipeline).
   src/voxel_nav.cpp
-  # External SLAM (kestrel-orbslam) over a local socket -- orbslam/README.md.
-  src/slam_link.cpp
-  src/slam_client.cpp
   src/world_model.cpp
   src/perception.cpp
   src/scheduler.cpp
@@ -224,7 +221,7 @@ if(BUILD_TESTS)
   # with a known wall, and the mission flying its plan. Needs no camera -- the
   # module takes any FrameSource, and the sim one has ground truth.
   kestrel_test(test_voxel_nav src/voxel_nav.cpp src/mission.cpp
-               src/nav_map.cpp src/world_model.cpp src/slam_link.cpp src/slam_client.cpp)
+               src/nav_map.cpp src/world_model.cpp)
   target_link_libraries(test_voxel_nav PRIVATE navcore)
 
   # DepthVio (navcore) against ground-truth trajectories in a textured room.
@@ -233,7 +230,7 @@ if(BUILD_TESTS)
 
   # SlamLink/SlamClient against a fake server; with KESTREL_ORBSLAM and
   # KESTREL_ORBVOC set, the real ORB-SLAM3 bridge on rendered stereo IR.
-  kestrel_test(test_slam_link src/slam_link.cpp src/slam_client.cpp)
+  kestrel_test(test_slam_link)
   target_link_libraries(test_slam_link PRIVATE navcore)
 
   # The OLD tracker -- the one perception.hpp still instantiates, and so the

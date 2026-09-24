@@ -41,12 +41,7 @@
 
 #include "frame_source.hpp"   // navcore
 #include "nav_pipeline.hpp"   // navcore
-#include "emitter_gate.hpp"   // navcore
-#include "vio.hpp"            // navcore
-#include "slam_anchor.hpp"
-#include "slam_client.hpp"
-#include "imu_sync.hpp"
-#include <map>
+#include "visual_pose.hpp"    // navcore
 #include "perception.hpp"
 
 class VoxelNavModule : public IPerceptionModule {
@@ -134,7 +129,7 @@ public:
         // (outdoors the sun swamps the dots anyway). Strobe: both, on
         // alternate frames, with DarkFrameGate picking the dark ones from the
         // image. live() uses Strobe when vio or slam is on, else On.
-        enum class Emitter { On, Off, Strobe };
+        using Emitter = sim::EmitterMode;
         Emitter emitter = Emitter::Strobe;
     };
 
@@ -158,15 +153,10 @@ public:
     const sim::NavPipeline& pipeline() const { return nav_; }
     const sim::FrameSource* source()   const { return src_.get(); }
     int resets() const { return resets_; }   // vantages started, for telemetry
-    const sim::DepthVio& vio() const { return vio_; }
+    const sim::VisualPose& visual() const { return visual_; }
 
 private:
-    void runVio(const cv::Mat& depth, const sim::PoseHint& hint, const WorldState& s,
-                WorldModel& wm);
-    void runSlam(const sim::PoseHint& hint, const WorldState& s, WorldModel& wm);
     sim::CamPose attitudeFor(const sim::PoseHint& hint, const WorldState& s) const;
-    void publishVisual(bool valid, float e, float n, float u, float yawDeg, int tracked,
-                       int resets, WorldModel& wm);
 
     std::unique_ptr<sim::FrameSource> src_;
     Params            p_;
@@ -174,24 +164,7 @@ private:
     bool              still_ = false;        // integrating into the current map
     bool              mapInit_ = false;      // persistMap: the one map exists
     int               resets_ = 0;
-    sim::DepthVio     vio_;
-    double            vioPrevT_ = -1.0;
-    float             vioPrevE_ = 0.f, vioPrevN_ = 0.f, vioVe_ = 0.f, vioVn_ = 0.f;
-    int               vioLost_ = 0;
-    sim::DarkFrameGate gate_;
-    bool              dotFree_ = true;       // this frame may be tracked
-    // SLAM
-    std::unique_ptr<SlamClient> slam_;
-    ImuSync           imuSync_;
-    std::vector<slamlink::ImuSample> slamImu_;
-    struct SlamCtx { sim::CamPose att; float fcYaw; };
-    std::map<uint32_t, SlamCtx> slamCtx_;   // seq -> attitude at capture
-    SlamAnchor        anchor_;
-    int32_t           slamMap_ = -1;
-    uint32_t          slamChanges_ = 0;
-    int               visResets_ = 0;
-    bool              haveLast_ = false;
-    float             lastE_ = 0, lastN_ = 0, lastU_ = 0, lastYaw_ = 0;
-    double            lastSlamS_ = 0.0;
-    bool              warnedStereo_ = false;
+    // WHERE THE CAMERA IS, when vio or slam is on -- navcore's VisualPose,
+    // the same object voxel_live and the demo run.
+    sim::VisualPose   visual_;
 };

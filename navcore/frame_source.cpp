@@ -14,7 +14,32 @@ bool SimFrameSource::next(cv::Mat& depth, PoseHint& hint) {
     hint.valid = true;              // the sim knows exactly where it was
     hint.attitudeOnly = false;
     hint.pose = pose_;
+    if (irOn_) {
+        irL_ = cam_.renderIR(w_, pose_);
+        if (irRight_) {
+            // The right imager: the same attitude, the baseline along the
+            // camera's own +x (camToWorld is the one rotation definition).
+            float dx, dy, dz;
+            DepthCamera::camToWorld(pose_, 1.f, 0.f, 0.f, dx, dy, dz);
+            CamPose r = pose_;
+            const float b = cam_.params().baselineM;
+            r.e += dx * b; r.n += dy * b; r.u += dz * b;
+            irR_ = cam_.renderIR(w_, r);
+        }
+    }
     return !depth.empty();
+}
+
+bool SimFrameSource::intensity(cv::Mat& out) const {
+    if (!irOn_ || irL_.empty()) return false;
+    out = irL_.clone();
+    return true;
+}
+
+bool SimFrameSource::intensityRight(cv::Mat& out) const {
+    if (!irOn_ || !irRight_ || irR_.empty()) return false;
+    out = irR_.clone();
+    return true;
 }
 
 bool ReplayFrameSource::open(const std::string& path, std::string* err) {

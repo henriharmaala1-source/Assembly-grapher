@@ -152,7 +152,7 @@ The survey of what others run on a D435i (VINS-Fusion, Basalt, OpenVINS, ORB-SLA
   - With mapping during legs it covered 57 m and 59 cells, against the per-stop baseline's 38.5 m and 38.
   - There were no collisions.
   - Final error was 0.1–1.5 m.
-- **Losses happen in fast turns in place.** A jump guard was needed: before it, 3 of 8 runs ended 10–19 m off after a loss moved the SLAM frame under the estimate. `mission.max_yaw_stick` caps the turn rate.
+- **Losses happen in fast turns in place.** A jump guard was needed: before it, 3 of 8 runs ended 10–19 m off after a loss moved the SLAM frame under the estimate. Capping the turn onto a leg at 0.4 stick (`mission.max_yaw_stick`, now the default with VIO or SLAM on) halved the frames lost; with it, mapping during legs reached 61 m and 67 cells, the best of any arm measured, with a worst error of 0.57 m.
 - 424×240 is too coarse for it: ORB-SLAM3's stereo start wants more than 500 features with depth.
 
 ### 4.4 Found while doing this

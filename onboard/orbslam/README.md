@@ -98,6 +98,7 @@ on 4 cores. Raw: `../docs/orbslam_sweep_2026-09-24.txt`.
 | DepthVio, mapping during legs | 59.9 m | 64 | 0.7-5.7 % | 0 |
 | **ORB-SLAM3**, stops only | 48.5 m | 36 | 0.01-1.07 m | 0 |
 | **ORB-SLAM3**, mapping during legs | 57.2 m | 59 | 0.11-1.46 m | 0 |
+| **ORB-SLAM3**, mapping during legs, turns capped at 0.4 | **61.2 m** | **67** | 0.14-0.57 m | 0 |
 
 What the traces show, and what was done about it:
 
@@ -113,11 +114,15 @@ What the traces show, and what was done about it:
 - The harness keeps flying legs on the frozen estimate while SLAM is lost; on
   the aircraft `vioLocalEstimate` drops the estimate and the mission stops, so
   this is the pessimistic case.
-- Turn rate: `mission.max_yaw_stick` caps the turn onto a leg. Its effect is
-  measured below when the run completes.
+- **Slowing the turns fixes most of it.** With the turn onto a leg capped at
+  0.4 stick (`mission.max_yaw_stick`), frames lost fell from 644 to 303 over
+  the eight runs and six runs lost none (two before). `kestrel` now applies
+  that cap by default whenever VIO or SLAM is on. One capped run (world 13,
+  stops only) still ended 1.3 m off without a single lost frame, then stuck
+  early; not yet explained.
 
 So: as accurate as the drift-free ideal when tracking (0.01-0.5 m over 60 m),
-with losses concentrated in fast turns -- slow the turns.
+with losses concentrated in fast turns -- and the turns are now slowed.
 
 Not known until it flies: real IR (auto-exposure, blur, a misbehaving strobe),
 the Pi 5's frame rate with the voxel pipeline running beside it, and latency

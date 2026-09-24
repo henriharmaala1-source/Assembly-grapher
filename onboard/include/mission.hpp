@@ -50,7 +50,9 @@ public:
         // Cap on the yaw stick when TURNING ONTO a leg ([0,1]). 1 = none. A
         // visual tracker (VIO, SLAM) loses its features in a fast turn --
         // measured in test_voxel_nav's closed loop with ORB-SLAM3 -- and the
-        // turn-in-place is where the mission turns fastest.
+        // turn-in-place is where the mission turns fastest. main sets 0.4 when
+        // VIO or SLAM is on (measured: half the lost frames) unless the config
+        // chose a cap of its own.
         float maxYawStick    = 1.0f;
         float hFovDeg        = 60.f;   // camera h-FoV: corridor offset -> bearing
         float corridorStaleSec = 0.8f; // corridor older than this = blind (stop)

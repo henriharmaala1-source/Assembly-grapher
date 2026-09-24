@@ -298,6 +298,16 @@ int main(int argc, char** argv) {
                                           parser.get<bool>("voxel-vio-fc"));
         vioToFc            = (vp.vio || vp.slam) &&
                              (tune.mission.voxVioToFc || parser.get<bool>("voxel-vio-fc"));
+        // A VISUAL TRACKER LOSES ITSELF IN FAST TURNS: every ORB-SLAM3 loss in
+        // the closed loop began in a turn in place, and capping that turn at
+        // 0.4 stick halved the frames lost and left 6 of 8 runs with none
+        // (onboard/docs/orbslam_sweep_2026-09-24.txt). So it is the default
+        // whenever one is on; a config that sets its own cap (< 1) keeps it.
+        if ((vp.vio || vp.slam) && tune.mission.maxYawStick >= 0.999f) {
+            tune.mission.maxYawStick = 0.4f;
+            std::printf("[voxel] visual tracker on: turn-onto-leg yaw capped at 0.4 stick "
+                        "(mission.max_yaw_stick)\n");
+        }
         const std::string em = tune.mission.voxEmitter;
         vp.emitter = em == "off" ? VoxelNavModule::Params::Emitter::Off
                    : em == "on"  ? VoxelNavModule::Params::Emitter::On

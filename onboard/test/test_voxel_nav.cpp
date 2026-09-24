@@ -696,6 +696,7 @@ int main() {
         std::unique_ptr<SlamClient> slamCli;
         SlamAnchor slamAnchor;
         int32_t slamMap = -1, slamPrevState = -99;
+        uint32_t slamPrevChanges = 0;
         int slamMaps = 0;
         const std::string slamSock = "/tmp/kestrel-voxslam-" + std::to_string(::getpid()) + ".sock";
         if (useSlam) {
@@ -781,11 +782,14 @@ int main() {
                 ++vioFrames;
                 const bool okT = got && (rep.state == slamlink::kOk || rep.state == slamlink::kOkKlt);
                 if (got && vioFrames > 1) vioMs += rep.ms;
-                if (std::getenv("VOXTEST_SLAMTRACE") && got && rep.state != slamPrevState)
-                    std::printf("   t=%.2f slam state %d map %d tracked %d  phase %s  "
-                                "at (%.2f,%.2f) yaw %.1f v %.2f\n", t, rep.state, rep.mapId,
-                                rep.tracked, wm.snapshot().missionPhase.c_str(), truth.e,
-                                truth.n, truth.yawDeg, v);
+                if (std::getenv("VOXTEST_SLAMTRACE") && got &&
+                    (rep.state != slamPrevState || rep.mapChanges != slamPrevChanges))
+                    std::printf("   t=%.2f slam state %d map %d changes %u tracked %d  phase %s  "
+                                "at (%.2f,%.2f) yaw %.1f v %.2f  err %.2f\n", t, rep.state,
+                                rep.mapId, rep.mapChanges, rep.tracked,
+                                wm.snapshot().missionPhase.c_str(), truth.e, truth.n,
+                                truth.yawDeg, v, std::hypot(errE, errN));
+                if (got) slamPrevChanges = rep.mapChanges;
                 if (got) slamPrevState = rep.state;
                 if (!okT) {
                     ++vioLost;                   // the estimate holds its last error

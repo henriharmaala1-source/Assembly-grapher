@@ -27,7 +27,9 @@
 cmake_minimum_required(VERSION 3.16)
 
 if(NOT TARGET navcore)
-  find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+  # video (pyramidal LK) is for vio.cpp. It ships in the Pi's apt OpenCV and
+  # in the Windows prebuilt, so the core still builds everywhere it did.
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc video)
 
   add_library(navcore STATIC
     voxel_world.cpp
@@ -42,7 +44,8 @@ if(NOT TARGET navcore)
     scan_match.cpp
     depth_vis.cpp
     nav_pipeline.cpp
-    footage.cpp)
+    footage.cpp
+    vio.cpp)
 
   target_compile_features(navcore PUBLIC cxx_std_17)
   # PUBLIC, so anything that links navcore finds its headers by basename --

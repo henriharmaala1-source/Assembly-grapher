@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -146,6 +147,24 @@ int main() {
         expectFrame("OBSTACLE_DISTANCE 72 bins from the nose", c,
                     MSG_OBSTACLE_DISTANCE, p,
                     "fda70000072abf4a010040e20100000000005e019001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffb004ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff84031400b80b00000000a040000000000ce4df");
+    }
+    {
+        // VISION_POSITION_ESTIMATE with the v2 extensions, golden from
+        // pymavlink (common v2.0): usec 123456, NED x 3 y -1.5 z -2 (2 m UP),
+        // roll 0.05 pitch -0.1 yaw 0.5 rad, covariance[0] NaN = unknown, reset
+        // counter 9. The VIO path into EKF3; the counter is what tells the EKF
+        // a jump is a jump. Laid out as MavlinkBackend::feedVisionPose writes it.
+        Codec c = fresh();
+        Payload p;
+        p.u64(123456);
+        p.f32(3.f); p.f32(-1.5f); p.f32(-2.f);
+        p.f32(0.05f); p.f32(-0.1f); p.f32(0.5f);
+        p.f32(std::numeric_limits<float>::quiet_NaN());
+        for (int i = 1; i < 21; ++i) p.f32(0.f);
+        p.u8(9);
+        expectFrame("VISION_POSITION_ESTIMATE + covariance + reset_counter", c,
+                    MSG_VISION_POSITION_ESTIMATE, p,
+                    "fd750000072abf66000040e2010000000000000040400000c0bf000000c0cdcc4c3dcdccccbd0000003f0000c07f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000094e8f");
     }
     {
         // The truncation case, and the reason it has its own test: channels

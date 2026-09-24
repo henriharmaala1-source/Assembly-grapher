@@ -195,7 +195,9 @@ int main(int argc, char** argv) {
         "{voxel          | false | D435i stereo -> voxel map -> swept-volume plan; the mission flies it (nav.use_voxel) }"
         "{voxel-width    | 848   | D435i depth width }"
         "{voxel-height   | 480   | D435i depth height }"
-        "{voxel-fps      | 15    | D435i depth rate }"
+        "{voxel-fps      | 15    | D435i depth rate (30 with --voxel-vio: VIO gets every other frame) }"
+        "{voxel-vio      | false | visual odometry on the D435i IR (emitter strobes); the displacement source when there is no other (nav.vox_vio) }"
+        "{voxel-vio-fc   | false | also feed that VIO to the FC's EKF3 as ExternalNav, so it can hold position on it (nav.vox_vio_to_fc) }"
         "{depth-backend  | midas | midas|dav2 }"
         "{detect-model   |       | ONNX YOLOv8 model (enables detect) }"
         "{detect-labels  | drone,bird | comma-separated class labels }"
@@ -279,6 +281,7 @@ int main(int argc, char** argv) {
     // and never the fly loop. --voxel both starts it and tells the mission to
     // fly its plan; a voxel layer nobody acts on would be a display.
     std::unique_ptr<VoxelNavModule> voxnav;
+    bool vioToFc = false;
     if (parser.get<bool>("voxel")) {
         VoxelNavModule::Params vp;
         vp.stillSpeedMs = tune.mission.settleSpeedMs;
@@ -287,6 +290,10 @@ int main(int argc, char** argv) {
         vp.nav.subpixelPx = tune.mission.voxSubpixelPx;   // measured, not assumed
         vp.persistMap      = tune.mission.voxPersistMap;
         vp.integrateMoving = tune.mission.voxIntegrateMoving;
+        vp.vio             = tune.mission.voxVio || parser.get<bool>("voxel-vio") ||
+                             parser.get<bool>("voxel-vio-fc");
+        vioToFc            = vp.vio && (tune.mission.voxVioToFc ||
+                                        parser.get<bool>("voxel-vio-fc"));
         std::string err;
         voxnav = VoxelNavModule::live(vp, parser.get<int>("voxel-width"),
                                       parser.get<int>("voxel-height"),
@@ -296,6 +303,10 @@ int main(int argc, char** argv) {
             tune.mission.useVoxel = true;
             std::printf("[voxel] D435i -> voxel -> plan ON (%s); the mission flies its plan\n",
                         voxnav->source()->name());
+            if (vp.vio)
+                std::printf("[voxel] VIO ON: displacement source when the Pi estimate "
+                            "and FC flow are both absent%s\n",
+                            vioToFc ? "; FED to the FC as ExternalNav" : "");
         } else {
             // Not silently: a flag that was asked for and did nothing reads,
             // in the air, exactly like a planner that saw nothing.
@@ -470,6 +481,17 @@ int main(int argc, char** argv) {
             const WorldState ps = wm.snapshot();
             if (ps.voxProxN > 0)
                 fcLink.proximity(ps.voxProx, ps.voxProxN, ps.voxProxStampS);
+            // VIO into EKF3, VALID frames only: a coasting pose is a guess, and
+            // an EKF fed guesses as measurements is the failure this avoids.
+            if (vioToFc && ps.vioValid) {
+                VisionOdom v;
+                v.e = ps.vioPe; v.n = ps.vioPn; v.u = ps.vioPu;
+                v.ve = ps.vioVe; v.vn = ps.vioVn;
+                v.rollDeg = ps.vehRollDeg; v.pitchDeg = ps.vehPitchDeg;
+                v.yawDeg = ps.vioYawDeg;
+                v.resets = ps.vioResets;
+                fcLink.vision(v, ps.vioStampS);
+            }
         }
 
         // ---- target designation: mouse click (display) or AUX switch (in-flight).
@@ -542,8 +564,12 @@ int main(int argc, char** argv) {
         // GPS fix only), so without this the mission hovers in SETTLE(no-est)
         // for ever. The FC's own flow-aided position is the displacement, when
         // EKF3 vouches for it -- see fc_odometry.hpp.
-        if (!es.valid && haveTel)
-            wm.with([&](WorldState& s) { fcLocalEstimate(t, monoNowS(), s); });
+        // And with neither, VIO from the voxel layer (fc_odometry.hpp).
+        if (!es.valid)
+            wm.with([&](WorldState& s) {
+                if (!(haveTel && fcLocalEstimate(t, monoNowS(), s)))
+                    vioLocalEstimate(monoNowS(), s);
+            });
 
         // Single control arbiter: safety layers (failsafe → iNAV RTH; obstacle →
         // HOLD) then the active mode module. Writes opMode/behavior/modeReason

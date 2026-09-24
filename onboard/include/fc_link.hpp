@@ -63,6 +63,12 @@ public:
     // picture of the world. Counted, so a log can show it was really sent.
     void proximity(const float* distM, int n, double stampS);
     long proximitySent() const { return proxSent_.load(); }
+    // VISUAL ODOMETRY for the FC's estimator. The same contract as proximity:
+    // the LATEST pose, at <= 30 Hz, once, and only while fresher than
+    // visionStaleSec -- a stale pose is not repeated; EKF3 then times the
+    // source out and falls back, which is the correct failure.
+    void vision(const VisionOdom& v, double stampS);
+    long visionSent() const { return visSent_.load(); }
 
 private:
     void loop_();
@@ -83,10 +89,14 @@ private:
     int        proxN_    = 0;
     double     proxStampS_ = -1e9, proxSentStampS_ = -1e9, proxLastTxS_ = -1e9;
     float      proxStaleSec_ = 0.5f;
+    VisionOdom vis_{};
+    double     visStampS_ = -1e9, visSentStampS_ = -1e9, visLastTxS_ = -1e9;
+    float      visStaleSec_ = 0.2f;
     FcTelemetry tel_{};
 
     std::atomic<bool> run_{false};
     std::atomic<long> framesSent_{0};
     std::atomic<long> proxSent_{0};
+    std::atomic<long> visSent_{0};
     std::thread       thr_;
 };

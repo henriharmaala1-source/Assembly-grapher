@@ -39,22 +39,34 @@
 
 namespace rsdyn {
 
-// Enum values from rs_sensor.h / rs_option.h / rs_types.h. These are ABI, not
-// implementation: changing them would break every compiled program using the
-// library, which is why they can be written down.
+// Enum values from rs_sensor.h / rs_option.h / rs_types.h / rs_frame.h. These
+// are ABI, not implementation: changing them would break every compiled
+// program using the library, which is why they can be written down.
+//
+// WRITE THEM DOWN FROM THE HEADER, NOT FROM MEMORY. Three of these were wrong
+// until 2026-09-24 and each failed silently: the option was 12 (VISUAL_PRESET,
+// so "emitter on" selected a depth preset), the depth-sensor extension was 12
+// (DEPTH_FRAME, so no sensor ever matched: the emitter was never set and the
+// depth scale was never read -- the 0.001 default happens to be the D435i's),
+// and the USB-type info was 12 (FIRMWARE_UPDATE_ID). All re-checked against
+// librealsense v2.55.1 include/librealsense2/h/.
 enum : int {
-    STREAM_DEPTH    = 1,
+    STREAM_DEPTH    = 1,             // rs2_stream
     STREAM_INFRARED = 3,
     STREAM_GYRO     = 5,
     STREAM_ACCEL    = 6,
-    FORMAT_Z16      = 1,
+    FORMAT_Z16      = 1,             // rs2_format
     FORMAT_Y8       = 9,
     FORMAT_MOTION_XYZ32F = 16,
-    OPTION_EMITTER_ENABLED = 12,
-    CAMERA_INFO_NAME = 0,
+    OPTION_EMITTER_ENABLED = 18,     // rs2_option
+    OPTION_EMITTER_ON_OFF  = 46,     // alternate emitter on/off every frame
+    EXTENSION_DEPTH_SENSOR = 7,      // rs2_extension
+    METADATA_LASER_POWER_MODE = 12,  // rs2_frame_metadata_value: 0 off, 1 on
+    METADATA_EMITTER_MODE     = 29,  //   newer firmware: 0 off, >0 some emitter
+    CAMERA_INFO_NAME = 0,            // rs2_camera_info
     CAMERA_INFO_SERIAL = 1,
     CAMERA_INFO_FIRMWARE = 2,
-    CAMERA_INFO_USB_TYPE = 12,
+    CAMERA_INFO_USB_TYPE = 9,
 };
 
 struct Intrinsics {          // layout of rs2_intrinsics, verified against the header
@@ -117,6 +129,15 @@ public:
     Intrinsics intrinsics() const { return intr_; }
     float      baselineM() const { return baseline_; }
     bool       setEmitter(bool on);
+    // STROBE: emitter on for one frame, off for the next, and so on. Depth
+    // keeps the projector's texture on half the frames; the other half give
+    // an IR image with no dots in it, which is the only kind visual odometry
+    // can track (the dots move WITH the camera and read as zero motion).
+    bool       setEmitterStrobe(bool on);
+    // Emitter state of the last IR frame delivered, from frame metadata:
+    // 1 lit, 0 dark, -1 unknown (metadata unsupported -- on Linux it needs
+    // the patched kernel module or the RSUSB backend).
+    int        lastIrEmitter() const { return lastIrEmitter_; }
     std::string deviceInfo(int cameraInfo) const;
 
     const std::string& error() const { return err_; }
@@ -127,6 +148,7 @@ private:
     void* profile_ = nullptr;
     void* sensor_ = nullptr;
     bool  haveIR_ = false, haveIMU_ = false;
+    int   lastIrEmitter_ = -1;
     float depthScale_ = 0.001f;
     float baseline_ = 0.05f;
     Intrinsics intr_;

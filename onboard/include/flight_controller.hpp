@@ -59,6 +59,12 @@ public:
     // bearing, clockwise from the nose, < 0 unknown. False where the backend
     // cannot carry it (MSP has no such message; the sim has no consumer).
     virtual bool sendProximity(const float* /*distM*/, int /*n*/) { return false; }
+    // VISUAL ODOMETRY into the FC's OWN estimator (EKF3 ExternalNav): a
+    // measurement source it fuses, not a second filter's output. Local ENU
+    // metres from where VIO started; resets counts discontinuities, which the
+    // EKF must be told about or it reads a jump as motion. False where the
+    // backend cannot carry it.
+    virtual bool sendVisionOdometry(const VisionOdom& /*v*/) { return false; }
 
     // Control blending:
     //   total autonomy (default) — sendControl() writes absolute sticks from

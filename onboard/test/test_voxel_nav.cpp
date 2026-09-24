@@ -34,9 +34,11 @@
 #include <string>
 #include <vector>
 
+#include "fc_odometry.hpp"
 #include "frame_source.hpp"
 #include "mission.hpp"
 #include "voxel_nav.hpp"
+#include "vio.hpp"
 #include "voxel_world.hpp"
 
 static int fails = 0;
@@ -77,12 +79,55 @@ private:
     const sim::CamPose* truth_;
 };
 
+// The D435i with its emitter STROBING, as VoxelNavModule sees it with vio on:
+// depth, the left IR image, and a camera-IMU attitude whose yaw has its OWN
+// zero (a gyro integral, not a compass). Odd frames are LIT: their IR carries
+// a dot pattern fixed to the camera, which a tracker must never be fed -- it
+// reads as zero motion.
+class StrobedSource : public sim::FrameSource {
+public:
+    StrobedSource(const sim::VoxelWorld& w, const sim::CamParams& p,
+                  const sim::CamPose* truth, float gyroZeroDeg)
+        : w_(w), cam_(p), truth_(truth), gyroZero_(gyroZeroDeg) {}
+    const char* name() const override { return "sim-strobed"; }
+    bool ok() const override { return true; }
+    const sim::CamParams& params() const override { return cam_.params(); }
+    const sim::DepthCamera& camera() const override { return cam_; }
+    bool next(cv::Mat& depth, sim::PoseHint& hint) override {
+        depth = cam_.renderTruth(w_, *truth_);
+        ir_ = cam_.renderIR(w_, *truth_);
+        lit_ = (frames % 2) == 1;
+        if (lit_)                                   // the projector's dots
+            for (int v = 3; v < ir_.rows; v += 7)
+                for (int u = (v * 3) % 7; u < ir_.cols; u += 7) ir_.at<uchar>(v, u) = 255;
+        hint.valid = true;
+        hint.attitudeOnly = true;
+        hint.pose = sim::CamPose{};
+        hint.pose.rollDeg  = truth_->rollDeg;
+        hint.pose.pitchDeg = truth_->pitchDeg;
+        hint.pose.yawDeg   = truth_->yawDeg + gyroZero_;
+        ++frames;
+        return true;
+    }
+    bool intensity(cv::Mat& out) const override { out = ir_.clone(); return !ir_.empty(); }
+    int  intensityEmitter() const override { return lit_ ? 1 : 0; }
+    int frames = 0;
+private:
+    const sim::VoxelWorld& w_;
+    sim::DepthCamera cam_;
+    const sim::CamPose* truth_;
+    float gyroZero_;
+    cv::Mat ir_;
+    bool lit_ = false;
+};
+
 sim::CamParams d435i() {
     // The D435i's depth geometry: 87 deg horizontal, 50 mm baseline. 424x240
     // rather than 848x480 so the suite stays quick; fineMapParams derives the
     // honest range from THIS camera, so the map is configured for it.
     sim::CamParams p;
     p.width = 424; p.height = 240; p.hfovDeg = 87.f; p.baselineM = 0.05f;
+    p.irBandLimit = true;   // the IR VIO tracks: band-limited (depth_camera.hpp)
     // VOXTEST_FULLRES=1: the resolution onboard actually runs (848x480), which
     // halves stereo error at range and lengthens the honest marking range.
     if (std::getenv("VOXTEST_FULLRES")) { p.width = 848; p.height = 480; }
@@ -171,6 +216,12 @@ int main() {
         sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
         sim::CamPose truth; truth.e = 8.f; truth.n = 4.f; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
+        sim::DepthCamera vioCam(cp);
+        sim::DepthVio vio;
+        vio.init(vioCam);
+        vio.reset(truth);                        // the start pose is known
+        int vioFrames = 0, vioLost = 0;
+        double vioMs = 0.0;
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
         CHECK(mod.isReady());
         WorldModel wm;
@@ -214,6 +265,12 @@ int main() {
         box(w, 6.5f, 6.0f, 9.5f, 6.4f, 4.f, kWallTex);
         sim::CamPose truth; truth.e = 8.f; truth.n = 4.f; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
+        sim::DepthCamera vioCam(cp);
+        sim::DepthVio vio;
+        vio.init(vioCam);
+        vio.reset(truth);                        // the start pose is known
+        int vioFrames = 0, vioLost = 0;
+        double vioMs = 0.0;
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
         WorldModel wm;
         wm.with([](WorldState& s) { s = stillState(); });
@@ -273,6 +330,62 @@ int main() {
         std::vector<float> pt = sim::obstacleDistanceFromFrame(d, cam.camera(), tilt);
         std::printf("  tilted -20: nose %.2f m\n", pt[0]);
         CHECK(std::fabs(pt[0] - 2.0f) < 0.25f);
+    }
+
+    // ---------------------------------------------------------------- 2c
+    std::printf("VIO wiring: strobed emitter, gyro yaw with its own zero\n");
+    {
+        // The module's own path, not DepthVio called directly: lit frames
+        // skipped, attitude plumbed from the camera IMU, the VIO frame's
+        // heading taken from the FC compass, and the estimate read back the
+        // way main reads it (vioLocalEstimate).
+        sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
+        std::mt19937 prng(3);
+        std::uniform_real_distribution<float> PU(2.f, 14.f);
+        for (int i = 0; i < 25; ++i) {
+            const float x = PU(prng), y = PU(prng);
+            if (std::fabs(x - 5.5f) < 1.5f && y > 3.f && y < 11.f) continue;  // the path
+            box(w, x - 0.2f, y - 0.2f, x + 0.2f, y + 0.2f, 4.f, kPillarTex);
+        }
+        const float hdg = 25.f;                      // flying 25 deg east of North
+        sim::CamPose truth; truth.e = 4.f; truth.n = 4.f; truth.u = 1.5f;
+        truth.yawDeg = hdg; truth.pitchDeg = -15.f;
+        auto* src = new StrobedSource(w, cp, &truth, /*gyro zero*/ 137.f);
+        VoxelNavModule::Params vq = vp;
+        vq.vio = true;
+        VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vq);
+        WorldModel wm;
+        const float dt = 1.f / 30.f, v = 1.f;
+        const float se = std::sin(hdg * kPi / 180.f), cn = std::cos(hdg * kPi / 180.f);
+        int valid = 0, lit = 0;
+        for (int i = 0; i < 180; ++i) {              // 6 s, 6 m, 30 fps strobed
+            wm.with([&](WorldState& s) {
+                s.tickMonoS = monoNowS(); s.vehYawDeg = hdg;   // the FC compass
+                s.vehGroundspeed = v; s.vehAltM = truth.u;
+            });
+            mod.run(cv::Mat(), wm);
+            if (src->intensityEmitter() == 1) ++lit;
+            else if (wm.snapshot().vioValid) ++valid;
+            truth.e += se * v * dt; truth.n += cn * v * dt;
+        }
+        WorldState s = wm.snapshot();
+        const float de = s.vioPe - (truth.e - se * v * dt - 4.f);
+        const float dn = s.vioPn - (truth.n - cn * v * dt - 4.f);
+        const float path = 179.f * v * dt;
+        std::printf("  %d dark frames valid of %d, %d lit skipped; VIO (%.2f, %.2f) vs "
+                    "truth (%.2f, %.2f): error %.2f m over %.1f m, yaw %.1f\n",
+                    valid, 180 - lit, lit, s.vioPe, s.vioPn, truth.e - se * v * dt - 4.f,
+                    truth.n - cn * v * dt - 4.f, std::hypot(de, dn), path, s.vioYawDeg);
+        CHECK(lit == 90);
+        CHECK(valid >= 85);                          // the dark half, all but a start
+        CHECK(std::hypot(de, dn) < 0.05f * path);    // under 5 % with the dots present
+        float yawErr = s.vioYawDeg - hdg;
+        while (yawErr > 180.f) yawErr -= 360.f;
+        while (yawErr <= -180.f) yawErr += 360.f;
+        CHECK(std::fabs(yawErr) < 3.f);              // compass frame, not gyro zero
+        s.tickMonoS = monoNowS();
+        CHECK(vioLocalEstimate(monoNowS(), s) && s.estValid);
+        CHECK(std::fabs(s.estPn - s.vioPn) < 1e-6f);   // (speed is wall-clock: not checked)
     }
 
     // ---------------------------------------------------------------- 3
@@ -387,7 +500,12 @@ int main() {
         // distance moved (VIO-class ~1-3 %, flow ~1-3 %; dead reckoning far
         // worse). VOXTEST_ODOM_MOVING=1 also maps during legs.
         const char* oEnv = std::getenv("VOXTEST_ODOM");
-        const float odomFrac = oEnv ? float(std::atof(oEnv)) : -1.f;
+        // VOXTEST_VIO=1: architecture B with the estimate from navcore's
+        // DepthVio, fed rendered IR + depth and a noisy, gyro-biased IMU --
+        // the real odometer instead of a model of one. Its error is whatever
+        // it turns out to be.
+        const bool useVio = std::getenv("VOXTEST_VIO") != nullptr;
+        const float odomFrac = useVio ? 0.f : (oEnv ? float(std::atof(oEnv)) : -1.f);
         if (odomFrac >= 0.f) {
             vp.persistMap = true;
             vp.integrateMoving = std::getenv("VOXTEST_ODOM_MOVING") != nullptr;
@@ -398,6 +516,12 @@ int main() {
         float biasDir = 6.2831853f * float(nrng() % 1000) / 1000.f;
         sim::CamPose truth; truth.e = spawnE; truth.n = spawnN; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
+        sim::DepthCamera vioCam(cp);
+        sim::DepthVio vio;
+        vio.init(vioCam);
+        vio.reset(truth);                        // the start pose is known
+        int vioFrames = 0, vioLost = 0;
+        double vioMs = 0.0;
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
 
         MissionController::Params mp;
@@ -422,6 +546,22 @@ int main() {
         for (float t = 0.f; t < simS; t += dt, ++ticks) {
             // Telemetry the aircraft would have: attitude, speed, and (for
             // the mission's leg-length gate only) where it is.
+            if (useVio) {
+                // Every tick is a camera frame (20 Hz). The IMU: roll/pitch
+                // with 0.3 deg noise, yaw with a 0.5 deg/s gyro bias.
+                const cv::Mat ir = vioCam.renderIR(w, truth);
+                const cv::Mat dep = std::getenv("VOXTEST_STEREO")
+                                  ? vioCam.renderStereo(w, truth, nullptr)
+                                  : vioCam.renderTruth(w, truth);
+                sim::CamPose imu;
+                imu.rollDeg  = truth.rollDeg + 0.3f * N01(nrng);
+                imu.pitchDeg = truth.pitchDeg + 0.3f * N01(nrng);
+                imu.yawDeg   = truth.yawDeg + 0.5f * t;
+                const sim::VioResult vr = vio.step(ir, dep, imu);
+                ++vioFrames; vioMs += vr.ms;
+                if (!vr.valid) ++vioLost;
+                errE = vr.pose.e - truth.e; errN = vr.pose.n - truth.n;
+            }
             wm.with([&](WorldState& s) {
                 s.tickMonoS = monoNowS();
                 s.vehYawDeg = truth.yawDeg; s.vehGroundspeed = std::fabs(v);
@@ -483,7 +623,7 @@ int main() {
             // 60 m, about 0.25 %, and flattered architecture B. Now: a bias of
             // odomFrac per metre moved, whose direction wanders slowly
             // (0.1 rad/sqrt(s)), so 10 % over 60 m is ~6 m of error.
-            if (odomFrac > 0.f) {
+            if (odomFrac > 0.f && !useVio) {
                 const float stepLen = std::hypot(stepE, stepN);
                 biasDir += 0.1f * std::sqrt(dt) * N01(nrng);
                 errE += odomFrac * stepLen * std::cos(biasDir);
@@ -511,12 +651,18 @@ int main() {
                     "final %s  frames %d\n",
                     pillars, walls, simS, travelled, net, cells, legs, minClear,
                     minPhase.c_str(), minT, lastPhase.c_str(), src->frames);
+        if (useVio)
+            std::printf("  VIO: %d frames, %d lost, %.1f ms/frame, final error %.2f m "
+                        "over %.1f m (%.1f %%)\n", vioFrames, vioLost,
+                        vioMs / std::max(1, vioFrames), std::hypot(errE, errN), travelled,
+                        100.f * std::hypot(errE, errN) / std::max(0.1f, travelled));
         // One machine-readable line, for sweeps.
-        std::printf("RESULT far=%d big=%d stereo=%d world=%s drift=%.2f odom=%.3f "
+        std::printf("RESULT far=%d big=%d stereo=%d world=%s drift=%.2f odom=%s "
                     "moving=%d travel=%.2f net=%.2f cells=%d legs=%d minclr=%.3f "
                     "stuck=%d collisions=%d cmove=%d chover=%d odomerr=%.2f\n",
                     int(vp.farChoose), int(big), int(std::getenv("VOXTEST_STEREO") != nullptr),
-                    ws ? ws : "7", driftSig, odomFrac, int(vp.integrateMoving),
+                    ws ? ws : "7", driftSig,
+                    useVio ? "vio" : std::to_string(odomFrac).c_str(), int(vp.integrateMoving),
                     travelled, net, cells, legs, minClear,
                     int(lastPhase == "STUCK"), collisions, collMove, collHover,
                     std::hypot(errE, errN));

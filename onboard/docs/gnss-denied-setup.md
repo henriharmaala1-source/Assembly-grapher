@@ -172,3 +172,62 @@ applies it through the velocity controller. Whether it constrains
 `SET_ATTITUDE_TARGET` in GUIDED_NOGPS is NOT verified here -- check it on the
 bench before relying on it with the attitude uplink. The RC-override uplink in
 ALT_HOLD or LOITER is covered by the documented behaviour.
+
+## 11. Visual odometry from the D435i itself (`--voxel-vio`, `--voxel-vio-fc`)
+
+§9 made a flow sensor required because the mission needs a displacement and
+the hover needs position hold. The D435i can supply both without one:
+`navcore/vio.hpp` (`DepthVio`) runs keyframe visual odometry on the camera's
+**left IR image**, which is registered with depth by construction, so every
+tracked corner has a metric 3D point the moment it is seen: no triangulation,
+no scale to estimate. The IMU gives roll and pitch (locked, never re-solved)
+and a yaw prior; vision solves yaw and position (4 DOF, robust Gauss-Newton
+from a constant-velocity prior, LK tracks seeded at the predicted pixel, both
+images high-passed so lighting that moves with the camera is not read as
+texture). A solve that jumps or turns further than a frame allows is LOST, not
+reported; a lost frame coasts and says so.
+
+**The emitter has to strobe.** The projector's dots are fixed to the camera
+and track as zero motion. With `--voxel-vio` the live source sets
+`RS2_OPTION_EMITTER_ON_OFF`: lit frames keep blank walls in the depth map,
+dark frames feed VIO, told apart by per-frame metadata. VIO therefore runs at
+half the depth rate -- use `--voxel-fps 30`. **On Linux, frame metadata needs
+librealsense built with `FORCE_RSUSB_BACKEND=ON`** (or Intel's patched
+`uvcvideo`); without it the source cannot tell lit from dark, says so once,
+and VIO stays off.
+
+Two ways to use it:
+
+| flag / key | what it does |
+|---|---|
+| `--voxel-vio` / `nav.vox_vio` | VIO is the mission's displacement when neither the Pi estimate nor the FC's flow position exists. The FC does **not** hold on it: hover drift (§9.2) remains. |
+| `--voxel-vio-fc` / `nav.vox_vio_to_fc` | also sends it to EKF3 as ExternalNav (`VISION_POSITION_ESTIMATE` + `VISION_SPEED_ESTIMATE`, with `reset_counter` and covariance marked unknown), at <= 30 Hz, valid frames only, never repeated once stale. The FC then holds position on it, and the mission reads the FC's own local position (§9.1) -- one filter. |
+
+ArduPilot parameters for `--voxel-vio-fc` (from the ArduPilot non-GPS /
+ExternalNav docs; bench-check before flight):
+
+| param | value | why |
+|---|---|---|
+| `VISO_TYPE` | 1 (MAVLink) | vision odometry arrives over MAVLink |
+| `VISO_POS_X/Y/Z` | camera offset from CG, m | lever arm; the Pi sends the camera's position |
+| `VISO_DELAY_MS` | ~50-70 | exposure + USB + VIO latency; measure it |
+| `EK3_SRC1_POSXY` | 6 (ExternalNav) | |
+| `EK3_SRC1_VELXY` | 6 (ExternalNav) | or 5 if a flow sensor is fitted and preferred |
+| `EK3_SRC1_POSZ` | 1 (Baro) | VIO height drifts; baro does not walk |
+| `EK3_SRC1_YAW` | 1 (Compass) | VIO's heading starts from the compass and drifts |
+
+Measured in simulation only (`test/test_vio.cpp`, the navcore IR and stereo
+models, IMU with 0.3 deg tilt noise and a 0.5 deg/s gyro bias). Drift as a
+fraction of path, 424x240 / 848x480:
+
+| case | truth depth | stereo depth |
+|---|---|---|
+| straight 8 m | 1.8 / 1.0 % | 2.8 / 0.5 % |
+| 5x5 m square, turns in place | 0.9 / 0.5 % | 0.7 / 0.5 % |
+| slalom with climb | 0.9 / 0.2 % | 1.4 / 0.1 % |
+| 3 m/s, 90 deg/s, 15 Hz | 0.9 / 1.3 % | 1.6 / 1.0 % |
+| flying at a blank wall | coasts | **lost** 29 / 26 of 104 frames, no wrong step |
+
+3-10 ms per frame on the desk. What is NOT known: behaviour with real IR
+(auto-exposure, motion blur, the dots if the strobe misbehaves), real latency,
+and the Pi 5's cost. It has not flown.

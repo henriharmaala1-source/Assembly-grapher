@@ -55,6 +55,12 @@ void FcLink::proximity(const float* distM, int n, double stampS) {
     proxStampS_ = stampS;
 }
 
+void FcLink::vision(const VisionOdom& v, double stampS) {
+    std::lock_guard<std::mutex> lk(mu_);
+    vis_ = v;
+    visStampS_ = stampS;
+}
+
 void FcLink::loop_() {
     using namespace std::chrono;
     // Elevate this thread so inference on the Deliberator can't delay RC — the
@@ -96,6 +102,22 @@ void FcLink::loop_() {
                 }
             }
             if (doProx && fc_->sendProximity(d, n)) proxSent_.fetch_add(1);
+        }
+        // Vision odometry: the same rule, at <= 30 Hz.
+        {
+            VisionOdom v; bool doVis = false;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                const double now = monoNowS();
+                if (visStampS_ > visSentStampS_ && now - visStampS_ <= visStaleSec_ &&
+                    now - visLastTxS_ >= 1.0 / 30.0) {
+                    v = vis_;
+                    visSentStampS_ = visStampS_;
+                    visLastTxS_ = now;
+                    doVis = true;
+                }
+            }
+            if (doVis && fc_->sendVisionOdometry(v)) visSent_.fetch_add(1);
         }
 
         // Marshalled one-shots.

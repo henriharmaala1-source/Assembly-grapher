@@ -328,9 +328,52 @@ cv::Mat DepthCamera::renderIR(const VoxelWorld& w, const CamPose& pose) const {
                         hz = pose.u + dz * t;
             // Two octaves so the surface has structure at more than one scale,
             // which is what a correlation window actually locks onto.
-            const float n = 0.65f * vnoise(hx * LAT, hy * LAT, hz * LAT)
-                          + 0.35f * vnoise(hx * LAT * 3.f, hy * LAT * 3.f,
-                                           hz * LAT * 3.f);
+            //
+            float n;
+            if (!p_.irBandLimit) {
+                // The original two octaves, point-sampled (see CamParams).
+                n = 0.65f * vnoise(hx * LAT, hy * LAT, hz * LAT)
+                  + 0.35f * vnoise(hx * LAT * 3.f, hy * LAT * 3.f, hz * LAT * 3.f);
+            } else {
+                // BAND-LIMITED to the pixel. One point sample per pixel of a
+                // texture finer than the pixel's footprint ALIASES: the pattern
+                // it produces depends on where the samples fall, so it changes
+                // when the camera moves and the surface appears to swim. No real
+                // camera does that -- lens blur and pixel area integrate the
+                // footprint -- so a tracker tested on it is tested against an
+                // artefact with no counterpart on hardware. Each octave fades to its mean
+                // as its lattice spacing drops from two footprints to one. The
+                // footprint is range / focal length, stretched by obliquity: the
+                // face hit is the axis whose coordinate sits on a cell boundary.
+                const float cell = w.cell();
+                auto edgeDist = [cell](float v) {
+                    const float f = v / cell - std::floor(v / cell);
+                    return std::min(f, 1.f - f);
+                };
+                const float ex = edgeDist(hx - w.ox()), ey = edgeDist(hy - w.oy()),
+                            ez = edgeDist(hz - w.oz());
+                const float cosInc = std::max(0.15f, std::fabs(
+                    (ex <= ey && ex <= ez) ? dx : (ey <= ez ? dy : dz)));
+                const float foot = t / (fpx_ * cosInc);
+                auto band = [foot](float spacing) {
+                    return std::min(1.f, std::max(0.f, spacing / foot - 1.f));
+                };
+                // FOUR octaves, 64 cm down to 1.3 cm. Real surfaces have structure
+                // at every scale (a roughly 1/f spectrum: planks, stones, bark
+                // ridges, grain), which is why a far wall is still trackable;
+                // with only the two fine octaves every surface beyond ~5 m went
+                // flat once band-limited, and a tracker could not tell a far wall
+                // from a blank one.
+                auto oct = [&](float lat, float amp) {
+                    return amp * (0.5f + band(1.f / lat) *
+                                  (vnoise(hx * lat + 17.f, hy * lat + 5.f, hz * lat + 11.f) - 0.5f));
+                };
+                n = oct(LAT / 16.f, 0.20f) + oct(LAT / 4.f, 0.25f)
+                  + 0.35f * (0.5f + band(1.f / LAT) *
+                             (vnoise(hx * LAT, hy * LAT, hz * LAT) - 0.5f))
+                  + 0.20f * (0.5f + band(1.f / (LAT * 3.f)) *
+                             (vnoise(hx * LAT * 3.f, hy * LAT * 3.f, hz * LAT * 3.f) - 0.5f));
+            }
             // Active illumination falls off with range. Half brightness at 4 m.
             const float fall = 1.f / (1.f + (t * t) / 16.f);
             const float base = 30.f + 170.f * fall;

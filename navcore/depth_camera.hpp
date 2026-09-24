@@ -134,6 +134,21 @@ struct CamParams {
     bool  emitterOn      = false;
     float emitterRangeM  = 3.0f;
     float emitterTex     = 0.9f;   // texture it imposes at point-blank in the dark
+
+    // renderIR's TEXTURE MODEL. false: the original -- two fine octaves (4 and
+    // 1.3 cm), point-sampled. Beyond a few metres that is finer than a pixel,
+    // so it ALIASES: the pattern depends on where the samples land and swims
+    // as the camera moves. true: each octave band-limited to the pixel's
+    // footprint on the surface (range / focal length, stretched by
+    // obliquity), plus 16 and 64 cm octaves so far surfaces keep structure,
+    // as real ones do. The visual-odometry tests use true.
+    //
+    // The default stays false because nav-sim's flow_odometry_check was tuned
+    // on the aliased render and PASSES PARTLY ON THE ALIASING: with the
+    // band-limit on, its fixed variance floor rejects most far patches and it
+    // solves 2-4 of 19 frames (measured 2026-09-24). That is a finding about
+    // FlowVelocityEstimator's minVar, recorded here, not fixed.
+    bool  irBandLimit    = false;
     float ambientIR      = 1.0f;   // 1 = bright daylight, 0 = dark
     bool  modelOcclusion = true;
     bool  filterSpeckle = true;

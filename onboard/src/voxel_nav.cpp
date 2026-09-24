@@ -10,7 +10,10 @@ VoxelNavModule::VoxelNavModule(std::unique_ptr<sim::FrameSource> src,
     : src_(std::move(src)), p_(p) {
     p_.nav.seedBodyM = p_.bodyR;
     p_.nav.legCoreM  = p_.bodyR;
-    if (src_ && src_->ok()) nav_.init(src_->camera(), p_.nav, sim::CamPose{});
+    if (src_ && src_->ok()) {
+        nav_.init(src_->camera(), p_.nav, sim::CamPose{});
+        if (p_.vio) vio_.init(src_->camera(), p_.vioParams);
+    }
 }
 
 std::unique_ptr<VoxelNavModule> VoxelNavModule::live(const Params& p, int width,
@@ -18,7 +21,9 @@ std::unique_ptr<VoxelNavModule> VoxelNavModule::live(const Params& p, int width,
                                                      std::string* err) {
     // Emitter ON: the D435i's projector is what gives a blank wall texture to
     // match on, and a blank wall is the obstacle stereo is otherwise blind to.
-    auto src = sim::makeLiveSource(width, height, fps, true, err);
+    // With VIO it STROBES: VIO must not see the dots (vio.hpp), and depth
+    // keeps them on every other frame.
+    auto src = sim::makeLiveSource(width, height, fps, true, err, p.vio);
     return std::unique_ptr<VoxelNavModule>(new VoxelNavModule(std::move(src), p));
 }
 
@@ -51,6 +56,10 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
             w.voxProxStampS = monoNowS();
         });
     }
+
+    // VISUAL ODOMETRY, also on every frame and before the gate: it is the
+    // estimate the gate's persistMap branch is placed by.
+    if (p_.vio) runVio(depth, hint, s, wm);
 
     // STILL OR NOT. Under a mission, only the phases the cycle defines as a
     // stable vantage count: THINK and SCAN (and ARMED, hovering for GO).
@@ -168,5 +177,59 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
         w.voxLegFarM    = legFar;
         w.voxFrames     = nav_.frames();
         w.voxStampS     = monoNowS();
+    });
+}
+
+void VoxelNavModule::runVio(const cv::Mat& depth, const sim::PoseHint& hint,
+                            const WorldState& s, WorldModel& wm) {
+    // A lit frame is skipped outright -- not tracked, not counted as lost.
+    // Unknown (-1: no frame metadata) is used: with the strobe off there are
+    // no dots to see, and with it on and no metadata there is no way to tell,
+    // which the source announces at start.
+    if (src_->intensityEmitter() == 1) return;
+    cv::Mat ir;
+    if (!src_->intensity(ir) || ir.size() != depth.size()) return;
+
+    // ATTITUDE. Roll/pitch as the map gets them (the camera's own IMU when it
+    // has settled -- it measures the camera, mount tilt included). Yaw: the
+    // camera IMU's gyro-integrated yaw when there is one -- VIO uses yaw only
+    // as a frame-to-frame rotation prior -- else the FC heading.
+    sim::CamPose att;
+    att.yawDeg = s.vehYawDeg;
+    if (hint.valid) {
+        att.rollDeg = hint.pose.rollDeg; att.pitchDeg = hint.pose.pitchDeg;
+        att.yawDeg  = hint.pose.yawDeg;
+    } else {
+        att.rollDeg = s.vehRollDeg; att.pitchDeg = s.vehPitchDeg + p_.mountTiltDeg;
+    }
+    if (!vio_.started()) {
+        // Start at the origin, facing the FC's compass heading: the estimate
+        // is then ENU from the start point with North where the FC has it.
+        sim::CamPose start;
+        start.rollDeg = att.rollDeg; start.pitchDeg = att.pitchDeg;
+        start.yawDeg = s.vehYawDeg;
+        vio_.reset(start);
+    }
+    // The heading the VIO starts from is the FC's; the IMU yaw it is handed
+    // each frame only has to rotate consistently from there.
+    const sim::VioResult r = vio_.step(ir, depth, att);
+    if (!r.valid) ++vioLost_;
+    const double now = monoNowS();
+    if (r.valid && vioPrevT_ > 0.0 && now > vioPrevT_) {
+        const float dt = float(now - vioPrevT_);
+        const float a = std::min(1.f, dt / 0.3f);          // ~0.3 s smoothing
+        vioVe_ += a * ((r.pose.e - vioPrevE_) / dt - vioVe_);
+        vioVn_ += a * ((r.pose.n - vioPrevN_) / dt - vioVn_);
+    }
+    vioPrevT_ = now; vioPrevE_ = r.pose.e; vioPrevN_ = r.pose.n;
+    wm.with([&](WorldState& w) {
+        w.vioValid = r.valid;
+        w.vioPe = r.pose.e; w.vioPn = r.pose.n; w.vioPu = r.pose.u;
+        w.vioVe = vioVe_; w.vioVn = vioVn_;
+        w.vioYawDeg = r.pose.yawDeg;
+        w.vioTracked = r.tracked;
+        w.vioResets = r.resets;
+        w.vioLost = vioLost_;
+        w.vioStampS = now;
     });
 }

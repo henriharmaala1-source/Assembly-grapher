@@ -60,7 +60,7 @@ bool ReplayFrameSource::next(cv::Mat& depth, PoseHint& hint) {
 // so it cannot rot behind an #ifdef nobody defines. It already had.
 class RealSenseSource : public FrameSource {
 public:
-    bool start(int w, int h, int fps, bool emitter, std::string* err) {
+    bool start(int w, int h, int fps, bool emitter, bool strobe, std::string* err) {
         // Ask for the IMU. Both optional streams fail independently and
         // neither failure costs depth -- see rsdyn::Pipeline::start.
         // wantIR: the left imager. It costs a little USB bandwidth and it is
@@ -72,6 +72,15 @@ public:
             return false;
         }
         pipe_.setEmitter(emitter);
+        if (emitter && strobe) {
+            // Said out loud either way: a strobe that silently did not engage
+            // leaves VIO tracking the dot pattern.
+            const bool s = pipe_.setEmitterStrobe(true);
+            strobing_ = s;
+            std::fprintf(stderr, s ? "[live] emitter STROBING: VIO uses the dark frames.\n"
+                                   : "[live] emitter strobe NOT supported by this device/"
+                                     "firmware: emitter left on, VIO will see the dots.\n");
+        }
 
         // Pull one frame before reporting success. The intrinsics come from the
         // frame's own profile, so until a frame has arrived we do not actually
@@ -183,6 +192,24 @@ public:
         out = cv::Mat(irH_, irW_, CV_8U, (void*)ir_.data()).clone();
         return true;
     }
+    int intensityEmitter() const override {
+        const int e = pipe_.lastIrEmitter();
+        // STROBING WITH NO METADATA: half the frames carry dots and nothing
+        // says which. Report every frame as lit, so VIO never runs and the
+        // mission sees no estimate -- the honest failure. Said once. (Linux
+        // needs librealsense's RSUSB backend or its patched uvcvideo for
+        // frame metadata.)
+        if (strobing_ && e < 0) {
+            if (!warnedMeta_) {
+                std::fprintf(stderr, "[live] emitter strobing but NO frame metadata: lit "
+                                     "and dark frames cannot be told apart, VIO is OFF. "
+                                     "Build librealsense with FORCE_RSUSB_BACKEND=ON.\n");
+                warnedMeta_ = true;
+            }
+            return 1;
+        }
+        return e;
+    }
 
     int index() const override { return idx_; }
     std::string info(int which) const { return pipe_.deviceInfo(which); }
@@ -200,14 +227,16 @@ private:
     double lastImuMs_ = 0.0;
     float gx_ = 0, gy_ = 0, gz_ = 0, ax_ = 0, ay_ = 0, az_ = 0;
     bool  haveImu_ = false;
+    bool  strobing_ = false;
+    mutable bool warnedMeta_ = false;
     bool  ok_ = false, pending_ = false;
     int   pendingW_ = 0, pendingH_ = 0, idx_ = 0;
 };
 
 std::unique_ptr<FrameSource> makeLiveSource(int w, int h, int fps, bool emitter,
-                                            std::string* err) {
+                                            std::string* err, bool strobe) {
     auto s = std::unique_ptr<RealSenseSource>(new RealSenseSource());
-    if (!s->start(w, h, fps, emitter, err)) return nullptr;
+    if (!s->start(w, h, fps, emitter, strobe, err)) return nullptr;
     std::printf("[live] %s  serial %s  fw %s  usb %s\n",
                 s->info(rsdyn::CAMERA_INFO_NAME).c_str(),
                 s->info(rsdyn::CAMERA_INFO_SERIAL).c_str(),

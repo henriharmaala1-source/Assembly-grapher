@@ -142,6 +142,21 @@ struct WorldState {
         return voxValid && (tickMonoS - voxStampS) <= maxAgeS;
     }
 
+    // VISUAL ODOMETRY (navcore DepthVio, run by VoxelNavModule on the D435i's
+    // dark IR frames). ENU metres from where it started, yaw from North, cw.
+    // vioValid is THIS frame's pose being a measurement; a lost frame coasts
+    // and says so. vioResets counts discontinuities (restarts, losses): a
+    // consumer holding an offset from an earlier pose must drop it when this
+    // changes.
+    bool        vioValid      = false;
+    float       vioPe = 0.f, vioPn = 0.f, vioPu = 0.f;
+    float       vioVe = 0.f, vioVn = 0.f;
+    float       vioYawDeg     = 0.f;
+    int         vioTracked    = 0;     // corners with a world point this frame
+    int         vioResets     = 0;
+    int         vioLost       = 0;     // frames lost since start
+    double      vioStampS     = -1e9;
+
     // --- Mission: move-stop-sense autonomous cycle ---
     bool        missionActive = false;
     std::string missionPhase;         // ARMED / SETTLE / THINK / MOVE / ARRIVE

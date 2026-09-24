@@ -133,6 +133,8 @@ Tunables load_tunables(Config& c) {
     t.mission.voxSubpixelPx    = c.f("nav.vox_subpixel_px",  t.mission.voxSubpixelPx);
     t.mission.voxPersistMap    = c.b("nav.vox_persist_map",  t.mission.voxPersistMap);
     t.mission.voxIntegrateMoving = c.b("nav.vox_integrate_moving", t.mission.voxIntegrateMoving);
+    t.mission.voxVio           = c.b("nav.vox_vio",          t.mission.voxVio);
+    t.mission.voxVioToFc       = c.b("nav.vox_vio_to_fc",    t.mission.voxVioToFc);
     t.mission.map.sizeM        = c.f("nav.grid_size_m",    t.mission.map.sizeM);
     t.mission.map.cellM        = c.f("nav.grid_cell_m",    t.mission.map.cellM);
 

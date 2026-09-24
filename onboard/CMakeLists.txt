@@ -224,6 +224,10 @@ if(BUILD_TESTS)
                src/nav_map.cpp src/world_model.cpp)
   target_link_libraries(test_voxel_nav PRIVATE navcore)
 
+  # DepthVio (navcore) against ground-truth trajectories in a textured room.
+  kestrel_test(test_vio)
+  target_link_libraries(test_vio PRIVATE navcore)
+
   # The OLD tracker -- the one perception.hpp still instantiates, and so the
   # one that actually flies. It had no test at all until a review found the
   # template scale-convention bug this pins.

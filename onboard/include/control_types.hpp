@@ -17,6 +17,17 @@ struct ControlCmd {
     bool  valid    = false;
 };
 
+// A visual-odometry pose for the FC's estimator (IFlightController::
+// sendVisionOdometry). LOCAL ENU metres from where VIO started, velocity in
+// the same frame, heading clockwise from North. roll/pitch are the BODY's --
+// VIO's own are the camera's, mount tilt included.
+struct VisionOdom {
+    float e = 0.f, n = 0.f, u = 0.f;
+    float ve = 0.f, vn = 0.f, vu = 0.f;
+    float rollDeg = 0.f, pitchDeg = 0.f, yawDeg = 0.f;
+    int   resets = 0;
+};
+
 // Telemetry read back from the flight controller.
 struct FcTelemetry {
     bool   armed        = false;

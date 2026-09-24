@@ -66,6 +66,10 @@ struct Fns {
     int   (*supports_option)(const void*, int, rs2_error_pp);
     void  (*set_option)(const void*, int, float, rs2_error_pp);
     int   (*is_sensor_extendable_to)(const void*, int, rs2_error_pp);
+    // OPTIONAL: resolved if present, and nothing fails without them. They
+    // only answer "was the emitter on for this IR frame".
+    int       (*supports_frame_metadata)(const void*, int, rs2_error_pp);
+    long long (*get_frame_metadata)(const void*, int, rs2_error_pp);
 };
 
 Fns g;
@@ -227,6 +231,10 @@ bool resolveAll(std::string* missing) {
         *t.slot = sym(t.name);
         if (!*t.slot) { if (!bad.empty()) bad += ", "; bad += t.name; }
     }
+    g.supports_frame_metadata = reinterpret_cast<decltype(g.supports_frame_metadata)>(
+        sym("rs2_supports_frame_metadata"));
+    g.get_frame_metadata = reinterpret_cast<decltype(g.get_frame_metadata)>(
+        sym("rs2_get_frame_metadata"));
     if (!bad.empty()) { if (missing) *missing = bad; return false; }
     return true;
 }
@@ -348,8 +356,8 @@ bool Pipeline::start(int width, int height, int fps,
                 void* s = g.create_sensor(list, i, &e9);
                 if (e9.bad() || !s) continue;
                 Err e10;
-                // RS2_EXTENSION_DEPTH_SENSOR = 12
-                if (g.is_sensor_extendable_to(s, 12, &e10) && !e10.bad()) {
+                if (g.is_sensor_extendable_to(s, EXTENSION_DEPTH_SENSOR, &e10) &&
+                    !e10.bad()) {
                     sensor_ = s;
                 } else {
                     g.delete_sensor(s);
@@ -386,6 +394,16 @@ bool Pipeline::setEmitter(bool on) {
     if (!g.supports_option(sensor_, OPTION_EMITTER_ENABLED, &e) || e.bad()) return false;
     Err e2;
     g.set_option(sensor_, OPTION_EMITTER_ENABLED, on ? 1.f : 0.f, &e2);
+    return !e2.bad();
+}
+
+bool Pipeline::setEmitterStrobe(bool on) {
+    if (!sensor_) return false;
+    Err e;
+    if (!g.supports_option(sensor_, OPTION_EMITTER_ON_OFF, &e) || e.bad()) return false;
+    if (on) setEmitter(true);            // strobe needs the emitter enabled at all
+    Err e2;
+    g.set_option(sensor_, OPTION_EMITTER_ON_OFF, on ? 1.f : 0.f, &e2);
     return !e2.bad();
 }
 
@@ -454,6 +472,16 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
             if (!ew.bad() && !eh2.bad() && !em.bad() && d && iw > 0 && ih > 0) {
                 ir->resize(size_t(iw) * ih);
                 std::memcpy(ir->data(), d, ir->size());
+            }
+            lastIrEmitter_ = -1;
+            if (g.supports_frame_metadata && g.get_frame_metadata) {
+                for (int key : {int(METADATA_EMITTER_MODE), int(METADATA_LASER_POWER_MODE)}) {
+                    Err es;
+                    if (!g.supports_frame_metadata(f, key, &es) || es.bad()) continue;
+                    Err ev;
+                    const long long v = g.get_frame_metadata(f, key, &ev);
+                    if (!ev.bad()) { lastIrEmitter_ = v != 0 ? 1 : 0; break; }
+                }
             }
             g.release_frame(f);
             continue;

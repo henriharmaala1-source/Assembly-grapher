@@ -105,6 +105,11 @@ public:
     bool sendProximity(const float* distM, int n) override {
         return sendObstacleDistance(distM, n, 0.2f, 20.f);
     }
+    // VIO pose + speed as VISION_POSITION_ESTIMATE / VISION_SPEED_ESTIMATE in
+    // local NED (x North, y East, z DOWN) -- the ENU->NED swap happens here and
+    // nowhere else. ArduPilot: VISO_TYPE=1, EK3_SRC1_POSXY=6, EK3_SRC1_VELXY=6
+    // (onboard/docs/gnss-denied-setup.md section 11).
+    bool sendVisionOdometry(const VisionOdom& v) override;
     void setRthChannel(int, int) override {}   // MAVLink has a real mode API
 
     // ExtGps is an MSP-shaped struct (lat/lon/alt). ArduPilot's supported
@@ -117,8 +122,13 @@ public:
     // --- backend-specific, for when a state estimator exists -----------------
     // Pose in LOCAL NED metres and radians (x North, y East, z DOWN). The z sign
     // is the one that catches people: everything else in this project is +up.
+    // resetCounter < 0 sends the 32-byte base message (the synthetic-GPS path,
+    // whose origin never jumps); >= 0 adds the v2 extensions -- covariance
+    // marked UNKNOWN (NaN first element: ArduPilot then uses VISO_POS_M_NSE)
+    // and the reset counter, which EKF3 needs to see a discontinuity as one.
     void feedVisionPose(float xN, float yE, float zD,
-                        float rollRad, float pitchRad, float yawRad);
+                        float rollRad, float pitchRad, float yawRad,
+                        int resetCounter = -1);
     void feedVisionSpeed(float vN, float vE, float vD);
 
     // Body-frame velocity setpoint, m/s, +x forward +y right +z DOWN, plus a

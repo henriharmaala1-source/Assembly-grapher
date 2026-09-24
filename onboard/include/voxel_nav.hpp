@@ -41,6 +41,7 @@
 
 #include "frame_source.hpp"   // navcore
 #include "nav_pipeline.hpp"   // navcore
+#include "vio.hpp"            // navcore
 #include "perception.hpp"
 
 class VoxelNavModule : public IPerceptionModule {
@@ -103,6 +104,15 @@ public:
         bool  persistMap     = false;
         // With persistMap, integrate during legs too, not only at stops.
         bool  integrateMoving = false;
+
+        // VISUAL ODOMETRY on the D435i's own left IR image, which is
+        // registered with depth by construction (navcore/vio.hpp). Runs on
+        // every frame the emitter did NOT light -- see live()'s strobe -- and
+        // publishes WorldState vio*; main uses it as the displacement source
+        // when neither the Pi estimate nor the FC's flow position exists.
+        // Off: nothing is computed and nothing is published.
+        bool  vio = false;
+        sim::VioParams vioParams;
     };
 
     // Own a source. `src` null means "no camera": isReady() is false and the
@@ -111,6 +121,8 @@ public:
 
     // The D435i, through librealsense loaded at run time. Returns a module
     // that is not ready (and says why in `err`) when there is no camera.
+    // With p.vio the emitter STROBES (alternate frames lit), so VIO has dark
+    // frames: VIO then runs at half the depth rate -- ask for 30 fps.
     static std::unique_ptr<VoxelNavModule> live(const Params& p, int width,
                                                 int height, int fps,
                                                 std::string* err);
@@ -123,12 +135,20 @@ public:
     const sim::NavPipeline& pipeline() const { return nav_; }
     const sim::FrameSource* source()   const { return src_.get(); }
     int resets() const { return resets_; }   // vantages started, for telemetry
+    const sim::DepthVio& vio() const { return vio_; }
 
 private:
+    void runVio(const cv::Mat& depth, const sim::PoseHint& hint, const WorldState& s,
+                WorldModel& wm);
+
     std::unique_ptr<sim::FrameSource> src_;
     Params            p_;
     sim::NavPipeline  nav_;
     bool              still_ = false;        // integrating into the current map
     bool              mapInit_ = false;      // persistMap: the one map exists
     int               resets_ = 0;
+    sim::DepthVio     vio_;
+    double            vioPrevT_ = -1.0;
+    float             vioPrevE_ = 0.f, vioPrevN_ = 0.f, vioVe_ = 0.f, vioVn_ = 0.f;
+    int               vioLost_ = 0;
 };

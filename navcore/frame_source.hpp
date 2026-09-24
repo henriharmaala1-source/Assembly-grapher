@@ -92,6 +92,12 @@ public:
     // without ever forming one.
     virtual bool intensity(cv::Mat& out) const { (void)out; return false; }
 
+    // Was the IR projector lit in that image? 1 yes, 0 no, -1 unknown. It
+    // matters to VISUAL ODOMETRY: the dot pattern is fixed to the camera, so
+    // tracked dots read as zero motion and outvote the world. With the
+    // emitter strobing (makeLiveSource's `strobe`), VIO uses only the 0s.
+    virtual int  intensityEmitter() const { return -1; }
+
     // Frames available, or -1 for an open-ended stream (live).
     virtual int  frameCount() const { return -1; }
     virtual int  index() const { return 0; }
@@ -147,8 +153,12 @@ private:
 // --- live -----------------------------------------------------------------
 // Declared unconditionally so callers do not need #ifdef; the factory returns
 // null with a message when the SDK was not compiled in.
+// strobe: alternate the emitter every frame (RS2_OPTION_EMITTER_ON_OFF) so
+// that half the IR images are dot-free for VIO; depth from both halves is
+// still delivered. Ignored when `emitter` is false.
 std::unique_ptr<FrameSource> makeLiveSource(int width, int height, int fps,
-                                            bool emitter, std::string* err);
+                                            bool emitter, std::string* err,
+                                            bool strobe = false);
 
 // Can a live camera be opened RIGHT NOW -- i.e. can librealsense be loaded.
 // A runtime question, deliberately: this binary is built the same way whether

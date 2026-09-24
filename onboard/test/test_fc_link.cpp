@@ -23,13 +23,16 @@ static int fails = 0;
 
 static void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 
-// A sim FC that CAN carry proximity, and counts what it was given.
+// A sim FC that CAN carry proximity and vision, and counts what it was given.
 struct ProxFc : SimFcBackend {
-    std::atomic<int> calls{0};
-    float first = 0.f;
+    std::atomic<int> calls{0}, visCalls{0};
+    float first = 0.f, visN = 0.f;
     bool sendProximity(const float* d, int n) override {
         if (n > 0) first = d[0];
         ++calls; return true;
+    }
+    bool sendVisionOdometry(const VisionOdom& v) override {
+        visN = v.n; ++visCalls; return true;
     }
 };
 
@@ -97,6 +100,30 @@ int main() {
         pl.stop();
         std::printf("  proximity: %d sent for 25 offered in 0.5 s, none after the "
                     "producer stopped\n", sent);
+    }
+    {
+        // VIO into the FC: the same contract as proximity, capped at 30 Hz.
+        auto pfc = std::make_unique<ProxFc>();
+        pfc->connect("sim", 0);
+        ProxFc* raw = pfc.get();
+        FcLink vl(std::move(pfc), 0.3f);
+        vl.start();
+        VisionOdom v; v.n = 4.f;
+        // A new pose every 5 ms for 500 ms (200 Hz): ~15 may go out.
+        for (int k = 0; k < 100; ++k) { vl.vision(v, monoNowS()); sleep_ms(5); }
+        const int sent = raw->visCalls.load();
+        CHECK(sent >= 8 && sent <= 18);
+        CHECK(std::fabs(raw->visN - 4.f) < 1e-6f);
+        CHECK(vl.visionSent() == sent);
+        sleep_ms(300);                               // producer stopped
+        const int after = raw->visCalls.load();
+        sleep_ms(300);
+        CHECK(raw->visCalls.load() == after);        // a stale pose is not repeated
+        vl.vision(v, monoNowS() - 1.0);              // stale on arrival
+        sleep_ms(100);
+        CHECK(raw->visCalls.load() == after);
+        vl.stop();
+        std::printf("  vision: %d sent for 100 offered in 0.5 s, none once stale\n", sent);
     }
 
     // --- FC local position as the displacement source: only when EKF3 vouches ---

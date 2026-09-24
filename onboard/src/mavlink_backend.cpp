@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 
 namespace {
@@ -383,12 +384,27 @@ bool MavlinkBackend::sendVelocityBody(float vFwd, float vRight, float vDown,
 }
 
 void MavlinkBackend::feedVisionPose(float xN, float yE, float zD,
-                                    float rollRad, float pitchRad, float yawRad) {
+                                    float rollRad, float pitchRad, float yawRad,
+                                    int resetCounter) {
     mav::Payload p;
     p.u64(uint64_t(nowS() * 1e6));
     p.f32(xN); p.f32(yE); p.f32(zD);
     p.f32(rollRad); p.f32(pitchRad); p.f32(yawRad);
+    if (resetCounter >= 0) {
+        p.f32(std::numeric_limits<float>::quiet_NaN());   // covariance: unknown
+        for (int i = 1; i < 21; ++i) p.f32(0.f);
+        p.u8(uint8_t(resetCounter & 0xFF));
+    }
     send(mav::MSG_VISION_POSITION_ESTIMATE, p);
+}
+
+bool MavlinkBackend::sendVisionOdometry(const VisionOdom& v) {
+    if (!serial_.isOpen()) return false;
+    constexpr float kD2R = float(kPi / 180.0);
+    feedVisionPose(v.n, v.e, -v.u, v.rollDeg * kD2R, v.pitchDeg * kD2R, v.yawDeg * kD2R,
+                   v.resets);
+    feedVisionSpeed(v.vn, v.ve, -v.vu);
+    return true;
 }
 
 void MavlinkBackend::feedVisionSpeed(float vN, float vE, float vD) {

@@ -280,6 +280,35 @@ int main() {
         std::printf("  vision pose: origin latched, NED offsets, z down\n");
     }
 
+    // --- VIO odometry: ENU in, NED on the wire, reset counter carried --------
+    {
+        drainMaster(mfd);
+        VisionOdom v;
+        v.e = 2.f; v.n = 5.f; v.u = 1.5f;             // 5 m North, 2 m East, 1.5 m up
+        v.ve = 0.5f; v.vn = 1.f; v.vu = 0.2f;
+        v.rollDeg = 2.f; v.pitchDeg = -3.f; v.yawDeg = 90.f;
+        v.resets = 3;
+        CHECK(fc.sendVisionOdometry(v));
+        auto msgs = decodeAll(drainMaster(mfd));
+        const mav::Msg* p = findMsg(msgs, mav::MSG_VISION_POSITION_ESTIMATE);
+        CHECK(p != nullptr);
+        if (p) {
+            CHECK(std::fabs(p->f32(8) - 5.f) < 1e-6f);     // x = North
+            CHECK(std::fabs(p->f32(12) - 2.f) < 1e-6f);    // y = East
+            CHECK(std::fabs(p->f32(16) + 1.5f) < 1e-6f);   // z DOWN: up is negative
+            CHECK(std::fabs(p->f32(28) - 1.5707963f) < 1e-5f);   // yaw, radians
+            CHECK(std::isnan(p->f32(32)));                 // covariance: unknown
+            CHECK(p->u8(116) == 3);                        // reset_counter
+        }
+        const mav::Msg* sp = findMsg(msgs, mav::MSG_VISION_SPEED_ESTIMATE);
+        CHECK(sp != nullptr);
+        if (sp) {
+            CHECK(std::fabs(sp->f32(8) - 1.f) < 1e-6f && std::fabs(sp->f32(12) - 0.5f) < 1e-6f);
+            CHECK(std::fabs(sp->f32(16) + 0.2f) < 1e-6f);
+        }
+        std::printf("  VIO odometry: ENU->NED, yaw in rad, covariance unknown, resets 3\n");
+    }
+
     // --- link goes down when the autopilot stops talking --------------------
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(2100));

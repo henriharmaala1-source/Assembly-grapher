@@ -108,6 +108,17 @@ public:
         // roughly doubled stereo coverage. Off by default: needs the sensor.
         bool  voxPersistMap   = false;
         bool  voxIntegrateMoving = false;
+        // VISUAL ODOMETRY in the voxel layer (VoxelNavModule::Params::vio):
+        // DepthVio on the D435i's dark IR frames, emitter strobing. Becomes the
+        // displacement estimate when there is neither a Pi estimate nor FC
+        // flow -- which is what makes voxPersistMap usable without a flow
+        // sensor. Off by default: unflown.
+        bool  voxVio          = false;
+        // ...and FEED it to the FC's EKF3 as ExternalNav (VISION_POSITION_
+        // ESTIMATE), so the FC can HOLD POSITION on it -- the hover-drift fix
+        // that otherwise needs a flow sensor. Needs VISO_TYPE=1 and the EK3
+        // source params; off by default.
+        bool  voxVioToFc      = false;
         float voxAlignDeg     = 10.f;  // no forward pitch until the nose is
                                        // within this of the leg bearing: the
                                        // leg is certified on ITS line only

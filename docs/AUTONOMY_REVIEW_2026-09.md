@@ -128,6 +128,21 @@ Stereo means, 4 worlds:
 - **That is exactly the regime NanoMap-style bounded memory exists for,** and it's the next experiment.
 - n = 4 per arm: indicative, not resolved (see §3).
 
+### 4.5 The same, with a real VIO instead of a drift model (added 2026-09-24)
+
+§4.3 modelled odometry as a bias. `navcore/vio.hpp` (`DepthVio`) is now an actual estimator: keyframe VO on the D435i's left IR image, which is registered with depth, so no triangulation and no scale; IMU roll/pitch locked; 4-DOF robust solve; LK seeded at predicted pixels on high-passed images. Run in the same closed loop on the same four worlds, stereo depth:
+
+| Arm | Travel | Cells | Collisions | Stuck | VIO error at end |
+|---|---|---|---|---|---|
+| C (per-stop maps, no drift) | 38.5 m | 38 | 0 | 2 | — |
+| B, placed by VIO | 58.4 m | 48 | 0 | 0 | 1.3–5.8% |
+| B + map during legs, VIO | 59.9 m | 64 | 0 | 1 | 0.7–5.7% |
+
+- **The real estimator lands where §4.3's 1–3% arm assumed**: 0 collisions in 16 runs (truth and stereo), nearest approach 0.53 m, 18 of ~46,000 frames lost.
+- Standalone (`onboard/test/test_vio.cpp`, known trajectories, IMU with 0.5°/s gyro bias): 0.6–2.8% drift at 424×240, 0.1–1.3% at 848×480, including 3 m/s at 15 Hz. A blank wall reads LOST on stereo depth, never as a confident wrong step.
+- Three things had to be found to get there, each measured: (1) with perfect depth, corners on pillar silhouettes took the far side's depth — reject depth discontinuities; (2) projector falloff moves with the camera and dominates the coarse pyramid levels, pulling LK to zero motion — high-pass first (seeded tracks within 2 px at 0.2 m/frame: 17/139 → 135/139); (3) a 6-DOF PnP left free to trade tilt against translation produced 10¹⁴ m solutions — lock tilt to the IMU and gate the jump.
+- **Simulation only.** Real IR brings auto-exposure, blur and the projector; the Pi 5's cost and the latency are unmeasured.
+
 ### 4.4 Found while doing this
 
 - **The GNSS-denied mission could never fly a leg.**
@@ -138,6 +153,8 @@ Stereo means, 4 worlds:
   - `onboard/tools/d435i_probe.py` already measures it. Nothing consumed the measurement until now (§5.5).
 - **No librealsense post-processing is used** [M, by grep]. That is correct: its default hole-filling copies the *farthest* neighbour, turning unknown into free [V].
 - **`onboard/docs/bom.md` describes a different aircraft:** a 7″ analog FPV build whose committed obstacle sensor is a VL53L5CX ToF, with "No stereo camera pair". It must be reconciled with the D435i stack before anything is bought.
+- **Three librealsense enum values were wrong, and each failed silently** (found 2026-09-24, checked against v2.55.1 headers). The emitter option was 12, which is `VISUAL_PRESET`. The depth-sensor extension was 12, which is `DEPTH_FRAME`, so no sensor ever matched: the emitter was never set and the depth scale was never read. The 0.001 default happens to be the D435i's. The USB-type field was 12, which is `FIRMWARE_UPDATE_ID`.
+- **`flow_odometry_check` passes partly on aliasing.** The synthetic IR point-samples a texture finer than a pixel at range. Band-limit it and the flow estimator's fixed variance floor rejects most patches (2–4 of 19 frames solved). The realistic render is opt-in (`CamParams::irBandLimit`) and the VIO tests use it. The flow finding is recorded, not fixed.
 - **D435/D435i on a Raspberry Pi is unsupported by both ArduPilot and Intel.** librealsense issues report a D435f timing out on a Pi 5 and ARM64 frame drops [V/S]. The USB link has never been proven on this hardware.
 
 ## 5. What was implemented in this round
@@ -155,10 +172,15 @@ Stereo means, 4 worlds:
 5. **Measured stereo noise as a parameter:** `NavPipelineParams::subpixelPx`, config key `nav.vox_subpixel_px`. The default stays 0.25 until `d435i_probe.py` measures the real unit.
 6. **The privileged-ceiling tool:** `VoxelMap::imprint`, `EnvConfig::oracleMap`, `kestrel bench --oracle`, and a GUI toggle.
 7. **Docs:** `onboard/docs/gnss-denied-setup.md` §9 (flow is required for `--voxel`, with parameters) and §10 (the `OBSTACLE_DISTANCE` path, with parameters and one unverified case).
+8. **VIO** (2026-09-24, §4.5): `navcore/vio.hpp`, run by `VoxelNavModule` on dark IR frames.
+   - `--voxel-vio` / `nav.vox_vio` makes it the mission's displacement when neither the Pi estimate nor FC flow exists.
+   - `--voxel-vio-fc` / `nav.vox_vio_to_fc` also feeds it to EKF3 as ExternalNav (`VISION_POSITION_ESTIMATE` with `reset_counter`, golden frame from pymavlink), so the FC can hold position on it.
+   - The emitter strobes (`EMITTER_ON_OFF`) with per-frame metadata. With no metadata, VIO turns itself off rather than track the dots.
+   - Parameters and caveats: `gnss-denied-setup.md` §11.
 
 ## 6. Recommendations, ranked
 
-1. **Fit an optical-flow sensor with an 8 m rangefinder (e.g. MicoAir MTF-01) and set `EK3_SRC1_VELXY=5`.**
+1. **Fit an optical-flow sensor with an 8 m rangefinder (e.g. MicoAir MTF-01) and set `EK3_SRC1_VELXY=5`** — or, now that it exists, **bench-test the D435i's own VIO** (`--voxel-vio-fc`, §4.5) as the ExternalNav source. Flow is still the lower-risk first step (no Pi CPU, ArduPilot-native, flown by many); VIO needs no extra hardware but has only been simulated, and the Pi's frame metadata (RSUSB backend) is a prerequisite. Having both, as EKF3 source sets 1 and 2, is the robust end state.
    - About $30–60, no Pi CPU, ArduPilot-native.
    - It makes the stationary-hover assumption true (§4.2), gives the mission its displacement (§4.4), and enables architecture B (§4.3).
    - Test it over forest litter in propeller wash before trusting it.

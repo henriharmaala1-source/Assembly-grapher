@@ -191,7 +191,7 @@ reported; a lost frame coasts and says so.
 and track as zero motion. With `--voxel-vio` the live source sets
 `RS2_OPTION_EMITTER_ON_OFF`: lit frames keep blank walls in the depth map,
 dark frames feed VIO, told apart by per-frame metadata. VIO therefore runs at
-half the depth rate -- use `--voxel-fps 30`. **On Linux, frame metadata needs
+half the depth rate -- use `--voxel-fps=30`. **On Linux, frame metadata needs
 librealsense built with `FORCE_RSUSB_BACKEND=ON`** (or Intel's patched
 `uvcvideo`); without it the source cannot tell lit from dark, says so once,
 and VIO stays off.
@@ -228,6 +228,20 @@ fraction of path, 424x240 / 848x480:
 | 3 m/s, 90 deg/s, 15 Hz | 0.9 / 1.3 % | 1.6 / 1.0 % |
 | flying at a blank wall | coasts | **lost** 29 / 26 of 104 frames, no wrong step |
 
-3-10 ms per frame on the desk. What is NOT known: behaviour with real IR
+3-10 ms per frame on the desk.
+
+**In the loop** (`VOXTEST_VIO=1`, the same 4 worlds x 150 s as §9, the
+estimate from `DepthVio` instead of a drift model, FC holding on it; raw in
+`docs/vio_sweep_2026-09-24.txt`), stereo depth:
+
+| arm | travel | cells | collisions | stuck | VIO error at end |
+|---|---|---|---|---|---|
+| per-stop maps, no drift (§9 baseline) | 38.5 m | 38 | 0 | 2 | -- |
+| one map, placed by VIO | 58.4 m | 48 | 0 | 0 | 1.3-5.8 % |
+| ... and mapping during legs | 59.9 m | 64 | 0 | 1 | 0.7-5.7 % |
+
+No collision in any of the 16 runs (truth and stereo depth), nearest approach
+0.53 m; 18 of ~46,000 VIO frames lost. That is the synthetic 1-3 % odometry
+arm of the earlier sweep, reached by the real estimator. What is NOT known: behaviour with real IR
 (auto-exposure, motion blur, the dots if the strobe misbehaves), real latency,
 and the Pi 5's cost. It has not flown.

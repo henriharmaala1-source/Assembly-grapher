@@ -259,6 +259,23 @@ simulated stereo matcher, never closer than 0.57 m to a surface, never stuck.
 At the suite's default 424x240 the marking range is ~2.5 m and stereo runs in
 open ground can strand -- a test-resolution effect, not the flight config.
 
+### Visual odometry (`--voxel-vio`, `--voxel-vio-fc`)
+
+```bash
+./build/kestrel --voxel --voxel-fps=30 --voxel-vio-fc --fc=mavlink --auto
+```
+
+`navcore/vio.hpp` runs keyframe visual odometry on the D435i's left IR image
+(registered with depth, so every corner is metric the moment it is seen), with
+the IMU holding roll and pitch. The emitter strobes so VIO sees dot-free
+frames, which halves its rate (hence 30 fps). `--voxel-vio` makes it the
+mission's displacement when there is no other; `--voxel-vio-fc` also feeds it
+to EKF3 as ExternalNav so the FC can hold position on it. ArduPilot parameters,
+the Linux frame-metadata prerequisite and the simulated numbers:
+`docs/gnss-denied-setup.md` §11. `test/test_vio.cpp` checks it against known
+trajectories; `VOXTEST_VIO=1 test_voxel_nav` flies the closed loop on it.
+Unflown.
+
 ### Telemetry line
 Headless, the runtime prints one compact world-state line ~2×/sec — this is
 exactly the scene state the LLM supervisor will consume in P3:

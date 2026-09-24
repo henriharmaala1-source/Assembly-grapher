@@ -276,6 +276,19 @@ the Linux frame-metadata prerequisite and the simulated numbers:
 trajectories; `VOXTEST_VIO=1 test_voxel_nav` flies the closed loop on it.
 Unflown.
 
+### ORB-SLAM3 (`--voxel-slam`)
+
+```bash
+onboard/orbslam/build/kestrel-orbslam --vocab .../ORBvoc.txt &
+./build/kestrel --voxel --voxel-fps=30 --voxel-slam --voxel-vio-fc --fc=mavlink --auto
+```
+
+The ready-made alternative to the built-in VIO: ORB-SLAM3 stereo SLAM on the
+D435i's IR pair, run as a separate process (`orbslam/`, GPLv3 kept out of
+`kestrel`) that onboard feeds over a local socket. Its poses land where the
+VIO's do, so the displacement estimate and the EKF3 feed work unchanged.
+Build, run, emitter handling and simulated numbers: `orbslam/README.md`.
+
 ### Telemetry line
 Headless, the runtime prints one compact world-state line ~2×/sec — this is
 exactly the scene state the LLM supervisor will consume in P3:

@@ -331,11 +331,18 @@ void VoxelNavModule::runSlam(const sim::PoseHint& hint, const WorldState& s, Wor
         // pose it is pinned to: roll/pitch from the IMU at capture, heading
         // from the FC compass the first time and the last estimate after,
         // position continuous with the last estimate.
+        const double nowS = monoNowS();
+        // Where the last estimate has got to by now: carried forward on the
+        // measured velocity, for at most half a second (a long loss must not
+        // extrapolate far). A re-anchor pins HERE, so it does not give back
+        // the motion since the last accepted pose.
+        const float carry = float(std::min(0.5, std::max(0.0, nowS - lastSlamS_)));
+        const float predE = lastE_ + vioVe_ * carry, predN = lastN_ + vioVn_ * carry;
         if (!anchor_.anchored() || rep.mapId != slamMap_) {
             sim::CamPose a = ctx.att;
             a.yawDeg = haveLast_ ? lastYaw_ : ctx.fcYaw;
-            a.e = haveLast_ ? lastE_ : 0.f;
-            a.n = haveLast_ ? lastN_ : 0.f;
+            a.e = haveLast_ ? predE : 0.f;
+            a.n = haveLast_ ? predN : 0.f;
             a.u = haveLast_ ? lastU_ : 0.f;
             anchor_.anchor(rep.Twc, a);
             if (slamMap_ != -1) ++visResets_;          // a discontinuity downstream
@@ -346,6 +353,17 @@ void VoxelNavModule::runSlam(const sim::PoseHint& hint, const WorldState& s, Wor
         if (rep.mapChanges != slamChanges_) { ++visResets_; slamChanges_ = rep.mapChanges; }
         float e, n, u, yaw;
         anchor_.toEnu(rep.Twc, e, n, u, yaw);
+        // An impossible jump is the SLAM's frame moving, not the aircraft:
+        // re-anchor to where the estimate has got to, and say so.
+        if (haveLast_ && !SlamAnchor::plausible(e - lastE_, n - lastN_, u - lastU_,
+                                                 nowS - lastSlamS_)) {
+            sim::CamPose a = ctx.att;
+            a.yawDeg = lastYaw_; a.e = predE; a.n = predN; a.u = lastU_;
+            anchor_.anchor(rep.Twc, a);
+            ++visResets_;
+            anchor_.toEnu(rep.Twc, e, n, u, yaw);
+        }
+        lastSlamS_ = nowS;
         haveLast_ = true;
         lastE_ = e; lastN_ = n; lastU_ = u; lastYaw_ = yaw;
         publishVisual(true, e, n, u, yaw, rep.tracked, visResets_, wm);

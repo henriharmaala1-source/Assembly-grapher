@@ -15,6 +15,7 @@
 // one definition in the tree.
 // ---------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cmath>
 
 #include <opencv2/core.hpp>
@@ -48,6 +49,19 @@ public:
         ok_ = true;
     }
     bool anchored() const { return ok_; }
+
+    // JUMP GUARD. A pose further from the last accepted one than the aircraft
+    // could have flown since (maxSpeedMs * dt, plus a slack for a loop
+    // closure's drift correction) is not motion: it is the SLAM's frame
+    // moving under us -- a re-initialisation, a map merge, a bad
+    // relocalisation. Seen: two closed-loop ORB-SLAM3 runs under CPU
+    // contention ended 10-19 m off while losing few frames, a failure the
+    // same worlds do not show run alone; this is the defence against the class.
+    static bool plausible(float de, float dn, float du, double dtS,
+                          float maxSpeedMs = 4.f, float slackM = 0.5f) {
+        const double d = std::sqrt(double(de) * de + double(dn) * dn + double(du) * du);
+        return d <= maxSpeedMs * std::max(0.0, dtS) + slackM;
+    }
     void clear() { ok_ = false; }
 
     // ENU position and heading of the camera for a SLAM pose. Roll/pitch are

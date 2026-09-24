@@ -192,5 +192,6 @@ private:
     int               visResets_ = 0;
     bool              haveLast_ = false;
     float             lastE_ = 0, lastN_ = 0, lastU_ = 0, lastYaw_ = 0;
+    double            lastSlamS_ = 0.0;
     bool              warnedStereo_ = false;
 };

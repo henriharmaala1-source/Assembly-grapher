@@ -426,14 +426,14 @@ int main() {
     }
 
     // ---------------------------------------------------------------- 2d
-    std::printf("SLAM wiring: fake server, arbitrary SLAM frame, a map change midway\n");
+    std::printf("SLAM wiring: fake server, arbitrary SLAM frame, a map change, a silent jump\n");
     {
         // Everything between the module and a SLAM process, without the SLAM:
         // the server answers each frame with the TRUE pose expressed in an
-        // arbitrary SLAM world (yawed, tilted, offset), and at frame 150
-        // starts a NEW map with a different one. The module must never send
-        // a lit frame, must land in ENU, and must stay continuous across the
-        // map change.
+        // arbitrary SLAM world (yawed, tilted, offset), at frame 150 starts a
+        // NEW map with a different one, and at frame 220 shifts that frame 5 m
+        // without saying so. The module must never send a lit frame, must land
+        // in ENU, and must stay continuous across both.
         sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
         std::mt19937 prng(3);
         std::uniform_real_distribution<float> PU(2.f, 14.f);
@@ -467,7 +467,10 @@ int main() {
                     q = truthAt[long(h.tS * 1000.0 + 0.5)];
                 }
                 const int k = served.fetch_add(1);
-                const sim::CamPose& F = k < 75 ? f0 : f1;      // ~frame 150: new map
+                // ~frame 150: a NEW map. ~frame 220: the frame silently shifts
+                // 5 m with NO new map id -- what the jump guard is for.
+                sim::CamPose F = k < 75 ? f0 : f1;
+                if (k >= 110) { F.e += 5.f; F.n -= 1.f; }
                 const cv::Matx33d Rsw = SlamAnchor::rotWc(F).t();
                 const cv::Vec3d tsw(F.e, F.n, F.u);
                 const cv::Matx33d Rwc = SlamAnchor::rotWc(q);
@@ -531,7 +534,7 @@ int main() {
         CHECK(served.load() >= 140);                      // the dark half, near enough
         CHECK(worst < 0.15f);                             // ~1-2 frames of lag, no jump
         CHECK(std::fabs(s.vioYawDeg - hdg) < 1.f);        // compass frame
-        CHECK(s.vioResets >= 1);                          // the map change was reported
+        CHECK(s.vioResets >= 2);                          // the map change AND the jump
         modp.reset();                                     // closes the client side
         const int c = cfd.load();
         if (c >= 0) ::shutdown(c, SHUT_RDWR);
@@ -697,6 +700,9 @@ int main() {
         SlamAnchor slamAnchor;
         int32_t slamMap = -1, slamPrevState = -99;
         uint32_t slamPrevChanges = 0;
+        bool slamHaveLast = false;
+        float slamLastT = 0.f;
+        int slamJumps = 0;
         int slamMaps = 0;
         const std::string slamSock = "/tmp/kestrel-voxslam-" + std::to_string(::getpid()) + ".sock";
         if (useSlam) {
@@ -807,6 +813,18 @@ int main() {
                     }
                     float se, sn, su, syaw;
                     slamAnchor.toEnu(rep.Twc, se, sn, su, syaw);
+                    // The module's jump guard, on sim time.
+                    const float pe = truth.e + errE, pn = truth.n + errN;
+                    if (slamHaveLast && !SlamAnchor::plausible(se - pe, sn - pn, 0.f,
+                                                               double(t - slamLastT))) {
+                        sim::CamPose a = truth; a.e = pe; a.n = pn;
+                        slamAnchor.anchor(rep.Twc, a);
+                        slamAnchor.toEnu(rep.Twc, se, sn, su, syaw);
+                        ++slamJumps;
+                        if (std::getenv("VOXTEST_SLAMTRACE"))
+                            std::printf("   t=%.2f JUMP GUARD fired\n", t);
+                    }
+                    slamHaveLast = true; slamLastT = t;
                     errE = se - truth.e; errN = sn - truth.n;
                 }
             }
@@ -910,7 +928,8 @@ int main() {
                         "over %.1f m (%.1f %%)\n", useSlam ? "SLAM" : "VIO", vioFrames, vioLost,
                         vioMs / std::max(1, vioFrames), std::hypot(errE, errN), travelled,
                         100.f * std::hypot(errE, errN) / std::max(0.1f, travelled));
-        if (useSlam) std::printf("  SLAM maps started after the first: %d\n", slamMaps);
+        if (useSlam) std::printf("  SLAM maps started after the first: %d, jump guard fired %d\n",
+                                 slamMaps, slamJumps);
         // One machine-readable line, for sweeps.
         std::printf("RESULT far=%d big=%d stereo=%d world=%s drift=%.2f odom=%s "
                     "moving=%d travel=%.2f net=%.2f cells=%d legs=%d minclr=%.3f "

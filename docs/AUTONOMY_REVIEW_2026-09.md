@@ -143,6 +143,18 @@ Stereo means, 4 worlds:
 - Three things had to be found to get there, each measured: (1) with perfect depth, corners on pillar silhouettes took the far side's depth — reject depth discontinuities; (2) projector falloff moves with the camera and dominates the coarse pyramid levels, pulling LK to zero motion — high-pass first (seeded tracks within 2 px at 0.2 m/frame: 17/139 → 135/139); (3) a 6-DOF PnP left free to trade tilt against translation produced 10¹⁴ m solutions — lock tilt to the IMU and gate the jump.
 - **Simulation only.** Real IR brings auto-exposure, blur and the projector; the Pi 5's cost and the latency are unmeasured.
 
+### 4.6 A ready-made SLAM instead: ORB-SLAM3 on the D435i's IR pair (added 2026-09-24)
+
+The survey of what others run on a D435i (VINS-Fusion, Basalt, OpenVINS, ORB-SLAM3, RTAB-Map) found ORB-SLAM3 the one with an official D435i stereo-inertial example. It is now integrated as `kestrel-orbslam` (`onboard/orbslam/`): a separate process, so its GPLv3 stays out of `kestrel`, fed the stereo IR pair over a local socket. Its poses go where DepthVio's go.
+
+- **Rendered stereo IR, 848×480:** a straight flight, a square with turns in place, and a hover–leg–hover all tracked every frame, with 0.2–0.4% drift (1.8 cm on the hover). About 20 ms/frame on a desktop.
+- **In the closed loop** (same four worlds, stereo depth, CPU-contended):
+  - With mapping during legs it covered 57 m and 59 cells, against the per-stop baseline's 38.5 m and 38.
+  - There were no collisions.
+  - Final error was 0.1–1.5 m.
+- **Losses happen in fast turns in place.** A jump guard was needed: before it, 3 of 8 runs ended 10–19 m off after a loss moved the SLAM frame under the estimate. `mission.max_yaw_stick` caps the turn rate.
+- 424×240 is too coarse for it: ORB-SLAM3's stereo start wants more than 500 features with depth.
+
 ### 4.4 Found while doing this
 
 - **The GNSS-denied mission could never fly a leg.**
@@ -177,6 +189,10 @@ Stereo means, 4 worlds:
    - `--voxel-vio-fc` / `nav.vox_vio_to_fc` also feeds it to EKF3 as ExternalNav (`VISION_POSITION_ESTIMATE` with `reset_counter`, golden frame from pymavlink), so the FC can hold position on it.
    - The emitter strobes (`EMITTER_ON_OFF`) with per-frame metadata. With no metadata, VIO turns itself off rather than track the dots.
    - Parameters and caveats: `gnss-denied-setup.md` §11.
+9. **ORB-SLAM3** (2026-09-24, §4.6): `onboard/orbslam/` (pinned, headless build script, bridge), `--voxel-slam` / `nav.vox_slam*`.
+   - Onboard streams the right IR imager, the pair's device time, the device's own baseline, and raw IMU.
+   - Dark frames are chosen **from the image** (`navcore/emitter_gate.hpp`), because librealsense's strobe metadata has been reported inverted.
+   - A jump guard and velocity-carried re-anchoring handle map changes.
 
 ## 6. Recommendations, ranked
 

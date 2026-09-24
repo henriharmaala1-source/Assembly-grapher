@@ -85,8 +85,39 @@ module anchors it. 848x480, 15 Hz:
 | hover, 4 m leg, hover | 208/208 | 1.8 cm | 21.9 |
 
 At 424x240 stereo initialisation can take seconds (ORB-SLAM3 wants more than
-500 features with depth in one frame); run it at 640 or 848 wide. Closed loop
-(`VOXTEST_SLAM`): `docs/orbslam_sweep_2026-09-24.txt`.
+500 features with depth in one frame); run it at 640 or 848 wide.
+
+**Closed loop** (`test_voxel_nav` with `VOXTEST_SLAM`): the whole mission
+flown for 150 s on ORB-SLAM3's estimate, the four worlds every other
+estimator here was measured on, stereo depth for the map, two runs at a time
+on 4 cores. Raw: `../docs/orbslam_sweep_2026-09-24.txt`.
+
+| | travel | cells | SLAM error at end | collisions |
+|---|---|---|---|---|
+| per-stop maps, no estimator (baseline) | 38.5 m | 38 | -- | 0 |
+| DepthVio, mapping during legs | 59.9 m | 64 | 0.7-5.7 % | 0 |
+| **ORB-SLAM3**, stops only | 48.5 m | 36 | 0.01-1.07 m | 0 |
+| **ORB-SLAM3**, mapping during legs | 57.2 m | 59 | 0.11-1.46 m | 0 |
+
+What the traces show, and what was done about it:
+
+- **Every tracking loss began in a turn in place** (the turn onto a leg, or
+  SCAN): ORB-SLAM3 reports "recently lost" for ~3 s, then starts a new map,
+  which onboard re-anchors. The residual error -- up to 1.5 m -- is the ground
+  covered during those seconds.
+- **Before the jump guard, three of eight runs ended 10-19 m off** after such
+  losses, the SLAM frame having moved under the estimate. The guard
+  (`slam_anchor.hpp`: a pose that implies more than 4 m/s since the last one
+  is re-anchored, not believed) fired three times in the rerun and no run
+  exceeded 1.5 m.
+- The harness keeps flying legs on the frozen estimate while SLAM is lost; on
+  the aircraft `vioLocalEstimate` drops the estimate and the mission stops, so
+  this is the pessimistic case.
+- Turn rate: `mission.max_yaw_stick` caps the turn onto a leg. Its effect is
+  measured below when the run completes.
+
+So: as accurate as the drift-free ideal when tracking (0.01-0.5 m over 60 m),
+with losses concentrated in fast turns -- slow the turns.
 
 Not known until it flies: real IR (auto-exposure, blur, a misbehaving strobe),
 the Pi 5's frame rate with the voxel pipeline running beside it, and latency

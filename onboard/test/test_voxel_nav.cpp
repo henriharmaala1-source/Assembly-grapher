@@ -780,10 +780,24 @@ int main() {
                 bool got = false;
                 const auto tw = std::chrono::steady_clock::now();
                 const double lim = vioFrames == 0 ? 300.0 : 30.0;
+                bool bridgeDead = false;
                 while (!got && std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                              tw).count() < lim) {
                     got = slamCli->takeReply(rep) && rep.seq == seq;
-                    if (!got) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    if (!got) {
+                        // A DEAD BRIDGE is not a slow one: waiting 30 s a frame
+                        // for 3000 frames once hung a sweep for seven hours.
+                        int st = 0;
+                        if (::waitpid(slamPid, &st, WNOHANG) == slamPid) { bridgeDead = true; break; }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                }
+                if (bridgeDead) {
+                    std::printf("  SLAM bridge DIED at t=%.2f s (frame %d); run abandoned\n",
+                                t, vioFrames);
+                    CHECK(!bridgeDead);
+                    slamPid = -1;
+                    break;
                 }
                 ++vioFrames;
                 const bool okT = got && (rep.state == slamlink::kOk || rep.state == slamlink::kOkKlt);

@@ -113,6 +113,7 @@ Tunables load_tunables(Config& c) {
     t.mission.moveTimeoutSec   = c.f("mission.move_timeout_sec",   t.mission.moveTimeoutSec);
     t.mission.cruise           = c.f("mission.cruise",             t.mission.cruise);
     t.mission.kpYaw            = c.f("mission.kp_yaw",             t.mission.kpYaw);
+    t.mission.maxYawStick      = c.f("mission.max_yaw_stick",      t.mission.maxYawStick);
     t.mission.hFovDeg          = c.f("mission.hfov_deg",           t.mission.hFovDeg);
     t.mission.corridorStaleSec = c.f("mission.corridor_stale_sec", t.mission.corridorStaleSec);
     t.mission.maxEphM          = c.f("mission.max_eph_m",          t.mission.maxEphM);
@@ -135,6 +136,10 @@ Tunables load_tunables(Config& c) {
     t.mission.voxIntegrateMoving = c.b("nav.vox_integrate_moving", t.mission.voxIntegrateMoving);
     t.mission.voxVio           = c.b("nav.vox_vio",          t.mission.voxVio);
     t.mission.voxVioToFc       = c.b("nav.vox_vio_to_fc",    t.mission.voxVioToFc);
+    t.mission.voxSlam          = c.b("nav.vox_slam",         t.mission.voxSlam);
+    t.mission.voxSlamSocket    = c.s("nav.vox_slam_socket",  t.mission.voxSlamSocket);
+    t.mission.voxSlamInertial  = c.b("nav.vox_slam_inertial", t.mission.voxSlamInertial);
+    t.mission.voxEmitter       = c.s("nav.vox_emitter",      t.mission.voxEmitter);
     t.mission.map.sizeM        = c.f("nav.grid_size_m",    t.mission.map.sizeM);
     t.mission.map.cellM        = c.f("nav.grid_cell_m",    t.mission.map.cellM);
 

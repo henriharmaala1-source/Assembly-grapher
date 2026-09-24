@@ -41,7 +41,12 @@
 
 #include "frame_source.hpp"   // navcore
 #include "nav_pipeline.hpp"   // navcore
+#include "emitter_gate.hpp"   // navcore
 #include "vio.hpp"            // navcore
+#include "slam_anchor.hpp"
+#include "slam_client.hpp"
+#include "imu_sync.hpp"
+#include <map>
 #include "perception.hpp"
 
 class VoxelNavModule : public IPerceptionModule {
@@ -113,6 +118,24 @@ public:
         // Off: nothing is computed and nothing is published.
         bool  vio = false;
         sim::VioParams vioParams;
+
+        // EXTERNAL SLAM: ORB-SLAM3 in its own process (onboard/orbslam,
+        // GPLv3, over slam_link.hpp). The module sends each dot-free STEREO
+        // IR pair -- plus IMU for stereo-inertial -- and publishes the poses
+        // it gets back as vio*, in ENU (slam_anchor.hpp), exactly where
+        // DepthVio's go; so everything downstream (the displacement estimate,
+        // the EKF3 feed) is unchanged. Takes precedence over `vio`.
+        bool        slam = false;
+        std::string slamSocket = "/tmp/kestrel-slam.sock";
+        bool        slamInertial = false;
+
+        // THE PROJECTOR. On: blank walls get depth, but no tracker can use
+        // the IR. Off: every frame trackable, blank walls have no depth
+        // (outdoors the sun swamps the dots anyway). Strobe: both, on
+        // alternate frames, with DarkFrameGate picking the dark ones from the
+        // image. live() uses Strobe when vio or slam is on, else On.
+        enum class Emitter { On, Off, Strobe };
+        Emitter emitter = Emitter::Strobe;
     };
 
     // Own a source. `src` null means "no camera": isReady() is false and the
@@ -140,6 +163,10 @@ public:
 private:
     void runVio(const cv::Mat& depth, const sim::PoseHint& hint, const WorldState& s,
                 WorldModel& wm);
+    void runSlam(const sim::PoseHint& hint, const WorldState& s, WorldModel& wm);
+    sim::CamPose attitudeFor(const sim::PoseHint& hint, const WorldState& s) const;
+    void publishVisual(bool valid, float e, float n, float u, float yawDeg, int tracked,
+                       int resets, WorldModel& wm);
 
     std::unique_ptr<sim::FrameSource> src_;
     Params            p_;
@@ -151,4 +178,19 @@ private:
     double            vioPrevT_ = -1.0;
     float             vioPrevE_ = 0.f, vioPrevN_ = 0.f, vioVe_ = 0.f, vioVn_ = 0.f;
     int               vioLost_ = 0;
+    sim::DarkFrameGate gate_;
+    bool              dotFree_ = true;       // this frame may be tracked
+    // SLAM
+    std::unique_ptr<SlamClient> slam_;
+    ImuSync           imuSync_;
+    std::vector<slamlink::ImuSample> slamImu_;
+    struct SlamCtx { sim::CamPose att; float fcYaw; };
+    std::map<uint32_t, SlamCtx> slamCtx_;   // seq -> attitude at capture
+    SlamAnchor        anchor_;
+    int32_t           slamMap_ = -1;
+    uint32_t          slamChanges_ = 0;
+    int               visResets_ = 0;
+    bool              haveLast_ = false;
+    float             lastE_ = 0, lastN_ = 0, lastU_ = 0, lastYaw_ = 0;
+    bool              warnedStereo_ = false;
 };

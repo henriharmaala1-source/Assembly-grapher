@@ -244,7 +244,7 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             // scaled by how open it is so it slows as clearance tightens.
             const float desired = desiredBearing_(s);                 // deg, 0=N
             const float err     = wrap180(desired - s.vehYawDeg);
-            c.yaw   = clampf(p_.kpYaw * (err / 90.f), -1.f, 1.f);
+            c.yaw   = clampf(p_.kpYaw * (err / 90.f), -p_.maxYawStick, p_.maxYawStick);
             const float openScale = s.corridorValid
                 ? clampf(s.corridorOpen, 0.3f, 1.f) : 0.6f;
             c.pitch = p_.cruise * openScale;
@@ -357,6 +357,6 @@ void MissionController::moveVoxel_(const WorldState& s, ControlCmd& c) {
         return;
     }
     const float err = wrap180(legBearing_ - s.vehYawDeg);
-    c.yaw = clampf(p_.kpYaw * (err / 90.f), -1.f, 1.f);
+    c.yaw = clampf(p_.kpYaw * (err / 90.f), -p_.maxYawStick, p_.maxYawStick);
     if (std::fabs(err) <= p_.voxAlignDeg) c.pitch = p_.cruise;
 }

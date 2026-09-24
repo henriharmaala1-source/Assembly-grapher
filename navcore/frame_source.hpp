@@ -51,6 +51,14 @@ namespace sim {
 
 // What a source can say about where the camera was. `valid` false means the
 // caller must supply a pose itself; it does NOT mean the origin.
+// One raw inertial sample, device clock, in the depth (left IR) camera's axes:
+// librealsense rotates D435i motion data into that frame.
+struct ImuRaw {
+    double tS = 0;
+    bool   gyro = false;          // rad/s if true, else m/s^2
+    float  x = 0, y = 0, z = 0;
+};
+
 struct PoseHint {
     bool  valid = false;
     bool  attitudeOnly = false;   // orientation known, translation is not
@@ -92,11 +100,24 @@ public:
     // without ever forming one.
     virtual bool intensity(cv::Mat& out) const { (void)out; return false; }
 
-    // Was the IR projector lit in that image? 1 yes, 0 no, -1 unknown. It
-    // matters to VISUAL ODOMETRY: the dot pattern is fixed to the camera, so
-    // tracked dots read as zero motion and outvote the world. With the
-    // emitter strobing (makeLiveSource's `strobe`), VIO uses only the 0s.
+    // Was the IR projector lit in that image, per the device's metadata? 1 yes,
+    // 0 no, -1 unknown. INFORMATIONAL: the polarity has been reported inverted
+    // under the strobe, so trackers decide with DarkFrameGate
+    // (emitter_gate.hpp), from the image.
     virtual int  intensityEmitter() const { return -1; }
+
+    // THE STEREO PAIR, for a stereo SLAM (onboard/orbslam): the RIGHT IR image
+    // of the pair intensity() is the left of, rectified with it, and the
+    // pair's device time in seconds (the IMU samples' clock). False / < 0 for
+    // a source that has no right image.
+    virtual bool   intensityRight(cv::Mat& out) const { (void)out; return false; }
+    virtual double intensityTimeS() const { return -1.0; }
+    // Left -> right distance of that pair, metres (the device's calibration
+    // when it reports one).
+    virtual float  stereoBaselineM() const { return params().baselineM; }
+    // Raw IMU samples since the last call (appended to `out` after clearing
+    // it), for a consumer that integrates them itself. Empty if none.
+    virtual void   takeImu(std::vector<ImuRaw>& out) { out.clear(); }
 
     // Frames available, or -1 for an open-ended stream (live).
     virtual int  frameCount() const { return -1; }
@@ -156,9 +177,10 @@ private:
 // strobe: alternate the emitter every frame (RS2_OPTION_EMITTER_ON_OFF) so
 // that half the IR images are dot-free for VIO; depth from both halves is
 // still delivered. Ignored when `emitter` is false.
+// stereoIr: also stream the RIGHT IR imager (intensityRight()).
 std::unique_ptr<FrameSource> makeLiveSource(int width, int height, int fps,
                                             bool emitter, std::string* err,
-                                            bool strobe = false);
+                                            bool strobe = false, bool stereoIr = false);
 
 // Can a live camera be opened RIGHT NOW -- i.e. can librealsense be loaded.
 // A runtime question, deliberately: this binary is built the same way whether

@@ -12,7 +12,8 @@ VoxelNavModule::VoxelNavModule(std::unique_ptr<sim::FrameSource> src,
     p_.nav.legCoreM  = p_.bodyR;
     if (src_ && src_->ok()) {
         nav_.init(src_->camera(), p_.nav, sim::CamPose{});
-        if (p_.vio) vio_.init(src_->camera(), p_.vioParams);
+        if (p_.vio && !p_.slam) vio_.init(src_->camera(), p_.vioParams);
+        if (p_.slam) slam_.reset(new SlamClient(p_.slamSocket));
     }
 }
 
@@ -23,7 +24,10 @@ std::unique_ptr<VoxelNavModule> VoxelNavModule::live(const Params& p, int width,
     // match on, and a blank wall is the obstacle stereo is otherwise blind to.
     // With VIO it STROBES: VIO must not see the dots (vio.hpp), and depth
     // keeps them on every other frame.
-    auto src = sim::makeLiveSource(width, height, fps, true, err, p.vio);
+    const bool track = p.vio || p.slam;
+    const Params::Emitter em = track ? p.emitter : Params::Emitter::On;
+    auto src = sim::makeLiveSource(width, height, fps, em != Params::Emitter::Off, err,
+                                   em == Params::Emitter::Strobe, p.slam);
     return std::unique_ptr<VoxelNavModule>(new VoxelNavModule(std::move(src), p));
 }
 
@@ -59,7 +63,20 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
 
     // VISUAL ODOMETRY, also on every frame and before the gate: it is the
     // estimate the gate's persistMap branch is placed by.
-    if (p_.vio) runVio(depth, hint, s, wm);
+    // Which frames a tracker may see: all with the emitter off, none with it
+    // on, the dark ones under the strobe -- decided from the IMAGE
+    // (emitter_gate.hpp), because the metadata's polarity is not trustworthy.
+    if (p_.vio || p_.slam) {
+        dotFree_ = true;
+        if (p_.emitter == Params::Emitter::On) dotFree_ = false;
+        else if (p_.emitter == Params::Emitter::Strobe) {
+            cv::Mat irg;
+            dotFree_ = src_->intensity(irg) &&
+                       sim::DarkFrameGate::usable(gate_.classify(irg));
+        }
+    }
+    if (p_.slam) runSlam(hint, s, wm);
+    else if (p_.vio && dotFree_) runVio(depth, hint, s, wm);
 
     // STILL OR NOT. Under a mission, only the phases the cycle defines as a
     // stable vantage count: THINK and SCAN (and ARMED, hovering for GO).
@@ -182,11 +199,7 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
 
 void VoxelNavModule::runVio(const cv::Mat& depth, const sim::PoseHint& hint,
                             const WorldState& s, WorldModel& wm) {
-    // A lit frame is skipped outright -- not tracked, not counted as lost.
-    // Unknown (-1: no frame metadata) is used: with the strobe off there are
-    // no dots to see, and with it on and no metadata there is no way to tell,
-    // which the source announces at start.
-    if (src_->intensityEmitter() == 1) return;
+    // (Lit frames never get here: run() gates them.)
     cv::Mat ir;
     if (!src_->intensity(ir) || ir.size() != depth.size()) return;
 
@@ -232,4 +245,109 @@ void VoxelNavModule::runVio(const cv::Mat& depth, const sim::PoseHint& hint,
         w.vioLost = vioLost_;
         w.vioStampS = now;
     });
+}
+
+sim::CamPose VoxelNavModule::attitudeFor(const sim::PoseHint& hint, const WorldState& s) const {
+    sim::CamPose att;
+    att.yawDeg = s.vehYawDeg;
+    if (hint.valid) {
+        att.rollDeg = hint.pose.rollDeg; att.pitchDeg = hint.pose.pitchDeg;
+        att.yawDeg  = hint.pose.yawDeg;
+    } else {
+        att.rollDeg = s.vehRollDeg; att.pitchDeg = s.vehPitchDeg + p_.mountTiltDeg;
+    }
+    return att;
+}
+
+void VoxelNavModule::publishVisual(bool valid, float e, float n, float u, float yawDeg,
+                                   int tracked, int resets, WorldModel& wm) {
+    if (!valid) ++vioLost_;
+    const double now = monoNowS();
+    if (valid && vioPrevT_ > 0.0 && now > vioPrevT_) {
+        const float dt = float(now - vioPrevT_);
+        const float a = std::min(1.f, dt / 0.3f);          // ~0.3 s smoothing
+        vioVe_ += a * ((e - vioPrevE_) / dt - vioVe_);
+        vioVn_ += a * ((n - vioPrevN_) / dt - vioVn_);
+    }
+    if (valid) { vioPrevT_ = now; vioPrevE_ = e; vioPrevN_ = n; }
+    wm.with([&](WorldState& w) {
+        w.vioValid = valid;
+        if (valid) {
+            w.vioPe = e; w.vioPn = n; w.vioPu = u;
+            w.vioVe = vioVe_; w.vioVn = vioVn_;
+            w.vioYawDeg = yawDeg;
+        }
+        w.vioTracked = tracked;
+        w.vioResets = resets;
+        w.vioLost = vioLost_;
+        w.vioStampS = now;
+    });
+}
+
+void VoxelNavModule::runSlam(const sim::PoseHint& hint, const WorldState& s, WorldModel& wm) {
+    // IMU: drained EVERY frame, lit ones too -- stereo-inertial integrates
+    // every sample between the frames it sees.
+    if (p_.slamInertial) {
+        std::vector<sim::ImuRaw> raw;
+        src_->takeImu(raw);
+        imuSync_.push(raw);
+        imuSync_.drain(slamImu_);
+    }
+    // 1. SEND this pair if it is trackable.
+    if (dotFree_) {
+        cv::Mat l, r;
+        if (src_->intensity(l) && src_->intensityRight(r) && l.size() == r.size()) {
+            slamlink::FrameHeader h;
+            const double t = src_->intensityTimeS();
+            h.tS = t >= 0.0 ? t : monoNowS();
+            h.width = l.cols; h.height = l.rows;
+            const sim::DepthCamera& cam = src_->camera();
+            h.fx = cam.fpx(); h.fy = cam.fy(); h.cx = cam.ppx(); h.cy = cam.ppy();
+            h.baselineM = src_->stereoBaselineM();
+            h.fps = 15.f;
+            h.flags = p_.slamInertial ? slamlink::kFlagInertial : 0u;
+            const uint32_t seq = slam_->submit(h, l.data, r.data, slamImu_);
+            slamImu_.clear();
+            slamCtx_[seq] = SlamCtx{attitudeFor(hint, s), s.vehYawDeg};
+            while (slamCtx_.size() > 64) slamCtx_.erase(slamCtx_.begin());
+        } else if (!warnedStereo_) {
+            std::fprintf(stderr, "[voxel] slam: this source has no stereo IR pair "
+                                 "(right imager not streaming?) -- nothing to track\n");
+            warnedStereo_ = true;
+        }
+    }
+    // 2. TAKE whatever came back.
+    slamlink::PoseReply rep;
+    while (slam_->takeReply(rep)) {
+        const auto it = slamCtx_.find(rep.seq);
+        const bool ok = rep.state == slamlink::kOk || rep.state == slamlink::kOkKlt;
+        if (!ok || it == slamCtx_.end()) {
+            publishVisual(false, 0, 0, 0, 0, rep.tracked, visResets_, wm);
+            continue;
+        }
+        const SlamCtx& ctx = it->second;
+        // ANCHOR on the first tracked frame, and again whenever the SLAM
+        // starts a new map -- a new map is a new coordinate frame. The ENU
+        // pose it is pinned to: roll/pitch from the IMU at capture, heading
+        // from the FC compass the first time and the last estimate after,
+        // position continuous with the last estimate.
+        if (!anchor_.anchored() || rep.mapId != slamMap_) {
+            sim::CamPose a = ctx.att;
+            a.yawDeg = haveLast_ ? lastYaw_ : ctx.fcYaw;
+            a.e = haveLast_ ? lastE_ : 0.f;
+            a.n = haveLast_ ? lastN_ : 0.f;
+            a.u = haveLast_ ? lastU_ : 0.f;
+            anchor_.anchor(rep.Twc, a);
+            if (slamMap_ != -1) ++visResets_;          // a discontinuity downstream
+            slamMap_ = rep.mapId;
+        }
+        // A loop closure or map merge moves the pose within the same frame:
+        // a correction, but a JUMP -- the EKF must be told (reset counter).
+        if (rep.mapChanges != slamChanges_) { ++visResets_; slamChanges_ = rep.mapChanges; }
+        float e, n, u, yaw;
+        anchor_.toEnu(rep.Twc, e, n, u, yaw);
+        haveLast_ = true;
+        lastE_ = e; lastN_ = n; lastU_ = u; lastYaw_ = yaw;
+        publishVisual(true, e, n, u, yaw, rep.tracked, visResets_, wm);
+    }
 }

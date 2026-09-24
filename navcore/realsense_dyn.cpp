@@ -1,5 +1,6 @@
 #include "realsense_dyn.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -69,6 +70,7 @@ struct Fns {
     // OPTIONAL: resolved if present, and nothing fails without them. They
     // only answer "was the emitter on for this IR frame".
     int       (*supports_frame_metadata)(const void*, int, rs2_error_pp);
+    void      (*get_extrinsics)(const void*, const void*, float*, rs2_error_pp);  // rs2_extrinsics: 9 + 3 floats
     long long (*get_frame_metadata)(const void*, int, rs2_error_pp);
 };
 
@@ -235,6 +237,8 @@ bool resolveAll(std::string* missing) {
         sym("rs2_supports_frame_metadata"));
     g.get_frame_metadata = reinterpret_cast<decltype(g.get_frame_metadata)>(
         sym("rs2_get_frame_metadata"));
+    g.get_extrinsics = reinterpret_cast<decltype(g.get_extrinsics)>(
+        sym("rs2_get_extrinsics"));
     if (!bad.empty()) { if (missing) *missing = bad; return false; }
     return true;
 }
@@ -289,7 +293,7 @@ bool load(std::string* err) {
 
 // ---------------------------------------------------------------------------
 bool Pipeline::start(int width, int height, int fps,
-                     bool wantIR, bool wantIMU) {
+                     bool wantIR, bool wantIMU, bool wantIR2) {
     if (!load(&err_)) return false;
     stop();
 
@@ -313,7 +317,7 @@ bool Pipeline::start(int width, int height, int fps,
     // motion sensor, and a USB 2 link will refuse the extra bandwidth -- in
     // both cases the correct outcome is depth without the extra, not a dead
     // camera. So a failure here is recorded and swallowed.
-    haveIR_ = false; haveIMU_ = false;
+    haveIR_ = false; haveIMU_ = false; haveIR2_ = false;
     if (wantIR) {
         Err ei;
         // Index 1 is the LEFT imager. Depth is computed in its frame, so it is
@@ -321,6 +325,12 @@ bool Pipeline::start(int width, int height, int fps,
         g.config_enable_stream(cfg, STREAM_INFRARED, 1, width, height,
                                FORMAT_Y8, fps, &ei);
         haveIR_ = !ei.bad();
+    }
+    if (wantIR && wantIR2 && haveIR_) {
+        Err ei2;
+        g.config_enable_stream(cfg, STREAM_INFRARED, 2, width, height,
+                               FORMAT_Y8, fps, &ei2);
+        haveIR2_ = !ei2.bad();
     }
     if (wantIMU) {
         Err eg, ea;
@@ -425,7 +435,7 @@ bool Pipeline::waitDepth(std::vector<uint16_t>& out, int& w, int& h, int timeout
 
 bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
                           std::vector<uint8_t>* ir, std::vector<Motion>* motion,
-                          int timeoutMs) {
+                          int timeoutMs, std::vector<uint8_t>* ir2) {
     if (!pipe_) { err_ = "pipeline not started"; return false; }
     Err e;
     void* fs = g.pipeline_wait_for_frames(pipe_, unsigned(timeoutMs), &e);
@@ -434,6 +444,7 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
     Err e2;
     const int n = g.embedded_frames_count(fs, &e2);
     bool got = false;
+    const void* irProf[3] = {nullptr, nullptr, nullptr};   // for the extrinsics
     for (int i = 0; i < n; ++i) {
         Err e3;
         void* f = g.extract_frame(fs, i, &e3);
@@ -465,6 +476,24 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
             continue;
         }
 
+        if (st == STREAM_INFRARED && idx == 2) {
+            // The RIGHT imager. Kept apart from index 1: they share a stream
+            // type, and copying both into one buffer would hand the tracker
+            // whichever arrived last.
+            if (ir2) {
+                Err ew, eh2, em;
+                const int iw = g.get_frame_width(f, &ew), ih = g.get_frame_height(f, &eh2);
+                const void* d = g.get_frame_data(f, &em);
+                if (!ew.bad() && !eh2.bad() && !em.bad() && d && iw > 0 && ih > 0) {
+                    ir2->resize(size_t(iw) * ih);
+                    std::memcpy(ir2->data(), d, ir2->size());
+                }
+            }
+            Err ep; irProf[2] = g.get_frame_stream_profile(f, &ep);
+            if (ep.bad()) irProf[2] = nullptr;
+            g.release_frame(f);
+            continue;
+        }
         if (ir && st == STREAM_INFRARED) {
             Err ew, eh2, em;
             const int iw = g.get_frame_width(f, &ew), ih = g.get_frame_height(f, &eh2);
@@ -473,6 +502,12 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
                 ir->resize(size_t(iw) * ih);
                 std::memcpy(ir->data(), d, ir->size());
             }
+            Err et;
+            const double ts = g.get_frame_timestamp ? g.get_frame_timestamp(f, &et) : -1.0;
+            lastIrMs_ = et.bad() ? -1.0 : ts;
+            Err ep; irProf[1] = g.get_frame_stream_profile(f, &ep);
+            if (ep.bad()) irProf[1] = nullptr;
+
             lastIrEmitter_ = -1;
             if (g.supports_frame_metadata && g.get_frame_metadata) {
                 for (int key : {int(METADATA_EMITTER_MODE), int(METADATA_LASER_POWER_MODE)}) {
@@ -512,6 +547,16 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
             }
         }
         g.release_frame(f);
+    }
+    // THE BASELINE from the device's own calibration, once: IR1 -> IR2 is a
+    // pure translation along x for the rectified pair. Profiles belong to the
+    // pipeline, not the frame, so they outlive the release above.
+    if (!haveBaseline_ && irProf[1] && irProf[2] && g.get_extrinsics) {
+        float ex[12] = {0};
+        Err ee;
+        g.get_extrinsics(irProf[1], irProf[2], ex, &ee);
+        const float b = std::fabs(ex[9]);
+        if (!ee.bad() && b > 0.01f && b < 0.5f) { baseline_ = b; haveBaseline_ = true; }
     }
     g.release_frame(fs);
     if (!got) err_ = "frameset contained no usable depth frame";

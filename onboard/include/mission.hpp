@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "control_types.hpp"
 #include "nav_map.hpp"
 #include "world_model.hpp"
@@ -45,6 +47,11 @@ public:
         float moveTimeoutSec = 12.f;   // abort a leg that stalls
         float cruise         = 0.25f;  // forward pitch while moving
         float kpYaw          = 1.2f;   // heading error -> yaw
+        // Cap on the yaw stick when TURNING ONTO a leg ([0,1]). 1 = none. A
+        // visual tracker (VIO, SLAM) loses its features in a fast turn --
+        // measured in test_voxel_nav's closed loop with ORB-SLAM3 -- and the
+        // turn-in-place is where the mission turns fastest.
+        float maxYawStick    = 1.0f;
         float hFovDeg        = 60.f;   // camera h-FoV: corridor offset -> bearing
         float corridorStaleSec = 0.8f; // corridor older than this = blind (stop)
         float maxEphM        = 3.0f;   // est 1σ above this = degraded (hover) —
@@ -119,6 +126,14 @@ public:
         // that otherwise needs a flow sensor. Needs VISO_TYPE=1 and the EK3
         // source params; off by default.
         bool  voxVioToFc      = false;
+        // ORB-SLAM3 through the kestrel-orbslam bridge instead of DepthVio
+        // (VoxelNavModule::Params::slam; onboard/orbslam/README.md). Its poses
+        // go where DepthVio's do, so voxVioToFc feeds them to EKF3 the same way.
+        bool        voxSlam          = false;
+        std::string voxSlamSocket    = "/tmp/kestrel-slam.sock";
+        bool        voxSlamInertial  = false;
+        // The projector while tracking: "strobe" (default), "off", "on".
+        std::string voxEmitter       = "strobe";
         float voxAlignDeg     = 10.f;  // no forward pitch until the nose is
                                        // within this of the leg bearing: the
                                        // leg is certified on ITS line only

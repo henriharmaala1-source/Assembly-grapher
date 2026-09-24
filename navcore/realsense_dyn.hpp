@@ -97,9 +97,12 @@ public:
     // or USB link: a D435 (no i) has no motion sensor at all, and a USB 2
     // connection routinely refuses the extra bandwidth. A failure to add them
     // must not cost the depth stream, so each is enabled in its own attempt.
+    // `wantIR2` adds infrared index 2, the RIGHT imager: with index 1 it is
+    // the rectified stereo pair a stereo SLAM tracks (onboard/orbslam).
     bool start(int width, int height, int fps,
-               bool wantIR = false, bool wantIMU = false);
+               bool wantIR = false, bool wantIMU = false, bool wantIR2 = false);
     bool haveIR()  const { return haveIR_; }
+    bool haveIR2() const { return haveIR2_; }
     bool haveIMU() const { return haveIMU_; }
     void stop();
     bool running() const { return pipe_ != nullptr; }
@@ -120,13 +123,20 @@ public:
     // Depth plus whatever else was enabled. `ir` is width*height uint8 and is
     // left untouched when infrared is off; `motion` is appended to, never
     // cleared, so a caller can drain several framesets before integrating.
+    // `ir2` receives the right IR image when index 2 was enabled.
     bool waitFrames(std::vector<uint16_t>& depth, int& w, int& h,
                     std::vector<uint8_t>* ir,
                     std::vector<Motion>* motion,
-                    int timeoutMs = 2000);
+                    int timeoutMs = 2000,
+                    std::vector<uint8_t>* ir2 = nullptr);
+    // Device timestamp (ms, the motion samples' clock) of the last left IR
+    // frame delivered; < 0 if none.
+    double lastIrTimeMs() const { return lastIrMs_; }
 
     float      depthScale() const { return depthScale_; }
     Intrinsics intrinsics() const { return intr_; }
+    // Left -> right IR distance from the device's own extrinsics once both IR
+    // streams have delivered a frame; the 50 mm nominal until then.
     float      baselineM() const { return baseline_; }
     bool       setEmitter(bool on);
     // STROBE: emitter on for one frame, off for the next, and so on. Depth
@@ -147,7 +157,9 @@ private:
     void* pipe_ = nullptr;
     void* profile_ = nullptr;
     void* sensor_ = nullptr;
-    bool  haveIR_ = false, haveIMU_ = false;
+    bool  haveIR_ = false, haveIMU_ = false, haveIR2_ = false;
+    double lastIrMs_ = -1.0;
+    bool  haveBaseline_ = false;
     int   lastIrEmitter_ = -1;
     float depthScale_ = 0.001f;
     float baseline_ = 0.05f;

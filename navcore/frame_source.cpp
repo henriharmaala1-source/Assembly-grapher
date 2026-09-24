@@ -60,14 +60,15 @@ bool ReplayFrameSource::next(cv::Mat& depth, PoseHint& hint) {
 // so it cannot rot behind an #ifdef nobody defines. It already had.
 class RealSenseSource : public FrameSource {
 public:
-    bool start(int w, int h, int fps, bool emitter, bool strobe, std::string* err) {
+    bool start(int w, int h, int fps, bool emitter, bool strobe, bool stereoIr,
+               std::string* err) {
         // Ask for the IMU. Both optional streams fail independently and
         // neither failure costs depth -- see rsdyn::Pipeline::start.
         // wantIR: the left imager. It costs a little USB bandwidth and it is
         // what `demo` runs its person detector on -- see FrameSource::
         // intensity(). A device or link that refuses it still gives depth,
         // which is why it is a separate attempt inside Pipeline::start.
-        if (!pipe_.start(w, h, fps, true, true)) {
+        if (!pipe_.start(w, h, fps, true, true, stereoIr)) {
             if (err) *err = pipe_.error();
             return false;
         }
@@ -133,8 +134,16 @@ public:
             pending_ = false;               // reuse the frame start() already took
         } else if (!pipe_.waitFrames(raw_, w, h,
                                      pipe_.haveIR() ? &ir_ : nullptr,
-                                     haveImu_ ? &motion_ : nullptr, 2000)) {
+                                     haveImu_ ? &motion_ : nullptr, 2000,
+                                     pipe_.haveIR2() ? &ir2_ : nullptr)) {
             return false;
+        }
+        // Raw samples for a consumer that integrates them (stereo-inertial
+        // SLAM). Bounded: nobody draining them must not grow memory.
+        for (const auto& m : motion_) {
+            if (rawImu_.size() >= 8000) rawImu_.erase(rawImu_.begin(), rawImu_.begin() + 4000);
+            ImuRaw r; r.tS = m.tMs * 1e-3; r.gyro = m.isGyro; r.x = m.x; r.y = m.y; r.z = m.z;
+            rawImu_.push_back(r);
         }
         irW_ = w; irH_ = h;
 
@@ -192,24 +201,22 @@ public:
         out = cv::Mat(irH_, irW_, CV_8U, (void*)ir_.data()).clone();
         return true;
     }
-    int intensityEmitter() const override {
-        const int e = pipe_.lastIrEmitter();
-        // STROBING WITH NO METADATA: half the frames carry dots and nothing
-        // says which. Report every frame as lit, so VIO never runs and the
-        // mission sees no estimate -- the honest failure. Said once. (Linux
-        // needs librealsense's RSUSB backend or its patched uvcvideo for
-        // frame metadata.)
-        if (strobing_ && e < 0) {
-            if (!warnedMeta_) {
-                std::fprintf(stderr, "[live] emitter strobing but NO frame metadata: lit "
-                                     "and dark frames cannot be told apart, VIO is OFF. "
-                                     "Build librealsense with FORCE_RSUSB_BACKEND=ON.\n");
-                warnedMeta_ = true;
-            }
-            return 1;
-        }
-        return e;
+    bool intensityRight(cv::Mat& out) const override {
+        if (ir2_.size() != size_t(irW_) * irH_ || irW_ <= 0) return false;
+        out = cv::Mat(irH_, irW_, CV_8U, (void*)ir2_.data()).clone();
+        return true;
     }
+    double intensityTimeS() const override {
+        const double ms = pipe_.lastIrTimeMs();
+        return ms < 0.0 ? -1.0 : ms * 1e-3;
+    }
+    void takeImu(std::vector<ImuRaw>& out) override { out.clear(); out.swap(rawImu_); }
+    float stereoBaselineM() const override { return pipe_.baselineM(); }
+
+    // Raw metadata -- informational. Its polarity has been reported INVERTED
+    // under the strobe (realsense-ros #3040), so the consumer's dark-frame
+    // gate (emitter_gate.hpp) decides from the image instead.
+    int intensityEmitter() const override { return pipe_.lastIrEmitter(); }
 
     int index() const override { return idx_; }
     std::string info(int which) const { return pipe_.deviceInfo(which); }
@@ -218,7 +225,8 @@ public:
 private:
     rsdyn::Pipeline pipe_;
     std::vector<uint16_t> raw_;
-    std::vector<uint8_t>  ir_;
+    std::vector<uint8_t>  ir_, ir2_;
+    std::vector<ImuRaw>   rawImu_;
     int  irW_ = 0, irH_ = 0;
     std::unique_ptr<DepthCamera> cam_;
     float scale_ = 0.001f;
@@ -228,15 +236,14 @@ private:
     float gx_ = 0, gy_ = 0, gz_ = 0, ax_ = 0, ay_ = 0, az_ = 0;
     bool  haveImu_ = false;
     bool  strobing_ = false;
-    mutable bool warnedMeta_ = false;
     bool  ok_ = false, pending_ = false;
     int   pendingW_ = 0, pendingH_ = 0, idx_ = 0;
 };
 
 std::unique_ptr<FrameSource> makeLiveSource(int w, int h, int fps, bool emitter,
-                                            std::string* err, bool strobe) {
+                                            std::string* err, bool strobe, bool stereoIr) {
     auto s = std::unique_ptr<RealSenseSource>(new RealSenseSource());
-    if (!s->start(w, h, fps, emitter, strobe, err)) return nullptr;
+    if (!s->start(w, h, fps, emitter, strobe, stereoIr, err)) return nullptr;
     std::printf("[live] %s  serial %s  fw %s  usb %s\n",
                 s->info(rsdyn::CAMERA_INFO_NAME).c_str(),
                 s->info(rsdyn::CAMERA_INFO_SERIAL).c_str(),

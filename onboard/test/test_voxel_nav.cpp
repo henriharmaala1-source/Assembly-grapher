@@ -26,6 +26,15 @@
 // grazing incidence that stereo never returned (0.03 m).
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <map>
+#include <mutex>
+#include <thread>
+#include <csignal>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +44,9 @@
 #include <vector>
 
 #include "fc_odometry.hpp"
+#include "slam_anchor.hpp"
+#include "slam_client.hpp"
+#include "slam_link.hpp"
 #include "frame_source.hpp"
 #include "mission.hpp"
 #include "voxel_nav.hpp"
@@ -111,6 +123,9 @@ public:
     }
     bool intensity(cv::Mat& out) const override { out = ir_.clone(); return !ir_.empty(); }
     int  intensityEmitter() const override { return lit_ ? 1 : 0; }
+protected:
+    void markLit() { ir_.at<uchar>(0, 0) = 255; }
+public:
     int frames = 0;
 private:
     const sim::VoxelWorld& w_;
@@ -119,6 +134,40 @@ private:
     float gyroZero_;
     cv::Mat ir_;
     bool lit_ = false;
+};
+
+// The same, with the RIGHT imager too (50 mm to the right), for the SLAM path.
+// Lit frames also carry a marker pixel (0,0) = 255, so a fake SLAM server can
+// prove it never received one.
+class StereoStrobedSource : public StrobedSource {
+public:
+    StereoStrobedSource(const sim::VoxelWorld& w, const sim::CamParams& p,
+                        const sim::CamPose* truth, float gyroZeroDeg)
+        : StrobedSource(w, p, truth, gyroZeroDeg), w2_(w), cam2_(p), truth2_(truth) {}
+    bool next(cv::Mat& depth, sim::PoseHint& hint) override {
+        if (!StrobedSource::next(depth, hint)) return false;
+        const cv::Matx33d R = SlamAnchor::rotWc(*truth2_);
+        sim::CamPose r = *truth2_;
+        const float b = cam2_.params().baselineM;
+        r.e += float(R(0, 0) * b); r.n += float(R(1, 0) * b); r.u += float(R(2, 0) * b);
+        right_ = cam2_.renderIR(w2_, r);
+        if (intensityEmitter() == 1) {
+            for (int v = 3; v < right_.rows; v += 7)
+                for (int u = (v * 3) % 7; u < right_.cols; u += 7) right_.at<uchar>(v, u) = 255;
+            markLit();
+            right_.at<uchar>(0, 0) = 255;
+        }
+        t_ = double(frames) / 30.0;
+        return true;
+    }
+    bool   intensityRight(cv::Mat& out) const override { out = right_.clone(); return true; }
+    double intensityTimeS() const override { return t_; }
+private:
+    const sim::VoxelWorld& w2_;
+    sim::DepthCamera cam2_;
+    const sim::CamPose* truth2_;
+    cv::Mat right_;
+    double t_ = 0;
 };
 
 sim::CamParams d435i() {
@@ -216,12 +265,6 @@ int main() {
         sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
         sim::CamPose truth; truth.e = 8.f; truth.n = 4.f; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
-        sim::DepthCamera vioCam(cp);
-        sim::DepthVio vio;
-        vio.init(vioCam);
-        vio.reset(truth);                        // the start pose is known
-        int vioFrames = 0, vioLost = 0;
-        double vioMs = 0.0;
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
         CHECK(mod.isReady());
         WorldModel wm;
@@ -265,12 +308,6 @@ int main() {
         box(w, 6.5f, 6.0f, 9.5f, 6.4f, 4.f, kWallTex);
         sim::CamPose truth; truth.e = 8.f; truth.n = 4.f; truth.u = 1.5f;
         auto* src = new AttitudeOnlySource(w, cp, &truth);
-        sim::DepthCamera vioCam(cp);
-        sim::DepthVio vio;
-        vio.init(vioCam);
-        vio.reset(truth);                        // the start pose is known
-        int vioFrames = 0, vioLost = 0;
-        double vioMs = 0.0;
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
         WorldModel wm;
         wm.with([](WorldState& s) { s = stillState(); });
@@ -386,6 +423,121 @@ int main() {
         s.tickMonoS = monoNowS();
         CHECK(vioLocalEstimate(monoNowS(), s) && s.estValid);
         CHECK(std::fabs(s.estPn - s.vioPn) < 1e-6f);   // (speed is wall-clock: not checked)
+    }
+
+    // ---------------------------------------------------------------- 2d
+    std::printf("SLAM wiring: fake server, arbitrary SLAM frame, a map change midway\n");
+    {
+        // Everything between the module and a SLAM process, without the SLAM:
+        // the server answers each frame with the TRUE pose expressed in an
+        // arbitrary SLAM world (yawed, tilted, offset), and at frame 150
+        // starts a NEW map with a different one. The module must never send
+        // a lit frame, must land in ENU, and must stay continuous across the
+        // map change.
+        sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
+        std::mt19937 prng(3);
+        std::uniform_real_distribution<float> PU(2.f, 14.f);
+        for (int i = 0; i < 25; ++i) {
+            const float x = PU(prng), y = PU(prng);
+            if (std::fabs(x - 5.5f) < 1.5f && y > 3.f && y < 11.f) continue;
+            box(w, x - 0.2f, y - 0.2f, x + 0.2f, y + 0.2f, 4.f, kPillarTex);
+        }
+        const std::string sock = "/tmp/kestrel-voxtest-" + std::to_string(::getpid()) + ".sock";
+        std::mutex tmu;
+        std::map<long, sim::CamPose> truthAt;          // frame time (ms) -> truth
+        std::atomic<int> litSeen{0}, served{0};
+        const int lfd = slamlink::listenUnix(sock);
+        CHECK(lfd >= 0);
+        std::atomic<int> cfd{-1};
+        std::thread srv([&] {
+            const int fd = ::accept(lfd, nullptr, nullptr);
+            if (fd < 0) return;
+            cfd.store(fd);
+            slamlink::FrameHeader h;
+            std::vector<uint8_t> l, r;
+            std::vector<slamlink::ImuSample> imu;
+            // Two arbitrary SLAM worlds: ENU -> SLAM.
+            sim::CamPose f0; f0.yawDeg = 70.f; f0.pitchDeg = 12.f; f0.e = 3.f; f0.n = -2.f; f0.u = 0.5f;
+            sim::CamPose f1; f1.yawDeg = -35.f; f1.rollDeg = 5.f; f1.e = -7.f; f1.n = 4.f;
+            while (slamlink::recvFrame(fd, h, l, r, imu)) {
+                if (l[0] == 255 || r[0] == 255) litSeen.fetch_add(1);
+                sim::CamPose q;
+                {
+                    std::lock_guard<std::mutex> lk(tmu);
+                    q = truthAt[long(h.tS * 1000.0 + 0.5)];
+                }
+                const int k = served.fetch_add(1);
+                const sim::CamPose& F = k < 75 ? f0 : f1;      // ~frame 150: new map
+                const cv::Matx33d Rsw = SlamAnchor::rotWc(F).t();
+                const cv::Vec3d tsw(F.e, F.n, F.u);
+                const cv::Matx33d Rwc = SlamAnchor::rotWc(q);
+                const cv::Matx33d Rsc = Rsw * Rwc;
+                const cv::Vec3d p = Rsw * (cv::Vec3d(q.e, q.n, q.u) - tsw);
+                slamlink::PoseReply rep;
+                rep.seq = h.seq; rep.state = slamlink::kOk; rep.mapId = k < 75 ? 0 : 1;
+                rep.tracked = 300;
+                for (int i = 0; i < 3; ++i) {
+                    for (int j = 0; j < 3; ++j) rep.Twc[i * 4 + j] = float(Rsc(i, j));
+                    rep.Twc[i * 4 + 3] = float(p[i]);
+                }
+                if (!slamlink::sendPose(fd, rep)) break;
+            }
+            ::close(fd);
+        });
+        const float hdg = 25.f;
+        sim::CamPose truth; truth.e = 4.f; truth.n = 4.f; truth.u = 1.5f;
+        truth.yawDeg = hdg; truth.pitchDeg = -15.f;
+        auto* src = new StereoStrobedSource(w, cp, &truth, 137.f);
+        VoxelNavModule::Params vq = vp;
+        vq.slam = true; vq.slamSocket = sock;
+        auto modp = std::make_unique<VoxelNavModule>(std::unique_ptr<sim::FrameSource>(src), vq);
+        VoxelNavModule& mod = *modp;
+        WorldModel wm;
+        const float dt = 1.f / 30.f, v = 1.f;
+        const float se = std::sin(hdg * kPi / 180.f), cn = std::cos(hdg * kPi / 180.f);
+        float worst = 0.f;
+        bool have0 = false;
+        float v0e = 0, v0n = 0, t0e = 0, t0n = 0;       // at the first valid pose
+        for (int i = 0; i < 300; ++i) {                 // 10 s, 10 m, 30 fps strobed
+            {
+                std::lock_guard<std::mutex> lk(tmu);
+                truthAt[long(double(i + 1) / 30.0 * 1000.0 + 0.5)] = truth;
+            }
+            wm.with([&](WorldState& s) {
+                s.tickMonoS = monoNowS(); s.vehYawDeg = hdg;
+                s.vehGroundspeed = v; s.vehAltM = truth.u;
+            });
+            mod.run(cv::Mat(), wm);
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+            const WorldState s = wm.snapshot();
+            if (s.vioValid) {
+                // DISPLACEMENT since the first tracked pose (that pose is the
+                // origin by definition). The reply read now answers a frame
+                // sent a run or two ago: ~3-7 cm of lag at 1 m/s is in this.
+                if (!have0) { have0 = true; v0e = s.vioPe; v0n = s.vioPn;
+                              t0e = truth.e; t0n = truth.n; }
+                const float err = std::hypot((s.vioPe - v0e) - (truth.e - t0e),
+                                             (s.vioPn - v0n) - (truth.n - t0n));
+                worst = std::max(worst, err);
+            }
+            truth.e += se * v * dt; truth.n += cn * v * dt;
+        }
+        const WorldState s = wm.snapshot();
+        std::printf("  %d frames served, %d lit ever sent; moved (%.2f, %.2f) vs truth "
+                    "(%.2f, %.2f); worst lag+error %.2f m; yaw %.1f; resets %d\n",
+                    served.load(), litSeen.load(), s.vioPe - v0e, s.vioPn - v0n,
+                    truth.e - t0e, truth.n - t0n, worst, s.vioYawDeg, s.vioResets);
+        CHECK(litSeen.load() == 0);                       // never a dotted frame
+        CHECK(served.load() >= 140);                      // the dark half, near enough
+        CHECK(worst < 0.15f);                             // ~1-2 frames of lag, no jump
+        CHECK(std::fabs(s.vioYawDeg - hdg) < 1.f);        // compass frame
+        CHECK(s.vioResets >= 1);                          // the map change was reported
+        modp.reset();                                     // closes the client side
+        const int c = cfd.load();
+        if (c >= 0) ::shutdown(c, SHUT_RDWR);
+        ::shutdown(lfd, SHUT_RDWR); ::close(lfd);
+        srv.join();
+        ::unlink(sock.c_str());
     }
 
     // ---------------------------------------------------------------- 3
@@ -505,7 +657,14 @@ int main() {
         // the real odometer instead of a model of one. Its error is whatever
         // it turns out to be.
         const bool useVio = std::getenv("VOXTEST_VIO") != nullptr;
-        const float odomFrac = useVio ? 0.f : (oEnv ? float(std::atof(oEnv)) : -1.f);
+        // VOXTEST_SLAM=<kestrel-orbslam> VOXTEST_ORBVOC=<ORBvoc.txt>: the same,
+        // with ORB-SLAM3 (the real bridge process) on a rendered stereo IR
+        // pair as the estimator.
+        const char* slamBin = std::getenv("VOXTEST_SLAM");
+        const char* slamVoc = std::getenv("VOXTEST_ORBVOC");
+        const bool useSlam = slamBin && slamVoc;
+        const float odomFrac = (useVio || useSlam) ? 0.f
+                             : (oEnv ? float(std::atof(oEnv)) : -1.f);
         if (odomFrac >= 0.f) {
             vp.persistMap = true;
             vp.integrateMoving = std::getenv("VOXTEST_ODOM_MOVING") != nullptr;
@@ -522,10 +681,43 @@ int main() {
         vio.reset(truth);                        // the start pose is known
         int vioFrames = 0, vioLost = 0;
         double vioMs = 0.0;
+        // SLAM sees the IR pair at the resolution that flies (848x480 --
+        // onboard's --voxel-width default), not the suite's 424x240 depth:
+        // ORB-SLAM3 needs more than 500 features with depth to (re)start a
+        // map, which 424x240 rarely has. VOXTEST_SLAMRES=424 to compare.
+        sim::CamParams slamCp = cp;
+        {
+            const char* r = std::getenv("VOXTEST_SLAMRES");
+            const int wpx = r ? std::atoi(r) : 848;
+            slamCp.width = wpx; slamCp.height = wpx * 480 / 848;
+        }
+        sim::DepthCamera slamCam(slamCp);
+        pid_t slamPid = -1;
+        std::unique_ptr<SlamClient> slamCli;
+        SlamAnchor slamAnchor;
+        int32_t slamMap = -1, slamPrevState = -99;
+        int slamMaps = 0;
+        const std::string slamSock = "/tmp/kestrel-voxslam-" + std::to_string(::getpid()) + ".sock";
+        if (useSlam) {
+            slamPid = ::fork();
+            if (slamPid == 0) {
+                if (!std::freopen("/dev/null", "w", stdout)) _exit(126);
+                ::execl(slamBin, slamBin, "--vocab", slamVoc, "--socket", slamSock.c_str(),
+                        (char*)nullptr);
+                _exit(127);
+            }
+            slamCli.reset(new SlamClient(slamSock));
+            for (int i = 0; i < 600 && !slamCli->connected(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            CHECK(slamCli->connected());
+        }
         VoxelNavModule mod(std::unique_ptr<sim::FrameSource>(src), vp);
 
         MissionController::Params mp;
         mp.useVoxel = true; mp.useMap = false;
+        // VOXTEST_YAWCAP=<0..1>: cap the turn-onto-a-leg yaw stick (the sim
+        // maps a full stick to 90 deg/s).
+        if (const char* yc = std::getenv("VOXTEST_YAWCAP")) mp.maxYawStick = float(std::atof(yc));
         MissionController m(mp);
         m.enable(true);
 
@@ -561,6 +753,58 @@ int main() {
                 ++vioFrames; vioMs += vr.ms;
                 if (!vr.valid) ++vioLost;
                 errE = vr.pose.e - truth.e; errN = vr.pose.n - truth.n;
+            }
+            if (useSlam && slamCli) {
+                // Every tick a stereo pair, 50 mm apart, answered before the
+                // tick goes on (the desk is fast enough; the Pi would drop
+                // frames, which SlamClient handles and this does not model).
+                const cv::Matx33d Rwc = SlamAnchor::rotWc(truth);
+                sim::CamPose right = truth;
+                right.e += float(Rwc(0, 0) * cp.baselineM);
+                right.n += float(Rwc(1, 0) * cp.baselineM);
+                right.u += float(Rwc(2, 0) * cp.baselineM);
+                const cv::Mat il = slamCam.renderIR(w, truth), irr = slamCam.renderIR(w, right);
+                slamlink::FrameHeader h;
+                h.tS = double(t); h.width = slamCp.width; h.height = slamCp.height;
+                h.fx = slamCam.fpx(); h.fy = slamCam.fy(); h.cx = slamCam.ppx(); h.cy = slamCam.ppy();
+                h.baselineM = cp.baselineM; h.fps = 1.f / dt;
+                const uint32_t seq = slamCli->submit(h, il.data, irr.data, {});
+                slamlink::PoseReply rep;
+                bool got = false;
+                const auto tw = std::chrono::steady_clock::now();
+                const double lim = vioFrames == 0 ? 300.0 : 30.0;
+                while (!got && std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                             tw).count() < lim) {
+                    got = slamCli->takeReply(rep) && rep.seq == seq;
+                    if (!got) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                ++vioFrames;
+                const bool okT = got && (rep.state == slamlink::kOk || rep.state == slamlink::kOkKlt);
+                if (got && vioFrames > 1) vioMs += rep.ms;
+                if (std::getenv("VOXTEST_SLAMTRACE") && got && rep.state != slamPrevState)
+                    std::printf("   t=%.2f slam state %d map %d tracked %d  phase %s  "
+                                "at (%.2f,%.2f) yaw %.1f v %.2f\n", t, rep.state, rep.mapId,
+                                rep.tracked, wm.snapshot().missionPhase.c_str(), truth.e,
+                                truth.n, truth.yawDeg, v);
+                if (got) slamPrevState = rep.state;
+                if (!okT) {
+                    ++vioLost;                   // the estimate holds its last error
+                } else {
+                    // Anchored at the first tracked frame to the true pose (the
+                    // start is known, as for VOXTEST_VIO) -- and, as the module
+                    // does, RE-anchored to the current estimate whenever the
+                    // SLAM starts a new map: a new map is a new frame.
+                    if (!slamAnchor.anchored() || rep.mapId != slamMap) {
+                        sim::CamPose a = truth;
+                        a.e = truth.e + errE; a.n = truth.n + errN;
+                        slamAnchor.anchor(rep.Twc, a);
+                        if (slamMap != -1) ++slamMaps;
+                        slamMap = rep.mapId;
+                    }
+                    float se, sn, su, syaw;
+                    slamAnchor.toEnu(rep.Twc, se, sn, su, syaw);
+                    errE = se - truth.e; errN = sn - truth.n;
+                }
             }
             wm.with([&](WorldState& s) {
                 s.tickMonoS = monoNowS();
@@ -651,18 +895,26 @@ int main() {
                     "final %s  frames %d\n",
                     pillars, walls, simS, travelled, net, cells, legs, minClear,
                     minPhase.c_str(), minT, lastPhase.c_str(), src->frames);
-        if (useVio)
-            std::printf("  VIO: %d frames, %d lost, %.1f ms/frame, final error %.2f m "
-                        "over %.1f m (%.1f %%)\n", vioFrames, vioLost,
+        if (slamPid > 0) {
+            slamCli.reset();
+            ::kill(slamPid, SIGTERM);
+            ::waitpid(slamPid, nullptr, 0);
+            ::unlink(slamSock.c_str());
+        }
+        if (useVio || useSlam)
+            std::printf("  %s: %d frames, %d lost, %.1f ms/frame, final error %.2f m "
+                        "over %.1f m (%.1f %%)\n", useSlam ? "SLAM" : "VIO", vioFrames, vioLost,
                         vioMs / std::max(1, vioFrames), std::hypot(errE, errN), travelled,
                         100.f * std::hypot(errE, errN) / std::max(0.1f, travelled));
+        if (useSlam) std::printf("  SLAM maps started after the first: %d\n", slamMaps);
         // One machine-readable line, for sweeps.
         std::printf("RESULT far=%d big=%d stereo=%d world=%s drift=%.2f odom=%s "
                     "moving=%d travel=%.2f net=%.2f cells=%d legs=%d minclr=%.3f "
                     "stuck=%d collisions=%d cmove=%d chover=%d odomerr=%.2f\n",
                     int(vp.farChoose), int(big), int(std::getenv("VOXTEST_STEREO") != nullptr),
                     ws ? ws : "7", driftSig,
-                    useVio ? "vio" : std::to_string(odomFrac).c_str(), int(vp.integrateMoving),
+                    useSlam ? "slam" : useVio ? "vio" : std::to_string(odomFrac).c_str(),
+                    int(vp.integrateMoving),
                     travelled, net, cells, legs, minClear,
                     int(lastPhase == "STUCK"), collisions, collMove, collHover,
                     std::hypot(errE, errN));

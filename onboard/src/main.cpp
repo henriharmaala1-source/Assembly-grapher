@@ -198,6 +198,7 @@ int main(int argc, char** argv) {
         "{voxel-fps      | 15    | D435i depth rate (30 with --voxel-vio: VIO gets every other frame) }"
         "{voxel-vio      | false | visual odometry on the D435i IR (emitter strobes); the displacement source when there is no other (nav.vox_vio) }"
         "{voxel-vio-fc   | false | also feed that VIO to the FC's EKF3 as ExternalNav, so it can hold position on it (nav.vox_vio_to_fc) }"
+        "{voxel-slam     | false | ORB-SLAM3 via the kestrel-orbslam bridge instead of the built-in VIO; start the bridge first (nav.vox_slam, orbslam/README.md) }"
         "{depth-backend  | midas | midas|dav2 }"
         "{detect-model   |       | ONNX YOLOv8 model (enables detect) }"
         "{detect-labels  | drone,bird | comma-separated class labels }"
@@ -290,10 +291,17 @@ int main(int argc, char** argv) {
         vp.nav.subpixelPx = tune.mission.voxSubpixelPx;   // measured, not assumed
         vp.persistMap      = tune.mission.voxPersistMap;
         vp.integrateMoving = tune.mission.voxIntegrateMoving;
-        vp.vio             = tune.mission.voxVio || parser.get<bool>("voxel-vio") ||
-                             parser.get<bool>("voxel-vio-fc");
-        vioToFc            = vp.vio && (tune.mission.voxVioToFc ||
-                                        parser.get<bool>("voxel-vio-fc"));
+        vp.slam            = tune.mission.voxSlam || parser.get<bool>("voxel-slam");
+        vp.slamSocket      = tune.mission.voxSlamSocket;
+        vp.slamInertial    = tune.mission.voxSlamInertial;
+        vp.vio             = !vp.slam && (tune.mission.voxVio || parser.get<bool>("voxel-vio") ||
+                                          parser.get<bool>("voxel-vio-fc"));
+        vioToFc            = (vp.vio || vp.slam) &&
+                             (tune.mission.voxVioToFc || parser.get<bool>("voxel-vio-fc"));
+        const std::string em = tune.mission.voxEmitter;
+        vp.emitter = em == "off" ? VoxelNavModule::Params::Emitter::Off
+                   : em == "on"  ? VoxelNavModule::Params::Emitter::On
+                                 : VoxelNavModule::Params::Emitter::Strobe;
         std::string err;
         voxnav = VoxelNavModule::live(vp, parser.get<int>("voxel-width"),
                                       parser.get<int>("voxel-height"),
@@ -303,10 +311,11 @@ int main(int argc, char** argv) {
             tune.mission.useVoxel = true;
             std::printf("[voxel] D435i -> voxel -> plan ON (%s); the mission flies its plan\n",
                         voxnav->source()->name());
-            if (vp.vio)
-                std::printf("[voxel] VIO ON: displacement source when the Pi estimate "
-                            "and FC flow are both absent%s\n",
-                            vioToFc ? "; FED to the FC as ExternalNav" : "");
+            if (vp.vio || vp.slam)
+                std::printf("[voxel] %s ON (emitter %s): displacement source when the Pi "
+                            "estimate and FC flow are both absent%s\n",
+                            vp.slam ? ("ORB-SLAM3 via " + vp.slamSocket).c_str() : "VIO",
+                            em.c_str(), vioToFc ? "; FED to the FC as ExternalNav" : "");
         } else {
             // Not silently: a flag that was asked for and did nothing reads,
             // in the air, exactly like a planner that saw nothing.

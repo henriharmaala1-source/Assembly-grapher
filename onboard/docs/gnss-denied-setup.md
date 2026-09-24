@@ -187,20 +187,24 @@ images high-passed so lighting that moves with the camera is not read as
 texture). A solve that jumps or turns further than a frame allows is LOST, not
 reported; a lost frame coasts and says so.
 
-**The emitter has to strobe.** The projector's dots are fixed to the camera
-and track as zero motion. With `--voxel-vio` the live source sets
-`RS2_OPTION_EMITTER_ON_OFF`: lit frames keep blank walls in the depth map,
-dark frames feed VIO, told apart by per-frame metadata. VIO therefore runs at
-half the depth rate -- use `--voxel-fps=30`. **On Linux, frame metadata needs
-librealsense built with `FORCE_RSUSB_BACKEND=ON`** (or Intel's patched
-`uvcvideo`); without it the source cannot tell lit from dark, says so once,
-and VIO stays off.
+**The projector must not reach the tracker.** Its dots are fixed to the
+camera and track as zero motion. With `--voxel-vio` or `--voxel-slam` the live
+source sets `RS2_OPTION_EMITTER_ON_OFF` (`nav.vox_emitter = strobe`, the
+default): lit frames keep blank walls in the depth map, dark frames go to the
+tracker, which therefore runs at half the depth rate -- use `--voxel-fps=30`.
+Lit and dark are told apart **from the image** (`navcore/emitter_gate.hpp`:
+the dots add fine-scale energy), not from librealsense's frame metadata, whose
+polarity has been reported inverted in exactly this mode (realsense-ros
+#3040) and which Linux only delivers with the RSUSB backend. A frame the gate
+is unsure of is skipped, never used. `nav.vox_emitter = off` is the simpler
+choice outdoors, where the sun swamps the dots anyway.
 
-Two ways to use it:
+Three flags:
 
 | flag / key | what it does |
 |---|---|
 | `--voxel-vio` / `nav.vox_vio` | VIO is the mission's displacement when neither the Pi estimate nor the FC's flow position exists. The FC does **not** hold on it: hover drift (§9.2) remains. |
+| `--voxel-slam` / `nav.vox_slam` | **ORB-SLAM3** instead of the built-in VIO: stereo (or stereo-inertial) SLAM on the IR pair, in its own process (`onboard/orbslam/`, GPLv3 kept out of `kestrel`). Its poses land in the same place, so both rows around this one apply unchanged. Start `kestrel-orbslam` first. |
 | `--voxel-vio-fc` / `nav.vox_vio_to_fc` | also sends it to EKF3 as ExternalNav (`VISION_POSITION_ESTIMATE` + `VISION_SPEED_ESTIMATE`, with `reset_counter` and covariance marked unknown), at <= 30 Hz, valid frames only, never repeated once stale. The FC then holds position on it, and the mission reads the FC's own local position (§9.1) -- one filter. |
 
 ArduPilot parameters for `--voxel-vio-fc` (from the ArduPilot non-GPS /

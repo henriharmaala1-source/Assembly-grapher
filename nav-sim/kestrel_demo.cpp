@@ -299,17 +299,19 @@ public:
     explicit SimEye(const sim::EnvConfig& cfg) : cfg_(cfg) {
         cp_.width = 424; cp_.height = 240; cp_.hfovDeg = 87.f; cp_.baselineM = 0.05f;
     }
-    // One frame from `pose` in world `seed`. Returns false if nothing drawn.
-    bool frame(const sim::CamPose& aircraft, unsigned seed, int outW, int outH,
-               cv::Mat& depthVis, cv::Mat& mapFpv, float& validFrac) {
+    // One frame from `pose` in world `world`, layout `seed`. It follows the
+    // planner onto every new map. Returns false if nothing drawn.
+    bool frame(const sim::CamPose& aircraft, const std::string& world, unsigned seed,
+               int outW, int outH, cv::Mat& depthVis, cv::Mat& mapFpv, float& validFrac) {
         sim::CamPose pose = aircraft;
         pose.pitchDeg += kSimEyeTiltDeg;      // the camera's mount, not the airframe
-        if (!twin_ || seed != seed_) {
-            sim::EnvConfig c = cfg_; c.seed = seed;
+        if (!twin_ || seed != seed_ || world != world_) {
+            sim::EnvConfig c = cfg_; c.seed = seed; c.world = world;
             twin_.reset(new sim::VoxelEnv(c));
             cam_.reset(new sim::SimFrameSource(twin_->world(), cp_, /*truth*/ false));
             nav_.init(cam_->camera(), sim::NavPipelineParams(), pose);
             seed_ = seed;
+            world_ = world;
         }
         cam_->setPose(pose);
         cv::Mat depth; sim::PoseHint hint;
@@ -338,12 +340,15 @@ private:
     std::unique_ptr<sim::SimFrameSource> cam_;
     sim::NavPipeline nav_;
     unsigned seed_ = ~0u;
+    std::string world_;
 };
 
 struct PlannerFrame {
     cv::Mat fpv, depth, top, footage;
     sim::CamPose pose;           // where the aircraft is, for the sim D435i
-    unsigned     seed = 0;       // which world it is flying
+    std::string  world;          // which world it is flying
+    unsigned     seed = 0;       // ... and which layout of it
+    int          map = 0;        // how many maps this run has flown before this one
     float   travelM = 0, netM = 0;
     int     steps = 0, cells = 0, collisions = 0;
 };
@@ -482,6 +487,20 @@ cv::Mat syntheticDepth(int w, int h) {
 
 }  // namespace
 
+std::string worldForEpisode(const std::string& world, int ep) {
+    // gallery and hall ONLY: the two worlds on the voxel ladder's own lattice
+    // (see Options::world). The training worlds read as a broken map in the
+    // first-person pane, which is the last thing a looping showcase should do.
+    static const char* TOUR[] = {"gallery", "hall"};
+    if (world != "tour") return world;
+    return TOUR[(ep < 0 ? 0 : ep) % 2];
+}
+
+namespace {
+// The planner's lookahead: the maze's corridors are too tight for 2 s.
+float horizonFor(const std::string& world) { return world == "maze" ? 0.6f : 2.0f; }
+}  // namespace
+
 // --------------------------------------------------------------------- parse
 bool parse(const std::vector<std::string>& args, Options& o, std::string& err) {
     for (size_t i = 0; i < args.size(); ++i) {
@@ -530,7 +549,7 @@ bool parse(const std::vector<std::string>& args, Options& o, std::string& err) {
     // environment -- it must always build something -- and wrong here, where
     // `--world galery` would quietly show the exact thing gallery exists to
     // avoid and nothing would say so.
-    static const char* WORLDS[] = {"gallery", "hall", "forest", "maze", "city",
+    static const char* WORLDS[] = {"tour", "gallery", "hall", "forest", "maze", "city",
                                    "road", "culdesac", "corridor"};
     bool knownWorld = false;
     for (const char* wn : WORLDS) if (o.world == wn) knownWorld = true;
@@ -607,9 +626,9 @@ int shot(const Options& o, const std::string& prefix) {
     // something in it -- this part needs no camera and no policy, so it is the
     // same picture the demo shows.
     sim::EnvConfig cfg;
-    cfg.world = o.world; cfg.seed = o.seed; cfg.maxSteps = 100000;
+    cfg.world = worldForEpisode(o.world, 0); cfg.seed = o.seed; cfg.maxSteps = 100000;
     cfg.objective = sim::EnvConfig::RANGE;
-    cfg.horizonS = (o.world == "maze") ? 0.6f : 2.0f;
+    cfg.horizonS = horizonFor(cfg.world);
     sim::VoxelEnv env(cfg);
     unsigned rng = 7u;
     bool found = false;
@@ -656,9 +675,9 @@ int shot(const Options& o, const std::string& prefix) {
         const sim::CamPose at = env.pose();
         for (int k = -3; k <= 3; ++k) {
             sim::CamPose q = at; q.yawDeg = at.yawDeg + 8.f * float(k);
-            eye.frame(q, cfg.seed, iw, ih, dv, mf, vf);
+            eye.frame(q, cfg.world, cfg.seed, iw, ih, dv, mf, vf);
         }
-        eye.frame(at, cfg.seed, iw, ih, dv, mf, vf);
+        eye.frame(at, cfg.world, cfg.seed, iw, ih, dv, mf, vf);
         p[1].img = dv; p[2].img = mf;
         p[1].sub = cv::format("simulated D435i 424x240, red 0 m .. blue 8 m   %.0f%% returned",
                               vf * 100.f);
@@ -772,10 +791,10 @@ int run(const Options& o) {
 
     // --- the planner stage ---------------------------------------------------
     sim::EnvConfig cfg;
-    cfg.world = o.world; cfg.seed = o.seed;
+    cfg.world = worldForEpisode(o.world, 0); cfg.seed = o.seed;
     cfg.maxSteps = o.maxSteps > 0 ? o.maxSteps : 100000;
     cfg.objective = sim::EnvConfig::RANGE;
-    cfg.horizonS = (o.world == "maze") ? 0.6f : 2.0f;
+    cfg.horizonS = horizonFor(cfg.world);
 
     Policy pol;
     std::string polNote;
@@ -789,11 +808,16 @@ int run(const Options& o) {
                     polNote.c_str(), sim::baselineName(fb));
 
     Slot<PlannerFrame> planSlot;
+    std::atomic<bool> nextMap{false};          // [r]: move on now
     std::thread planThread([&] {
-        sim::VoxelEnv env(cfg);
+        auto envp = std::make_unique<sim::VoxelEnv>(cfg);
         unsigned rng = o.seed * 7919u + 13u;
         unsigned seedNow = cfg.seed;
+        std::string worldNow = cfg.world;
+        int map = 0;
+        auto mapT0 = std::chrono::steady_clock::now();
         while (!stop.load()) {
+            sim::VoxelEnv& env = *envp;
             const sim::EnvStep st = env.step(
                 pol.act(env.observation(), env.actionMask(), env.nPrims(), fb, rng));
             PlannerFrame f;
@@ -802,18 +826,42 @@ int run(const Options& o) {
             f.top = matFrom(env.renderFrame(ih, ih, true), ih, ih);
             f.footage = matFrom(env.renderFootage(iw, ih), iw, ih);
             f.pose = env.pose();
+            f.world = worldNow;
             f.seed = seedNow;
+            f.map = map;
             f.travelM = st.travelM; f.netM = st.netDispM;
             f.steps = st.steps; f.cells = st.cellsVisited; f.collisions = st.collisions;
             planSlot.publish(std::move(f));
             // A COLLISION IS NOT THE END OF THE DEMO. It is the failure the
             // whole project is about, so it is shown -- briefly -- and then the
-            // episode restarts, rather than the pane freezing on a dead frame
-            // that a viewer reads as the program having crashed.
-            if (st.done || st.truncated) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(700));
-                env.reset(o.world, ++rng);
-                seedNow = rng;
+            // next map starts, rather than the pane freezing on a dead frame
+            // that a viewer reads as the program having crashed. The tour also
+            // moves on after kTourMapS, so an aircraft working one room over
+            // and over does not become the whole demo.
+            const bool ended = st.done || st.truncated;
+            const bool timeUp = o.world == "tour" &&
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - mapT0)
+                        .count() > kTourMapS;
+            if (ended || timeUp || nextMap.exchange(false)) {
+                if (ended) std::this_thread::sleep_for(std::chrono::milliseconds(700));
+                ++map;
+                seedNow = ++rng;
+                const std::string w = worldForEpisode(o.world, map);
+                if (w != worldNow) {
+                    // A different world may want a different lookahead, which
+                    // is construction-time configuration: build afresh.
+                    sim::EnvConfig c = cfg;
+                    c.world = w; c.seed = seedNow; c.horizonS = horizonFor(w);
+                    envp = std::make_unique<sim::VoxelEnv>(c);
+                    worldNow = w;
+                } else {
+                    env.reset(w, seedNow);
+                }
+                mapT0 = std::chrono::steady_clock::now();
+                std::printf("[demo] map %d: %s, layout %u (%s)\n", map + 1, worldNow.c_str(),
+                            seedNow, ended ? (st.collisions ? "collision" : "episode over")
+                                           : timeUp ? "time on this map" : "[r]");
+                std::fflush(stdout);
             }
         }
     });
@@ -934,7 +982,7 @@ int run(const Options& o) {
                 PlannerFrame pf;
                 unsigned long seen = 0;
                 if (planSlot.take(pf, seen) && !pf.fpv.empty())
-                    simEye.frame(pf.pose, pf.seed, iw, ih, f.depthVis, f.mapFpv,
+                    simEye.frame(pf.pose, pf.world, pf.seed, iw, ih, f.depthVis, f.mapFpv,
                                  f.validFrac);
                 else
                     std::this_thread::sleep_for(std::chrono::milliseconds(33));
@@ -949,8 +997,13 @@ int run(const Options& o) {
     const bool eyesLive = eyes.open(o, eyesNote);
     PersonDetector det;
     std::string detNote;
-    det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); },
-             detNote);
+    // --no-people means NO DETECTOR, not a detector on a synthetic frame: it
+    // used to run ten times a second on the placeholder image, for nobody.
+    if (o.eyes == Options::NOEYES)
+        detNote = eyesNote;
+    else
+        det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); },
+                 detNote);
 
     Slot<PeopleFrame> pplSlot;
     std::thread detThread([&] {
@@ -1046,15 +1099,17 @@ int run(const Options& o) {
         for (int i = 0; i < 4; ++i) drawPane(canvas, L.pane[i], p[i]);
 
         txt(canvas,
-            cv::format("step %d   travel %.0f m   net %.0f m   cells %d   collisions %d"
-                       "   |  policy %s   people %s      [q] quit  [r] restart",
-                       pf.steps, pf.travelM, pf.netM, pf.cells, pf.collisions,
+            cv::format("%s #%d   step %d   travel %.0f m   net %.0f m   cells %d   "
+                       "collisions %d   |  policy %s   people %s      [q] quit  [r] next map",
+                       pf.world.c_str(), pf.map + 1, pf.steps, pf.travelM, pf.netM,
+                       pf.cells, pf.collisions,
                        pol.backend().c_str(), det.backend().c_str()),
             L.strip.x + 4, L.strip.y + 18, 0.44, DIM, 1);
 
         cv::imshow(WIN, canvas);
         const int k = cv::waitKey(20);
         if (k == 'q' || k == 27) break;
+        if (k == 'r' || k == 'R') nextMap.store(true);
     }
     stop.store(true);
     planThread.join();

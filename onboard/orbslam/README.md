@@ -83,7 +83,8 @@ camera, so without it the estimate jumped silently to near the takeoff point
 seconds of vocabulary load). Tested in `test_voxel_nav`, section 2e.
 
 A startup crash was seen once in ~30 launches during the closed-loop sweeps
-(before the stack trace existed). 40+ launches since have not reproduced it.
+(before the stack trace existed). 79 launches since (39 at 424x240, 40 at
+848x480, three at a time) have not reproduced it.
 
 ## Measured (simulation)
 

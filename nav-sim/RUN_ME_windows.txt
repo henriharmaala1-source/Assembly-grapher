@@ -322,6 +322,14 @@ columns as the classical ones, on seeds it never trained on.
                                         trick; a box that says 2.3 m is this
                                         stack
 
+                     IT RUNS UNTIL YOU CLOSE IT. The default, --world tour,
+                     flies the two worlds below in turn -- gallery, hall,
+                     gallery on a new layout, and so on. It moves to the
+                     next map when the aircraft collides (shown for a
+                     moment first), after 3 minutes on one map, or when
+                     you press r. The status line says which map it is
+                     on. q or Esc quits.
+
                      TWO WORLDS BUILT FOR THIS VIEW, and they are the
                      default. The first-person voxel pane is a ladder:
                      0.25 m voxels out to about 3.5 m, then 1.0 m, then
@@ -399,7 +407,9 @@ columns as the classical ones, on seeds it never trained on.
                        kestrel demo                    everything off the sim
                        kestrel demo --live             depth from a D435i
                        kestrel demo --replay walk.kdr  from a recording
-                       kestrel demo --world maze       which world it flies in
+                       kestrel demo --world maze       stay in one world (the
+                                                       layout still changes
+                                                       after each crash)
                        kestrel demo --pane 640         bigger panes
                        kestrel demo --no-people        drop the detector pane
                        kestrel demo --live --pose vio  the live voxel pane

@@ -385,7 +385,9 @@ const int NWORLDS = 6;
 // default. They are deliberately NOT added to WORLD_NAME: that list is what
 // bench, watch, evaluate and report sample, and adding a world nothing has
 // trained on would quietly change every one of those tables.
-const char* DEMO_WORLD[] = {"gallery", "hall", "forest", "maze", "city",
+// "tour" first, as the default: gallery and hall in turn, a new layout each
+// time, until the demo is closed (kestrel_demo.hpp).
+const char* DEMO_WORLD[] = {"tour", "gallery", "hall", "forest", "maze", "city",
                             "road", "culdesac", "corridor"};
 const int NDEMO_WORLD = int(sizeof DEMO_WORLD / sizeof *DEMO_WORLD);
 
@@ -977,7 +979,8 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     section(im, "world for the SIM pane", x, 292);
     bs.push_back({cv::Rect(x, 304, 250, 38),
                   std::string("world: ") + DEMO_WORLD[c.dWorld], ID_D_WORLD, true});
-    txt(im, "click to cycle", x, 358, 0.42, DIM);
+    txt(im, c.dWorld == 0 ? "gallery + hall in turn, forever" : "click to cycle",
+        x, 358, 0.42, DIM);
 
     // WHERE THE CAMERA IS for the live voxel pane (--pose): fixed, DepthVio,
     // or ORB-SLAM3 through kestrel-orbslam. Only a real source is tracked.
@@ -1046,7 +1049,7 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     } else if (c.dSource == 2 && recs.empty()) {
         txt(im, "no .kdr recordings found in ./ or ./recordings", x, 557, 0.42, DIM);
     } else {
-        txt(im, "q quit, r restart. Every pane names what it is ACTUALLY showing.",
+        txt(im, "q quit, r next map. Every pane names what it is ACTUALLY showing.",
             x, 557, 0.42, DIM);
     }
 }

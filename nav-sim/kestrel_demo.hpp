@@ -54,6 +54,15 @@
 namespace kdemo {
 
 // Parsed `kestrel demo` arguments. Defaults are the ones that run anywhere.
+// How long the tour stays on one map when nothing ends it sooner. Long enough
+// to watch a room-to-room route develop, short enough that a viewer who walks
+// up sees the other world within a few minutes.
+constexpr double kTourMapS = 180.0;
+
+// The world episode `ep` of a demo flies: `world` itself, or for "tour" the
+// showcase worlds in turn.
+std::string worldForEpisode(const std::string& world, int ep);
+
 struct Options {
     // Where the depth for the two live panes comes from.
     enum Source { SIM = 0, REPLAY, LIVE };
@@ -75,7 +84,12 @@ struct Options {
     // on the coarse one -- so the view appears to change as you approach it,
     // which is indistinguishable from a broken map. gallery is built on the
     // coarse rung's own lattice; see GalleryParams in voxel_world.hpp.
-    std::string world = "gallery";
+    //
+    // "tour" (the default) flies BOTH worlds built for this view in turn:
+    // gallery, then hall, then gallery again on a new layout, and so on until
+    // the window is closed. A map ends on a collision, after kTourMapS, or on
+    // [r]; a named world stays that world and only its layout changes.
+    std::string world = "tour";
     unsigned    seed = 101;
     int         maxSteps = 0;   // 0 = never stop; the demo loops forever
 

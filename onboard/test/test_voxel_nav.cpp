@@ -949,8 +949,12 @@ int main() {
                 ++vioFrames;
                 const bool okT = got && (rep.state == slamlink::kOk || rep.state == slamlink::kOkKlt);
                 if (got && vioFrames > 1) vioMs += rep.ms;
-                if (std::getenv("VOXTEST_SLAMTRACE") && got &&
-                    (rep.state != slamPrevState || rep.mapChanges != slamPrevChanges))
+                // VOXTEST_SLAMTRACE=1: on every change of state; =2: also every
+                // half second, to see an error that grows while tracking is OK.
+                const char* trc = std::getenv("VOXTEST_SLAMTRACE");
+                if (trc && got &&
+                    (rep.state != slamPrevState || rep.mapChanges != slamPrevChanges ||
+                     (std::atoi(trc) >= 2 && vioFrames % 10 == 0)))
                     std::printf("   t=%.2f slam state %d map %d changes %u tracked %d  phase %s  "
                                 "at (%.2f,%.2f) yaw %.1f v %.2f  err %.2f\n", t, rep.state,
                                 rep.mapId, rep.mapChanges, rep.tracked,

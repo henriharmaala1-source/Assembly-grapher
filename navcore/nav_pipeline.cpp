@@ -150,14 +150,20 @@ bool NavPipeline::coreFree(float x, float y, float z, float r,
 
 cv::Mat NavPipeline::renderFpv(const CamPose& pose, int w, int h,
                                float hfovDeg) const {
-    const std::vector<VoxelMap::Layer> fine{{&map_, 0.f, mp_.maxIntegM}};
+    return renderFpv(map_, mp_.maxIntegM, bfield_, p_.farRangeM, pose, w, h, hfovDeg);
+}
+
+cv::Mat NavPipeline::renderFpv(const VoxelMap& map, float maxIntegM,
+                               const BearingField& field, float farRangeM,
+                               const CamPose& pose, int w, int h, float hfovDeg) {
+    const std::vector<VoxelMap::Layer> fine{{&map, 0.f, maxIntegM}};
     cv::Mat maskNear, maskFar;
     cv::Mat fpv = VoxelMap::renderLadder(fine, pose.e, pose.n, pose.u,
                                          pose.yawDeg, pose.pitchDeg, w, h,
                                          hfovDeg, FpvStyle(), &maskNear);
-    const cv::Mat far_ = BearingField::render(bfield_, pose.yawDeg,
+    const cv::Mat far_ = BearingField::render(field, pose.yawDeg,
                                               pose.pitchDeg, w, h, hfovDeg,
-                                              mp_.maxIntegM, p_.farRangeM,
+                                              maxIntegM, farRangeM,
                                               pose.u, &maskFar);
     for (int v = 0; v < fpv.rows; ++v) {
         const uchar* mn = maskNear.ptr<uchar>(v);

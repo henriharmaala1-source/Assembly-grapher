@@ -55,10 +55,13 @@ FlightShow::FlightShow(const FlightParams& p)
     {
         unsigned r = p.seed * 2654435761u + 7u;
         r = r * 1664525u + 1013904223u;
-        g.pitchM = 12.f + 4.f * float(r >> 8) / float(1u << 24);
+        const bool gal = p.world != "hall";
+        const float lo = p.pitchMinM > 0.f ? p.pitchMinM : (gal ? 10.f : 12.f);
+        const float hi = p.pitchMaxM > 0.f ? p.pitchMaxM : (gal ? 12.f : 16.f);
+        g.pitchM = lo + (hi - lo) * float(r >> 8) / float(1u << 24);
     }
     const bool hall = p.world == "hall";
-    g.wallFrac = hall ? 0.65f : 0.30f;
+    g.wallFrac = p.wallFrac >= 0.f ? p.wallFrac : (hall ? 0.65f : 0.30f);
     g.ceiling  = hall;
     g.minHM = hall ? 10.f : 14.f;
     g.maxHM = hall ? 14.f : 24.f;

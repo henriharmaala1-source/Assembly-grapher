@@ -395,7 +395,10 @@ if(BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
     ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(flight_show_check PRIVATE navcore ${OpenCV_LIBS})
-  add_test(NAME flight_show_check COMMAND flight_show_check)
+  # 30 s per world at 424x240 in CI: the default 848x480 x 45 s timed out at
+  # 90 s on the Windows runner. Full resolution is for sweeps, by hand.
+  add_test(NAME flight_show_check COMMAND flight_show_check 30)
+  set_tests_properties(flight_show_check PROPERTIES ENVIRONMENT "FLIGHT_LOWRES=1")
 endif()
 if(OpenCV_objdetect_FOUND OR TARGET opencv_objdetect)
   target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_OBJDETECT=1)

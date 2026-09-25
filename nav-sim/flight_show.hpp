@@ -56,6 +56,19 @@ struct FlightParams {
     // real configuration costs the showcase nothing.
     int   camW = 848, camH = 480;
     float altM = 1.5f;               // above the floor, as test_voxel_nav flies
+    // THE LAYOUT: room pitch drawn from [pitchMinM, pitchMaxM] per seed
+    // (< 0: the world's own, below), and the fraction of room edges with no
+    // doorway (< 0: the world's own).
+    //
+    // GALLERY FLIES 10-12 m ROOMS, hall 12-16. Measured, the aircraft's stack,
+    // 150 s, seeds 201-204, 848x480 (flight_show_check FLIGHT_PITCH):
+    //   gallery 12-16  net 12.6 m  cells 72.0      10-12  net 18.6  cells 84.8
+    //   hall    12-16  net 13.2 m  cells 69.5      10-12  net  5.9  cells 74.5
+    // 0 collisions in all 40 runs of the sweep, clearance 0.51 m or more. At
+    // four seeds a side these are weak differences, not findings; the gallery
+    // change is the one that held in both columns, hall's did not.
+    float pitchMinM = -1.f, pitchMaxM = -1.f;
+    float wallFrac = -1.f;
     bool  stereo = true;             // false: perfect depth (a control)
 };
 

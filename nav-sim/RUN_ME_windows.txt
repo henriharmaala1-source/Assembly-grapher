@@ -331,10 +331,12 @@ columns as the classical ones, on seeds it never trained on.
                      flies it, stops again. The window shows that flight
                      from behind with what the stop's map knows laid over
                      the true scene (blue = air confirmed free, red = cells
-                     marked solid), and underneath, left to right, the
-                     pipeline: the IR image the stereo matcher reads, the
-                     depth it produced, the voxel map built from it. Every
-                     30 s it prints how well your machine keeps up.
+                     marked solid), and beside it the stop's voxel map as a
+                     model. Underneath is the camera row -- live depth, the
+                     live voxel map from the camera's eye, and people with a
+                     range each: from a D435i with --live, a recording with
+                     --replay, otherwise the aircraft's own simulated camera.
+                     Every 30 s it prints how well your machine keeps up.
 
                      IT RUNS UNTIL YOU CLOSE IT. The default, --world tour,
                      flies the two worlds below in turn -- gallery, hall,

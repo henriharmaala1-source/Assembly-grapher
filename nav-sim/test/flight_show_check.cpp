@@ -5,6 +5,8 @@
 //   flight_show_check SECONDS SEED...       longer flights, more layouts
 //   FLIGHT_LOWRES=1                         at 424x240 (default: 848x480, the
 //                                           mode that flies)
+//   FLIGHT_WORLD=gallery|hall               one world only
+//   FLIGHT_PITCH=min,max FLIGHT_WALLFRAC=f  a different layout (sweeps)
 //
 // What it holds the maps to is CLAUDE.md's objective, not a goal: the aircraft
 // must not touch anything (truth clearance under the 0.3 m airframe), and it
@@ -12,6 +14,7 @@
 // the real stack cannot fly is not a showcase of the real stack.
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -27,10 +30,16 @@ int main(int argc, char** argv) {
 
     int fails = 0;
     for (const char* world : {"gallery", "hall"}) {
+        if (const char* only = std::getenv("FLIGHT_WORLD"))
+            if (std::strcmp(only, world) != 0) continue;
         for (unsigned seed : seeds) {
             kshow::FlightParams p;
             p.world = world; p.seed = seed;
             if (std::getenv("FLIGHT_LOWRES")) { p.camW = 424; p.camH = 240; }
+            // Layout sweeps: FLIGHT_PITCH=min,max  FLIGHT_WALLFRAC=f
+            if (const char* e = std::getenv("FLIGHT_PITCH"))
+                std::sscanf(e, "%f,%f", &p.pitchMinM, &p.pitchMaxM);
+            if (const char* e = std::getenv("FLIGHT_WALLFRAC")) p.wallFrac = float(std::atof(e));
             kshow::FlightShow f(p);
             std::string last;
             const int ticks = int(seconds / kshow::FlightShow::kDt);

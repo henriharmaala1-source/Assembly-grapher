@@ -2,6 +2,7 @@
 #include "kestrel_demo.hpp"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -474,23 +475,141 @@ cv::Mat syntheticColour(int w, int h) {
     return im;
 }
 
+// THE REAL CAMERA STAGE, one implementation for both windows: a RealSense or
+// a recording, through the AIRCRAFT'S pipeline (navcore's NavPipeline, the map
+// configured from THIS camera, plus the bearing field), placed by the pose
+// source the demo was given, with the image the depth was measured in kept
+// for the detector.
+class LiveCamera {
+public:
+    LiveCamera(const Options& o, int iw, int ih) : o_(o), iw_(iw), ih_(ih) {
+        if (o.source == Options::LIVE) {
+            std::string err;
+            sim::parsePoseMode(o.pose, poseMode_);
+            const bool track = poseMode_ != sim::PoseMode::Fixed;
+            src_ = sim::makeLiveSource(o.camW, o.camH, o.camFps, o.emitter, &err,
+                                       o.emitter && track, poseMode_ == sim::PoseMode::Slam);
+            note_ = src_ ? "RealSense" : ("no live camera: " + err);
+        } else if (o.source == Options::REPLAY) {
+            auto r = std::make_unique<sim::ReplayFrameSource>();
+            std::string err;
+            sim::parsePoseMode(o.pose, poseMode_);
+            if (r->open(o.replayPath, &err)) {
+                // The file's NAME: a caption has no room for the path to it.
+                const size_t cut = o.replayPath.find_last_of("/\\");
+                note_ = "replay " + (cut == std::string::npos ? o.replayPath
+                                                              : o.replayPath.substr(cut + 1));
+                src_ = std::move(r);
+            }
+            else note_ = "replay failed: " + err;
+        } else {
+            note_ = "simulated D435i on the sim aircraft";
+        }
+        if (ok()) {
+            sim::VisualPoseParams vp;
+            vp.mode = poseMode_;
+            vp.emitter = o.emitter ? sim::EmitterMode::Strobe : sim::EmitterMode::Off;
+            vp.slamSocket = o.slamSocket;
+            vp.fps = float(o.camFps);
+            visual_.init(*src_, vp);
+        }
+        t0_ = std::chrono::steady_clock::now();
+    }
+    bool ok() const { return src_ && src_->ok(); }
+    const std::string& note() const { return note_; }
+
+    // One frame into `f`; false when none arrived.
+    bool step(CameraFrame& f) {
+        cv::Mat depth;
+        sim::PoseHint hint;
+        if (!ok() || !src_->next(depth, hint) || depth.empty()) return false;
+        // POSE IS THE HONEST LIMIT, exactly as in voxel_live: a handheld
+        // camera has none, so the map is built from a FIXED pose and says so.
+        // Inventing motion here would produce a map that looks plausible and
+        // means nothing.
+        sim::CamPose pose = hint.valid ? hint.pose : sim::CamPose{};
+        if (poseMode_ != sim::PoseMode::Fixed) {
+            // Attitude from the camera's IMU; POSITION (and heading) from the
+            // tracker, relative to where the map was begun.
+            const double tNow = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t0_).count();
+            const sim::PoseEstimate& ve = visual_.step(*src_, depth, pose, pose.yawDeg, tNow);
+            if (ve.valid) {
+                pose.e = origin_.e + ve.e; pose.n = origin_.n + ve.n;
+                pose.u = origin_.u + ve.u; pose.yawDeg = ve.yawDeg;
+                lastEst_ = pose;
+            } else if (inited_) {
+                // No pose this frame: HOLD the last one (the map does not
+                // jump back to where it began).
+                pose.e = lastEst_.e; pose.n = lastEst_.n; pose.u = lastEst_.u;
+            }
+            f.poseNote = std::string("pose ") + sim::poseModeName(poseMode_) + ": " +
+                         ve.status + cv::format("   lost %d  resets %d", ve.lost, ve.resets);
+            f.poseOk = ve.valid;
+        } else {
+            f.poseNote = "pose FIXED: move the camera and the map smears";
+            f.poseOk = true;
+        }
+        if (!inited_) {
+            nav_.init(src_->camera(), sim::NavPipelineParams(), pose);
+            origin_ = pose; lastEst_ = pose;
+            inited_ = true;
+        }
+        nav_.step(depth, pose);
+        int valid = 0;
+        for (int y = 0; y < depth.rows; ++y) {
+            const float* r = depth.ptr<float>(y);
+            for (int x = 0; x < depth.cols; ++x) valid += (r[x] > 0.f);
+        }
+        f.validFrac = float(valid) / std::max(1, depth.rows * depth.cols);
+        f.depthRaw = depth.clone();
+        f.depthVis = sim::colourDepth(depth, kDepthScaleM);
+        // THE IMAGE THE DEPTH WAS MEASURED IN, when the source has one.
+        // Registered with the depth by construction, so a box found here
+        // indexes straight into f.depthRaw -- which is what makes "person at
+        // 2.3 m" a measurement rather than an estimate from apparent height.
+        cv::Mat ir;
+        if (src_->intensity(ir) && !ir.empty()) cv::cvtColor(ir, f.colour, cv::COLOR_GRAY2BGR);
+        const float hf = src_->camera().params().hfovDeg;
+        f.mapFpv = letterbox(nav_.renderFpv(pose, 320, 320 * depth.rows / std::max(1, depth.cols),
+                                            hf),
+                             iw_, ih_);
+        return true;
+    }
+
+private:
+    const Options& o_;
+    int iw_, ih_;
+    std::unique_ptr<sim::FrameSource> src_;
+    std::string note_;
+    sim::PoseMode poseMode_ = sim::PoseMode::Fixed;
+    sim::VisualPose visual_;
+    sim::NavPipeline nav_;
+    bool inited_ = false;
+    sim::CamPose origin_, lastEst_;
+    std::chrono::steady_clock::time_point t0_;
+};
+
 // ------------------------------------------------------------ the showcase
-// `kestrel demo` with the simulator and no --model: the AIRCRAFT'S OWN
-// autonomy (flight_show.hpp) flying the showcase worlds, as five pictures --
+// `kestrel demo` (without --model): the AIRCRAFT'S OWN autonomy
+// (flight_show.hpp) flying the showcase worlds, and the live camera panes --
 //
-//   +------------------------------------+---------------+
-//   |  THE FLIGHT (chase, true scene      |  MISSION      |
-//   |  + what this stop's map knows)      |  from above   |
-//   +------------+------------+-----------+---------------+
-//   | 1 SEES     |> 2 DEPTH   |> 3 KNOWS  |
-//   +------------+------------+-----------+
+//   +--------------------------------------+---------------+
+//   |  THE FLIGHT: chase view of the true   |  WHAT IT      |
+//   |  scene + what this stop's map knows,  |  KNOWS: the   |
+//   |  minimap inset                        |  voxel model  |
+//   +------------+-------------+------------+---------------+
+//   | LIVE DEPTH | LIVE VOXEL  | HUMANS     |
+//   +------------+-------------+------------+
 //
-// The bottom row is the pipeline in the order it runs: the IR image the
-// stereo matcher reads, the depth frame it produced, the voxel map built from
-// it. The window is data, so `check` can assert it with no display.
+// The top row is always the simulated flight. The bottom row is the CAMERA:
+// a RealSense or a recording with --live / --replay -- depth, its own voxel map
+// through the aircraft's pipeline, people with a range each -- and without
+// one, the flight's own simulated D435i. Every caption says which.
+// The window is data, so `check` can assert it with no display.
 struct ShowLayout {
     cv::Size canvas;
-    cv::Rect chase, mission, cam, depth, map;
+    cv::Rect chase, know, depth, fpv, people;
     cv::Rect strip;
 };
 
@@ -500,12 +619,12 @@ ShowLayout showLayoutFor(int u) {
     const int PAD = 8, TOP = 44;
     const int sh = u * 9 / 16;
     const int bw = 2 * u + PAD, bh = bw * 9 / 16;
-    L.chase   = cv::Rect(PAD, TOP, bw, bh + CAPTION_H);
-    L.mission = cv::Rect(PAD + bw + PAD, TOP, u, bh + CAPTION_H);
+    L.chase = cv::Rect(PAD, TOP, bw, bh + CAPTION_H);
+    L.know  = cv::Rect(PAD + bw + PAD, TOP, u, bh + CAPTION_H);
     const int yb = TOP + bh + CAPTION_H + PAD;
-    L.cam   = cv::Rect(PAD, yb, u, sh + CAPTION_H);
-    L.depth = cv::Rect(PAD + (u + PAD), yb, u, sh + CAPTION_H);
-    L.map   = cv::Rect(PAD + 2 * (u + PAD), yb, u, sh + CAPTION_H);
+    L.depth  = cv::Rect(PAD, yb, u, sh + CAPTION_H);
+    L.fpv    = cv::Rect(PAD + (u + PAD), yb, u, sh + CAPTION_H);
+    L.people = cv::Rect(PAD + 2 * (u + PAD), yb, u, sh + CAPTION_H);
     L.canvas = {3 * u + 4 * PAD, yb + sh + CAPTION_H + PAD + 26 + PAD};
     L.strip = cv::Rect(PAD, L.canvas.height - PAD - 26, L.canvas.width - 2 * PAD, 26);
     return L;
@@ -517,8 +636,16 @@ int showUnit(int paneW) { return std::max(240, paneW * 5 / 6); }
 
 cv::Size imgSize(const cv::Rect& r) { return {r.width, r.height - CAPTION_H}; }
 
+// The minimap inset in the flight pane: a square, top right -- dropped below
+// the HUD's phase line when the picture is too narrow for both side by side.
+cv::Rect minimapRect(const cv::Size& img) {
+    const int m = std::max(96, img.width * 26 / 100);
+    const int x = img.width - m - 10;
+    return {x, x < 430 ? 62 : 10, m, m};
+}
+
 struct ShowPanes {
-    cv::Mat chase, mission, cam, depth, map;
+    cv::Mat chase, minimap, know, depth, fpv, cam;
     kshow::ShowSnap snap;          // what they were drawn from (numbers only)
 };
 
@@ -530,75 +657,103 @@ ShowPanes renderShow(kshow::FlightView& v, const kshow::ShowSnap& s, const ShowL
     // thread beside it was measured SLOWER on a 4-core machine -- 3.8 fps
     // against 6.2, and it starved the flight to 0.86x real time -- because
     // the cores were already busy. The flight keeping real time comes first.
-    cv::Size z;
-    z = imgSize(L.chase);   p.chase   = v.chase(s, z.width, z.height);
-    z = imgSize(L.mission); p.mission = v.mission(s, z.width, z.height);
-    z = imgSize(L.cam);     p.cam     = v.camera(s, z.width, z.height);
-    z = imgSize(L.depth);   p.depth   = v.depth(s, z.width, z.height);
-    z = imgSize(L.map);     p.map     = v.belief(s, z.width, z.height);
+    cv::Size z = imgSize(L.chase);
+    p.chase = v.chase(s, z.width, z.height);
+    const cv::Rect mm = minimapRect(z);
+    p.minimap = v.mission(s, mm.width, mm.height, true);
+    z = imgSize(L.know);  p.know  = v.belief(s, z.width, z.height);
+    z = imgSize(L.depth); p.depth = v.depth(s, z.width, z.height);
+    z = imgSize(L.fpv);   p.fpv   = v.fpv(s, z.width, z.height);
+    // The IR image, for the detector when there is no real camera.
+    p.cam = v.camera(s, 424, 240);
     p.snap = s;
     p.snap.trail.clear(); p.snap.legs.clear(); p.snap.fan.clear();
-    p.snap.map.reset(); p.snap.depth.release();
+    p.snap.map.reset(); p.snap.field.reset(); p.snap.depth.release();
     return p;
 }
 
-// A small arrowhead on the seam between two pipeline panes.
-void seamArrow(cv::Mat& canvas, const cv::Rect& left) {
-    const int x = left.x + left.width + 4, y = left.y + (left.height - CAPTION_H) / 2;
-    const std::vector<cv::Point> tri{{x - 9, y - 11}, {x + 9, y}, {x - 9, y + 11}};
-    cv::fillConvexPoly(canvas, tri, ACCENT, cv::LINE_AA);
-    cv::polylines(canvas, tri, true, INK, 1, cv::LINE_AA);
+// THE BOTTOM ROW, from wherever it came: the pictures and what to say about
+// them. warn = draw the caption in the warning colour (not the real sensor,
+// or a sensor in trouble).
+struct LiveRow {
+    cv::Mat depth, fpv, people;
+    std::string depthSub, fpvSub, peopleSub;
+    bool depthWarn = false, fpvWarn = false, peopleWarn = false;
+};
+
+// The bottom row when there is no camera: the flight's own simulated D435i.
+LiveRow simRow(const ShowPanes& p) {
+    LiveRow r;
+    r.depth = p.depth;
+    r.depthSub = cv::format("simulated D435i, %dx%d: the aircraft's own",
+                            p.snap.cam.width, p.snap.cam.height);
+    r.depthWarn = true;
+    r.fpv = p.fpv;
+    r.fpvSub = "the aircraft's map, its eye; pale = UNKNOWN";
+    r.fpvWarn = true;
+    return r;
 }
 
 void composeShow(cv::Mat& canvas, const ShowLayout& L, const ShowPanes& p,
-                 const cv::Mat& people, const std::string& peopleNote) {
+                 const LiveRow& row, const std::string& note) {
     canvas.create(L.canvas, CV_8UC3);
     canvas.setTo(BG);
     const kshow::ShowSnap& s = p.snap;
-    drawHeader(canvas, "kestrel demo",
-               "the aircraft's own autonomy, flying a simulated " +
-               (s.worldName.empty() ? std::string("world") : s.worldName));
+    drawHeader(canvas, "kestrel demo", note);
+    // A TITLE CARD for the first seconds of every map, so a new world reads
+    // as the tour moving on rather than as the demo restarting.
+    cv::Mat chaseImg = p.chase.empty() ? cv::Mat() : p.chase.clone();
+    if (!chaseImg.empty() && s.stats.timeS < 4.f) {
+        const float a = s.stats.timeS < 3.f ? 1.f : 4.f - s.stats.timeS;
+        cv::Mat band = chaseImg.clone();
+        const int bh = 96, by = chaseImg.rows / 2 - bh / 2;
+        cv::rectangle(band, {0, by, chaseImg.cols, bh}, cv::Scalar(30, 26, 22), cv::FILLED);
+        cv::addWeighted(band, 0.78 * a, chaseImg, 1.0 - 0.78 * a, 0.0, chaseImg);
+        if (a > 0.3f) {
+            std::string name = s.worldName;
+            for (char& ch : name) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+            txt(chaseImg, cv::format("%s   --   map %d", name.c_str(), s.mapNo + 1),
+                30, by + 42, 1.0, INK, 2);
+            txt(chaseImg, "every stop: hover, map from stereo, certify a straight leg, fly it",
+                30, by + 74, 0.52, DIM, 1);
+        }
+    }
+    if (!chaseImg.empty() && !p.minimap.empty()) {
+        const cv::Rect mm = minimapRect(chaseImg.size());
+        if (p.minimap.size() == mm.size()) {
+            p.minimap.copyTo(chaseImg(mm));
+            cv::rectangle(chaseImg, mm, INK, 1);
+        }
+    }
     Pane a;
     a.title = "THE AIRCRAFT'S OWN AUTONOMY, FLYING";
     a.sub = "onboard VoxelNavModule + MissionController, compiled in -- not a model of them";
     a.subColour = OK;
-    a.img = p.chase;
-    if (!people.empty() && !a.img.empty()) {
-        // PEOPLE, when a webcam is attached: an inset, not a pane -- the
-        // flight is simulated and the people are not, and the two are kept
-        // visibly apart.
-        a.img = a.img.clone();
-        const int iw = a.img.cols * 3 / 10, ih = iw * people.rows / std::max(1, people.cols);
-        const cv::Rect at(a.img.cols - iw - 10, a.img.rows - ih - 34, iw, ih);
-        if (ih > 20 && at.y > 0) {
-            cv::resize(people, a.img(at), at.size(), 0, 0, cv::INTER_AREA);
-            cv::rectangle(a.img, at, INK, 1);
-            txt(a.img, "HUMANS  " + peopleNote, at.x + 4, at.y - 6, 0.4, INK, 1);
-        }
-    }
+    a.img = chaseImg;
     drawPane(canvas, L.chase, a);
-    Pane m;
-    m.title = "MISSION";
-    m.sub = "move - stop - sense: a new map at every stop";
-    m.img = p.mission;
-    drawPane(canvas, L.mission, m);
-    Pane c;
-    c.title = "1  WHAT IT SEES";
-    c.sub = "D435i left infrared (simulated)";
-    c.img = p.cam;
-    drawPane(canvas, L.cam, c);
-    Pane d;
-    d.title = "2  STEREO DEPTH";
-    d.sub = cv::format("%dx%d, the frame the module was given", s.cam.width, s.cam.height);
-    d.img = p.depth;
-    drawPane(canvas, L.depth, d);
     Pane k;
-    k.title = "3  WHAT IT KNOWS";
+    k.title = "WHAT IT KNOWS";
     k.sub = "the voxel map of this stop, 0.25 m cells";
-    k.img = p.map;
-    drawPane(canvas, L.map, k);
-    seamArrow(canvas, L.cam);
-    seamArrow(canvas, L.depth);
+    k.img = p.know;
+    drawPane(canvas, L.know, k);
+    Pane d;
+    d.title = "LIVE DEPTH";
+    d.sub = row.depthSub;
+    d.subColour = row.depthWarn ? WARN : DIM;
+    d.img = row.depth;
+    drawPane(canvas, L.depth, d);
+    Pane f;
+    f.title = "LIVE VOXEL -- first person";
+    f.sub = row.fpvSub;
+    f.subColour = row.fpvWarn ? WARN : DIM;
+    f.img = row.fpv;
+    drawPane(canvas, L.fpv, f);
+    Pane h;
+    h.title = "HUMANS";
+    h.sub = row.peopleSub;
+    h.subColour = row.peopleWarn ? WARN : DIM;
+    h.img = row.people;
+    drawPane(canvas, L.people, h);
     const kshow::FlightStats& st = s.stats;
     txt(canvas,
         cv::format("%s  map %d   |   t %02d:%02d   flown %.0f m   %d m from start   "
@@ -608,10 +763,10 @@ void composeShow(cv::Mat& canvas, const ShowLayout& L, const ShowPanes& p,
         L.strip.x + 4, L.strip.y + 18, 0.44, DIM, 1);
 }
 
-// The flight showcase is what plain `kestrel demo` shows. A camera (--live,
-// --replay) or a learned policy (--model) keeps the four-pane window, whose
-// panes are about the camera and the policy.
-bool showcase(const Options& o) { return o.source == Options::SIM && o.model.empty(); }
+// The showcase is what `kestrel demo` shows, with or without a camera. Only
+// a learned policy (--model) keeps the four-pane research window, whose top
+// pane is about that policy.
+bool showcase(const Options& o) { return o.model.empty(); }
 
 cv::Mat syntheticDepth(int w, int h) {
     cv::Mat d(h, w, CV_32F, cv::Scalar(0.f));
@@ -752,7 +907,7 @@ int check() {
     for (int pw : {320, 480, 640, 800}) {
         const ShowLayout S = showLayoutFor(showUnit(pw));
         const cv::Rect canvas(0, 0, S.canvas.width, S.canvas.height);
-        const cv::Rect all[5] = {S.chase, S.mission, S.cam, S.depth, S.map};
+        const cv::Rect all[5] = {S.chase, S.know, S.depth, S.fpv, S.people};
         for (int i = 0; i < 5; ++i) {
             if ((all[i] & canvas) != all[i])
                 fail(cv::format("showcase pane %d off the canvas at pane=%d", i, pw));
@@ -764,17 +919,25 @@ int check() {
                 if ((all[i] & all[j]).area() > 0)
                     fail(cv::format("showcase panes %d and %d overlap at pane=%d", i, j, pw));
         }
-        if (!(S.cam.x < S.depth.x && S.depth.x < S.map.x && S.cam.y == S.depth.y &&
-              S.depth.y == S.map.y))
-            fail(cv::format("showcase pipeline row out of order at pane=%d", pw));
+        if (!(S.depth.x < S.fpv.x && S.fpv.x < S.people.x && S.depth.y == S.fpv.y &&
+              S.fpv.y == S.people.y))
+            fail(cv::format("showcase camera row out of order at pane=%d", pw));
+        // The minimap sits inside the flight picture, clear of the HUD's
+        // phase line in its top-left corner.
+        const cv::Size ci = imgSize(S.chase);
+        const cv::Rect mm = minimapRect(ci), hud(0, 0, 420, 56);
+        if ((mm & cv::Rect(0, 0, ci.width, ci.height)) != mm)
+            fail(cv::format("minimap off the flight picture at pane=%d", pw));
+        if ((mm & hud).area() > 0)
+            fail(cv::format("minimap covers the phase HUD at pane=%d", pw));
         if ((S.strip & canvas) != S.strip)
             fail(cv::format("showcase strip off the canvas at pane=%d", pw));
         if (pw == 480 && S.canvas.height > 1000)
             fail(cv::format("showcase window %d px tall at the default pane: taller than a "
                             "1080p screen leaves room for", S.canvas.height));
     }
-    const char* showCaps[] = {"THE AIRCRAFT'S OWN AUTONOMY, FLYING", "MISSION",
-                              "1  WHAT IT SEES", "2  STEREO DEPTH", "3  WHAT IT KNOWS"};
+    const char* showCaps[] = {"THE AIRCRAFT'S OWN AUTONOMY, FLYING", "WHAT IT KNOWS",
+                              "LIVE DEPTH", "LIVE VOXEL -- first person", "HUMANS"};
     for (const char* c : showCaps) {
         const int narrow = showUnit(320) - 20;
         const std::string f = fit(c, narrow, 0.56);
@@ -812,12 +975,59 @@ int shotShowcase(const Options& o, const std::string& prefix) {
     }
     kshow::FlightView v;
     const ShowPanes p = renderShow(v, snap, L);
+    // THE CAMERA ROW headless. A recording needs no device, so --replay
+    // fills it from the file -- depth, its map through the aircraft's
+    // pipeline, people with a range from the depth camera's own image -- and
+    // anything else from the flight's own D435i, with the detector run on the
+    // aircraft's IR. (--live cannot be shot: a shot never opens a device.)
+    LiveRow row = simRow(p);
+    PersonDetector det;
+    std::string dnote;
+    if (o.eyes != Options::NOEYES)
+        det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); }, dnote);
+    cv::Mat peopleIn = p.cam, peopleDepth;
+    std::string peopleFrom = "the aircraft's IR (no people here)";
+    if (o.source == Options::REPLAY) {
+        Options ro = o;
+        const cv::Size cz = imgSize(L.depth);
+        LiveCamera live(ro, cz.width, cz.height);
+        CameraFrame cf;
+        int n = 0;
+        for (int i = 0; i < 30 && live.ok(); ++i)
+            if (live.step(cf)) ++n;
+        if (n > 0) {
+            row.depth = cf.depthVis;
+            row.depthSub = live.note() + cv::format(", %d frames   %.0f%% returned", n,
+                                                    cf.validFrac * 100.f);
+            row.depthWarn = false;
+            row.fpv = cf.mapFpv;
+            row.fpvSub = cf.poseNote;
+            row.fpvWarn = !cf.poseOk;
+            if (!cf.colour.empty()) {
+                peopleIn = cf.colour; peopleDepth = cf.depthRaw;
+                peopleFrom = "the recording's own imager";
+            }
+        } else {
+            std::printf("[demo shot] %s -- camera row from the simulated D435i\n",
+                        live.note().c_str());
+        }
+    }
+    row.people = peopleIn.clone();
+    if (det.available()) {
+        const std::vector<Person> ps = det.detect(peopleIn, peopleDepth);
+        drawPeople(row.people, ps);
+        row.peopleSub = cv::format("%s on %s: %d found", det.kindName(), peopleFrom.c_str(),
+                                   int(ps.size()));
+    } else {
+        row.peopleSub = dnote.empty() ? std::string("no detector") : dnote;
+    }
+    row.peopleWarn = peopleDepth.empty();
     cv::Mat canvas;
-    composeShow(canvas, L, p, cv::Mat(), "");
+    composeShow(canvas, L, p, row, "the aircraft's own autonomy, flying a simulated " + fp.world);
     int n = 0;
     const std::pair<const char*, const cv::Mat*> out[] = {
-        {"flight", &p.chase}, {"mission", &p.mission}, {"camera", &p.cam},
-        {"depth", &p.depth}, {"map", &p.map}, {"window", &canvas}};
+        {"flight", &p.chase}, {"knows", &p.know}, {"depth", &p.depth},
+        {"voxel", &p.fpv}, {"humans", &row.people}, {"window", &canvas}};
     for (const auto& q : out) n += cv::imwrite(prefix + "_" + q.first + ".png", *q.second) ? 1 : 0;
     const kshow::FlightStats& st = f.stats();
     std::printf("[demo shot] %s, %.0f s flown by the aircraft's own stack: %.1f m, %d legs, "
@@ -1061,48 +1271,113 @@ int runShowcase(const Options& o) {
         }
     });
 
-    // PEOPLE, only from a camera that is really there. The showcase has no
-    // placeholder figure: a synthetic person on a simulated flight would be a
-    // demonstration of nothing.
+    // THE CAMERA ROW: a RealSense or a recording, when one was asked for and
+    // opened -- the same stage the four-pane window runs.
+    const cv::Size cz = imgSize(L.depth);
+    LiveCamera live(o, cz.width, cz.height);
+    if (o.source != Options::SIM && !live.ok())
+        std::printf("[demo] %s -- the camera row shows the simulated D435i instead\n",
+                    live.note().c_str());
+    Slot<CameraFrame> camSlot;
+    std::thread camera([&] {
+        while (live.ok() && !stop.load()) {
+            const auto t0 = std::chrono::steady_clock::now();
+            CameraFrame f;
+            if (live.step(f)) camSlot.publish(std::move(f));
+            else std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            // A RECORDING IS PACED, a camera is not. A file reads as fast as
+            // the disk allows, and unpaced it took the cores the flight needs
+            // (0.50x real time, 2 fps, measured). A live D435i paces itself --
+            // and a tracker (--pose vio|slam) must see every frame it sends.
+            if (o.source == Options::REPLAY)
+                std::this_thread::sleep_until(t0 + std::chrono::milliseconds(100));
+        }
+    });
+
+    // PEOPLE, from the best image there is, and saying which:
+    //   1  the depth camera's own imager -- registered with its depth, so a
+    //      box gets a RANGE (--live, --replay)
+    //   2  a webcam -- no range: it is not the camera that measured depth
+    //   3  the aircraft's simulated IR -- honest, and empty: the showcase
+    //      worlds have no people in them
+    // At most 5 Hz: the detector shares the cores the flight needs to keep
+    // real time.
     ColourSource eyes;
     std::string eyesNote;
-    const bool eyesLive = o.eyes != Options::NOEYES && eyes.open(o, eyesNote);
+    const bool eyesLive = o.eyes != Options::NOEYES && !live.ok() && eyes.open(o, eyesNote);
     PersonDetector det;
     std::string detNote;
-    if (eyesLive)
-        det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); },
-                 detNote);
-    Slot<cv::Mat> pplSlot;
+    if (o.eyes == Options::NOEYES) detNote = "people pane off (--no-people)";
+    else det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); },
+                  detNote);
+    struct Seen { cv::Mat image; std::string sub; bool warn = true; };
+    Slot<Seen> pplSlot;
     std::thread people([&] {
-        while (eyesLive && !stop.load()) {
-            cv::Mat f = eyes.grab(640, 480);
-            if (!eyes.live()) break;
-            std::vector<Person> ps = det.detect(f, cv::Mat());
+        unsigned long seenCam = 0, seenPanes = 0;
+        CameraFrame cf;
+        ShowPanes sp;
+        while (!stop.load() && det.available()) {
+            const auto t0 = std::chrono::steady_clock::now();
+            cv::Mat view, depthRaw;
+            std::string from;
+            bool mirror = false, aligned = false;
+            if (live.ok()) {
+                camSlot.take(cf, seenCam);
+                if (!cf.colour.empty()) {
+                    view = cf.colour; depthRaw = cf.depthRaw; aligned = true;
+                    from = "the depth camera's own imager"; mirror = o.mirror;
+                }
+            } else if (eyesLive) {
+                view = eyes.grab(640, 480);
+                if (eyes.live()) { from = eyesNote + " (not the depth camera: no range)"; mirror = o.mirror; }
+                else view.release();
+            }
+            if (view.empty()) {
+                paneSlot.take(sp, seenPanes);
+                if (!sp.cam.empty()) { view = sp.cam; from = "the aircraft's IR (no people here)"; }
+            }
+            if (view.empty()) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); continue; }
+            // DETECT IN THE ORIENTATION THE SENSOR DELIVERED; mirror after, so a
+            // box still indexes the depth frame it came with.
+            std::vector<Person> ps = det.detect(view, aligned ? depthRaw : cv::Mat());
             cv::Mat shown;
-            if (o.mirror) {
-                cv::flip(f, shown, 1);
+            if (mirror) {
+                cv::flip(view, shown, 1);
                 for (Person& q : ps) q.box.x = shown.cols - q.box.x - q.box.width;
             } else {
-                shown = f.clone();
+                shown = view.clone();
             }
             drawPeople(shown, ps);
-            pplSlot.publish(shown);
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+            Seen out;
+            out.image = shown;
+            out.sub = cv::format("%s on %s   %d found   %.0f ms", det.kindName(), from.c_str(),
+                                 int(ps.size()), ms);
+            out.warn = !aligned;
+            pplSlot.publish(out);
+            std::this_thread::sleep_for(std::chrono::milliseconds(std::max(0, 200 - int(ms))));
         }
     });
 
     const char* WIN = "kestrel demo";
     cv::namedWindow(WIN, cv::WINDOW_AUTOSIZE);
     ShowPanes panes;
-    cv::Mat ppl, canvas;
-    unsigned long seenP = 0, seenH = 0;
+    CameraFrame cf;
+    Seen ppl;
+    cv::Mat canvas;
+    unsigned long seenP = 0, seenC = 0, seenH = 0;
     // HOW WELL THIS MACHINE KEEPS UP, said every 30 s: the flight's speed
     // against the wall clock, and the pictures' rate. Below 1x the aircraft
     // is not slower -- its world is; everything it decides is unchanged.
     auto tLog = std::chrono::steady_clock::now();
     int pics = 0;
     float simAtLog = 0.f;
+    const std::string camName = o.source == Options::LIVE ? "live D435i" : "replay";
     while (true) {
         if (paneSlot.take(panes, seenP)) ++pics;
+        camSlot.take(cf, seenC);
+        pplSlot.take(ppl, seenH);
         const double since = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - tLog).count();
         if (since >= 30.0 && !panes.chase.empty()) {
@@ -1114,12 +1389,27 @@ int runShowcase(const Options& o) {
             simAtLog = simNow; pics = 0;
             tLog = std::chrono::steady_clock::now();
         }
-        pplSlot.take(ppl, seenH);
         if (panes.chase.empty()) {
             canvas = cv::Mat(L.canvas, CV_8UC3, BG);
             drawHeader(canvas, "kestrel demo", "building the world...");
         } else {
-            composeShow(canvas, L, panes, ppl, det.kindName());
+            LiveRow row = simRow(panes);
+            if (live.ok() && !cf.depthVis.empty()) {
+                row.depth = cf.depthVis;
+                row.depthSub = live.note() + cv::format(", red 0 m .. blue 8 m   %.0f%% returned",
+                                                        cf.validFrac * 100.f);
+                row.depthWarn = false;
+                row.fpv = cf.mapFpv;
+                row.fpvSub = cf.poseNote;
+                row.fpvWarn = !cf.poseOk;
+            }
+            row.people = ppl.image;
+            row.peopleSub = det.available() ? (ppl.sub.empty() ? "starting..." : ppl.sub) : detNote;
+            row.peopleWarn = !det.available() || ppl.warn;
+            const std::string note = "the aircraft's own autonomy, flying a simulated " +
+                                     panes.snap.worldName +
+                                     (live.ok() ? "   |   camera row: " + camName : "");
+            composeShow(canvas, L, panes, row, note);
         }
         cv::imshow(WIN, canvas);
         const int k = cv::waitKey(15);
@@ -1129,6 +1419,7 @@ int runShowcase(const Options& o) {
     stop.store(true);
     flight.join();
     render.join();
+    camera.join();
     people.join();
     cv::destroyAllWindows();
     return 0;
@@ -1220,113 +1511,20 @@ int run(const Options& o) {
 
     // --- the camera stage ----------------------------------------------------
     // SIM and REPLAY exist so this runs with no hardware. LIVE is the D435i.
-    std::string srcNote;
-    std::unique_ptr<sim::FrameSource> src;
-    if (o.source == Options::LIVE) {
-        std::string err;
-        sim::PoseMode pm = sim::PoseMode::Fixed;
-        sim::parsePoseMode(o.pose, pm);
-        const bool track = pm != sim::PoseMode::Fixed;
-        src = sim::makeLiveSource(o.camW, o.camH, o.camFps, o.emitter, &err,
-                                  o.emitter && track, pm == sim::PoseMode::Slam);
-        srcNote = src ? "RealSense" : ("no live camera: " + err);
-    } else if (o.source == Options::REPLAY) {
-        auto r = std::make_unique<sim::ReplayFrameSource>();
-        std::string err;
-        if (r->open(o.replayPath, &err)) { srcNote = "replay " + o.replayPath; src = std::move(r); }
-        else srcNote = "replay failed: " + err;
-    } else {
-        srcNote = "simulated D435i 424x240 on the sim aircraft";
-    }
+    LiveCamera live(o, iw, ih);
+    const std::string srcNote = o.source == Options::SIM
+        ? std::string("simulated D435i 424x240 on the sim aircraft") : live.note();
 
     Slot<CameraFrame> camSlot;
     std::thread camThread([&] {
         SimEye simEye(cfg);
-        sim::NavPipeline nav;
-        bool inited = false;
-        // THE POSE SOURCE for the live pane (VisualPose, as the aircraft).
-        sim::VisualPose visual;
-        sim::PoseMode poseMode = sim::PoseMode::Fixed;
-        sim::parsePoseMode(o.pose, poseMode);
-        if (src && src->ok()) {
-            sim::VisualPoseParams vp;
-            vp.mode = poseMode;
-            vp.emitter = o.emitter ? sim::EmitterMode::Strobe : sim::EmitterMode::Off;
-            vp.slamSocket = o.slamSocket;
-            vp.fps = float(o.camFps);
-            visual.init(*src, vp);
-        }
-        sim::CamPose origin, lastEst;
-        const auto t0 = std::chrono::steady_clock::now();
         while (!stop.load()) {
             CameraFrame f;
-            if (src && src->ok()) {
-                cv::Mat depth;
-                sim::PoseHint hint;
-                if (!src->next(depth, hint) || depth.empty()) {
+            if (live.ok()) {
+                if (!live.step(f)) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(20));
                     continue;
                 }
-                // POSE IS THE HONEST LIMIT, exactly as in voxel_live: a
-                // handheld camera has none, so the map is built from a FIXED
-                // pose and says so. Inventing motion here would produce a map
-                // that looks plausible and means nothing.
-                sim::CamPose pose = hint.valid ? hint.pose : sim::CamPose{};
-                if (poseMode != sim::PoseMode::Fixed) {
-                    // Attitude from the camera's IMU; POSITION (and heading)
-                    // from the tracker, relative to where the map was begun.
-                    const double tNow = std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - t0).count();
-                    const sim::PoseEstimate& ve = visual.step(*src, depth, pose,
-                                                              pose.yawDeg, tNow);
-                    if (ve.valid) {
-                        pose.e = origin.e + ve.e; pose.n = origin.n + ve.n;
-                        pose.u = origin.u + ve.u; pose.yawDeg = ve.yawDeg;
-                        lastEst = pose;
-                    } else if (inited) {
-                        // No pose this frame: HOLD the last one (the map does
-                        // not jump back to where it began).
-                        pose.e = lastEst.e; pose.n = lastEst.n; pose.u = lastEst.u;
-                    }
-                    f.poseNote = std::string("pose ") + sim::poseModeName(poseMode) + ": " +
-                                 ve.status + cv::format("   lost %d  resets %d", ve.lost,
-                                                        ve.resets);
-                    f.poseOk = ve.valid;
-                } else {
-                    f.poseNote = "pose FIXED: move the camera and the map smears";
-                    f.poseOk = true;
-                }
-                // THE AIRCRAFT'S PIPELINE, not a default map: navcore's
-                // NavPipeline, as onboard runs it -- the map configured from
-                // THIS camera (it used bare VoxelMapParams: marking to 8 m with
-                // no stereo noise model, a more confident map than the one that
-                // flies), plus the bearing field. Fixed pose, as above.
-                if (!inited) {
-                    nav.init(src->camera(), sim::NavPipelineParams(), pose);
-                    origin = pose; lastEst = pose;
-                    inited = true;
-                }
-                nav.step(depth, pose);
-                int valid = 0;
-                for (int y = 0; y < depth.rows; ++y) {
-                    const float* r = depth.ptr<float>(y);
-                    for (int x = 0; x < depth.cols; ++x) valid += (r[x] > 0.f);
-                }
-                f.validFrac = float(valid) / std::max(1, depth.rows * depth.cols);
-                f.depthRaw = depth.clone();
-                f.depthVis = sim::colourDepth(depth, kDepthScaleM);
-                // THE IMAGE THE DEPTH WAS MEASURED IN, when the source has
-                // one. Registered with the depth by construction, so a box
-                // found here indexes straight into f.depthRaw -- which is what
-                // makes "person at 2.3 m" a measurement rather than an
-                // estimate from apparent height. See FrameSource::intensity.
-                cv::Mat ir;
-                if (src->intensity(ir) && !ir.empty())
-                    cv::cvtColor(ir, f.colour, cv::COLOR_GRAY2BGR);
-                const float hf = src->camera().params().hfovDeg;
-                f.mapFpv = letterbox(nav.renderFpv(pose, 320, 320 * depth.rows
-                                                   / std::max(1, depth.cols), hf),
-                                     iw, ih);
             } else {
                 // No camera: mirror the planner's own sensor, which is the
                 // honest thing to show -- it IS simulated stereo from a real
@@ -1430,14 +1628,14 @@ int run(const Options& o) {
         p[1].sub = srcNote + ", red 0 m .. blue 8 m" + (cf.validFrac > 0.f
                        ? cv::format("   %.0f%% of pixels returned", cf.validFrac * 100.f)
                        : std::string());
-        p[1].subColour = (o.source == Options::LIVE && src) ? DIM : WARN;
+        p[1].subColour = (o.source == Options::LIVE && live.ok()) ? DIM : WARN;
         p[1].img = cf.depthVis.empty() ? pf.depth : cf.depthVis;
         p[2].title = "LIVE VOXEL -- first person";
-        p[2].sub = (src && src->ok())
+        p[2].sub = live.ok()
                    ? cf.poseNote
                    : std::string("sim D435i: voxels to the map's reach, far tier beyond; "
                                  "grey is UNKNOWN");
-        p[2].subColour = (src && src->ok() && cf.poseOk) ? DIM : WARN;
+        p[2].subColour = (live.ok() && cf.poseOk) ? DIM : WARN;
         p[2].img = cf.mapFpv;
         p[3].title = "HUMANS";
         p[3].sub = det.available()

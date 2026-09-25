@@ -192,10 +192,15 @@ ShowSnap ShowSnap::of(const FlightShow& f, const ShowSnap* prev) {
     s.mapKey = long(f.module().resets()) * 100000L + s.mapFrames;
     // The map is copied only when it has changed: a new frame folded in, or a
     // new stop begun. Otherwise the previous copy is shared.
-    if (prev && prev->map && prev->mapKey == s.mapKey && prev->world == s.world)
+    if (prev && prev->map && prev->mapKey == s.mapKey && prev->world == s.world) {
         s.map = prev->map;
-    else if (s.mapFrames > 0)
+        s.field = prev->field;
+    } else if (s.mapFrames > 0) {
         s.map = std::make_shared<const sim::VoxelMap>(nav.map());
+        s.field = std::make_shared<const sim::BearingField>(nav.field());
+    }
+    s.maxIntegM = nav.mapParams().maxIntegM;
+    s.farRangeM = nav.params().farRangeM;
     s.cam = f.camera().params();
     s.floorZ = f.floorZ(); s.speed = f.speed();
     s.truth = f.truth(); s.vantage = f.vantage();
@@ -357,8 +362,11 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
     }
     // THE LEG FAN while the aircraft is choosing: each bearing as far as it
     // was certified, at flight height, short red to long green.
+    // Kept, dimmed, through the leg it produced: THINK lasts 0.3 s, and the
+    // point -- the leg flown is the longest ray of this fan -- needs longer.
     const std::string phNow = s.phase;
-    if (phNow == "THINK" || phNow == "SCAN") {
+    const bool choosing = phNow == "THINK" || phNow == "SCAN";
+    if (choosing || phNow == "MOVE") {
         const float legMax = std::max(MissionController::Params().stepM +
                                       MissionController::Params().voxStopMarginM, 1.f);
         for (const Ray& r : s.fan) {
@@ -367,8 +375,9 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
             std::vector<cv::Point3f> seg{{v.e, v.n, s.truth.u},
                                          {v.e + std::sin(br) * r.freeM,
                                           v.n + std::cos(br) * r.freeM, s.truth.u}};
+            const float k = choosing ? 1.f : 0.55f;
             drawPath3d(im, nullptr, cam, kChaseFov, seg,
-                       cv::Scalar(60, 60 + 170 * q, 230 - 180 * q), 1, false);
+                       cv::Scalar(60, 60 + 170 * q, 230 - 180 * q) * k, 1, false);
         }
     }
     // Every leg flown so far, faint; the trail, warm and fading with age.
@@ -558,8 +567,43 @@ cv::Mat FlightView::belief(const ShowSnap& s, int w, int h) const {
     return im;
 }
 
+// ---------------------------------------------------------------------- fpv
+cv::Mat FlightView::fpv(const ShowSnap& s, int w, int h) const {
+    const float fov = s.cam.hfovDeg;
+    if (s.mapFrames == 0 || !s.map) {
+        cv::Mat im(h, w, CV_8UC3, cv::Scalar(215, 212, 208));
+        label(im, "no map yet", {10, 22}, 0.5, cv::Scalar(60, 60, 60), 1);
+        return im;
+    }
+    const sim::CamPose& v = s.vantage;
+    sim::CamPose eye = s.truth;                    // the camera, in the map's frame
+    eye.e -= v.e; eye.n -= v.n; eye.u -= v.u;
+    // navcore's own first-person render, both tiers, from the copies: the
+    // same picture the live camera's pane and voxel_live draw.
+    cv::Mat im = s.field
+        ? sim::NavPipeline::renderFpv(*s.map, s.maxIntegM, *s.field, s.farRangeM, eye, w, h, fov)
+        : cv::Mat(h, w, CV_8UC3, cv::Scalar(215, 212, 208));
+    const float legMax = std::max(MissionController::Params().stepM +
+                                  MissionController::Params().voxStopMarginM, 1.f);
+    const float zf = s.floorZ - v.u;
+    for (const Ray& r : s.fan) {
+        const float br = r.bearingDeg * kPi / 180.f;
+        const float q = std::min(1.f, r.freeM / legMax);
+        std::vector<cv::Point3f> seg;
+        for (int i = 0; i <= 8; ++i) {
+            const float d = r.freeM * float(i) / 8.f;
+            seg.push_back({std::sin(br) * d, std::cos(br) * d, zf});
+        }
+        drawPath3d(im, nullptr, eye, fov, seg, cv::Scalar(60, 60 + 170 * q, 230 - 180 * q), 2,
+                   false);
+    }
+    label(im, cv::format("%d frames   near map + far bearings", s.mapFrames),
+          {10, 22}, 0.45, kInk, 1);
+    return im;
+}
+
 // ------------------------------------------------------------------ mission
-cv::Mat FlightView::mission(const ShowSnap& s, int w, int h) const {
+cv::Mat FlightView::mission(const ShowSnap& s, int w, int h, bool compact) const {
     // A window round the aircraft, 1 px per cell, then scaled; north up.
     const float spanM = 36.f;
     const int n = int(spanM / planCell_);
@@ -618,6 +662,10 @@ cv::Mat FlightView::mission(const ShowSnap& s, int w, int h) const {
     cv::fillConvexPoly(im, arrow, {250, 250, 250}, cv::LINE_AA);
     cv::polylines(im, arrow, true, {20, 20, 20}, 1, cv::LINE_AA);
 
+    if (compact) {
+        label(im, "from above", {6, 16}, 0.4, kInk, 1);
+        return im;
+    }
     const FlightStats& st = s.stats;
     label(im, "from above, north up", {10, 22}, 0.5, kInk, 1);
     label(im, "blue: confirmed free   red: marked solid", {10, 42}, 0.42, kDim, 1);

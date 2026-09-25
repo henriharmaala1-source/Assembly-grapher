@@ -960,14 +960,14 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                const std::vector<std::string>& recs) {
     const int x = 266;
     txt(im, "the demo -- the aircraft, flying", x, 112, 0.66, INK, 2);
-    txt(im, "Simulated: the aircraft's OWN autonomy (onboard's voxel module and mission,",
+    txt(im, "The aircraft's OWN autonomy (onboard's voxel module and mission, compiled",
         x, 144, 0.44, DIM);
-    txt(im, "compiled in) through the showcase worlds -- what it sees, the stereo depth,",
+    txt(im, "in) flying the showcase worlds, and the camera row: live depth, its voxel",
         x, 162, 0.44, DIM);
-    txt(im, "the map it builds, the flight. A camera or a policy: the four-pane window.",
+    txt(im, "map and people -- from a D435i, a recording, or the simulated one.",
         x, 180, 0.44, DIM);
 
-    section(im, "depth for the two live panes", x, 208);
+    section(im, "the camera row", x, 208);
     const char* src[3] = {"Simulated raycaster", "Live D435i", "Replay a recording"};
     for (int i = 0; i < 3; ++i)
         bs.push_back({cv::Rect(x + i * 260, 220, 250, 38), src[i],

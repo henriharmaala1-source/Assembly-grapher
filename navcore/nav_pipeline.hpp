@@ -186,10 +186,17 @@ public:
     // from the aircraft only -- a bearing bin is a direction FROM it and has
     // no position to re-project from anywhere else.
     cv::Mat renderFpv(const CamPose& pose, int w, int h, float hfovDeg) const;
+    // The same picture from COPIES of the two tiers -- for a display that
+    // renders on another thread than the one mapping (kestrel demo). The
+    // member above is this with the pipeline's own map and field.
+    static cv::Mat renderFpv(const VoxelMap& map, float maxIntegM,
+                             const BearingField& field, float farRangeM,
+                             const CamPose& pose, int w, int h, float hfovDeg);
 
     bool ready()  const { return cam_ != nullptr; }
     int  frames() const { return frames_; }
     const VoxelMap&          map()     const { return map_; }
+    const BearingField&      field()   const { return bfield_; }
     const VoxelMapParams&    mapParams() const { return mp_; }
     const NavPipelineParams& params()  const { return p_; }
 

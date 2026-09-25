@@ -5,28 +5,33 @@
 //   kestrel demo --replay w.kdr   a recording, for when the camera is packed
 //   kestrel demo --model p.onnx   a learned policy flying the research sim
 //
-// THE SHOWCASE (plain `kestrel demo`). The AIRCRAFT'S OWN AUTONOMY -- onboard's
-// VoxelNavModule and MissionController, compiled into this binary from
-// onboard/src, not a model of them -- flying the showcase worlds against a
-// simulated D435i at the mode that flies (848x480), with no position given to
-// the map, exactly as aboard (flight_show.hpp). Five pictures of it
-// (flight_view.hpp), none of which can reach a decision:
+// THE SHOWCASE (`kestrel demo`, with or without a camera). The AIRCRAFT'S OWN
+// AUTONOMY -- onboard's VoxelNavModule and MissionController, compiled into
+// this binary from onboard/src, not a model of them -- flying the showcase
+// worlds against a simulated D435i at the mode that flies (848x480), with no
+// position given to the map, exactly as aboard (flight_show.hpp):
 //
 //   THE FLIGHT        the true scene from behind the aircraft, with what THIS
 //                     stop's map knows laid over it: air confirmed free at
 //                     flight height (blue), cells marked solid (red), the leg
-//                     fan while it chooses, the certified leg while it flies.
-//   MISSION           from above: the walls, the stop's map, the trail, every
-//                     leg, and the numbers -- flown, from start, collisions.
-//   1 WHAT IT SEES    the left IR image the stereo matcher reads.
-//   2 STEREO DEPTH    the depth frame the module was actually given.
-//   3 WHAT IT KNOWS   the stop's voxel map as a model. Empty is UNKNOWN.
+//                     fan while it chooses, the certified leg while it flies;
+//                     a minimap from above in the corner.
+//   WHAT IT KNOWS     the stop's voxel map as a model. Empty is UNKNOWN.
+//   LIVE DEPTH, LIVE VOXEL, HUMANS
+//                     THE CAMERA ROW: a RealSense (--live) or a recording
+//                     (--replay) through the aircraft's pipeline -- depth, its
+//                     first-person map with the far tier, people with a range
+//                     from the depth camera's own image. Without one, the
+//                     flight's own simulated D435i, and the detector on the
+//                     aircraft's IR (a webcam, if one opens, for people).
 //
 // The flight is paced to the wall clock on its own thread and logs every 30 s
 // how well this machine keeps up; below 1x the world is slower, never the
-// aircraft's decisions. A webcam, if present, adds people as an inset.
+// aircraft's decisions. `--shot` renders it all headless, the camera row from
+// --replay when given.
 //
-// THE FOUR-PANE WINDOW (--live, --replay, --model). What it shows, and why:
+// THE FOUR-PANE RESEARCH WINDOW (--model: a learned policy flying VoxelEnv).
+// What it shows, and why:
 //
 //   SIM DEMONSTRATION a planner flying the simulated world: FPV FOOTAGE of
 //                     the true scene (navcore/footage.hpp), with the map it is

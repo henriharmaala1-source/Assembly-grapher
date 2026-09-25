@@ -28,6 +28,7 @@
 #include <opencv2/core.hpp>
 
 #include "flight_show.hpp"
+#include "bearing_field.hpp"
 #include "voxel_map.hpp"
 
 namespace kshow {
@@ -46,6 +47,8 @@ std::vector<Ray> legFan(const FlightShow& f);
 struct ShowSnap {
     std::shared_ptr<const sim::VoxelWorld> world;
     std::shared_ptr<const sim::VoxelMap>   map;     // this stop's map (a copy)
+    std::shared_ptr<const sim::BearingField> field; // and its far tier (a copy)
+    float       maxIntegM = 0, farRangeM = 0;       // the ranges the two cover
     int         mapFrames = 0;
     long        mapKey = -1;                        // which map, and how far along
     sim::CamParams cam;                             // the D435i
@@ -75,7 +78,13 @@ public:
     cv::Mat camera(const ShowSnap& s, int w, int h) const;
     cv::Mat depth(const ShowSnap& s, int w, int h) const;
     cv::Mat belief(const ShowSnap& s, int w, int h) const;
-    cv::Mat mission(const ShowSnap& s, int w, int h) const;
+    // The stop's map FROM THE AIRCRAFT'S EYE -- the first-person voxel view
+    // the live camera pane draws, here for the simulated D435i. Pale is
+    // UNKNOWN; the certified leg fan lies on the floor under the flight line.
+    cv::Mat fpv(const ShowSnap& s, int w, int h) const;
+    // compact: no legend and no numbers -- for an inset; the window's status
+    // line carries the numbers.
+    cv::Mat mission(const ShowSnap& s, int w, int h, bool compact = false) const;
 
 private:
     sim::CamPose chasePose(const ShowSnap& s) const;

@@ -956,10 +956,10 @@ int main() {
                     (rep.state != slamPrevState || rep.mapChanges != slamPrevChanges ||
                      (std::atoi(trc) >= 2 && vioFrames % 10 == 0)))
                     std::printf("   t=%.2f slam state %d map %d changes %u tracked %d  phase %s  "
-                                "at (%.2f,%.2f) yaw %.1f v %.2f  err %.2f\n", t, rep.state,
-                                rep.mapId, rep.mapChanges, rep.tracked,
+                                "at (%.2f,%.2f) yaw %.1f v %.2f  err %.2f (%.2f,%.2f)\n", t,
+                                rep.state, rep.mapId, rep.mapChanges, rep.tracked,
                                 wm.snapshot().missionPhase.c_str(), truth.e, truth.n,
-                                truth.yawDeg, v, std::hypot(errE, errN));
+                                truth.yawDeg, v, std::hypot(errE, errN), errE, errN);
                 if (got) slamPrevChanges = rep.mapChanges;
                 if (got) slamPrevState = rep.state;
                 if (!okT) {
@@ -975,6 +975,10 @@ int main() {
                         slamAnchor.anchor(rep.Twc, a);
                         if (slamMap != -1) ++slamMaps;
                         slamMap = rep.mapId;
+                        if (std::getenv("VOXTEST_SLAMTRACE"))
+                            std::printf("   t=%.2f map %d ANCHORED at truth (%.2f,%.2f) yaw %.1f, "
+                                        "estimate off by (%.2f,%.2f)\n", t, rep.mapId, truth.e,
+                                        truth.n, truth.yawDeg, errE, errN);
                     }
                     float se, sn, su, syaw;
                     slamAnchor.toEnu(rep.Twc, se, sn, su, syaw);

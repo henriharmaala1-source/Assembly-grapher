@@ -29,6 +29,8 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <csignal>
+#include <execinfo.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
@@ -106,7 +108,22 @@ bool parse(int argc, char** argv, Options& o) {
 
 }  // namespace
 
+// A CRASH LEAVES A STACK TRACE on stderr, then dies as it would have. The
+// bridge runs unattended aboard; "it exited" with nothing else is how a
+// once-in-thirty startup crash went undiagnosed (only async-signal-safe calls
+// here: backtrace_symbols_fd writes straight to the descriptor).
+void onCrash(int sig) {
+    const char msg[] = "\n[orbslam] FATAL signal -- stack:\n";
+    if (::write(2, msg, sizeof msg - 1) < 0) {}
+    void* frames[64];
+    const int n = backtrace(frames, 64);
+    backtrace_symbols_fd(frames, n, 2);
+    std::signal(sig, SIG_DFL);
+    std::raise(sig);
+}
+
 int main(int argc, char** argv) {
+    for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL}) std::signal(sig, onCrash);
     Options opt;
     if (!parse(argc, argv, opt)) {
         std::fprintf(stderr, "usage: kestrel-orbslam --vocab ORBvoc.txt [--socket PATH] "

@@ -130,10 +130,13 @@ int main() {
             if (first < 0.f) first = r.meanPoints;
             last = r.meanPoints;
         }
-        // MEASURED, and not what I expected: yield is nearly FLAT in trunk
-        // texture. The sparse grid samples 12x9 points over the whole frame, and
-        // at 6 m altitude most of them land on ground and canopy rather than on
-        // bark -- so the ground carries the solve whatever the trunks are doing.
+        // MEASURED: the ground carries most of the solve. The sparse grid
+        // samples 12x9 points over the whole frame, and at 6 m altitude most
+        // land on ground and canopy rather than on bark. Yield does rise with
+        // bark texture -- 12.8 -> 15.6 pts/frame from 0.02 to 0.75 on the
+        // band-limited render (2026-09-25) -- but never falls below what the
+        // solver needs. (On the old aliased render it read as FLAT: sub-pixel
+        // noise gave every surface the same fake texture.)
         //
         // Treat that as a hypothesis about the real sensor, not a result. This
         // ground is synthetic and its brightness varies with range through the

@@ -143,12 +143,13 @@ struct CamParams {
     // obliquity), plus 16 and 64 cm octaves so far surfaces keep structure,
     // as real ones do. The visual-odometry tests use true.
     //
-    // The default stays false because nav-sim's flow_odometry_check was tuned
-    // on the aliased render and PASSES PARTLY ON THE ALIASING: with the
-    // band-limit on, its fixed variance floor rejects most far patches and it
-    // solves 2-4 of 19 frames (measured 2026-09-24). That is a finding about
-    // FlowVelocityEstimator's minVar, recorded here, not fixed.
-    bool  irBandLimit    = false;
+    // TRUE BY DEFAULT since 2026-09-25. It was opt-in for a day because
+    // nav-sim's flow_odometry_check passed partly ON the aliasing: its fixed
+    // variance floor (25) accepted swimming sub-pixel texture and rejected
+    // real smooth surfaces. The floor is now 4 (flow_velocity.hpp) and the
+    // check passes on this render -- more accurately than it did on the old.
+    // false reproduces the old render, for comparison only.
+    bool  irBandLimit    = true;
     float ambientIR      = 1.0f;   // 1 = bright daylight, 0 = dark
     bool  modelOcclusion = true;
     bool  filterSpeckle = true;

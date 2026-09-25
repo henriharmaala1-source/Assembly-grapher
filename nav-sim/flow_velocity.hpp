@@ -55,7 +55,14 @@ struct FlowVelocityParams {
     int   gridX      = 12, gridY = 9;   // sample points across the frame
     int   patch      = 4;               // half-size of the SSD match patch
     int   search     = 10;              // half-size of the search window, px
-    float minVar     = 25.f;            // reject flat patches: no texture, no match
+    // Reject flat patches: no texture, no match. 4, not the 25 it was: 25 was
+    // tuned on an IR render that point-sampled sub-pixel texture, so distant
+    // patches carried ALIASING -- variance that moves with the camera -- and
+    // passed it. On the band-limited render (depth_camera.hpp) the same floor
+    // rejected most of the frame (4 of 19 solved); at 4 all 19 solve and the
+    // recovered translation is 5-8 % off truth, against 16-25 % on the
+    // aliased render (flow_odometry_check, 2026-09-25).
+    float minVar     = 4.f;
     // Backward re-match window. Raised to at least `search` internally: a
     // narrower one guarantees the round trip hits its boundary and every
     // point is discarded, which looks exactly like "no texture".

@@ -18,6 +18,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -291,6 +292,8 @@ int main() {
     const float dt = 1.f / 15.f;
     for (size_t ci = 0; ci < cases.size(); ++ci) {
         const Case& c = cases[ci];
+        if (const char* only = std::getenv("SLAMTEST_ONLY"))   // e.g. "straight"
+            if (!std::strstr(c.name, only)) continue;
         // A fresh bridge per case: each flight starts its own map.
         const std::string sock = "/tmp/kestrel-orbtest-" + std::to_string(::getpid()) +
                                  "-" + std::to_string(ci) + ".sock";

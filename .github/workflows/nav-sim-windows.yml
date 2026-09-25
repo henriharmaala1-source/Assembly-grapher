@@ -133,6 +133,9 @@ jobs:
             Write-Warning "voxelenv.pyd was not built - `kestrel train` will not run from this zip"
           }
           Copy-Item RUN_ME_windows.txt dist/RUN_ME.txt
+          # YOLOX-nano is compiled into kestrel.exe; Apache-2.0 asks that its
+          # licence travel with the binary.
+          Copy-Item models/LICENSE-YOLOX dist/LICENSE-YOLOX.txt
           Get-ChildItem dist -Recurse | Select-Object FullName
 
       - uses: actions/upload-artifact@v4

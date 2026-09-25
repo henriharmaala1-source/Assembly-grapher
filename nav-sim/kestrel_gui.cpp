@@ -589,7 +589,9 @@ struct Cfg {
     // command line everywhere in this window, so a toggle whose ON state emits
     // NOTHING is the --raw-clear inversion again. Naming the field after the
     // argument makes the button, the flag and the green light one fact.
-    bool  dNoPeople = false, dNoMirror = false, dNoEmitter = false;
+    // The people pane: 0 YOLOX-nano (built in), 1 HOG, 2 off.
+    int   dPeople = 0;
+    bool  dNoMirror = false, dNoEmitter = false;
     // 0 auto, 1 --cuda, 2 --no-cuda. Three states rather than a toggle because
     // "take the GPU if it is there" and "I am relying on the GPU" are different
     // intentions, and only the second should refuse to start without one.
@@ -673,7 +675,8 @@ std::vector<std::string> buildArgs(const Cfg& c,
             } else a.push_back("--sim");
             a.push_back("--world"); a.push_back(DEMO_WORLD[c.dWorld]);
             a.push_back("--pane");  a.push_back(std::to_string(DEMO_PANE[c.dPane]));
-            if (c.dNoPeople)  a.push_back("--no-people");
+            if (c.dPeople == 2) a.push_back("--no-people");
+            else if (c.dPeople == 1) { a.push_back("--detector"); a.push_back("hog"); }
             if (c.dNoMirror)  a.push_back("--no-mirror");
             if (c.dNoEmitter) a.push_back("--no-emitter");
             if (c.dPose > 0) { a.push_back("--pose"); a.push_back(POSE_ARG[c.dPose]); }
@@ -987,9 +990,12 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
             std::to_string(DEMO_PANE[c.dPane]), ID_D_PANEM, ID_D_PANEP,
             "one of the four", 100);
 
+    // PEOPLE: the built-in YOLOX-nano (Apache-2.0, compiled into this exe),
+    // OpenCV's HOG, or the pane off.
     bs.push_back({cv::Rect(x, 382, 250, 36),
-                  c.dNoPeople ? "people pane OFF" : "people pane on",
-                  ID_D_PEOPLE, c.dNoPeople});
+                  c.dPeople == 0 ? "people: YOLOX (built in)"
+                : c.dPeople == 1 ? "people: HOG" : "people pane OFF",
+                  ID_D_PEOPLE, c.dPeople != 0});
     bs.push_back({cv::Rect(x + 260, 382, 250, 36),
                   c.dNoMirror ? "camera as-is" : "mirror the camera",
                   ID_D_MIRROR, c.dNoMirror});
@@ -1032,8 +1038,7 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
 
     // BELOW the buttons, not beside them: at x+520 four lines of this length
     // ran 200 px off a 1060 px canvas, and gui --check caught it.
-    txt(im, "cuda moves the POLICY and an --detector onnx onto the GPU; the default "
-            "HOG detector has none.", x, 541, 0.42, DIM);
+    txt(im, "cuda moves the POLICY and YOLOX onto the GPU; HOG has no GPU path.", x, 541, 0.42, DIM);
 
     if (c.dSource == 1) {
         txt(im, "librealsense loads at RUN time; with no camera the two live panes "
@@ -1685,7 +1690,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_D_WORLD:  c.dWorld = (c.dWorld + 1) % NDEMO_WORLD; break;
         case ID_D_PANEM:  c.dPane = std::max(0, c.dPane - 1); break;
         case ID_D_PANEP:  c.dPane = std::min(NDEMO_PANE - 1, c.dPane + 1); break;
-        case ID_D_PEOPLE:  c.dNoPeople = !c.dNoPeople; break;
+        case ID_D_PEOPLE:  c.dPeople = (c.dPeople + 1) % 3; break;
         case ID_D_MIRROR:  c.dNoMirror = !c.dNoMirror; break;
         case ID_D_EMITTER: c.dNoEmitter = !c.dNoEmitter; break;
         case ID_D_CUDA:    c.dCuda = (c.dCuda + 1) % 3; break;

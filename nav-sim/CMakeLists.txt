@@ -360,6 +360,8 @@ add_executable(kestrel
   voxel_live.cpp
   # The demo: four panes, four threads, no second implementation of anything.
   kestrel_demo.cpp
+  # People in the camera image: built-in YOLOX-nano, HOG, or an .onnx file.
+  person_detector.cpp
 
   rl_env.cpp
   ../onboard/src/lock_tracker_fused.cpp
@@ -379,6 +381,32 @@ else()
 endif()
 if(OpenCV_dnn_FOUND OR TARGET opencv_dnn)
   target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_DNN=1)
+  # YOLOX-nano (Megvii, Apache-2.0 -- models/LICENSE-YOLOX) COMPILED IN, so the
+  # demo finds people with no model file beside the exe. The .onnx is turned
+  # into a source file at build time; 3.7 MB on the binary.
+  set(YOLOX_MODEL ${CMAKE_CURRENT_SOURCE_DIR}/models/yolox_nano.onnx)
+  set(YOLOX_CPP ${CMAKE_CURRENT_BINARY_DIR}/embedded_yolox.cpp)
+  add_custom_command(OUTPUT ${YOLOX_CPP}
+    COMMAND ${CMAKE_COMMAND} -DIN=${YOLOX_MODEL} -DOUT=${YOLOX_CPP} -DNS=kdemo
+            -DSYM=yoloxNano -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake
+    DEPENDS ${YOLOX_MODEL} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_file.cmake
+    COMMENT "Embedding YOLOX-nano into kestrel")
+  target_sources(kestrel PRIVATE ${YOLOX_CPP})
+  target_compile_definitions(kestrel PRIVATE KESTREL_EMBED_YOLOX=1)
+  # The detector's decoders against known answers, and the embedded model.
+  if(BUILD_TESTS)
+    add_executable(person_detector_check test/person_detector_check.cpp
+                   person_detector.cpp ${YOLOX_CPP})
+    target_include_directories(person_detector_check PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(person_detector_check PRIVATE ${OpenCV_LIBS})
+    target_compile_definitions(person_detector_check PRIVATE
+      KESTREL_HAVE_DNN=1 KESTREL_EMBED_YOLOX=1)
+    if(OpenCV_objdetect_FOUND OR TARGET opencv_objdetect)
+      target_compile_definitions(person_detector_check PRIVATE KESTREL_HAVE_OBJDETECT=1)
+    endif()
+    add_test(NAME person_detector_check COMMAND person_detector_check)
+  endif()
   message(STATUS "kestrel: dnn found - demo can fly an exported .onnx policy")
 else()
   message(STATUS "kestrel: no dnn - demo flies a classical planner, and says so")

@@ -457,7 +457,7 @@ columns as the classical ones, on seeds it never trained on.
                        kestrel demo --no-cuda   refuse one
                        (neither)                take one if it is there
 
-                     --cuda moves the policy and an --detector onnx onto
+                     --cuda moves the policy and the person detector onto
                      the GPU through OpenCV's dnn CUDA backend. It does
                      NOT touch the simulator's depth renderer: that has
                      its own build switch, NAVSIM_WITH_CUDA, guarding a
@@ -467,11 +467,10 @@ columns as the classical ones, on seeds it never trained on.
                      unvalidated kernel inside the one command whose job
                      is to be believed.
 
-                     The DEFAULT detector gets nothing from it. HOG's GPU
-                     version lives in opencv_contrib's cudaobjdetect,
-                     which this build does not require, so the people
-                     pane says cpu and means it. Point --detector at an
-                     ONNX model to put detection on the GPU.
+                     HOG gets nothing from it: its GPU version lives in
+                     opencv_contrib's cudaobjdetect, which this build does
+                     not require, so with --detector hog the people pane
+                     says cpu and means it.
 
                      --cuda REFUSES TO START without a visible device,
                      deliberately: a flag that passes silently on a
@@ -482,15 +481,28 @@ columns as the classical ones, on seeds it never trained on.
                      so the frame rate on screen always has the right
                      label under it.
 
-                     PEOPLE. The default detector is HOG with a linear SVM,
-                     which ships inside OpenCV with trained weights -- no model
-                     file, no download, no network on the day. It is also
-                     genuinely mediocre: upright, unoccluded, roughly full-body
-                     people only. --detector FILE takes an ONNX detector
-                     instead when you have one. Range always comes from the
-                     DEPTH frame, never from how tall the box is, because
-                     guessing distance from apparent height means assuming how
-                     tall someone is and this stack does not have to.
+                     PEOPLE. The default detector is YOLOX-nano, COMPILED INTO
+                     kestrel.exe -- no model file, no download, no network on
+                     the day. It finds partial, sitting, turned and distant
+                     people, and runs in tens of milliseconds on a laptop CPU.
+                     It is Apache-2.0 (Megvii), so shipping the exe needs only
+                     its licence notice (models/LICENSE-YOLOX); the
+                     Ultralytics YOLO models, AGPL-3.0, were passed over for
+                     exactly that reason.
+
+                       kestrel demo --detector hog       OpenCV's HOG instead:
+                                                         upright, whole people
+                                                         only, but ~6 ms
+                       kestrel demo --detector FILE.onnx any detector in the
+                                                         YOLOX, YOLOv5 or
+                                                         YOLOv8/11 layout
+
+                     Mind the licence of a FILE you load: fine to use, but
+                     distributing an exe WITH an AGPL model inside puts the
+                     exe under the AGPL too. Range always comes from the DEPTH
+                     frame, never from how tall the box is, because guessing
+                     distance from apparent height means assuming how tall
+                     someone is and this stack does not have to.
 
     kestrel train    train. Expect 8-18 hours at 10 M steps with stereo.
 

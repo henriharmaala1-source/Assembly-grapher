@@ -35,6 +35,7 @@
 #include "frame_source.hpp"
 #include "nav_pipeline.hpp"
 #include "visual_pose.hpp"
+#include "person_detector.hpp"
 #include "rl_env.hpp"
 #include "voxel_map.hpp"
 
@@ -192,144 +193,8 @@ std::string applyBackend(void* netv, int want, bool* usedCuda) {
 }
 
 // --------------------------------------------------------------- the detector
-// PEOPLE, and only the parts of "people" this build can honestly do.
-//
-// HOG + a linear SVM (Dalal & Triggs 2005) ships inside OpenCV with trained
-// weights, so the default path needs no model file, no download and no network
-// at demo time -- which is the difference between a demo that runs on a strange
-// laptop and one that does not. It is also genuinely mediocre: upright,
-// unoccluded, roughly full-body people only, and it costs tens of milliseconds.
-// Both facts are stated on the pane rather than hidden.
-//
-// An ONNX detector is strictly better when one is present, and `--detector
-// FILE` takes it. It is not the default because a default that fails when a
-// file is missing is not a default.
-//
-// RANGE COMES FROM THE DEPTH FRAME, not from the box size. Estimating distance
-// from how tall a person looks requires assuming how tall they are; this stack
-// has a calibrated depth image, so the box's median valid depth is a
-// measurement. That is the one thing here a webcam demo cannot do.
-struct Person {
-    cv::Rect box;
-    float    rangeM = -1.f;    // < 0 means the depth frame had nothing there
-    float    score = 0.f;
-};
-
-class PersonDetector {
-public:
-    bool init(const std::string& onnx, int want, std::string& note) {
-#if KESTREL_HAVE_DNN
-        if (!onnx.empty()) {
-            try {
-                net_ = cv::dnn::readNet(onnx);
-                if (!net_.empty()) {
-                    kind_ = ONNX;
-                    backend_ = applyBackend(&net_, want, &cuda_);
-                    note = "onnx on " + backend_;
-                    return true;
-                }
-            } catch (const cv::Exception& e) {
-                note = std::string("onnx failed, using HOG: ") + e.what();
-            }
-        }
-#else
-        if (!onnx.empty()) note = "this build has no opencv dnn; using HOG";
-#endif
-#if KESTREL_HAVE_OBJDETECT
-        hog_.setSVMDetector(cv::HOGDescriptor::getDefaultPeopleDetector());
-        kind_ = HOG;
-        // HOG IS CPU HERE AND THERE IS NO GPU PATH FOR IT in mainline OpenCV
-        // -- cv::cuda::HOG lives in the contrib cudaobjdetect module, which
-        // this build does not require. So --cuda does nothing for the default
-        // detector, and the pane says cpu rather than implying otherwise. The
-        // way to put the detector on the GPU is --detector FILE.onnx.
-        backend_ = "cpu (HOG has no cuda path in this build)";
-        if (note.empty())
-            note = "HOG + linear SVM, upright people, no model file";
-        return true;
-#else
-        kind_ = NONE;
-        note = "this build has no opencv objdetect -- no detector";
-        return false;
-#endif
-    }
-
-    bool available() const { return kind_ != NONE; }
-    const std::string& backend() const { return backend_; }
-    bool onCuda() const { return cuda_; }
-    const char* kindName() const {
-        return kind_ == ONNX ? "onnx" : kind_ == HOG ? "HOG" : "none";
-    }
-
-    // `bgr` is what the camera saw; `depthM` may be empty, in which case the
-    // boxes come back without a range rather than with a guessed one.
-    std::vector<Person> detect(const cv::Mat& bgr, const cv::Mat& depthM) {
-        std::vector<Person> out;
-        if (kind_ == NONE || bgr.empty()) return out;
-#if KESTREL_HAVE_OBJDETECT
-        if (kind_ == HOG) {
-            // DOWNSCALE FIRST. HOG on a 640x480 frame is ~120 ms on a laptop
-            // core, which would make this the slowest stage by a factor of
-            // four; at 320 wide it is ~35 ms and finds the same people at the
-            // ranges a demo happens at.
-            cv::Mat small;
-            const double s = 320.0 / std::max(1, bgr.cols);
-            cv::resize(bgr, small, {}, s, s, cv::INTER_AREA);
-            std::vector<cv::Rect> found;
-            std::vector<double> weights;
-            hog_.detectMultiScale(small, found, weights, 0.0, cv::Size(8, 8),
-                                  cv::Size(0, 0), 1.05, 2.0, false);
-            for (size_t i = 0; i < found.size(); ++i) {
-                Person p;
-                p.box = cv::Rect(int(found[i].x / s), int(found[i].y / s),
-                                 int(found[i].width / s), int(found[i].height / s));
-                p.score = float(weights[i]);
-                out.push_back(p);
-            }
-        }
-#endif
-        for (Person& p : out) p.rangeM = rangeIn(depthM, p.box, bgr.size());
-        return out;
-    }
-
-private:
-    // MEDIAN, not mean. A box around a person also contains whatever is behind
-    // them, and a mean of "person at 2 m" and "wall at 8 m" is a number that
-    // describes nothing in the scene. The median of the middle of the box is
-    // the person whenever the person fills most of it, which is what a box
-    // that fired on a person looks like.
-    static float rangeIn(const cv::Mat& depthM, const cv::Rect& box,
-                         const cv::Size& imgSize) {
-        if (depthM.empty() || depthM.type() != CV_32F) return -1.f;
-        const double sx = double(depthM.cols) / std::max(1, imgSize.width);
-        const double sy = double(depthM.rows) / std::max(1, imgSize.height);
-        cv::Rect r(int(box.x * sx), int(box.y * sy),
-                   int(box.width * sx), int(box.height * sy));
-        // The middle half, so the frame of the box (mostly background) is out.
-        r = cv::Rect(r.x + r.width / 4, r.y + r.height / 4, r.width / 2, r.height / 2);
-        r &= cv::Rect(0, 0, depthM.cols, depthM.rows);
-        if (r.width < 2 || r.height < 2) return -1.f;
-        std::vector<float> v;
-        for (int y = r.y; y < r.y + r.height; ++y) {
-            const float* row = depthM.ptr<float>(y);
-            for (int x = r.x; x < r.x + r.width; ++x)
-                if (row[x] > 0.f) v.push_back(row[x]);
-        }
-        if (v.size() < 8) return -1.f;
-        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
-        return v[v.size() / 2];
-    }
-
-    enum Kind { NONE = 0, HOG, ONNX } kind_ = NONE;
-    std::string backend_ = "cpu";
-    bool cuda_ = false;
-#if KESTREL_HAVE_OBJDETECT
-    cv::HOGDescriptor hog_;
-#endif
-#if KESTREL_HAVE_DNN
-    cv::dnn::Net net_;
-#endif
-};
+// person_detector.hpp: built-in YOLOX-nano by default, HOG as the fallback,
+// or any .onnx detector via --detector; range from the depth frame.
 
 void drawPeople(cv::Mat& bgr, const std::vector<Person>& ps) {
     for (const Person& p : ps) {
@@ -806,7 +671,8 @@ int shot(const Options& o, const std::string& prefix) {
 
     PersonDetector det;
     std::string dnote;
-    det.init(o.detector, o.cuda, dnote);
+    det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); },
+             dnote);
     cv::Mat colour = syntheticColour(iw, ih);
     drawPeople(colour, det.detect(colour, dRaw));
     p[3].title = "HUMANS";
@@ -1083,7 +949,8 @@ int run(const Options& o) {
     const bool eyesLive = eyes.open(o, eyesNote);
     PersonDetector det;
     std::string detNote;
-    det.init(o.detector, o.cuda, detNote);
+    det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); },
+             detNote);
 
     Slot<PeopleFrame> pplSlot;
     std::thread detThread([&] {

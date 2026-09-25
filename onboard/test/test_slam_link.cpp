@@ -274,9 +274,13 @@ int main() {
         }
     }
     sim::CamParams cp;
-    cp.width = 424; cp.height = 240; cp.hfovDeg = 87.f; cp.baselineM = 0.05f;
+    // 848x480, as the bridge is meant to run. At 424x240 stereo start takes
+    // ~99 frames (ORB-SLAM3 wants > 500 features with depth in ONE frame) and
+    // the "tracking within a second" bar below fails every time -- measured in
+    // 39 of 39 launches. SLAMTEST_LOWRES keeps it for looking at that.
+    cp.width = 848; cp.height = 480; cp.hfovDeg = 87.f; cp.baselineM = 0.05f;
     cp.irBandLimit = true;
-    if (std::getenv("SLAMTEST_FULLRES")) { cp.width = 848; cp.height = 480; }
+    if (std::getenv("SLAMTEST_LOWRES")) { cp.width = 424; cp.height = 240; }
     const sim::DepthCamera cam(cp);
 
     struct Case { const char* name; std::vector<Waypoint> key; float pitch; float vel, yawRate; };

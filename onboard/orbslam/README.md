@@ -72,6 +72,19 @@ feed: `docs/gnss-denied-setup.md` §11.
 The vocabulary is 145 MB of text and loads in ~5 s on a desktop, longer on a
 Pi; the first reply waits for it. Start the bridge before takeoff.
 
+**Keep it running with systemd:** `kestrel-orbslam.service` (in this
+directory) restarts it within a second if it dies, and its log -- including a
+stack trace on a fatal signal -- lands in `journalctl -u kestrel-orbslam`.
+Onboard reconnects by itself and treats the restarted bridge as a NEW MAP:
+re-anchored where the estimate had got to, reset counter bumped. That last
+part matters: a fresh process's first map has id 0 again and its origin at the
+camera, so without it the estimate jumped silently to near the takeoff point
+(9.3 m in the test, no reset reported; the jump guard allows 4 m/s times the
+seconds of vocabulary load). Tested in `test_voxel_nav`, section 2e.
+
+A startup crash was seen once in ~30 launches during the closed-loop sweeps
+(before the stack trace existed). 40+ launches since have not reproduced it.
+
 ## Measured (simulation)
 
 `test/test_slam_link.cpp` with `KESTREL_ORBSLAM` and `KESTREL_ORBVOC` set runs

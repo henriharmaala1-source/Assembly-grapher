@@ -543,6 +543,153 @@ int main() {
         ::unlink(sock.c_str());
     }
 
+    // ---------------------------------------------------------------- 2e
+    std::printf("SLAM wiring: the bridge dies and a supervisor restarts it\n");
+    {
+        // A restarted kestrel-orbslam starts a fresh map: id 0 again, origin
+        // wherever the camera is when it comes up, its own yaw. Same id as the
+        // map it replaces, different frame. After the vocabulary load (here
+        // 2.5 s; 5-30 s for real) the jump guard would allow 4 m/s x that --
+        // so the ONLY thing that can tell the estimate is the reconnect.
+        sim::VoxelWorld w; buildRoom(w, 16.f, 4.f, 0.2f);
+        std::mt19937 prng(5);
+        std::uniform_real_distribution<float> PU(2.f, 14.f);
+        for (int i = 0; i < 25; ++i) {
+            const float x = PU(prng), y = PU(prng);
+            if (std::fabs(x - 5.5f) < 1.5f && y > 3.f && y < 11.f) continue;
+            box(w, x - 0.2f, y - 0.2f, x + 0.2f, y + 0.2f, 4.f, kPillarTex);
+        }
+        const std::string sock = "/tmp/kestrel-voxtest-r" + std::to_string(::getpid()) + ".sock";
+        std::mutex tmu;
+        std::map<long, sim::CamPose> truthAt;
+        std::atomic<bool> down{false};                 // the bridge is restarting
+        std::atomic<int> served{0};
+        const int lfd = slamlink::listenUnix(sock);
+        CHECK(lfd >= 0);
+        std::atomic<int> cfd{-1};
+        std::thread srv([&] {
+            // Process 1: frame f0. Process 2: frame at the camera's pose when
+            // it came up, yawed 110 deg, first 5 frames still initialising.
+            sim::CamPose F; F.yawDeg = 70.f; F.pitchDeg = 12.f; F.e = 3.f; F.n = -2.f; F.u = 0.5f;
+            for (int proc = 0; proc < 2; ++proc) {
+                const int fd = ::accept(lfd, nullptr, nullptr);
+                if (fd < 0) return;
+                cfd.store(fd);
+                slamlink::FrameHeader h;
+                std::vector<uint8_t> l, r;
+                std::vector<slamlink::ImuSample> imu;
+                int k = 0;
+                while (slamlink::recvFrame(fd, h, l, r, imu)) {
+                    sim::CamPose q;
+                    {
+                        std::lock_guard<std::mutex> lk(tmu);
+                        q = truthAt[long(h.tS * 1000.0 + 0.5)];
+                    }
+                    if (proc == 1 && k == 0) {
+                        F = sim::CamPose(); F.e = q.e; F.n = q.n; F.u = q.u; F.yawDeg = q.yawDeg + 110.f;
+                    }
+                    slamlink::PoseReply rep;
+                    rep.seq = h.seq; rep.mapId = 0; rep.tracked = 300;
+                    rep.state = proc == 1 && k < 5 ? slamlink::kNotInitialized : slamlink::kOk;
+                    const cv::Matx33d Rsw = SlamAnchor::rotWc(F).t();
+                    const cv::Matx33d Rsc = Rsw * SlamAnchor::rotWc(q);
+                    const cv::Vec3d p = Rsw * (cv::Vec3d(q.e, q.n, q.u) - cv::Vec3d(F.e, F.n, F.u));
+                    for (int i = 0; i < 3; ++i) {
+                        for (int j = 0; j < 3; ++j) rep.Twc[i * 4 + j] = float(Rsc(i, j));
+                        rep.Twc[i * 4 + 3] = float(p[i]);
+                    }
+                    ++k;
+                    served.fetch_add(1);
+                    if (!slamlink::sendPose(fd, rep)) break;
+                    if (proc == 0 && k == 20) break;       // the crash
+                }
+                ::close(fd);
+                cfd.store(-1);
+                if (proc == 0) {
+                    down.store(true);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+                    down.store(false);
+                }
+            }
+        });
+        const float hdg = -40.f;
+        sim::CamPose truth; truth.e = 10.f; truth.n = 4.f; truth.u = 1.5f;
+        truth.yawDeg = hdg; truth.pitchDeg = -15.f;
+        auto* src = new StereoStrobedSource(w, cp, &truth, 137.f);
+        VoxelNavModule::Params vq = vp;
+        vq.slam = true; vq.slamSocket = sock;
+        auto modp = std::make_unique<VoxelNavModule>(std::unique_ptr<sim::FrameSource>(src), vq);
+        VoxelNavModule& mod = *modp;
+        WorldModel wm;
+        const float dt = 1.f / 30.f, v = 1.f;
+        const float se = std::sin(hdg * kPi / 180.f), cn = std::cos(hdg * kPi / 180.f);
+        // The gap is wall time, and so is the velocity a re-anchor carries
+        // the estimate on: both come from the module's clock, whatever speed
+        // this machine renders at. Ends 20 fresh poses after the restart.
+        bool have0 = false, sawDown = false, havePost = false;
+        float v0e = 0, v0n = 0, t0e = 0, t0n = 0, preE = 0, preN = 0, step = 0.f;
+        float worstPre = 0.f, worstPost = 0.f;
+        float p0e = 0, p0n = 0, pt0e = 0, pt0n = 0;
+        int resetsPre = 0;
+        double lastStamp = -1e9;
+        const auto t0 = std::chrono::steady_clock::now();
+        int nPost = 0;
+        for (int i = 0; i < 3000 && nPost < 20 && std::chrono::duration<double>(
+                                        std::chrono::steady_clock::now() - t0).count() < 120.0; ++i) {
+            {
+                std::lock_guard<std::mutex> lk(tmu);
+                truthAt[long(double(i + 1) / 30.0 * 1000.0 + 0.5)] = truth;
+            }
+            wm.with([&](WorldState& s) {
+                s.tickMonoS = monoNowS(); s.vehYawDeg = hdg;
+                s.vehGroundspeed = down.load() ? 0.f : v; s.vehAltM = truth.u;
+            });
+            mod.run(cv::Mat(), wm);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const WorldState s = wm.snapshot();
+            if (down.load()) sawDown = true;
+            const bool fresh = s.vioValid && s.vioStampS != lastStamp;
+            lastStamp = s.vioStampS;
+            if (fresh) {
+                if (!have0) { have0 = true; v0e = s.vioPe; v0n = s.vioPn; t0e = truth.e; t0n = truth.n; }
+                if (!sawDown) {
+                    worstPre = std::max(worstPre, std::hypot((s.vioPe - v0e) - (truth.e - t0e),
+                                                             (s.vioPn - v0n) - (truth.n - t0n)));
+                    preE = s.vioPe; preN = s.vioPn; resetsPre = s.vioResets;
+                } else if (!down.load()) {
+                    if (!havePost) {
+                        havePost = true;
+                        step = std::hypot(s.vioPe - preE, s.vioPn - preN);
+                        p0e = s.vioPe; p0n = s.vioPn; pt0e = truth.e; pt0n = truth.n;
+                    }
+                    ++nPost;
+                    worstPost = std::max(worstPost, std::hypot((s.vioPe - p0e) - (truth.e - pt0e),
+                                                               (s.vioPn - p0n) - (truth.n - pt0n)));
+                }
+            }
+            // The mission stops while the estimate is gone: hold position.
+            if (!down.load()) { truth.e += se * v * dt; truth.n += cn * v * dt; }
+        }
+        const WorldState s = wm.snapshot();
+        std::printf("  %d frames served over two processes; tracked to %.2f m before the "
+                    "crash, %.2f m after; step across the restart %.2f m; resets %d -> %d\n",
+                    served.load(), worstPre, worstPost, step, resetsPre, s.vioResets);
+        CHECK(sawDown && havePost);
+        CHECK(worstPre < 0.15f);
+        // Across the gap the aircraft held still; the re-anchor carries the
+        // estimate at most 0.5 s on the last velocity (~1 m/s).
+        CHECK(step < 0.7f);
+        CHECK(worstPost < 0.15f);
+        CHECK(s.vioResets > resetsPre);                   // the consumer is told
+        CHECK(std::fabs(s.vioYawDeg - hdg) < 1.f);
+        modp.reset();
+        const int c = cfd.load();
+        if (c >= 0) ::shutdown(c, SHUT_RDWR);
+        ::shutdown(lfd, SHUT_RDWR); ::close(lfd);
+        srv.join();
+        ::unlink(sock.c_str());
+    }
+
     // ---------------------------------------------------------------- 3
     std::printf("mission gates on the voxel plan\n");
     {

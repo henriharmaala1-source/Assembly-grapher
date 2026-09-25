@@ -29,10 +29,11 @@ uint32_t SlamClient::submit(const slamlink::FrameHeader& h, const uint8_t* left,
     return hdr_.seq;
 }
 
-bool SlamClient::takeReply(slamlink::PoseReply& out) {
+bool SlamClient::takeReply(slamlink::PoseReply& out, long* connection) {
     std::lock_guard<std::mutex> lk(mu_);
     if (!haveReply_) return false;
     out = reply_;
+    if (connection) *connection = replyConn_;
     haveReply_ = false;
     return true;
 }
@@ -45,6 +46,7 @@ void SlamClient::loop() {
         if (fd < 0) {
             fd = slamlink::connectUnix(path_);
             connected_.store(fd >= 0);
+            if (fd >= 0) ++conns_;
             if (fd < 0) {
                 for (int i = 0; i < 10 && run_.load(); ++i)
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -74,6 +76,7 @@ void SlamClient::loop() {
         sent_.fetch_add(1);
         std::lock_guard<std::mutex> lk(mu_);
         reply_ = rep;
+        replyConn_ = conns_;
         haveReply_ = true;
     }
     if (fd >= 0) slamlink::closeFd(fd);

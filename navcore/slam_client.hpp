@@ -11,6 +11,11 @@
 // Connection loss is survivable: the thread reconnects every second, and the
 // caller sees `connected() == false` and no new poses meanwhile -- the estimate
 // then goes stale and the consumers treat it as absent.
+//
+// A NEW CONNECTION MAY BE A NEW PROCESS, and a restarted SLAM starts a fresh
+// map whose id (0) and origin (wherever the camera is now) look like the old
+// one's. So every reply carries the number of the connection it came on, and
+// the caller re-anchors when that number changes.
 // ---------------------------------------------------------------------------
 
 #include <atomic>
@@ -34,8 +39,10 @@ public:
     uint32_t submit(const slamlink::FrameHeader& h, const uint8_t* left,
                     const uint8_t* right, const std::vector<slamlink::ImuSample>& imu);
 
-    // The newest reply not yet taken. False if there is none.
-    bool takeReply(slamlink::PoseReply& out);
+    // The newest reply not yet taken. False if there is none. `connection`
+    // (optional) receives which connection it came on: 1, 2, ... counting
+    // every successful connect.
+    bool takeReply(slamlink::PoseReply& out, long* connection = nullptr);
 
     bool connected() const { return connected_.load(); }
     long framesSent() const { return sent_.load(); }
@@ -53,6 +60,8 @@ private:
     std::vector<slamlink::ImuSample> imu_;
     bool       haveReply_ = false;
     slamlink::PoseReply reply_;
+    long       replyConn_ = 0;
+    long       conns_ = 0;                 // I/O thread only
     uint32_t   seq_ = 0;
     std::atomic<bool> run_{true}, connected_{false};
     std::atomic<long> sent_{0}, dropped_{0};

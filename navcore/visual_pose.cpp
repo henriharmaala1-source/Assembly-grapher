@@ -133,7 +133,17 @@ void VisualPose::stepSlam(FrameSource& src, const CamPose& att, float heading,
 
     // 2. TAKE whatever came back.
     slamlink::PoseReply rep;
-    while (slam_->takeReply(rep)) {
+    long conn = 0;
+    while (slam_->takeReply(rep, &conn)) {
+        // A new connection after the first is, as far as anyone can tell, a
+        // RESTARTED bridge: its map id starts again at 0 and its origin is
+        // wherever the camera was when it came up. Same id, different frame --
+        // and after a vocabulary load of 5-30 s the jump guard, at 4 m/s, would
+        // wave through 20-120 m. So a new connection re-anchors like a new map.
+        if (conn != slamConn_) {
+            if (slamConn_ != 0) slamRestarted_ = true;
+            slamConn_ = conn;
+        }
         const auto it = ctx_.find(rep.seq);
         const bool ok = rep.state == slamlink::kOk || rep.state == slamlink::kOkKlt;
         if (!ok || it == ctx_.end()) {
@@ -151,7 +161,7 @@ void VisualPose::stepSlam(FrameSource& src, const CamPose& att, float heading,
         const float predE = lastE_ + est_.ve * carry, predN = lastN_ + est_.vn * carry;
         // ANCHOR on the first tracked frame and on every new map -- a new map
         // is a new coordinate frame.
-        if (!anchor_.anchored() || rep.mapId != slamMap_) {
+        if (!anchor_.anchored() || rep.mapId != slamMap_ || slamRestarted_) {
             CamPose a = ctx.att;
             a.yawDeg = haveLast_ ? lastYaw_ : ctx.heading;
             a.e = haveLast_ ? predE : 0.f;
@@ -160,6 +170,10 @@ void VisualPose::stepSlam(FrameSource& src, const CamPose& att, float heading,
             anchor_.anchor(rep.Twc, a);
             if (slamMap_ != -1) ++resets_;
             slamMap_ = rep.mapId;
+            // A new process counts its map changes from zero: that is not a
+            // change, the re-anchor above already reported the discontinuity.
+            if (slamRestarted_) slamChanges_ = rep.mapChanges;
+            slamRestarted_ = false;
         }
         // A loop closure or merge moves the pose within its frame: a JUMP the
         // consumer must be told about.

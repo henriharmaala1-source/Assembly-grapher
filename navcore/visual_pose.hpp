@@ -109,6 +109,8 @@ private:
     SlamAnchor anchor_;
     int32_t  slamMap_ = -1;
     uint32_t slamChanges_ = 0;
+    long     slamConn_ = 0;           // SlamClient connection the last reply came on
+    bool     slamRestarted_ = false;  // a new connection: re-anchor on its first pose
     int      resets_ = 0;
     bool     haveLast_ = false;
     float    lastE_ = 0, lastN_ = 0, lastU_ = 0, lastYaw_ = 0;

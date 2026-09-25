@@ -1345,10 +1345,10 @@ static int runSession(Config C) {
                                       : colourDepth(depth, dMax), PW, PH);
         {
             char db[80];
-            std::snprintf(db, sizeof(db), "DEPTH  grey = NO RETURN, not far   %s",
-                          C.depthEq ? "colour spread by DATA (h)"
-                                    : (std::snprintf(nullptr, 0, "") , "linear"));
-            if (!C.depthEq)
+            if (C.depthEq)
+                std::snprintf(db, sizeof(db), "DEPTH  grey = NO RETURN, not far   "
+                              "colour spread by DATA (h)");
+            else
                 std::snprintf(db, sizeof(db), "DEPTH  grey = NO RETURN, not far   "
                               "red 0 -> blue %.0f m", dMax);
             banner(dPane, db);

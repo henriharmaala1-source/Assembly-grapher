@@ -39,14 +39,6 @@ void closeFd(int fd) {
 
 void removePath(const std::string& path) { std::remove(path.c_str()); }
 
-void shutdownFd(int fd) {
-#ifdef _WIN32
-    ::shutdown(SOCKET(fd), SD_BOTH);
-#else
-    ::shutdown(fd, SHUT_RDWR);
-#endif
-}
-
 bool writeAll(int fd, const void* p, size_t n) {
     const uint8_t* b = static_cast<const uint8_t*>(p);
     while (n > 0) {
@@ -135,10 +127,6 @@ int connectUnix(const std::string& path, std::string* err) {
         return -1;
     }
     return fd;
-}
-
-int acceptOne(int listenFd) {
-    return int(::accept(listenFd, nullptr, nullptr));
 }
 
 }  // namespace slamlink

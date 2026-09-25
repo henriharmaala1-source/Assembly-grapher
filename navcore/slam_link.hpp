@@ -90,8 +90,6 @@ bool recvPose(int fd, PoseReply& r);
 
 int  listenUnix(const std::string& path, std::string* err = nullptr);
 int  connectUnix(const std::string& path, std::string* err = nullptr);
-int  acceptOne(int listenFd);          // blocking; < 0 on error
-void shutdownFd(int fd);               // wakes a peer blocked in recv
 void closeFd(int fd);
 void removePath(const std::string& path);
 

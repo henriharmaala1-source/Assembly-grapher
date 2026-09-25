@@ -87,17 +87,4 @@ void castScan(const World& w, float pe, float pn, float yawDeg,
 // floor/sky gradient. Deliberately simple and CPU-only — no GPU, no scene graph.
 cv::Mat renderFPV(const std::vector<float>& ranges, float maxRange, int w, int h);
 
-// Build the CV_32F metric depth grid (rows x cols, metres, <=0 = invalid) that
-// DepthNav::updateFromGrid expects, from a per-bearing range scan (flat world =
-// range constant down each column).
-cv::Mat rangesToGrid(const std::vector<float>& ranges, int rows);
-
-// Top-down "God's-eye" debug view: true obstacles, the drone + heading, the goal,
-// the committed waypoint, the goal/plan bearing, and the flown trail.
-cv::Mat renderTopDown(const World& w, float pe, float pn, float yawDeg,
-                      float goalE, float goalN, float wpE, float wpN,
-                      float planBearingDeg, bool planValid,
-                      const std::vector<cv::Point2f>& trail,
-                      const char* phase, int size, float spanM);
-
 }  // namespace sim

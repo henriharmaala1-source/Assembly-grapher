@@ -508,8 +508,4 @@ private:
     float ox_ = 0, oy_ = 0, oz_ = 0;   // world coord of cell (0,0,0) min corner
 };
 
-// Side-by-side truth vs estimate isometric view, with the score printed on it.
-cv::Mat compareImage(const VoxelWorld& truth, const VoxelMap& map,
-                     const VoxelMap::Score& s, int outPx = 640);
-
 }  // namespace sim

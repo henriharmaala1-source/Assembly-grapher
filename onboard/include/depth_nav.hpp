@@ -91,9 +91,6 @@ public:
     const std::vector<float>& openHist() const { return openHist_; }  // [0,1] per col
     float scanMaxM() const { return scanMaxM_; }
 
-    // Draw heat grid + smoothed corridor arrow onto frame (in-place).
-    void drawOverlay(cv::Mat& frame) const;
-
 private:
     // Corridor scoring is done on a small working map for speed.
     static constexpr int   WORK_W   = 96;

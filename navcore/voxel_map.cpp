@@ -896,19 +896,4 @@ static cv::Mat isoOfWorld(const VoxelWorld& w, int outPx, float maxZ) {
     return img;
 }
 
-cv::Mat compareImage(const VoxelWorld& truth, const VoxelMap& map,
-                     const VoxelMap::Score& s, int outPx) {
-    cv::Mat a = isoOfWorld(truth, outPx, 40.f);
-    cv::Mat b = map.isoImage(outPx, 40.f);
-    cv::putText(a, "TRUTH", {12, 26}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {30, 30, 30}, 2);
-    cv::putText(b, "ESTIMATED (stereo)", {12, 26}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {30, 30, 30}, 2);
-    char buf[160];
-    std::snprintf(buf, sizeof buf, "IoU %.2f   false-free %.3f%%   unknown %.0f%%",
-                  s.iou(), 100.0 * s.falseFreeRate(),
-                  100.0 * double(s.unknown) / std::max(1L, s.total));
-    cv::putText(b, buf, {12, outPx - 16}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {20, 20, 140}, 1);
-    cv::Mat out; cv::hconcat(a, b, out);
-    return out;
-}
-
 }  // namespace sim

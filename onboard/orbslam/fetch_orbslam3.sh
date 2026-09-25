@@ -4,13 +4,16 @@
 #   onboard/orbslam/fetch_orbslam3.sh [DEST]     (default: onboard/orbslam/third_party)
 #
 # PINNED to one upstream commit, so what was measured is what gets built. The
-# patch is small and touches the build, not the SLAM:
+# patch is small and touches the build -- and one upstream crash:
 #   - no Pangolin/OpenGL: the viewer is replaced by headless/headless_stubs.cc
 #     and <pangolin/pangolin.h> by a one-type shim (the aircraft has no screen)
 #   - C++14 instead of C++11 (Eigen 3.4 / GCC 13 warnings), examples not built
 #   - one read-only accessor, System::GetCurrentMapIdHeadless()
 #   - the settings printout removed: upstream segfaults printing a Rectified
 #     stereo configuration (it dereferences a second calibration it never made)
+#   - Sim3Solver::ComputeSim3 made safe at identity rotation: upstream aborts
+#     the process (NaN into Sophus) when a hovering camera's loop search finds
+#     its own view. The one change to SLAM code; same rotation otherwise.
 #   - the vocabulary is unpacked next to the library
 # ORB-SLAM3 is GPLv3. It is built into its own process, kestrel-orbslam, which
 # talks to the rest of onboard over a socket (slam_link.hpp) -- see README.md.
@@ -67,6 +70,34 @@ if 'GetCurrentMapIdHeadless' not in s:
     s += ('\nnamespace ORB_SLAM3 {\nlong System::GetCurrentMapIdHeadless() {\n'
           '    Map* m = mpAtlas ? mpAtlas->GetCurrentMap() : nullptr;\n'
           '    return m ? long(m->GetId()) : -1;\n}\n}\n')
+open(p, 'w').write(s)
+# Upstream bug: Sim3Solver::ComputeSim3 turns Horn's quaternion into an axis by
+# dividing by its imaginary part's norm. When that norm is ZERO -- the best
+# rotation is exactly identity, as when a HOVERING camera's loop-closing search
+# matches a keyframe of the same view, or three coincident points -- the axis
+# is 0/0 = NaN and Sophus::SO3f::exp aborts the process. Seen in the closed
+# loop: kestrel-orbslam killed by SIGABRT in LoopClosing, aircraft in SETTLE at
+# 0.02 m/s. The eigenvector IS the rotation's quaternion, so use it directly:
+# the same rotation, and identity (not NaN) when the input is degenerate.
+p = src + '/src/Sim3Solver.cc'
+s = open(p).read()
+old = """    Eigen::Vector3f vec = evec.block<3,1>(1,maxIndex); //extract imaginary part of the quaternion (sin*axis)
+
+    // Rotation angle. sin is the norm of the imaginary part, cos is the real part
+    double ang=atan2(vec.norm(),evec(0,maxIndex));
+
+    vec = 2*ang*vec/vec.norm(); //Angle-axis representation. quaternion angle is the half
+    mR12i = Sophus::SO3f::exp(vec).matrix();"""
+new = """    // [kestrel] the eigenvector IS the quaternion (Horn 1987): no axis-angle
+    // round trip, whose division by |imaginary part| is 0/0 at identity.
+    Eigen::Quaterniond qR(evec(0,maxIndex), evec(1,maxIndex), evec(2,maxIndex), evec(3,maxIndex));
+    if (!qR.coeffs().allFinite() || qR.norm() < 1e-12)
+        qR = Eigen::Quaterniond::Identity();
+    mR12i = qR.normalized().toRotationMatrix().cast<float>();"""
+if old in s:
+    s = s.replace(old, new, 1)
+elif '[kestrel] the eigenvector IS the quaternion' not in s:
+    sys.exit('Sim3Solver.cc: the ComputeSim3 patch no longer applies')
 open(p, 'w').write(s)
 PY
 

@@ -82,9 +82,18 @@ camera, so without it the estimate jumped silently to near the takeoff point
 (9.3 m in the test, no reset reported; the jump guard allows 4 m/s times the
 seconds of vocabulary load). Tested in `test_voxel_nav`, section 2e.
 
-A startup crash was seen once in ~30 launches during the closed-loop sweeps
-(before the stack trace existed). 79 launches since (39 at 424x240, 40 at
-848x480, three at a time) have not reproduced it.
+**A crash in ORB-SLAM3 itself, found and patched.** The bridge died about
+once in 30 closed-loop runs. With the stack trace in place it was caught: an
+abort in the LOOP CLOSING thread, `Sim3Solver::ComputeSim3`, with the aircraft
+hovering in SETTLE. Upstream turns Horn's rotation quaternion into an axis by
+dividing by the norm of its imaginary part; when the best rotation is exactly
+identity -- a hovering camera whose loop search finds its own view -- that is
+0/0, and Sophus aborts on the NaN. `fetch_orbslam3.sh` now patches it to use
+the quaternion directly: the same rotation (to 1.3e-6 over 100 000 random
+cases) and identity instead of NaN at the degenerate point. It is the one
+change the patch makes to SLAM code. (Float rounding alone was ruled out: no
+failures of that check in 2 000 000 random rotations.) 79 bridge launches with
+no crash at startup, before and after.
 
 ## Measured (simulation)
 

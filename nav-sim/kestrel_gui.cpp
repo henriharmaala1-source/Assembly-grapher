@@ -677,8 +677,12 @@ std::vector<std::string> buildArgs(const Cfg& c,
             } else a.push_back("--sim");
             a.push_back("--world"); a.push_back(DEMO_WORLD[c.dWorld]);
             a.push_back("--pane");  a.push_back(std::to_string(DEMO_PANE[c.dPane]));
-            if (c.dPeople == 2) a.push_back("--no-people");
-            else if (c.dPeople == 1) { a.push_back("--detector"); a.push_back("hog"); }
+            // PEOPLE: YOLOX on the D435i's RGB (default, nothing emitted), on
+            // its IR, on a webcam; HOG; or off.
+            if (c.dPeople == 1) a.push_back("--infrared");
+            else if (c.dPeople == 2) { a.push_back("--webcam"); a.push_back("0"); }
+            else if (c.dPeople == 3) { a.push_back("--detector"); a.push_back("hog"); }
+            else if (c.dPeople == 4) a.push_back("--no-people");
             if (c.dNoMirror)  a.push_back("--no-mirror");
             if (c.dNoEmitter) a.push_back("--no-emitter");
             if (c.dPose > 0) { a.push_back("--pose"); a.push_back(POSE_ARG[c.dPose]); }
@@ -993,11 +997,13 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
             std::to_string(DEMO_PANE[c.dPane]), ID_D_PANEM, ID_D_PANEP,
             "one of the four", 100);
 
-    // PEOPLE: the built-in YOLOX-nano (Apache-2.0, compiled into this exe),
-    // OpenCV's HOG, or the pane off.
-    bs.push_back({cv::Rect(x, 382, 250, 36),
-                  c.dPeople == 0 ? "people: YOLOX (built in)"
-                : c.dPeople == 1 ? "people: HOG" : "people pane OFF",
+    // PEOPLE: the built-in YOLOX-nano (Apache-2.0, compiled into this exe) on
+    // the D435i's RGB camera -- range from its depth -- or its IR imager, or a
+    // webcam (no range); OpenCV's HOG; or the pane off.
+    const char* PEOPLE_LABEL[5] = {"people: YOLOX on RGB", "people: YOLOX on IR",
+                                   "people: YOLOX, webcam", "people: HOG",
+                                   "people pane OFF"};
+    bs.push_back({cv::Rect(x, 382, 250, 36), PEOPLE_LABEL[c.dPeople % 5],
                   ID_D_PEOPLE, c.dPeople != 0});
     bs.push_back({cv::Rect(x + 260, 382, 250, 36),
                   c.dNoMirror ? "camera as-is" : "mirror the camera",
@@ -1424,7 +1430,6 @@ const FlagBtn FLAG_BTNS[] = {
     {REPORT, ID_R_BASE,     "--baselines"},
     {REPORT, ID_R_RANDOM,   "--random"},
     {REPORT, ID_R_STEREO,   "--stereo"},
-    {DEMO,  ID_D_PEOPLE,    "--no-people"},
     {DEMO,  ID_D_MIRROR,    "--no-mirror"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
     {BENCH, ID_BENCH_STEREO, "--stereo"},
@@ -1693,7 +1698,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_D_WORLD:  c.dWorld = (c.dWorld + 1) % NDEMO_WORLD; break;
         case ID_D_PANEM:  c.dPane = std::max(0, c.dPane - 1); break;
         case ID_D_PANEP:  c.dPane = std::min(NDEMO_PANE - 1, c.dPane + 1); break;
-        case ID_D_PEOPLE:  c.dPeople = (c.dPeople + 1) % 3; break;
+        case ID_D_PEOPLE:  c.dPeople = (c.dPeople + 1) % 5; break;
         case ID_D_MIRROR:  c.dNoMirror = !c.dNoMirror; break;
         case ID_D_EMITTER: c.dNoEmitter = !c.dNoEmitter; break;
         case ID_D_CUDA:    c.dCuda = (c.dCuda + 1) % 3; break;

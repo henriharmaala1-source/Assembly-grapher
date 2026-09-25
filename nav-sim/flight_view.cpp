@@ -14,7 +14,6 @@ namespace kshow {
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
-constexpr float kChaseFov = 62.f;
 
 // BGR. The trail is warm and the leg is cool so the two never read as one.
 const cv::Scalar kTrail{40, 190, 255}, kLeg{255, 215, 70}, kInk{242, 240, 238};
@@ -286,7 +285,6 @@ void FlightView::update(const ShowSnap& s) {
     // THE CHASE CAMERA follows the heading with a lag (0.9 s), so a turn in
     // place reads as a turn instead of the world spinning round the aircraft.
     const float k = 1.f - std::exp(-std::max(0.f, dt) / 0.9f);
-    isoSpin_ = 20.f * std::sin(float(t) * 0.25f);       // slow sway: parallax
     camYaw_ += wrap180(s.truth.yawDeg - camYaw_) * k;
     // THE BOOM never goes through a wall: shorten it to what is clear behind
     // the aircraft, as a game camera does. Otherwise a stop beside a wall is
@@ -320,12 +318,17 @@ static sim::FootageStyle showStyle() {
 
 // -------------------------------------------------------------------- chase
 cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
+    // THE LENS FOLLOWS THE PICTURE: a fixed vertical field (36 deg), so a wide
+    // pane shows more to either side rather than cropping the floor and the
+    // aircraft off the bottom.
+    const float fov = 2.f * std::atan(std::tan(18.f * kPi / 180.f) * float(w) / float(h)) *
+                      180.f / kPi;
     const sim::CamPose cam = chasePose(s);
     // Cast at 3/4 of the pane and scaled up: 56 % of the rays, and the
     // overlays are drawn after, at full resolution, through the same
     // projection (focal length and centre scale with the image).
     cv::Mat im;
-    cv::resize(sim::renderFootage((*s.world), cam, w * 3 / 4, h * 3 / 4, kChaseFov, 70.f,
+    cv::resize(sim::renderFootage((*s.world), cam, w * 3 / 4, h * 3 / 4, fov, 70.f,
                                   s.floorZ + 0.3f, showStyle()),
                im, {w, h}, 0, 0, cv::INTER_LINEAR);
     // WHAT THIS STOP'S MAP KNOWS, laid over the true scene: air it has
@@ -344,7 +347,7 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
             for (const auto& d : {std::array<float, 2>{-0.5f, -0.5f}, {0.5f, -0.5f},
                                   {0.5f, 0.5f}, {-0.5f, 0.5f}}) {
                 cv::Point2f p;
-                if (project(cam, w, h, kChaseFov, v.e + q0.x + d[0] * c, v.n + q0.y + d[1] * c,
+                if (project(cam, w, h, fov, v.e + q0.x + d[0] * c, v.n + q0.y + d[1] * c,
                             s.truth.u, p))
                     q.push_back(p);
             }
@@ -354,7 +357,7 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
         for (const cv::Point3f& o : occ_) {
             const float ex = v.e + o.x, ny = v.n + o.y, uz = v.u + o.z;
             cv::Point2f p;
-            if (!project(cam, w, h, kChaseFov, ex, ny, uz, p)) continue;
+            if (!project(cam, w, h, fov, ex, ny, uz, p)) continue;
             if (p.x < 0 || p.y < 0 || p.x >= w || p.y >= h) continue;
             if (!visible((*s.world), cam, ex, ny, uz)) continue;
             cv::circle(im, p, 2, {60, 60, 235}, cv::FILLED, cv::LINE_AA);
@@ -376,7 +379,7 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
                                          {v.e + std::sin(br) * r.freeM,
                                           v.n + std::cos(br) * r.freeM, s.truth.u}};
             const float k = choosing ? 1.f : 0.55f;
-            drawPath3d(im, nullptr, cam, kChaseFov, seg,
+            drawPath3d(im, nullptr, cam, fov, seg,
                        cv::Scalar(60, 60 + 170 * q, 230 - 180 * q) * k, 1, false);
         }
     }
@@ -385,7 +388,7 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
     const size_t keep = 900;                              // ~90 m of trail
     std::vector<cv::Point3f> recent(tr.size() > keep ? tr.end() - keep : tr.begin(), tr.end());
     recent.push_back({s.truth.e, s.truth.n, s.truth.u});
-    drawPath3d(im, s.world.get(), cam, kChaseFov, recent, kTrail, 2, true);
+    drawPath3d(im, s.world.get(), cam, fov, recent, kTrail, 2, true);
     // THE LEG BEING FLOWN (or just certified): a line at flight altitude to
     // the waypoint, and a ring where the aircraft will stop.
     const std::string ph = s.phase;
@@ -398,15 +401,15 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
             const float q = float(i) / 12.f;
             seg.push_back({l.e0 + (ee - l.e0) * q, l.n0 + (ne - l.n0) * q, s.truth.u});
         }
-        drawPath3d(im, s.world.get(), cam, kChaseFov, seg, kLeg, 2, false);
+        drawPath3d(im, s.world.get(), cam, fov, seg, kLeg, 2, false);
         std::vector<cv::Point3f> ring;
         for (int i = 0; i <= 20; ++i) {
             const float t = 2.f * kPi * float(i) / 20.f;
             ring.push_back({ee + 0.35f * std::cos(t), ne + 0.35f * std::sin(t), s.truth.u});
         }
-        drawPath3d(im, s.world.get(), cam, kChaseFov, ring, kLeg, 2, false);
+        drawPath3d(im, s.world.get(), cam, fov, ring, kLeg, 2, false);
     }
-    drawDrone(im, cam, kChaseFov, s.truth, s.floorZ, true);
+    drawDrone(im, cam, fov, s.truth, s.floorZ, true);
 
     // HUD: the mission's phase, what it means, and the airframe's numbers.
     const cv::Scalar pc = phaseColour(ph);
@@ -501,70 +504,6 @@ cv::Mat FlightView::depth(const ShowSnap& s, int w, int h) const {
     depthOf_ = s.depthSeq;
     depthPane_ = out.clone();
     return out;
-}
-
-// ------------------------------------------------------------------- belief
-cv::Mat FlightView::belief(const ShowSnap& s, int w, int h) const {
-    // THE MAP OF THIS STOP, as a model: every cell it marked OCCUPIED as a
-    // cube (VoxelMap::isoImage, at the map's own 0.25 m), the air it CONFIRMED
-    // free at flight height as a green sheet under them, the certified leg fan
-    // growing out of the vantage. Nothing else is drawn -- and nothing else is
-    // known: an empty patch of this picture is UNKNOWN, not air, and the
-    // caption says so.
-    const int S = std::min(w, h * 16 / 9);
-    cv::Mat im(h, w, CV_8UC3, cv::Scalar(38, 34, 31));
-    if (s.mapFrames == 0 || !s.map) {
-        label(im, "no map yet -- the first stop is being made", {10, 22}, 0.5, kInk, 1);
-        return im;
-    }
-    const sim::VoxelMap& map = (*s.map);
-    const int P = std::max(w, h) * 3 / 2;
-    sim::VoxelMap::IsoView iv;
-    // Turned so the heading at this stop points UP the picture: iso screen-up
-    // is the direction with rx = ry < 0, i.e. rotation = heading + 135.
-    const float yaw = s.vantage.yawDeg + 135.f + isoSpin_;
-    cv::Mat iso = map.isoImage(P, 6.f, yaw, &iv, 0.25f, 11.f, false);
-    (void)S;
-    if (iso.empty() || !iv.valid) return im;
-    // The free sheet, drawn UNDER the cubes: paint it on a copy and keep the
-    // cube pixels where they were.
-    cv::Mat bg(iso.size(), iso.type(), cv::Scalar(38, 34, 31));
-    cv::Mat mask;
-    cv::inRange(iso, iso.at<cv::Vec3b>(0, 0), iso.at<cv::Vec3b>(0, 0), mask);   // background
-    const float c = map.params().cell * 0.5f;
-    for (const cv::Point2f& q0 : free_) {
-        const float wx = q0.x, wy = q0.y, wz = 0.f;
-        std::vector<cv::Point> q{iv.project(wx - c, wy - c, wz), iv.project(wx + c, wy - c, wz),
-                                 iv.project(wx + c, wy + c, wz), iv.project(wx - c, wy + c, wz)};
-        cv::fillConvexPoly(bg, q, {150, 112, 62});
-    }
-    // The fan, on the sheet.
-    const float legMax = std::max(MissionController::Params().stepM +
-                                  MissionController::Params().voxStopMarginM, 1.f);
-    for (const Ray& r : s.fan) {
-        const float br = r.bearingDeg * kPi / 180.f;
-        const float q = std::min(1.f, r.freeM / legMax);
-        cv::line(bg, iv.project(0.f, 0.f, 0.f),
-                 iv.project(std::sin(br) * r.freeM, std::cos(br) * r.freeM, 0.f),
-                 cv::Scalar(60, 60 + 170 * q, 230 - 180 * q), 1, cv::LINE_AA);
-    }
-    bg.copyTo(iso, mask);
-    // Where the aircraft is now, in this map's frame.
-    const sim::CamPose& v = s.vantage;
-    const cv::Point2f a = iv.project(s.truth.e - v.e, s.truth.n - v.n, 0.f);
-    cv::circle(iso, a, 6, {250, 250, 250}, 2, cv::LINE_AA);
-    cv::circle(iso, a, 2, {250, 250, 250}, cv::FILLED, cv::LINE_AA);
-    // Into the pane: the vantage three quarters of the way down, so what is
-    // ahead of it fills the picture.
-    const cv::Point2f o = iv.project(0.f, 0.f, 0.f);
-    const int ox = std::max(0, std::min(iso.cols - w, int(o.x) - w / 2));
-    const int oy = std::max(0, std::min(iso.rows - h, int(o.y) - h * 3 / 4));
-    iso(cv::Rect(ox, oy, std::min(w, iso.cols), std::min(h, iso.rows))).copyTo(
-        im(cv::Rect(0, 0, std::min(w, iso.cols), std::min(h, iso.rows))));
-    label(im, cv::format("%d depth frames at this stop", s.mapFrames), {10, 22}, 0.45,
-          kInk, 1);
-    label(im, "cubes: solid   blue: free   empty: UNKNOWN", {10, h - 12}, 0.42, kInk, 1);
-    return im;
 }
 
 // ---------------------------------------------------------------------- fpv

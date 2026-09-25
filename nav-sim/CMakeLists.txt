@@ -555,6 +555,14 @@ target_include_directories(sky_open_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${
 target_link_libraries(sky_open_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME sky_open_check COMMAND sky_open_check)
 
+# Depth re-projected into the D435i's RGB camera: what gives a person found in
+# colour a measured range. Known geometry, no camera.
+add_executable(colour_register_check test/colour_register_check.cpp)
+target_link_libraries(colour_register_check PRIVATE navcore)
+target_include_directories(colour_register_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(colour_register_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME colour_register_check COMMAND colour_register_check)
+
 # Chase view: a path with fixed BODY shape must land on the same pixels at every
 # heading. The two panes that show the plan use different references -- the
 # top-down one is world-referenced and does not rotate -- so they cannot be

@@ -11,19 +11,19 @@
 // worlds against a simulated D435i at the mode that flies (848x480), with no
 // position given to the map, exactly as aboard (flight_show.hpp):
 //
-//   THE FLIGHT        the true scene from behind the aircraft, with what THIS
-//                     stop's map knows laid over it: air confirmed free at
-//                     flight height (blue), cells marked solid (red), the leg
-//                     fan while it chooses, the certified leg while it flies;
-//                     a minimap from above in the corner.
-//   WHAT IT KNOWS     the stop's voxel map as a model. Empty is UNKNOWN.
+//   THE FLIGHT        across the top: the true scene from behind the aircraft,
+//                     with what THIS stop's map knows laid over it: air
+//                     confirmed free at flight height (blue), cells marked
+//                     solid (red), the leg fan while it chooses, the certified
+//                     leg while it flies; a minimap from above in the corner.
 //   LIVE DEPTH, LIVE VOXEL, HUMANS
 //                     THE CAMERA ROW: a RealSense (--live) or a recording
 //                     (--replay) through the aircraft's pipeline -- depth, its
-//                     first-person map with the far tier, people with a range
-//                     from the depth camera's own image. Without one, the
-//                     flight's own simulated D435i, and the detector on the
-//                     aircraft's IR (a webcam, if one opens, for people).
+//                     first-person map with the far tier, people found in the
+//                     D435i's RGB camera with a range from its depth
+//                     (registerDepthToColour) -- or its IR with --infrared.
+//                     Without one, the flight's own simulated D435i, and the
+//                     detector on the aircraft's IR (a webcam, if one opens).
 //
 // The flight is paced to the wall clock on its own thread and logs every 30 s
 // how well this machine keeps up; below 1x the world is slower, never the

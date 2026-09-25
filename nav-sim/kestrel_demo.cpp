@@ -358,6 +358,10 @@ struct PlannerFrame {
 struct CameraFrame {
     cv::Mat depthVis, mapFpv, colour;
     cv::Mat depthRaw;            // CV_32F metres, for the detector's range
+    // The D435i's RGB camera, when it streams, and the depth's ranges
+    // re-projected into it (registerDepthToColour): a person found in colour
+    // then reads a MEASURED range.
+    cv::Mat rgb, rgbRange;
     float   validFrac = 0;
     std::string poseNote;        // what placed the map, for the pane caption
     bool    poseOk = true;
@@ -487,8 +491,13 @@ public:
             std::string err;
             sim::parsePoseMode(o.pose, poseMode_);
             const bool track = poseMode_ != sim::PoseMode::Fixed;
+            // THE RGB CAMERA for people, unless IR was asked for (--infrared)
+            // or people are off. It is refused quietly if the link cannot
+            // carry it -- depth is never the price.
+            const bool rgb = o.eyes == Options::AUTO || o.eyes == Options::COLOUR;
             src_ = sim::makeLiveSource(o.camW, o.camH, o.camFps, o.emitter, &err,
-                                       o.emitter && track, poseMode_ == sim::PoseMode::Slam);
+                                       o.emitter && track, poseMode_ == sim::PoseMode::Slam,
+                                       rgb);
             note_ = src_ ? "RealSense" : ("no live camera: " + err);
         } else if (o.source == Options::REPLAY) {
             auto r = std::make_unique<sim::ReplayFrameSource>();
@@ -570,6 +579,7 @@ public:
         // 2.3 m" a measurement rather than an estimate from apparent height.
         cv::Mat ir;
         if (src_->intensity(ir) && !ir.empty()) cv::cvtColor(ir, f.colour, cv::COLOR_GRAY2BGR);
+        src_->colour(f.rgb, f.rgbRange);
         const float hf = src_->camera().params().hfovDeg;
         f.mapFpv = letterbox(nav_.renderFpv(pose, 320, 320 * depth.rows / std::max(1, depth.cols),
                                             hf),
@@ -594,13 +604,12 @@ private:
 // `kestrel demo` (without --model): the AIRCRAFT'S OWN autonomy
 // (flight_show.hpp) flying the showcase worlds, and the live camera panes --
 //
-//   +--------------------------------------+---------------+
-//   |  THE FLIGHT: chase view of the true   |  WHAT IT      |
-//   |  scene + what this stop's map knows,  |  KNOWS: the   |
-//   |  minimap inset                        |  voxel model  |
-//   +------------+-------------+------------+---------------+
-//   | LIVE DEPTH | LIVE VOXEL  | HUMANS     |
-//   +------------+-------------+------------+
+//   +------------------------------------------+
+//   |  THE FLIGHT: chase view of the true scene |
+//   |  + what this stop's map knows, minimap    |
+//   +-------------+--------------+-------------+
+//   | LIVE DEPTH  | LIVE VOXEL   | HUMANS      |
+//   +-------------+--------------+-------------+
 //
 // The top row is always the simulated flight. The bottom row is the CAMERA:
 // a RealSense or a recording with --live / --replay -- depth, its own voxel map
@@ -609,7 +618,7 @@ private:
 // The window is data, so `check` can assert it with no display.
 struct ShowLayout {
     cv::Size canvas;
-    cv::Rect chase, know, depth, fpv, people;
+    cv::Rect chase, depth, fpv, people;
     cv::Rect strip;
 };
 
@@ -618,9 +627,10 @@ ShowLayout showLayoutFor(int u) {
     ShowLayout L;
     const int PAD = 8, TOP = 44;
     const int sh = u * 9 / 16;
-    const int bw = 2 * u + PAD, bh = bw * 9 / 16;
+    // The flight across the whole width, as tall as a 16:9 picture two panes
+    // wide -- a wide shot, and the chase lens widens to match (flight_view).
+    const int bw = 3 * u + 2 * PAD, bh = (2 * u + PAD) * 9 / 16;
     L.chase = cv::Rect(PAD, TOP, bw, bh + CAPTION_H);
-    L.know  = cv::Rect(PAD + bw + PAD, TOP, u, bh + CAPTION_H);
     const int yb = TOP + bh + CAPTION_H + PAD;
     L.depth  = cv::Rect(PAD, yb, u, sh + CAPTION_H);
     L.fpv    = cv::Rect(PAD + (u + PAD), yb, u, sh + CAPTION_H);
@@ -639,13 +649,13 @@ cv::Size imgSize(const cv::Rect& r) { return {r.width, r.height - CAPTION_H}; }
 // The minimap inset in the flight pane: a square, top right -- dropped below
 // the HUD's phase line when the picture is too narrow for both side by side.
 cv::Rect minimapRect(const cv::Size& img) {
-    const int m = std::max(96, img.width * 26 / 100);
+    const int m = std::max(96, std::min(img.width * 20 / 100, img.height * 55 / 100));
     const int x = img.width - m - 10;
     return {x, x < 430 ? 62 : 10, m, m};
 }
 
 struct ShowPanes {
-    cv::Mat chase, minimap, know, depth, fpv, cam;
+    cv::Mat chase, minimap, depth, fpv, cam;
     kshow::ShowSnap snap;          // what they were drawn from (numbers only)
 };
 
@@ -661,7 +671,6 @@ ShowPanes renderShow(kshow::FlightView& v, const kshow::ShowSnap& s, const ShowL
     p.chase = v.chase(s, z.width, z.height);
     const cv::Rect mm = minimapRect(z);
     p.minimap = v.mission(s, mm.width, mm.height, true);
-    z = imgSize(L.know);  p.know  = v.belief(s, z.width, z.height);
     z = imgSize(L.depth); p.depth = v.depth(s, z.width, z.height);
     z = imgSize(L.fpv);   p.fpv   = v.fpv(s, z.width, z.height);
     // The IR image, for the detector when there is no real camera.
@@ -731,11 +740,6 @@ void composeShow(cv::Mat& canvas, const ShowLayout& L, const ShowPanes& p,
     a.subColour = OK;
     a.img = chaseImg;
     drawPane(canvas, L.chase, a);
-    Pane k;
-    k.title = "WHAT IT KNOWS";
-    k.sub = "the voxel map of this stop, 0.25 m cells";
-    k.img = p.know;
-    drawPane(canvas, L.know, k);
     Pane d;
     d.title = "LIVE DEPTH";
     d.sub = row.depthSub;
@@ -907,15 +911,15 @@ int check() {
     for (int pw : {320, 480, 640, 800}) {
         const ShowLayout S = showLayoutFor(showUnit(pw));
         const cv::Rect canvas(0, 0, S.canvas.width, S.canvas.height);
-        const cv::Rect all[5] = {S.chase, S.know, S.depth, S.fpv, S.people};
-        for (int i = 0; i < 5; ++i) {
+        const cv::Rect all[4] = {S.chase, S.depth, S.fpv, S.people};
+        for (int i = 0; i < 4; ++i) {
             if ((all[i] & canvas) != all[i])
                 fail(cv::format("showcase pane %d off the canvas at pane=%d", i, pw));
             if ((all[i] & S.strip).area() > 0)
                 fail(cv::format("showcase pane %d runs into the strip at pane=%d", i, pw));
             if (all[i].height - CAPTION_H < 100)
                 fail(cv::format("showcase pane %d has no room for its image at pane=%d", i, pw));
-            for (int j = i + 1; j < 5; ++j)
+            for (int j = i + 1; j < 4; ++j)
                 if ((all[i] & all[j]).area() > 0)
                     fail(cv::format("showcase panes %d and %d overlap at pane=%d", i, j, pw));
         }
@@ -936,7 +940,7 @@ int check() {
             fail(cv::format("showcase window %d px tall at the default pane: taller than a "
                             "1080p screen leaves room for", S.canvas.height));
     }
-    const char* showCaps[] = {"THE AIRCRAFT'S OWN AUTONOMY, FLYING", "WHAT IT KNOWS",
+    const char* showCaps[] = {"THE AIRCRAFT'S OWN AUTONOMY, FLYING",
                               "LIVE DEPTH", "LIVE VOXEL -- first person", "HUMANS"};
     for (const char* c : showCaps) {
         const int narrow = showUnit(320) - 20;
@@ -986,7 +990,7 @@ int shotShowcase(const Options& o, const std::string& prefix) {
     if (o.eyes != Options::NOEYES)
         det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); }, dnote);
     cv::Mat peopleIn = p.cam, peopleDepth;
-    std::string peopleFrom = "the aircraft's IR (no people here)";
+    std::string peopleFrom = "sim IR, no people in it";
     if (o.source == Options::REPLAY) {
         Options ro = o;
         const cv::Size cz = imgSize(L.depth);
@@ -1026,7 +1030,7 @@ int shotShowcase(const Options& o, const std::string& prefix) {
     composeShow(canvas, L, p, row, "the aircraft's own autonomy, flying a simulated " + fp.world);
     int n = 0;
     const std::pair<const char*, const cv::Mat*> out[] = {
-        {"flight", &p.chase}, {"knows", &p.know}, {"depth", &p.depth},
+        {"flight", &p.chase}, {"depth", &p.depth},
         {"voxel", &p.fpv}, {"humans", &row.people}, {"window", &canvas}};
     for (const auto& q : out) n += cv::imwrite(prefix + "_" + q.first + ".png", *q.second) ? 1 : 0;
     const kshow::FlightStats& st = f.stats();
@@ -1295,10 +1299,12 @@ int runShowcase(const Options& o) {
     });
 
     // PEOPLE, from the best image there is, and saying which:
-    //   1  the depth camera's own imager -- registered with its depth, so a
-    //      box gets a RANGE (--live, --replay)
-    //   2  a webcam -- no range: it is not the camera that measured depth
-    //   3  the aircraft's simulated IR -- honest, and empty: the showcase
+    //   1  the D435i's RGB camera, with the depth re-projected into it
+    //      through the device's calibration -- so a box gets a RANGE (--live)
+    //   2  its left IR imager, which depth is computed in -- a range too
+    //      (--infrared, a recording, or no RGB on this link)
+    //   3  a webcam -- no range: it is not the camera that measured depth
+    //   4  the aircraft's simulated IR -- honest, and empty: the showcase
     //      worlds have no people in them
     // At most 5 Hz: the detector shares the cores the flight needs to keep
     // real time.
@@ -1323,9 +1329,12 @@ int runShowcase(const Options& o) {
             bool mirror = false, aligned = false;
             if (live.ok()) {
                 camSlot.take(cf, seenCam);
-                if (!cf.colour.empty()) {
+                if (!cf.rgb.empty()) {
+                    view = cf.rgb; depthRaw = cf.rgbRange; aligned = !cf.rgbRange.empty();
+                    from = "the D435i's RGB camera"; mirror = o.mirror;
+                } else if (!cf.colour.empty()) {
                     view = cf.colour; depthRaw = cf.depthRaw; aligned = true;
-                    from = "the depth camera's own imager"; mirror = o.mirror;
+                    from = "the D435i's IR imager"; mirror = o.mirror;
                 }
             } else if (eyesLive) {
                 view = eyes.grab(640, 480);
@@ -1334,7 +1343,7 @@ int runShowcase(const Options& o) {
             }
             if (view.empty()) {
                 paneSlot.take(sp, seenPanes);
-                if (!sp.cam.empty()) { view = sp.cam; from = "the aircraft's IR (no people here)"; }
+                if (!sp.cam.empty()) { view = sp.cam; from = "sim IR, no people in it"; }
             }
             if (view.empty()) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); continue; }
             // DETECT IN THE ORIENTATION THE SENSOR DELIVERED; mirror after, so a
@@ -1570,7 +1579,10 @@ int run(const Options& o) {
             // refuses everywhere else. The webcam is the fallback for when
             // there is no depth camera at all, and then boxes come back
             // without a range rather than with a guessed one.
-            const bool aligned = !cf.colour.empty();
+            // RGB when the D435i streams it, its range re-projected; else its
+            // IR imager, registered with depth by construction.
+            const bool useRgb = !cf.rgb.empty();
+            const bool aligned = useRgb || !cf.colour.empty();
             PeopleFrame pf;
             // DETECT IN THE ORIENTATION THE SENSOR DELIVERED, always. The
             // mirror is a courtesy to the person standing in front of the
@@ -1578,9 +1590,9 @@ int run(const Options& o) {
             // index the same pixels as the depth frame, so detecting in it
             // would look the boxes up in the wrong half of the scene and
             // return a confident wrong range.
-            cv::Mat sensorView = aligned ? cf.colour : eyes.grab(iw, ih);
+            cv::Mat sensorView = useRgb ? cf.rgb : aligned ? cf.colour : eyes.grab(iw, ih);
             std::vector<Person> ps =
-                det.detect(sensorView, aligned ? cf.depthRaw : cv::Mat());
+                det.detect(sensorView, useRgb ? cf.rgbRange : aligned ? cf.depthRaw : cv::Mat());
 
             cv::Mat shown;
             if (o.mirror) {
@@ -1640,7 +1652,7 @@ int run(const Options& o) {
         p[3].title = "HUMANS";
         p[3].sub = det.available()
                      ? cv::format("%s on %s   %d found   %.0f ms", det.kindName(),
-                                  hf.aligned ? "the depth camera's own imager"
+                                  hf.aligned ? "the D435i (range from its depth)"
                                              : eyesNote.c_str(),
                                   hf.n, hf.msPerFrame)
                      : detNote;

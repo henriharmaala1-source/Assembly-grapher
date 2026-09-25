@@ -119,6 +119,15 @@ public:
     // it), for a consumer that integrates them itself. Empty if none.
     virtual void   takeImu(std::vector<ImuRaw>& out) { out.clear(); }
 
+    // THE COLOUR CAMERA, for a person detector: the RGB image (CV_8UC3 BGR),
+    // and beside it the depth frame's RANGES re-projected into it (CV_32F
+    // metres, <= 0 where no depth landed) through the device's own depth ->
+    // colour calibration -- so a box found in colour reads a measured range,
+    // not one guessed from how tall it looks. False: no colour stream.
+    virtual bool colour(cv::Mat& bgr, cv::Mat& rangeM) const {
+        (void)bgr; (void)rangeM; return false;
+    }
+
     // Frames available, or -1 for an open-ended stream (live).
     virtual int  frameCount() const { return -1; }
     virtual int  index() const { return 0; }
@@ -193,9 +202,27 @@ private:
 // that half the IR images are dot-free for VIO; depth from both halves is
 // still delivered. Ignored when `emitter` is false.
 // stereoIr: also stream the RIGHT IR imager (intensityRight()).
+// colour: also stream the RGB camera (640x480), for colour() -- refused
+// quietly (depth kept) if the link will not carry it.
 std::unique_ptr<FrameSource> makeLiveSource(int width, int height, int fps,
                                             bool emitter, std::string* err,
-                                            bool strobe = false, bool stereoIr = false);
+                                            bool strobe = false, bool stereoIr = false,
+                                            bool colour = false);
+
+// DEPTH INTO THE COLOUR CAMERA. Every `stride`-th pixel of a Z16 depth image
+// (raw units x `scale` = metres along the optical axis) is lifted to 3D with
+// the depth intrinsics, moved by `depthToColour` (rs2_extrinsics layout:
+// rotation[9] column-major, translation[3] m), and projected with the colour
+// intrinsics; each lands as its RANGE from the colour camera, nearest kept,
+// splatted over the few colour pixels one depth sample covers. Pinhole: lens
+// distortion is ignored (the D435i's RGB is Brown-Conrady with small
+// coefficients -- a pixel or two at the edge, nothing to a person's median
+// range). CV_32F, colourH x colourW, <= 0 where nothing landed.
+// fx,fy,ppx,ppy for each camera, in that order.
+cv::Mat registerDepthToColour(const uint16_t* z16, int w, int h, float scale,
+                              const float depthK[4], const float colourK[4],
+                              int colourW, int colourH, const float depthToColour[12],
+                              int stride = 2);
 
 // Can a live camera be opened RIGHT NOW -- i.e. can librealsense be loaded.
 // A runtime question, deliberately: this binary is built the same way whether

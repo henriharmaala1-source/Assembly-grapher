@@ -15,8 +15,8 @@
 //   camera   the D435i's left IR image -- what the stereo matcher looks at.
 //   depth    the depth frame the module was actually handed, holes and all:
 //            red near, blue far on a FIXED scale, holes grey.
-//   belief   this stop's map as a model: marked cells as cubes, confirmed-free
-//            air as a sheet, the certified leg fan. Empty is UNKNOWN.
+//   fpv      this stop's map from the aircraft's eye: near voxels, far
+//            bearings, the certified leg fan on the floor. Pale is UNKNOWN.
 //   mission  from above: the true walls, this stop's map over them, the trail,
 //            every leg, and the numbers CLAUDE.md scores on.
 // ---------------------------------------------------------------------------
@@ -77,7 +77,6 @@ public:
     cv::Mat chase(const ShowSnap& s, int w, int h) const;
     cv::Mat camera(const ShowSnap& s, int w, int h) const;
     cv::Mat depth(const ShowSnap& s, int w, int h) const;
-    cv::Mat belief(const ShowSnap& s, int w, int h) const;
     // The stop's map FROM THE AIRCRAFT'S EYE -- the first-person voxel view
     // the live camera pane draws, here for the simulated D435i. Pale is
     // UNKNOWN; the certified leg fan lies on the floor under the flight line.
@@ -92,7 +91,6 @@ private:
     float  camYaw_ = 0.f;
     double lastT_ = -1.0;
     float  boomM_ = 4.5f;
-    float  isoSpin_ = 0.f;
     const sim::VoxelWorld* planOf_ = nullptr;   // which world plan_ was drawn from
     cv::Mat plan_;        // the true world at flight altitude, 1 px per cell
     long cacheKey_ = -1;                        // which map free_/occ_ list

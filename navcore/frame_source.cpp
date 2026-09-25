@@ -2,6 +2,7 @@
 
 #include "attitude_filter.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -86,17 +87,22 @@ bool ReplayFrameSource::next(cv::Mat& depth, PoseHint& hint) {
 class RealSenseSource : public FrameSource {
 public:
     bool start(int w, int h, int fps, bool emitter, bool strobe, bool stereoIr,
-               std::string* err) {
+               bool colour, std::string* err) {
         // Ask for the IMU. Both optional streams fail independently and
         // neither failure costs depth -- see rsdyn::Pipeline::start.
         // wantIR: the left imager. It costs a little USB bandwidth and it is
         // what `demo` runs its person detector on -- see FrameSource::
         // intensity(). A device or link that refuses it still gives depth,
         // which is why it is a separate attempt inside Pipeline::start.
-        if (!pipe_.start(w, h, fps, true, true, stereoIr)) {
+        if (!pipe_.start(w, h, fps, true, true, stereoIr, colour)) {
             if (err) *err = pipe_.error();
             return false;
         }
+        if (colour)
+            std::fprintf(stderr, pipe_.haveColor()
+                ? "[live] RGB camera streaming: people are found in colour.\n"
+                : "[live] RGB camera NOT streaming (%s): people fall back to IR.\n",
+                pipe_.error().c_str());
         pipe_.setEmitter(emitter);
         if (emitter && strobe) {
             // Said out loud either way: a strobe that silently did not engage
@@ -160,9 +166,11 @@ public:
         } else if (!pipe_.waitFrames(raw_, w, h,
                                      pipe_.haveIR() ? &ir_ : nullptr,
                                      haveImu_ ? &motion_ : nullptr, 2000,
-                                     pipe_.haveIR2() ? &ir2_ : nullptr)) {
+                                     pipe_.haveIR2() ? &ir2_ : nullptr,
+                                     pipe_.haveColor() ? &color_ : nullptr)) {
             return false;
         }
+        rawW_ = w; rawH_ = h;
         // Raw samples for a consumer that integrates them (stereo-inertial
         // SLAM). Bounded: nobody draining them must not grow memory.
         for (const auto& m : motion_) {
@@ -236,6 +244,24 @@ public:
         return ms < 0.0 ? -1.0 : ms * 1e-3;
     }
     void takeImu(std::vector<ImuRaw>& out) override { out.clear(); out.swap(rawImu_); }
+
+    bool colour(cv::Mat& bgr, cv::Mat& rangeM) const override {
+        if (color_.w <= 0 || color_.bgr.size() != size_t(color_.w) * color_.h * 3) return false;
+        bgr = cv::Mat(color_.h, color_.w, CV_8UC3, (void*)color_.bgr.data()).clone();
+        rsdyn::Intrinsics ci;
+        float ex[12];
+        const rsdyn::Intrinsics di = pipe_.intrinsics();
+        if (pipe_.colorCalibration(ci, ex) && di.fx > 0.f &&
+            raw_.size() == size_t(rawW_) * rawH_) {
+            const float dk[4] = {di.fx, di.fy, di.ppx, di.ppy};
+            const float ck[4] = {ci.fx, ci.fy, ci.ppx, ci.ppy};
+            rangeM = registerDepthToColour(raw_.data(), rawW_, rawH_, scale_, dk, ck,
+                                           color_.w, color_.h, ex);
+        } else {
+            rangeM.release();            // no calibration yet: boxes get no range
+        }
+        return true;
+    }
     float stereoBaselineM() const override { return pipe_.baselineM(); }
 
     // Raw metadata -- informational. Its polarity has been reported INVERTED
@@ -251,6 +277,8 @@ private:
     rsdyn::Pipeline pipe_;
     std::vector<uint16_t> raw_;
     std::vector<uint8_t>  ir_, ir2_;
+    rsdyn::Pipeline::ColorFrame color_;
+    int  rawW_ = 0, rawH_ = 0;
     std::vector<ImuRaw>   rawImu_;
     int  irW_ = 0, irH_ = 0;
     std::unique_ptr<DepthCamera> cam_;
@@ -266,15 +294,60 @@ private:
 };
 
 std::unique_ptr<FrameSource> makeLiveSource(int w, int h, int fps, bool emitter,
-                                            std::string* err, bool strobe, bool stereoIr) {
+                                            std::string* err, bool strobe, bool stereoIr,
+                                            bool colour) {
     auto s = std::unique_ptr<RealSenseSource>(new RealSenseSource());
-    if (!s->start(w, h, fps, emitter, strobe, stereoIr, err)) return nullptr;
+    if (!s->start(w, h, fps, emitter, strobe, stereoIr, colour, err)) return nullptr;
     std::printf("[live] %s  serial %s  fw %s  usb %s\n",
                 s->info(rsdyn::CAMERA_INFO_NAME).c_str(),
                 s->info(rsdyn::CAMERA_INFO_SERIAL).c_str(),
                 s->info(rsdyn::CAMERA_INFO_FIRMWARE).c_str(),
                 s->info(rsdyn::CAMERA_INFO_USB_TYPE).c_str());
     return std::unique_ptr<FrameSource>(s.release());
+}
+
+cv::Mat registerDepthToColour(const uint16_t* z16, int w, int h, float scale,
+                              const float dk[4], const float ck[4],
+                              int cw, int ch, const float ex[12], int stride) {
+    cv::Mat out(ch, cw, CV_32F, cv::Scalar(-1.f));
+    if (!z16 || w <= 0 || h <= 0 || cw <= 0 || ch <= 0 || dk[0] <= 0.f || ck[0] <= 0.f)
+        return out;
+    stride = std::max(1, stride);
+    // How many colour pixels one depth sample spans -- the ratio of focal
+    // lengths, times the stride -- and so how far to splat it to leave no
+    // pinholes. Not at all when it spans a pixel or less: a splat there only
+    // lets "nearest wins" hand a pixel its neighbour's (shorter, off-axis)
+    // range, which measured 0.2 % low on a flat wall.
+    const float foot = float(stride) * ck[0] / dk[0];
+    const int rad = foot <= 1.0f ? 0 : int(std::ceil(0.5f * foot));
+    for (int v = 0; v < h; v += stride) {
+        const uint16_t* row = z16 + size_t(v) * w;
+        for (int u = 0; u < w; u += stride) {
+            if (!row[u]) continue;
+            const float Z = float(row[u]) * scale;
+            const float X = (float(u) - dk[2]) / dk[0] * Z;
+            const float Y = (float(v) - dk[3]) / dk[1] * Z;
+            // rs2_extrinsics: rotation is column-major, p' = R p + t.
+            const float Xc = ex[0] * X + ex[3] * Y + ex[6] * Z + ex[9];
+            const float Yc = ex[1] * X + ex[4] * Y + ex[7] * Z + ex[10];
+            const float Zc = ex[2] * X + ex[5] * Y + ex[8] * Z + ex[11];
+            if (Zc <= 0.05f) continue;
+            const int uc = int(std::lround(ck[0] * Xc / Zc + ck[2]));
+            const int vc = int(std::lround(ck[1] * Yc / Zc + ck[3]));
+            const float r = std::sqrt(Xc * Xc + Yc * Yc + Zc * Zc);
+            for (int dy = -rad; dy <= rad; ++dy) {
+                const int y = vc + dy;
+                if (y < 0 || y >= ch) continue;
+                float* o = out.ptr<float>(y);
+                for (int dx = -rad; dx <= rad; ++dx) {
+                    const int x = uc + dx;
+                    if (x < 0 || x >= cw) continue;
+                    if (o[x] <= 0.f || r < o[x]) o[x] = r;     // nearest wins
+                }
+            }
+        }
+    }
+    return out;
 }
 
 // Runtime, not compile time: can the library be loaded right now.

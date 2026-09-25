@@ -52,10 +52,12 @@ namespace rsdyn {
 // librealsense v2.55.1 include/librealsense2/h/.
 enum : int {
     STREAM_DEPTH    = 1,             // rs2_stream
+    STREAM_COLOR    = 2,
     STREAM_INFRARED = 3,
     STREAM_GYRO     = 5,
     STREAM_ACCEL    = 6,
     FORMAT_Z16      = 1,             // rs2_format
+    FORMAT_BGR8     = 6,
     FORMAT_Y8       = 9,
     FORMAT_MOTION_XYZ32F = 16,
     OPTION_EMITTER_ENABLED = 18,     // rs2_option
@@ -99,8 +101,14 @@ public:
     // must not cost the depth stream, so each is enabled in its own attempt.
     // `wantIR2` adds infrared index 2, the RIGHT imager: with index 1 it is
     // the rectified stereo pair a stereo SLAM tracks (onboard/orbslam).
+    // `wantColor` adds the RGB camera at colorW x colorH, BGR8. It is a
+    // separate USB stream on its own sensor; if the pipeline will not start
+    // with it (a USB 2 link, usually), it starts again WITHOUT it rather than
+    // losing depth -- haveColor() says which happened.
     bool start(int width, int height, int fps,
-               bool wantIR = false, bool wantIMU = false, bool wantIR2 = false);
+               bool wantIR = false, bool wantIMU = false, bool wantIR2 = false,
+               bool wantColor = false, int colorW = 640, int colorH = 480);
+    bool haveColor() const { return haveColor_; }
     bool haveIR()  const { return haveIR_; }
     bool haveIR2() const { return haveIR2_; }
     bool haveIMU() const { return haveIMU_; }
@@ -124,11 +132,19 @@ public:
     // left untouched when infrared is off; `motion` is appended to, never
     // cleared, so a caller can drain several framesets before integrating.
     // `ir2` receives the right IR image when index 2 was enabled.
+    // `color` receives the RGB frame (BGR8) when the colour stream is on.
+    struct ColorFrame { std::vector<uint8_t> bgr; int w = 0, h = 0; };
     bool waitFrames(std::vector<uint16_t>& depth, int& w, int& h,
                     std::vector<uint8_t>* ir,
                     std::vector<Motion>* motion,
                     int timeoutMs = 2000,
-                    std::vector<uint8_t>* ir2 = nullptr);
+                    std::vector<uint8_t>* ir2 = nullptr,
+                    ColorFrame* color = nullptr);
+    // The colour camera's calibration, from the device, once a colour frame
+    // has arrived: its intrinsics, and depth -> colour extrinsics as
+    // rs2_extrinsics lays them out (rotation[9] COLUMN-major, translation[3]
+    // in metres). False until both are known.
+    bool colorCalibration(Intrinsics& colorIntr, float depthToColor[12]) const;
     // Device timestamp (ms, the motion samples' clock) of the last left IR
     // frame delivered; < 0 if none.
     double lastIrTimeMs() const { return lastIrMs_; }
@@ -157,7 +173,10 @@ private:
     void* pipe_ = nullptr;
     void* profile_ = nullptr;
     void* sensor_ = nullptr;
-    bool  haveIR_ = false, haveIMU_ = false, haveIR2_ = false;
+    bool  haveIR_ = false, haveIMU_ = false, haveIR2_ = false, haveColor_ = false;
+    bool  haveColorCal_ = false;
+    Intrinsics colorIntr_;
+    float d2c_[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
     double lastIrMs_ = -1.0;
     bool  haveBaseline_ = false;
     int   lastIrEmitter_ = -1;

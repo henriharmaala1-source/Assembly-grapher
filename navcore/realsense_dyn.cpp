@@ -293,9 +293,11 @@ bool load(std::string* err) {
 
 // ---------------------------------------------------------------------------
 bool Pipeline::start(int width, int height, int fps,
-                     bool wantIR, bool wantIMU, bool wantIR2) {
+                     bool wantIR, bool wantIMU, bool wantIR2,
+                     bool wantColor, int colorW, int colorH) {
     if (!load(&err_)) return false;
     stop();
+    haveColorCal_ = false;
 
     Err e;
     ctx_ = g.create_context(g_api, &e);
@@ -341,9 +343,26 @@ bool Pipeline::start(int width, int height, int fps,
         haveIMU_ = !eg.bad() && !ea.bad();
     }
 
+    haveColor_ = false;
+    if (wantColor) {
+        Err ec;
+        g.config_enable_stream(cfg, STREAM_COLOR, 0, colorW, colorH, FORMAT_BGR8, fps, &ec);
+        haveColor_ = !ec.bad();
+    }
+
     Err e5;
     profile_ = g.pipeline_start_with_config(pipe_, cfg, &e5);
     g.delete_config(cfg);
+    if ((e5.bad() || !profile_) && haveColor_) {
+        // THE COLOUR STREAM MUST NOT COST DEPTH. The request above cannot fail
+        // on its own -- the device refuses at start, usually for bandwidth on
+        // a USB 2 link. Start again without it.
+        std::string first = e5.msg();
+        if (profile_) { g.delete_pipeline_profile(profile_); profile_ = nullptr; }
+        const bool ok = start(width, height, fps, wantIR, wantIMU, wantIR2, false);
+        if (ok) err_ = "colour stream refused (" + first + "); running without it";
+        return ok;
+    }
     if (e5.bad() || !profile_) {
         err_ = "start: " + e5.msg();
         stop();
@@ -435,7 +454,7 @@ bool Pipeline::waitDepth(std::vector<uint16_t>& out, int& w, int& h, int timeout
 
 bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
                           std::vector<uint8_t>* ir, std::vector<Motion>* motion,
-                          int timeoutMs, std::vector<uint8_t>* ir2) {
+                          int timeoutMs, std::vector<uint8_t>* ir2, ColorFrame* color) {
     if (!pipe_) { err_ = "pipeline not started"; return false; }
     Err e;
     void* fs = g.pipeline_wait_for_frames(pipe_, unsigned(timeoutMs), &e);
@@ -445,6 +464,8 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
     const int n = g.embedded_frames_count(fs, &e2);
     bool got = false;
     const void* irProf[3] = {nullptr, nullptr, nullptr};   // for the extrinsics
+    const void* depthProf = nullptr;
+    const void* colorProf = nullptr;
     for (int i = 0; i < n; ++i) {
         Err e3;
         void* f = g.extract_frame(fs, i, &e3);
@@ -491,6 +512,22 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
             }
             Err ep; irProf[2] = g.get_frame_stream_profile(f, &ep);
             if (ep.bad()) irProf[2] = nullptr;
+            g.release_frame(f);
+            continue;
+        }
+        if (st == STREAM_COLOR) {
+            if (color) {
+                Err ew, eh2, em;
+                const int cw = g.get_frame_width(f, &ew), ch = g.get_frame_height(f, &eh2);
+                const void* d = g.get_frame_data(f, &em);
+                if (!ew.bad() && !eh2.bad() && !em.bad() && d && cw > 0 && ch > 0) {
+                    color->bgr.resize(size_t(cw) * ch * 3);
+                    std::memcpy(color->bgr.data(), d, color->bgr.size());
+                    color->w = cw; color->h = ch;
+                }
+            }
+            Err ep; colorProf = g.get_frame_stream_profile(f, &ep);
+            if (ep.bad()) colorProf = nullptr;
             g.release_frame(f);
             continue;
         }
@@ -542,6 +579,7 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
                 if (!e7.bad() && sp) {
                     Err e8;
                     g.get_video_stream_intrinsics(sp, &intr_, &e8);
+                    depthProf = sp;
                 }
                 got = true;
             }
@@ -558,9 +596,24 @@ bool Pipeline::waitFrames(std::vector<uint16_t>& out, int& w, int& h,
         const float b = std::fabs(ex[9]);
         if (!ee.bad() && b > 0.01f && b < 0.5f) { baseline_ = b; haveBaseline_ = true; }
     }
+    // THE COLOUR CALIBRATION, once: the RGB camera's intrinsics and the
+    // depth -> colour extrinsics, both from the device -- nothing assumed.
+    if (!haveColorCal_ && depthProf && colorProf && g.get_extrinsics) {
+        Err ei, ee;
+        g.get_video_stream_intrinsics(colorProf, &colorIntr_, &ei);
+        g.get_extrinsics(depthProf, colorProf, d2c_, &ee);
+        haveColorCal_ = !ei.bad() && !ee.bad() && colorIntr_.fx > 0.f;
+    }
     g.release_frame(fs);
     if (!got) err_ = "frameset contained no usable depth frame";
     return got;
+}
+
+bool Pipeline::colorCalibration(Intrinsics& colorIntr, float depthToColor[12]) const {
+    if (!haveColorCal_) return false;
+    colorIntr = colorIntr_;
+    for (int i = 0; i < 12; ++i) depthToColor[i] = d2c_[i];
+    return true;
 }
 
 }  // namespace rsdyn

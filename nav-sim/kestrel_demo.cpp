@@ -32,6 +32,8 @@
 #endif
 
 #include "depth_vis.hpp"
+#include "flight_show.hpp"
+#include "flight_view.hpp"
 #include "frame_source.hpp"
 #include "nav_pipeline.hpp"
 #include "visual_pose.hpp"
@@ -472,6 +474,145 @@ cv::Mat syntheticColour(int w, int h) {
     return im;
 }
 
+// ------------------------------------------------------------ the showcase
+// `kestrel demo` with the simulator and no --model: the AIRCRAFT'S OWN
+// autonomy (flight_show.hpp) flying the showcase worlds, as five pictures --
+//
+//   +------------------------------------+---------------+
+//   |  THE FLIGHT (chase, true scene      |  MISSION      |
+//   |  + what this stop's map knows)      |  from above   |
+//   +------------+------------+-----------+---------------+
+//   | 1 SEES     |> 2 DEPTH   |> 3 KNOWS  |
+//   +------------+------------+-----------+
+//
+// The bottom row is the pipeline in the order it runs: the IR image the
+// stereo matcher reads, the depth frame it produced, the voxel map built from
+// it. The window is data, so `check` can assert it with no display.
+struct ShowLayout {
+    cv::Size canvas;
+    cv::Rect chase, mission, cam, depth, map;
+    cv::Rect strip;
+};
+
+// `u` is one small pane's width; the small panes are 16:9.
+ShowLayout showLayoutFor(int u) {
+    ShowLayout L;
+    const int PAD = 8, TOP = 44;
+    const int sh = u * 9 / 16;
+    const int bw = 2 * u + PAD, bh = bw * 9 / 16;
+    L.chase   = cv::Rect(PAD, TOP, bw, bh + CAPTION_H);
+    L.mission = cv::Rect(PAD + bw + PAD, TOP, u, bh + CAPTION_H);
+    const int yb = TOP + bh + CAPTION_H + PAD;
+    L.cam   = cv::Rect(PAD, yb, u, sh + CAPTION_H);
+    L.depth = cv::Rect(PAD + (u + PAD), yb, u, sh + CAPTION_H);
+    L.map   = cv::Rect(PAD + 2 * (u + PAD), yb, u, sh + CAPTION_H);
+    L.canvas = {3 * u + 4 * PAD, yb + sh + CAPTION_H + PAD + 26 + PAD};
+    L.strip = cv::Rect(PAD, L.canvas.height - PAD - 26, L.canvas.width - 2 * PAD, 26);
+    return L;
+}
+
+// The window's small-pane width for a --pane: 5/6 of it, so the default
+// (480) makes a 1232 x 875 window -- a 1080p laptop screen with room to spare.
+int showUnit(int paneW) { return std::max(240, paneW * 5 / 6); }
+
+cv::Size imgSize(const cv::Rect& r) { return {r.width, r.height - CAPTION_H}; }
+
+struct ShowPanes {
+    cv::Mat chase, mission, cam, depth, map;
+    kshow::ShowSnap snap;          // what they were drawn from (numbers only)
+};
+
+ShowPanes renderShow(kshow::FlightView& v, const kshow::ShowSnap& s, const ShowLayout& L) {
+    v.update(s);
+    ShowPanes p;
+    // SEQUENTIAL ON PURPOSE. The chase view already spreads across cores
+    // (renderFootage's parallel_for); rendering the small pictures on a second
+    // thread beside it was measured SLOWER on a 4-core machine -- 3.8 fps
+    // against 6.2, and it starved the flight to 0.86x real time -- because
+    // the cores were already busy. The flight keeping real time comes first.
+    cv::Size z;
+    z = imgSize(L.chase);   p.chase   = v.chase(s, z.width, z.height);
+    z = imgSize(L.mission); p.mission = v.mission(s, z.width, z.height);
+    z = imgSize(L.cam);     p.cam     = v.camera(s, z.width, z.height);
+    z = imgSize(L.depth);   p.depth   = v.depth(s, z.width, z.height);
+    z = imgSize(L.map);     p.map     = v.belief(s, z.width, z.height);
+    p.snap = s;
+    p.snap.trail.clear(); p.snap.legs.clear(); p.snap.fan.clear();
+    p.snap.map.reset(); p.snap.depth.release();
+    return p;
+}
+
+// A small arrowhead on the seam between two pipeline panes.
+void seamArrow(cv::Mat& canvas, const cv::Rect& left) {
+    const int x = left.x + left.width + 4, y = left.y + (left.height - CAPTION_H) / 2;
+    const std::vector<cv::Point> tri{{x - 9, y - 11}, {x + 9, y}, {x - 9, y + 11}};
+    cv::fillConvexPoly(canvas, tri, ACCENT, cv::LINE_AA);
+    cv::polylines(canvas, tri, true, INK, 1, cv::LINE_AA);
+}
+
+void composeShow(cv::Mat& canvas, const ShowLayout& L, const ShowPanes& p,
+                 const cv::Mat& people, const std::string& peopleNote) {
+    canvas.create(L.canvas, CV_8UC3);
+    canvas.setTo(BG);
+    const kshow::ShowSnap& s = p.snap;
+    drawHeader(canvas, "kestrel demo",
+               "the aircraft's own autonomy, flying a simulated " +
+               (s.worldName.empty() ? std::string("world") : s.worldName));
+    Pane a;
+    a.title = "THE AIRCRAFT'S OWN AUTONOMY, FLYING";
+    a.sub = "onboard VoxelNavModule + MissionController, compiled in -- not a model of them";
+    a.subColour = OK;
+    a.img = p.chase;
+    if (!people.empty() && !a.img.empty()) {
+        // PEOPLE, when a webcam is attached: an inset, not a pane -- the
+        // flight is simulated and the people are not, and the two are kept
+        // visibly apart.
+        a.img = a.img.clone();
+        const int iw = a.img.cols * 3 / 10, ih = iw * people.rows / std::max(1, people.cols);
+        const cv::Rect at(a.img.cols - iw - 10, a.img.rows - ih - 34, iw, ih);
+        if (ih > 20 && at.y > 0) {
+            cv::resize(people, a.img(at), at.size(), 0, 0, cv::INTER_AREA);
+            cv::rectangle(a.img, at, INK, 1);
+            txt(a.img, "HUMANS  " + peopleNote, at.x + 4, at.y - 6, 0.4, INK, 1);
+        }
+    }
+    drawPane(canvas, L.chase, a);
+    Pane m;
+    m.title = "MISSION";
+    m.sub = "move - stop - sense: a new map at every stop";
+    m.img = p.mission;
+    drawPane(canvas, L.mission, m);
+    Pane c;
+    c.title = "1  WHAT IT SEES";
+    c.sub = "D435i left infrared (simulated)";
+    c.img = p.cam;
+    drawPane(canvas, L.cam, c);
+    Pane d;
+    d.title = "2  STEREO DEPTH";
+    d.sub = cv::format("%dx%d, the frame the module was given", s.cam.width, s.cam.height);
+    d.img = p.depth;
+    drawPane(canvas, L.depth, d);
+    Pane k;
+    k.title = "3  WHAT IT KNOWS";
+    k.sub = "the voxel map of this stop, 0.25 m cells";
+    k.img = p.map;
+    drawPane(canvas, L.map, k);
+    seamArrow(canvas, L.cam);
+    seamArrow(canvas, L.depth);
+    const kshow::FlightStats& st = s.stats;
+    txt(canvas,
+        cv::format("%s  map %d   |   t %02d:%02d   flown %.0f m   %d m from start   "
+                   "stops %d   collisions %d   |   [q] quit   [r] next map",
+                   s.worldName.c_str(), s.mapNo + 1, int(st.timeS) / 60, int(st.timeS) % 60,
+                   st.travelM, int(st.netM), st.stops, st.collisions),
+        L.strip.x + 4, L.strip.y + 18, 0.44, DIM, 1);
+}
+
+// The flight showcase is what plain `kestrel demo` shows. A camera (--live,
+// --replay) or a learned policy (--model) keeps the four-pane window, whose
+// panes are about the camera and the policy.
+bool showcase(const Options& o) { return o.source == Options::SIM && o.model.empty(); }
+
 cv::Mat syntheticDepth(int w, int h) {
     cv::Mat d(h, w, CV_32F, cv::Scalar(0.f));
     for (int y = 0; y < h; ++y)
@@ -605,6 +746,41 @@ int check() {
         if (r.top.width < 60)
             fail(cv::format("top-down inset too small to read at paneW=%d", pw));
     }
+    // THE SHOWCASE WINDOW: every pane inside the canvas, none overlapping,
+    // the strip clear of all of them, the pipeline row in order and on one
+    // line, and the whole window no taller than a 1080p screen at the default.
+    for (int pw : {320, 480, 640, 800}) {
+        const ShowLayout S = showLayoutFor(showUnit(pw));
+        const cv::Rect canvas(0, 0, S.canvas.width, S.canvas.height);
+        const cv::Rect all[5] = {S.chase, S.mission, S.cam, S.depth, S.map};
+        for (int i = 0; i < 5; ++i) {
+            if ((all[i] & canvas) != all[i])
+                fail(cv::format("showcase pane %d off the canvas at pane=%d", i, pw));
+            if ((all[i] & S.strip).area() > 0)
+                fail(cv::format("showcase pane %d runs into the strip at pane=%d", i, pw));
+            if (all[i].height - CAPTION_H < 100)
+                fail(cv::format("showcase pane %d has no room for its image at pane=%d", i, pw));
+            for (int j = i + 1; j < 5; ++j)
+                if ((all[i] & all[j]).area() > 0)
+                    fail(cv::format("showcase panes %d and %d overlap at pane=%d", i, j, pw));
+        }
+        if (!(S.cam.x < S.depth.x && S.depth.x < S.map.x && S.cam.y == S.depth.y &&
+              S.depth.y == S.map.y))
+            fail(cv::format("showcase pipeline row out of order at pane=%d", pw));
+        if ((S.strip & canvas) != S.strip)
+            fail(cv::format("showcase strip off the canvas at pane=%d", pw));
+        if (pw == 480 && S.canvas.height > 1000)
+            fail(cv::format("showcase window %d px tall at the default pane: taller than a "
+                            "1080p screen leaves room for", S.canvas.height));
+    }
+    const char* showCaps[] = {"THE AIRCRAFT'S OWN AUTONOMY, FLYING", "MISSION",
+                              "1  WHAT IT SEES", "2  STEREO DEPTH", "3  WHAT IT KNOWS"};
+    for (const char* c : showCaps) {
+        const int narrow = showUnit(320) - 20;
+        const std::string f = fit(c, narrow, 0.56);
+        if (f.size() < 4 || f.substr(0, 3) == "...")
+            fail(std::string("showcase caption elided to nothing: ") + c);
+    }
     const char* caps[] = {"SIM DEMONSTRATION", "LIVE DEPTH", "LIVE VOXEL -- first person",
                           "HUMANS", "flying freeM (classical)",
                           "learned policy (onnx)", "no detector in this build"};
@@ -618,7 +794,41 @@ int check() {
 }
 
 // ---------------------------------------------------------------------- shot
+// THE SHOWCASE, headless: the real stack flown until there is something to
+// see -- a few legs in, mid-leg, so the chase view has a trail, a leg and a
+// map under it -- then every pane and the window, as the demo would draw them.
+int shotShowcase(const Options& o, const std::string& prefix) {
+    const ShowLayout L = showLayoutFor(showUnit(o.paneW));
+    kshow::FlightParams fp;
+    fp.world = worldForEpisode(o.world, 0);
+    fp.seed = o.seed;
+    kshow::FlightShow f(fp);
+    kshow::ShowSnap snap;
+    const int maxTicks = int(90.f / kshow::FlightShow::kDt);
+    for (int i = 0; i < maxTicks; ++i) {
+        f.tick();
+        snap = kshow::ShowSnap::of(f, &snap);           // carries the fan
+        if (f.stats().legs >= 4 && f.phase() == "MOVE" && f.speed() > 0.6f) break;
+    }
+    kshow::FlightView v;
+    const ShowPanes p = renderShow(v, snap, L);
+    cv::Mat canvas;
+    composeShow(canvas, L, p, cv::Mat(), "");
+    int n = 0;
+    const std::pair<const char*, const cv::Mat*> out[] = {
+        {"flight", &p.chase}, {"mission", &p.mission}, {"camera", &p.cam},
+        {"depth", &p.depth}, {"map", &p.map}, {"window", &canvas}};
+    for (const auto& q : out) n += cv::imwrite(prefix + "_" + q.first + ".png", *q.second) ? 1 : 0;
+    const kshow::FlightStats& st = f.stats();
+    std::printf("[demo shot] %s, %.0f s flown by the aircraft's own stack: %.1f m, %d legs, "
+                "%d collisions\n", fp.world.c_str(), st.timeS, st.travelM, st.legs,
+                st.collisions);
+    std::printf("[demo shot] %d image(s) written as %s_*.png\n", n, prefix.c_str());
+    return n;
+}
+
 int shot(const Options& o, const std::string& prefix) {
+    if (showcase(o)) return shotShowcase(o, prefix);
     const Layout L = layoutFor(o.paneW, o.paneH);
     const int iw = o.paneW, ih = o.paneH;
 
@@ -783,7 +993,149 @@ cv::Mat matFrom(const std::vector<uint8_t>& v, int w, int h) {
 
 }  // namespace
 
+// THE SHOWCASE WINDOW. Three threads, each at its own rate:
+//   flight   the aircraft's stack, ticked at 20 Hz and paced to the wall
+//            clock -- real time whenever this machine keeps up. Publishes a
+//            ShowSnap every tick.
+//   render   the five pictures from the newest snapshot, as fast as it can.
+//   window   composes what is there and never waits (this thread).
+// A webcam, if one opens, adds a fourth: people, as an inset.
+int runShowcase(const Options& o) {
+    const ShowLayout L = showLayoutFor(showUnit(o.paneW));
+    std::atomic<bool> stop{false}, nextMap{false};
+
+    Slot<kshow::ShowSnap> snapSlot;
+    std::thread flight([&] {
+        int map = 0;
+        while (!stop.load()) {
+            kshow::FlightParams fp;
+            fp.world = worldForEpisode(o.world, map);
+            fp.seed = o.seed + unsigned(map);
+            kshow::FlightShow f(fp);
+            kshow::ShowSnap snap;
+            const auto t0 = std::chrono::steady_clock::now();
+            double simT = 0.0;
+            int collisions = 0;
+            const char* why = nullptr;
+            while (!stop.load() && !why) {
+                f.tick();
+                simT += kshow::FlightShow::kDt;
+                snap = kshow::ShowSnap::of(f, &snap);
+                snap.mapNo = map;
+                snapSlot.publish(snap);
+                // A COLLISION ENDS THE MAP, shown for a moment first; so does
+                // STUCK, the tour's time on one map, and [r].
+                if (f.stats().collisions > collisions) why = "collision";
+                else if (f.stats().stuck) why = "stuck";
+                else if (o.world == "tour" && simT > kTourMapS) why = "time on this map";
+                else if (nextMap.exchange(false)) why = "[r]";
+                const double wall = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - t0).count();
+                if (simT > wall)
+                    std::this_thread::sleep_for(std::chrono::duration<double>(simT - wall));
+            }
+            if (why && std::string(why) == "collision")
+                std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            if (why) {
+                std::printf("[demo] %s map %d done (%s): %.0f s, flown %.1f m, %d stops, "
+                            "%d collisions\n", fp.world.c_str(), map + 1, why,
+                            f.stats().timeS, f.stats().travelM, f.stats().stops,
+                            f.stats().collisions);
+                std::fflush(stdout);
+            }
+            ++map;
+        }
+    });
+
+    Slot<ShowPanes> paneSlot;
+    std::thread render([&] {
+        kshow::FlightView view;
+        kshow::ShowSnap s;
+        unsigned long seen = 0;
+        while (!stop.load()) {
+            if (!snapSlot.take(s, seen)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+            }
+            paneSlot.publish(renderShow(view, s, L));
+        }
+    });
+
+    // PEOPLE, only from a camera that is really there. The showcase has no
+    // placeholder figure: a synthetic person on a simulated flight would be a
+    // demonstration of nothing.
+    ColourSource eyes;
+    std::string eyesNote;
+    const bool eyesLive = o.eyes != Options::NOEYES && eyes.open(o, eyesNote);
+    PersonDetector det;
+    std::string detNote;
+    if (eyesLive)
+        det.init(o.detector, [&](void* n, bool* c) { return applyBackend(n, o.cuda, c); },
+                 detNote);
+    Slot<cv::Mat> pplSlot;
+    std::thread people([&] {
+        while (eyesLive && !stop.load()) {
+            cv::Mat f = eyes.grab(640, 480);
+            if (!eyes.live()) break;
+            std::vector<Person> ps = det.detect(f, cv::Mat());
+            cv::Mat shown;
+            if (o.mirror) {
+                cv::flip(f, shown, 1);
+                for (Person& q : ps) q.box.x = shown.cols - q.box.x - q.box.width;
+            } else {
+                shown = f.clone();
+            }
+            drawPeople(shown, ps);
+            pplSlot.publish(shown);
+        }
+    });
+
+    const char* WIN = "kestrel demo";
+    cv::namedWindow(WIN, cv::WINDOW_AUTOSIZE);
+    ShowPanes panes;
+    cv::Mat ppl, canvas;
+    unsigned long seenP = 0, seenH = 0;
+    // HOW WELL THIS MACHINE KEEPS UP, said every 30 s: the flight's speed
+    // against the wall clock, and the pictures' rate. Below 1x the aircraft
+    // is not slower -- its world is; everything it decides is unchanged.
+    auto tLog = std::chrono::steady_clock::now();
+    int pics = 0;
+    float simAtLog = 0.f;
+    while (true) {
+        if (paneSlot.take(panes, seenP)) ++pics;
+        const double since = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - tLog).count();
+        if (since >= 30.0 && !panes.chase.empty()) {
+            const float simNow = panes.snap.stats.timeS;
+            if (simNow > simAtLog)
+                std::printf("[demo] last %.0f s: flight at %.2fx real time, pictures at %.1f fps\n",
+                            since, (simNow - simAtLog) / since, pics / since);
+            std::fflush(stdout);
+            simAtLog = simNow; pics = 0;
+            tLog = std::chrono::steady_clock::now();
+        }
+        pplSlot.take(ppl, seenH);
+        if (panes.chase.empty()) {
+            canvas = cv::Mat(L.canvas, CV_8UC3, BG);
+            drawHeader(canvas, "kestrel demo", "building the world...");
+        } else {
+            composeShow(canvas, L, panes, ppl, det.kindName());
+        }
+        cv::imshow(WIN, canvas);
+        const int k = cv::waitKey(15);
+        if (k == 'q' || k == 27) break;
+        if (k == 'r' || k == 'R') nextMap.store(true);
+    }
+    stop.store(true);
+    flight.join();
+    render.join();
+    people.join();
+    cv::destroyAllWindows();
+    return 0;
+}
+
 int run(const Options& o) {
+    if (showcase(o)) return runShowcase(o);
     const Layout L = layoutFor(o.paneW, o.paneH);
     const int iw = o.paneW, ih = o.paneH;
 

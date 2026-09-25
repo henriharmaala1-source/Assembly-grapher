@@ -28,7 +28,7 @@ cv::Vec3f mix(const cv::Vec3f& a, const cv::Vec3f& b, float t) {
 
 cv::Mat renderFootage(const VoxelWorld& world, const CamPose& pose,
                       int w, int h, float hfovDeg, float maxRangeM,
-                      float groundZ) {
+                      float groundZ, const FootageStyle& style) {
     CamParams cp;
     cp.width = std::max(16, w);
     cp.height = std::max(12, h);
@@ -39,13 +39,13 @@ cv::Mat renderFootage(const VoxelWorld& world, const CamPose& pose,
     // BGR, in 0..1. Sky pale at the horizon and deeper overhead; the haze
     // colour is the horizon, so distant things fade INTO the sky rather than
     // into grey -- which is what makes depth readable in a still frame.
-    const cv::Vec3f skyTop(0.86f, 0.62f, 0.38f), skyHor(0.95f, 0.88f, 0.80f);
+    const cv::Vec3f skyTop = style.skyTop, skyHor = style.skyHor;
     // Low contrast between A and B on purpose: a strong per-voxel shade makes
     // every surface a checkerboard and the scene reads as blocks, not as a
     // place. The variation is there so a flat wall still shows its extent.
-    const cv::Vec3f grassA(0.24f, 0.47f, 0.36f), grassB(0.27f, 0.52f, 0.40f);
-    const cv::Vec3f warmA(0.36f, 0.46f, 0.57f), warmB(0.40f, 0.50f, 0.61f);
-    const cv::Vec3f wallA(0.66f, 0.68f, 0.70f), wallB(0.72f, 0.73f, 0.74f);
+    const cv::Vec3f grassA = style.groundA, grassB = style.groundB;
+    const cv::Vec3f warmA = style.warmA, warmB = style.warmB;
+    const cv::Vec3f wallA = style.wallA, wallB = style.wallB;
     // Sun from the north-west, high. Unit length.
     const float sl = std::sqrt(0.35f * 0.35f + 0.5f * 0.5f + 0.8f * 0.8f);
     const float sx = -0.35f / sl, sy = 0.5f / sl, sz = 0.8f / sl;
@@ -103,11 +103,30 @@ cv::Mat renderFootage(const VoxelWorld& world, const CamPose& pose,
                 else                   base = mix(wallA, wallB, k);   // plaster, glass
                 // Height tint so tall structure reads as tall.
                 if (!ground) base *= 0.85f + 0.15f * std::min(1.f, hz / 6.f);
+                if (ground && style.gridM > 0.f) {
+                    // Lines on the lattice, a couple of cm wide.
+                    const float gx = std::fabs(std::remainder(hx, style.gridM));
+                    const float gy = std::fabs(std::remainder(hy, style.gridM));
+                    if (std::min(gx, gy) < 0.03f + 0.002f * t) base *= 1.f - style.gridDark;
+                }
+                if (!ground && style.panelM > 0.f) {
+                    // One tint per wall panel, from the panel's own cell, so
+                    // it is fixed to the wall and does not shimmer.
+                    const float pk = cellHash(int(std::floor(hx / style.panelM)) + 7,
+                                              int(std::floor(hy / style.panelM)) + 11,
+                                              int(std::floor(hz / style.panelM)));
+                    base *= 1.f - style.panelTint * pk;
+                }
+                if (!ground && style.contactM > 0.f) {
+                    const float above = hz - groundZ;
+                    if (above < style.contactM)
+                        base *= 0.6f + 0.4f * std::max(0.f, above / style.contactM);
+                }
 
                 const float lam = std::max(0.f, nx * sx + ny * sy + nz * sz);
                 col = base * (0.45f + 0.55f * lam);
                 // Haze: nothing at 0, full sky at the far end of the range.
-                const float fog = std::min(1.f, std::pow(t / maxRangeM, 1.3f));
+                const float fog = std::min(1.f, style.hazeK * std::pow(t / maxRangeM, 1.3f));
                 col = mix(col, sky, fog);
             }
             row[u] = cv::Vec3b(cv::saturate_cast<uint8_t>(col[0] * 255.f),

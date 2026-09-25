@@ -1,10 +1,32 @@
-// THE DEMO. Four things at once, on a laptop, in one window.
+// THE DEMO, on a laptop, in one window.
 //
-//   kestrel demo                  sim everywhere -- runs on any machine
+//   kestrel demo                  THE SHOWCASE: the aircraft, flying (below)
 //   kestrel demo --live           depth and the detector from a RealSense
 //   kestrel demo --replay w.kdr   a recording, for when the camera is packed
+//   kestrel demo --model p.onnx   a learned policy flying the research sim
 //
-// WHAT IT SHOWS, and why these four:
+// THE SHOWCASE (plain `kestrel demo`). The AIRCRAFT'S OWN AUTONOMY -- onboard's
+// VoxelNavModule and MissionController, compiled into this binary from
+// onboard/src, not a model of them -- flying the showcase worlds against a
+// simulated D435i at the mode that flies (848x480), with no position given to
+// the map, exactly as aboard (flight_show.hpp). Five pictures of it
+// (flight_view.hpp), none of which can reach a decision:
+//
+//   THE FLIGHT        the true scene from behind the aircraft, with what THIS
+//                     stop's map knows laid over it: air confirmed free at
+//                     flight height (blue), cells marked solid (red), the leg
+//                     fan while it chooses, the certified leg while it flies.
+//   MISSION           from above: the walls, the stop's map, the trail, every
+//                     leg, and the numbers -- flown, from start, collisions.
+//   1 WHAT IT SEES    the left IR image the stereo matcher reads.
+//   2 STEREO DEPTH    the depth frame the module was actually given.
+//   3 WHAT IT KNOWS   the stop's voxel map as a model. Empty is UNKNOWN.
+//
+// The flight is paced to the wall clock on its own thread and logs every 30 s
+// how well this machine keeps up; below 1x the world is slower, never the
+// aircraft's decisions. A webcam, if present, adds people as an inset.
+//
+// THE FOUR-PANE WINDOW (--live, --replay, --model). What it shows, and why:
 //
 //   SIM DEMONSTRATION a planner flying the simulated world: FPV FOOTAGE of
 //                     the true scene (navcore/footage.hpp), with the map it is

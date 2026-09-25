@@ -93,7 +93,10 @@ the quaternion directly: the same rotation (to 1.3e-6 over 100 000 random
 cases) and identity instead of NaN at the degenerate point. It is the one
 change the patch makes to SLAM code. (Float rounding alone was ruled out: no
 failures of that check in 2 000 000 random rotations.) 79 bridge launches with
-no crash at startup, before and after.
+no crash at startup, before and after; with the patch, 8 closed-loop flights of
+150 s (worlds 7/11/12/13 twice, turn cap on) with no bridge death, no
+collision, and final SLAM error 0.02-0.42 m in seven of them (2.09 m in one
+with 211 frames lost).
 
 ## Measured (simulation)
 

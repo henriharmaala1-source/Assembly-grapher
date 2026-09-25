@@ -11,19 +11,7 @@
 #include "tracker_core.hpp"
 #include "depth_nav.hpp"      // rpi5_tracker/src
 #include "tof_source.hpp"
-
-// A perception module reads the current frame and writes its findings into the
-// WorldModel. The scheduler decides which modules run on a given tick based on
-// their cost and the active behaviour, so on a CPU-only Pi 5 the heavy models
-// never all fire on the same frame.
-class IPerceptionModule {
-public:
-    virtual ~IPerceptionModule() = default;
-    virtual const char* name()   const = 0;
-    virtual float       costMs() const = 0;   // approx CPU cost per run
-    virtual bool        isReady() const { return true; }
-    virtual void        run(const cv::Mat& frame, WorldModel& wm) = 0;
-};
+#include "perception_module.hpp"   // IPerceptionModule
 
 // ------------------------------------------------------------------- track
 // Wraps the rpi5_tracker LockOnTracker. Cheap enough to run every frame.

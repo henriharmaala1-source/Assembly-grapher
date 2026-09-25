@@ -959,12 +959,12 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
 void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                const std::vector<std::string>& recs) {
     const int x = 266;
-    txt(im, "the demo -- four things at once", x, 112, 0.66, INK, 2);
-    txt(im, "The policy flying, the depth a real camera returns, the map built from",
+    txt(im, "the demo -- the aircraft, flying", x, 112, 0.66, INK, 2);
+    txt(im, "Simulated: the aircraft's OWN autonomy (onboard's voxel module and mission,",
         x, 144, 0.44, DIM);
-    txt(im, "it, and people found in the camera image with a RANGE read off the depth",
+    txt(im, "compiled in) through the showcase worlds -- what it sees, the stereo depth,",
         x, 162, 0.44, DIM);
-    txt(im, "frame. Four threads, because the detector is the slowest stage.",
+    txt(im, "the map it builds, the flight. A camera or a policy: the four-pane window.",
         x, 180, 0.44, DIM);
 
     section(im, "depth for the two live panes", x, 208);
@@ -1026,12 +1026,12 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                   ID_D_EXPORT, false});
 
     // WHICH POLICY, and "none" is a real choice rather than the absence of one:
-    // the pane is then captioned "flying freeM (classical)" and nobody can
-    // come away thinking they watched the learned policy.
-    section(im, "policy for the SIM pane", x, 486);
+    // it is the aircraft's own autonomy flying. A learned policy switches to
+    // the research window, captioned as the policy it is.
+    section(im, "who flies the SIM", x, 486);
     {
         const int n = std::min<int>(3, int(g_models.size()));
-        bs.push_back({cv::Rect(x, 494, 180, 32), "none: freeM",
+        bs.push_back({cv::Rect(x, 494, 180, 32), "the aircraft",
                       ID_D_MODEL, c.dModel < 0});
         for (int i = 0; i < n; ++i)
             bs.push_back({cv::Rect(x + 190 + i * 200, 494, 190, 32),

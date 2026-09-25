@@ -351,6 +351,14 @@ add_test(NAME cuda_depth_check COMMAND cuda_depth_check)
 # install does not have FAILS HARD and clears OpenCV_LIBS for everything below,
 # so a missing videoio took the whole configure down with it. The find at the
 # top of this file already ran; just ask whether the target came out of it.
+# What the aircraft decides with, from onboard/src, verbatim. perception_module.hpp
+# keeps OpenCV contrib out of it, so the Windows build (prebuilt OpenCV) compiles
+# it too.
+set(KESTREL_AUTONOMY_SRC
+  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/voxel_nav.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/mission.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/nav_map.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/world_model.cpp)
 add_executable(kestrel
   kestrel.cpp
   kestrel_gui.cpp
@@ -362,6 +370,12 @@ add_executable(kestrel
   kestrel_demo.cpp
   # People in the camera image: built-in YOLOX-nano, HOG, or an .onnx file.
   person_detector.cpp
+  # The showcase flight: the AIRCRAFT'S OWN voxel module and mission, compiled
+  # from onboard/src -- not a copy -- flown against a simulated D435i.
+  flight_show.cpp
+  # ... and its pictures, drawn from snapshots of it; read-only.
+  flight_view.cpp
+  ${KESTREL_AUTONOMY_SRC}
 
   rl_env.cpp
   ../onboard/src/lock_tracker_fused.cpp
@@ -373,6 +387,16 @@ target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
   ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
+# The showcase maps flown by the real stack: no collision, and it gets somewhere.
+if(BUILD_TESTS)
+  add_executable(flight_show_check test/flight_show_check.cpp flight_show.cpp
+                 ${KESTREL_AUTONOMY_SRC})
+  target_include_directories(flight_show_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
+    ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(flight_show_check PRIVATE navcore ${OpenCV_LIBS})
+  add_test(NAME flight_show_check COMMAND flight_show_check)
+endif()
 if(OpenCV_objdetect_FOUND OR TARGET opencv_objdetect)
   target_compile_definitions(kestrel PRIVATE KESTREL_HAVE_OBJDETECT=1)
   message(STATUS "kestrel: objdetect found - demo can detect people")

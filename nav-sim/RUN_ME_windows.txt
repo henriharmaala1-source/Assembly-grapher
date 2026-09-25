@@ -322,6 +322,20 @@ columns as the classical ones, on seeds it never trained on.
                                         trick; a box that says 2.3 m is this
                                         stack
 
+                     WHAT FLIES IS THE AIRCRAFT. Plain `kestrel demo` runs
+                     the flight software's own voxel module and mission --
+                     compiled from onboard/src, not a copy -- against a
+                     simulated D435i at 848x480, the mode that flies, and
+                     with no position given to the map, as aboard: it stops,
+                     maps from where it hovers, certifies a straight leg,
+                     flies it, stops again. The window shows that flight
+                     from behind with what the stop's map knows laid over
+                     the true scene (blue = air confirmed free, red = cells
+                     marked solid), and underneath, left to right, the
+                     pipeline: the IR image the stereo matcher reads, the
+                     depth it produced, the voxel map built from it. Every
+                     30 s it prints how well your machine keeps up.
+
                      IT RUNS UNTIL YOU CLOSE IT. The default, --world tour,
                      flies the two worlds below in turn -- gallery, hall,
                      gallery on a new layout, and so on. It moves to the

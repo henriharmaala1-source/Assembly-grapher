@@ -42,7 +42,7 @@
 #include "frame_source.hpp"   // navcore
 #include "nav_pipeline.hpp"   // navcore
 #include "visual_pose.hpp"    // navcore
-#include "perception.hpp"
+#include "perception_module.hpp"   // not perception.hpp: no OpenCV contrib
 
 class VoxelNavModule : public IPerceptionModule {
 public:

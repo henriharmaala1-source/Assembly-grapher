@@ -35,3 +35,8 @@ events.out.tfevents.*
 
 # CI staging folder for the Windows zip
 nav-sim/dist/
+
+# EXCEPT the one model compiled into kestrel (nav-sim/models/README.md): the
+# build embeds it, so it must be in the tree. Apache-2.0, 3.7 MB.
+!nav-sim/models/
+!nav-sim/models/*

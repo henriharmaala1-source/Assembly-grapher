@@ -21,6 +21,7 @@
 //            every leg, and the numbers CLAUDE.md scores on.
 // ---------------------------------------------------------------------------
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -42,6 +43,17 @@ struct Ray { float bearingDeg = 0, freeM = 0; };
 // own const straightFreeM out to legMaxM. For display; call on the flight's
 // thread.
 std::vector<Ray> legFan(const FlightShow& f);
+
+// A PLANNED PATH DRAWN INTO A FIRST-PERSON VOXEL VIEW, as a ribbon lying
+// flat: its edges offset `halfW` either side of the path, perpendicular to it,
+// `drop` below the path's own height, and projected quad by quad from `eye` --
+// so perspective narrows it into the distance -- and each pixel drawn only if
+// it is NEARER than the surface `hitDist` (VoxelMap::renderLadder) has there,
+// so the voxels in front of it hide it. Farther is darker. `arrow`: a flat
+// arrowhead past the last point. `path` is in the same frame as `eye`.
+void drawRibbon(cv::Mat& im, const sim::CamPose& eye, float hfovDeg, const cv::Mat& hitDist,
+                const std::vector<std::array<float, 3>>& path, const cv::Scalar& colour,
+                float halfW, double alpha, bool arrow, float drop);
 
 // Everything the pictures need, copied out of a FlightShow.
 struct ShowSnap {

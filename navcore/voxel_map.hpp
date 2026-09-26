@@ -490,12 +490,16 @@ public:
         float minRange = 0.f;           // start of this level's band
         float range = 0.f;              // end of it — its honest range
     };
+    // `hitDist`: CV_32F, the distance along each pixel's ray to the surface
+    // it drew (0 where none) -- so something drawn INTO this view afterwards
+    // (a planned path) can be hidden behind the voxels in front of it.
     static cv::Mat renderLadder(const std::vector<Layer>& layers,
                                 float px, float py, float pz,
                                 float yawDeg, float pitchDeg,
                                 int outW, int outH, float hfovDeg,
                                 const FpvStyle& style = FpvStyle(),
-                                cv::Mat* hitMask = nullptr);
+                                cv::Mat* hitMask = nullptr,
+                                cv::Mat* hitDist = nullptr);
 
 private:
     size_t idx(int x, int y, int z) const { return (size_t(z) * p_.ny + y) * p_.nx + x; }

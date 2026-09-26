@@ -281,7 +281,8 @@ cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
                                float px, float py, float pz,
                                float yawDeg, float pitchDeg,
                                int outW, int outH, float hfovDeg,
-                               const FpvStyle& style, cv::Mat* hitMask) {
+                               const FpvStyle& style, cv::Mat* hitMask,
+                               cv::Mat* hitDist) {
     cv::Mat out(outH, outW, CV_8UC3, cv::Scalar(238, 240, 244));   // FOG
     cv::Mat any(outH, outW, CV_8U, cv::Scalar(0));
     cv::Mat best(outH, outW, CV_32F, cv::Scalar(0.f));             // 0 = no hit
@@ -343,6 +344,7 @@ cv::Mat VoxelMap::renderLadder(const std::vector<Layer>& layers,
     // Same rule as fpvImageWH: caption bands unless the caller is compositing
     // this over a camera image, in which case washing two strips of that image
     // is vandalism rather than legibility.
+    if (hitDist) *hitDist = best;
     if (hitMask) { *hitMask = any; }
     else {
         for (const cv::Rect& r : {cv::Rect(0, 0, outW, 50),

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -624,9 +625,31 @@ public:
             } else {
                 ladder.push_back({&nav_.map(), 0.f, mainEnd});
             }
-            fpv_ = sim::NavPipeline::renderFpv(ladder, mainEnd, nav_.field(),
-                                               nav_.params().farRangeM, pose, fw, fh, hf);
-            drawPlan(fpv_, pose, hf);
+            cv::Mat hitMask, hitDist;
+            const cv::Mat vox = sim::VoxelMap::renderLadder(ladder, pose.e, pose.n, pose.u,
+                                                            pose.yawDeg, pose.pitchDeg, fw, fh,
+                                                            hf, sim::FpvStyle(), &hitMask,
+                                                            &hitDist);
+            cv::Mat view;
+            if (!ir.empty()) {
+                // THE CAMERA'S OWN IMAGE BEHIND THE VOXELS. The left IR imager
+                // is the one depth is computed in, so every voxel lands on the
+                // pixels it came from. Where nothing is mapped the pane shows
+                // what the camera sees -- the scene, not a claim that it is
+                // empty: unknown is still not drawn as free air.
+                cv::Mat g;
+                cv::resize(ir, g, {fw, fh}, 0, 0, cv::INTER_LINEAR);
+                cv::cvtColor(g, view, cv::COLOR_GRAY2BGR);
+                view *= 0.85;
+            } else {
+                // No image in this source: navcore's first-person render, the
+                // far tier's bearings past the ladder and fog for unknown.
+                view = sim::NavPipeline::renderFpv(ladder, mainEnd, nav_.field(),
+                                                   nav_.params().farRangeM, pose, fw, fh, hf);
+            }
+            vox.copyTo(view, hitMask);
+            drawPlan(view, pose, hf, hitDist);
+            fpv_ = view;
             lastFpv_ = now;
         }
         f.mapFpv = fpv_;
@@ -653,55 +676,43 @@ private:
     std::vector<std::array<float, 3>> chosen_;
     std::vector<std::vector<std::array<float, 3>>> cands_;
 
-    // WHERE IT WOULD FLY, drawn into the first-person map: every admissible
-    // primitive thin, the chosen one as a bold 3D arrow, its bearing and
-    // confirmed-free distance on the image -- or BLOCKED. The planner is
-    // navcore's own (NavPipeline's TrajectoryPlanner), run on this map.
+    // WHERE IT WOULD FLY, drawn INTO the voxel world: the planner's chosen
+    // primitive as a wide ribbon lying flat, every other admissible one as a
+    // narrower muted one. Each ribbon is built in 3D -- its edges offset half
+    // a width either side of the path, perpendicular to it -- and projected
+    // quad by quad, so perspective narrows it into the distance; and each
+    // pixel of it is drawn only if it is NEARER than the voxel behind that
+    // pixel (renderLadder's hit distance), so the map hides it where it
+    // passes behind something. The planner is navcore's own (NavPipeline's
+    // TrajectoryPlanner) on this map.
     //
-    // DRAWN 30 cm BELOW THE EYE, and labelled so. From a first-person eye a
-    // path at eye height straight ahead collapses onto the centre of the image;
-    // dropped to where the airframe's body is, it reads as a path running away
-    // from the viewer, which is what it is.
-    void drawPlan(cv::Mat& im, const sim::CamPose& pose, float hfov) const {
-        const float drop = 0.30f;
-        auto proj = [&](const std::array<float, 3>& w, cv::Point2f& o) {
-            float u, v;
-            const bool in = sim::VoxelMap::fpvProject(pose.e, pose.n, pose.u, pose.yawDeg,
-                                                     pose.pitchDeg, im.cols, im.rows, hfov,
-                                                     w[0], w[1], w[2] - drop, u, v);
-            o = {u, v};
-            return in;
+    // LAID 0.8 m BELOW THE EYE, and labelled so -- the path's shadow, as a
+    // road is below a driver. At eye height a path straight ahead projects
+    // onto the horizon and cannot be seen at all.
+    void drawPlan(cv::Mat& im, const sim::CamPose& pose, float hfov,
+                  const cv::Mat& hitDist) const {
+        const float drop = 0.8f;
+        auto ribbon = [&](const std::vector<std::array<float, 3>>& pts, const cv::Scalar& col,
+                          float halfW, double alpha, bool arrow) {
+            kshow::drawRibbon(im, pose, hfov, hitDist, pts, col, halfW, alpha, arrow, drop);
         };
-        auto poly = [&](const std::vector<std::array<float, 3>>& pts, const cv::Scalar& col,
-                        int th) {
-            cv::Point2f a, b;
-            bool have = false;
-            for (const auto& w : pts) {
-                const bool ok = proj(w, b);
-                if (ok && have) cv::line(im, a, b, col, th, cv::LINE_AA);
-                a = b; have = ok;
-            }
-        };
-        for (const auto& c : cands_) poly(c, cv::Scalar(200, 170, 120), 1);
+        // A few of the alternatives, spread across the set, muted.
+        const size_t nc = cands_.size();
+        const size_t stride = std::max<size_t>(1, nc / 6);
+        int k = 0;
+        for (size_t i = 0; i < nc; i += stride, ++k)
+            ribbon(cands_[i], (k % 2) ? cv::Scalar(150, 70, 110) : cv::Scalar(60, 60, 200),
+                   0.12f, 0.55, false);
         if (plan_.blocked || chosen_.size() < 2) {
             txt(im, "planner: BLOCKED -- nothing clears the airframe, it would hold",
                 10, im.rows - 14, 0.5, cv::Scalar(80, 80, 240), 1);
             return;
         }
-        poly(chosen_, cv::Scalar(20, 20, 20), 7);                 // an outline, for contrast
-        poly(chosen_, cv::Scalar(90, 230, 110), 4);
-        // THE ARROWHEAD on the last visible stretch of the chosen path.
-        cv::Point2f tip, tail;
-        int k = int(chosen_.size()) - 1;
-        while (k > 0 && !proj(chosen_[size_t(k)], tip)) --k;
-        int j = k - 1;
-        while (j >= 0 && (!proj(chosen_[size_t(j)], tail) || cv::norm(tip - tail) < 14.f)) --j;
-        if (k > 0 && j >= 0)
-            cv::arrowedLine(im, tail, tip, cv::Scalar(90, 230, 110), 4, cv::LINE_AA, 0, 0.5);
+        ribbon(chosen_, cv::Scalar(255, 110, 40), 0.25f, 0.95, true);
         txt(im, cv::format("planner: %03.0f deg  %+.0f up   %.1f m confirmed free", plan_.azDeg,
                            plan_.elDeg, plan_.freeM),
-            10, im.rows - 34, 0.5, cv::Scalar(90, 230, 110), 1);
-        txt(im, "path drawn 30 cm below the eye", 10, im.rows - 14, 0.42, DIM, 1);
+            10, im.rows - 34, 0.5, cv::Scalar(255, 170, 90), 1);
+        txt(im, "path laid 0.8 m below the eye", 10, im.rows - 14, 0.42, DIM, 1);
     }
 };
 

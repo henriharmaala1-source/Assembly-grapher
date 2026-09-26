@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 
 #include <opencv2/imgproc.hpp>
@@ -162,6 +163,99 @@ void drawPath3d(cv::Mat& im, const sim::VoxelWorld* world, const sim::CamPose& c
 }
 
 }  // namespace
+
+// ------------------------------------------------------------------ ribbons
+void drawRibbon(cv::Mat& im, const sim::CamPose& eye, float hfov, const cv::Mat& hitDist,
+                const std::vector<std::array<float, 3>>& path, const cv::Scalar& col,
+                float halfW, double alpha, bool arrow, float drop) {
+    // IN 10 cm PIECES: a quad with a corner behind the camera cannot be
+    // projected and is dropped whole, so a leg drawn as one long quad vanished
+    // the moment the aircraft started along it. Short pieces lose only what is
+    // really behind the eye.
+    std::vector<std::array<float, 3>> pts;
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        const auto& a = path[i];
+        const auto& b = path[i + 1];
+        const float len = std::sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]) +
+                                    (b[2] - a[2]) * (b[2] - a[2]));
+        const int n = std::max(1, int(std::ceil(len / 0.1f)));
+        for (int k = 0; k < n; ++k) {
+            const float t = float(k) / float(n);
+            pts.push_back({a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t,
+                           a[2] + (b[2] - a[2]) * t});
+        }
+    }
+    if (!path.empty()) pts.push_back(path.back());
+    auto proj = [&](float x, float y, float z, cv::Point2f& o) {
+        float u = std::numeric_limits<float>::quiet_NaN(), v = u;
+        sim::VoxelMap::fpvProject(eye.e, eye.n, eye.u, eye.yawDeg, eye.pitchDeg, im.cols,
+                                  im.rows, hfov, x, y, z, u, v);
+        o = {u, v};
+        return std::isfinite(u) && std::isfinite(v) && std::fabs(u) < 8.f * im.cols &&
+               std::fabs(v) < 8.f * im.rows;
+    };
+    cv::Mat mask(im.size(), CV_8U, cv::Scalar(0));
+    auto quad = [&](const cv::Point3f (&c)[4], double band) {
+        std::vector<cv::Point> poly;
+        for (const cv::Point3f& q : c) {
+            cv::Point2f p;
+            if (!proj(q.x, q.y, q.z, p)) return;
+            poly.push_back(cv::Point(int(std::lround(p.x)), int(std::lround(p.y))));
+        }
+        const cv::Rect box = cv::boundingRect(poly) & cv::Rect(0, 0, im.cols, im.rows);
+        if (box.area() <= 0) return;
+        const cv::Point3f mid = (c[0] + c[1] + c[2] + c[3]) * 0.25f;
+        const float dq = std::sqrt((mid.x - eye.e) * (mid.x - eye.e) +
+                                   (mid.y - eye.n) * (mid.y - eye.n) +
+                                   (mid.z - eye.u) * (mid.z - eye.u));
+        mask(box).setTo(0);
+        cv::fillConvexPoly(mask, poly, cv::Scalar(255), cv::LINE_AA);
+        const double shade = (1.0 - 0.45 * std::min(1.f, dq / 6.f)) * band;
+        for (int v = box.y; v < box.y + box.height; ++v) {
+            const uchar* m = mask.ptr<uchar>(v);
+            const float* hd = hitDist.empty() ? nullptr : hitDist.ptr<float>(v);
+            cv::Vec3b* px = im.ptr<cv::Vec3b>(v);
+            for (int u = box.x; u < box.x + box.width; ++u) {
+                if (!m[u]) continue;
+                // Behind a voxel -- one clearly nearer, not the surface the
+                // ribbon lies on or beside.
+                if (hd && hd[u] > 0.f && hd[u] < dq - 0.15f) continue;
+                const double a = alpha * m[u] / 255.0;
+                for (int k = 0; k < 3; ++k)
+                    px[u][k] = cv::saturate_cast<uchar>(px[u][k] * (1.0 - a) +
+                                                        col[k] * shade * a);
+            }
+        }
+    };
+    for (size_t i = 0; i + 1 < pts.size(); ++i) {
+        const auto& a = pts[i];
+        const auto& b = pts[i + 1];
+        const float dx = b[0] - a[0], dy = b[1] - a[1];
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-3f) continue;
+        const float nx = -dy / len * halfW, ny = dx / len * halfW;
+        const cv::Point3f c[4] = {{a[0] + nx, a[1] + ny, a[2] - drop},
+                                  {a[0] - nx, a[1] - ny, a[2] - drop},
+                                  {b[0] - nx, b[1] - ny, b[2] - drop},
+                                  {b[0] + nx, b[1] + ny, b[2] - drop}};
+        // BANDS every 30 cm, a shade apart, like road markings: something
+        // for the eye to count into the distance, which is most of what makes
+        // a flat colour read as lying IN the scene.
+        quad(c, ((i / 3) % 2) ? 0.80 : 1.0);
+    }
+    if (!arrow || pts.size() < 2) return;
+    const auto& a = pts[pts.size() - 2];
+    const auto& b = pts.back();
+    const float dx = b[0] - a[0], dy = b[1] - a[1];
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1e-3f) return;
+    const float fx = dx / len, fy = dy / len, z = b[2] - drop, w = halfW * 1.9f;
+    const cv::Point3f c[4] = {{b[0] - fy * w, b[1] + fx * w, z},
+                              {b[0] + fy * w, b[1] - fx * w, z},
+                              {b[0] + fx * 0.55f, b[1] + fy * 0.55f, z},
+                              {b[0] + fx * 0.55f, b[1] + fy * 0.55f, z}};
+    quad(c, 1.0);
+}
 
 // ------------------------------------------------------------------ the fan
 std::vector<Ray> legFan(const FlightShow& f) {
@@ -509,36 +603,68 @@ cv::Mat FlightView::depth(const ShowSnap& s, int w, int h) const {
 // ---------------------------------------------------------------------- fpv
 cv::Mat FlightView::fpv(const ShowSnap& s, int w, int h) const {
     const float fov = s.cam.hfovDeg;
+    // THE CAMERA'S OWN IMAGE BEHIND THE VOXELS, as the live pane draws it: the
+    // D435i's left IR (simulated here), the imager depth is computed in, so
+    // every voxel lands on what it came from. Where nothing is mapped the pane
+    // shows what the camera sees -- not a claim that it is empty.
+    sim::CamParams cp = s.cam;
+    cp.width = w; cp.height = h;
+    const sim::DepthCamera cam(cp);
+    cv::Mat view;
+    cv::cvtColor(cam.renderIR(*s.world, s.truth), view, cv::COLOR_GRAY2BGR);
+    view *= 0.85;
     if (s.mapFrames == 0 || !s.map) {
-        cv::Mat im(h, w, CV_8UC3, cv::Scalar(215, 212, 208));
-        label(im, "no map yet", {10, 22}, 0.5, cv::Scalar(60, 60, 60), 1);
-        return im;
+        label(view, "no map yet", {10, 22}, 0.5, kInk, 1);
+        return view;
     }
     const sim::CamPose& v = s.vantage;
     sim::CamPose eye = s.truth;                    // the camera, in the map's frame
     eye.e -= v.e; eye.n -= v.n; eye.u -= v.u;
-    // navcore's own first-person render, both tiers, from the copies: the
-    // same picture the live camera's pane and voxel_live draw.
-    cv::Mat im = s.field
-        ? sim::NavPipeline::renderFpv(*s.map, s.maxIntegM, *s.field, s.farRangeM, eye, w, h, fov)
-        : cv::Mat(h, w, CV_8UC3, cv::Scalar(215, 212, 208));
+    std::vector<sim::VoxelMap::Layer> layers(1);
+    layers[0].map = s.map.get();
+    layers[0].minRange = 0.f;
+    layers[0].range = s.maxIntegM > 0.f ? s.maxIntegM : 4.f;
+    cv::Mat hitMask, hitDist;
+    const cv::Mat vox = sim::VoxelMap::renderLadder(layers, eye.e, eye.n, eye.u, eye.yawDeg,
+                                                    eye.pitchDeg, w, h, fov, sim::FpvStyle(),
+                                                    &hitMask, &hitDist);
+    vox.copyTo(view, hitMask);
+    // THE LEG FAN, laid under the flight line: every bearing the module
+    // certified, as far as it certified it, short red to long green; the leg it
+    // chose (or is flying) wide and blue with its arrowhead. 0.6 m below the
+    // eye: a level D435i sees the floor only from 2.7 m ahead, and the legs are
+    // 2-3 m long, so on the floor they would be out of the picture.
+    const float drop = std::min(0.6f, s.truth.u - s.floorZ);
     const float legMax = std::max(MissionController::Params().stepM +
                                   MissionController::Params().voxStopMarginM, 1.f);
-    const float zf = s.floorZ - v.u;
+    const Ray* best = nullptr;
+    const bool choosing = s.phase == "THINK" || s.phase == "SCAN";
     for (const Ray& r : s.fan) {
+        if (!best || r.freeM > best->freeM) best = &r;
+        if (!choosing) continue;            // while flying, the leg alone
         const float br = r.bearingDeg * kPi / 180.f;
         const float q = std::min(1.f, r.freeM / legMax);
-        std::vector<cv::Point3f> seg;
-        for (int i = 0; i <= 8; ++i) {
-            const float d = r.freeM * float(i) / 8.f;
-            seg.push_back({std::sin(br) * d, std::cos(br) * d, zf});
-        }
-        drawPath3d(im, nullptr, eye, fov, seg, cv::Scalar(60, 60 + 170 * q, 230 - 180 * q), 2,
-                   false);
+        const std::vector<std::array<float, 3>> path{
+            {0.f, 0.f, 0.f}, {std::sin(br) * r.freeM, std::cos(br) * r.freeM, 0.f}};
+        drawRibbon(view, eye, fov, hitDist, path, cv::Scalar(60, 60 + 170 * q, 230 - 180 * q),
+                   0.05f, 0.6, false, drop);
     }
-    label(im, cv::format("%d frames   near map + far bearings", s.mapFrames),
+    std::vector<std::array<float, 3>> leg;
+    if (s.phase == "MOVE" && !s.legs.empty()) {
+        const Leg& l = s.legs.back();
+        const float br = l.bearingDeg * kPi / 180.f;
+        const float e0 = l.e0 - v.e, n0 = l.n0 - v.n;
+        leg = {{e0, n0, 0.f}, {e0 + std::sin(br) * l.lengthM, n0 + std::cos(br) * l.lengthM, 0.f}};
+    } else if (best && best->freeM > 0.5f) {
+        const float br = best->bearingDeg * kPi / 180.f;
+        leg = {{0.f, 0.f, 0.f}, {std::sin(br) * best->freeM, std::cos(br) * best->freeM, 0.f}};
+    }
+    if (!leg.empty())
+        drawRibbon(view, eye, fov, hitDist, leg, cv::Scalar(255, 110, 40), 0.22f, 0.95, true, drop);
+    label(view, cv::format("%d frames   voxels over the camera image", s.mapFrames),
           {10, 22}, 0.45, kInk, 1);
-    return im;
+    label(view, "legs laid 0.6 m below the eye", {10, h - 12}, 0.42, kDim, 1);
+    return view;
 }
 
 // ------------------------------------------------------------------ mission

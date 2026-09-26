@@ -203,6 +203,10 @@ public:
     int  frames() const { return frames_; }
     const VoxelMap&          map()     const { return map_; }
     const BearingField&      field()   const { return bfield_; }
+    // The planner, read-only: its chosen primitive and the candidates it
+    // weighed on the last step() -- for a display that draws where it would
+    // fly. Null before init().
+    const TrajectoryPlanner* planner() const { return traj_.get(); }
     const VoxelMapParams&    mapParams() const { return mp_; }
     const NavPipelineParams& params()  const { return p_; }
 

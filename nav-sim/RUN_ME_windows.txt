@@ -349,6 +349,14 @@ columns as the classical ones, on seeds it never trained on.
                      The window resizes -- the panes are laid out again
                      for its size -- and f toggles full screen.
 
+                     LIVE VOXEL shows the camera's map in 5 cm cubes up
+                     close and 10 cm further out, and WHERE THE PLANNER
+                     WOULD FLY: the aircraft's own planner, run on that
+                     map, draws its chosen path as a green 3D arrow (with
+                     its bearing and how far is confirmed free) and every
+                     other path it would accept as thin lines -- or says
+                     BLOCKED when nothing clears the airframe.
+
                      IT RUNS UNTIL YOU CLOSE IT. The default, --world tour,
                      flies the two worlds below in turn -- gallery, hall,
                      gallery on a new layout, and so on. It moves to the

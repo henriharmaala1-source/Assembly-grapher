@@ -865,8 +865,12 @@ enum {
     ID_D_PEOPLE, ID_D_MIRROR, ID_D_EMITTER, ID_D_SHOT, ID_D_CUDA,
     ID_D_EXPORT,
     // A RANGE, like ID_SIM_REPLAY: one id per .onnx found, plus one for "none".
+    // apply() claims 830..859 for it -- so nothing else may live there. The
+    // pose buttons did (840..842), and apply() handed every click on "VIO" or
+    // "SLAM" to the model list: the buttons did nothing. gui --check now
+    // clicks every button and fails one that changes nothing.
     ID_D_MODEL = 830,
-    ID_D_POSE = 840,      // +0..2
+    ID_D_POSE = 870,      // +0..2
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -2024,6 +2028,70 @@ int check() {
                     std::printf("%s: command strip drops %d argument(s)\n",
                                 tag.c_str(), dropped);
                     ++bad;
+                }
+            }
+            // EVERY BUTTON DOES SOMETHING. Click each one (the actions -- RUN,
+            // install, the interpreter list, shot, export -- are dispatched
+            // before apply() and are skipped) and require that the command it
+            // builds, the mode, or the panel itself changes. This is what would
+            // have caught the demo's pose buttons, whose ids fell inside the
+            // model list's range and whose clicks went there.
+            if (variant == 0) {
+                const std::vector<std::string> argv0 = buildArgs(c, inputs, recs);
+                for (const Btn& b : bs) {
+                    if (b.id == ID_RUN || b.id == ID_TRAIN_INSTALL || b.id == ID_TRAIN_PYTHONS ||
+                        b.id == ID_D_SHOT || b.id == ID_D_EXPORT)
+                        continue;
+                    // THE CLICK MUST LAND ON THIS BUTTON: its own highlight or
+                    // label changes, or the command does. A change somewhere
+                    // else on the panel is not enough -- that is exactly what a
+                    // click delivered to the wrong handler looks like (the pose
+                    // buttons' clicks un-lit the policy list instead).
+                    auto effect = [&](const Cfg& from, const std::vector<Btn>& fromBs,
+                                      const cv::Mat& fromIm) {
+                        Cfg d = from;
+                        apply(b.id, d, inputs, recs);
+                        if (d.mode != from.mode ||
+                            buildArgs(d, inputs, recs) != buildArgs(from, inputs, recs))
+                            return true;
+                        std::vector<Btn> after;
+                        const cv::Mat im2 = compose(d, inputs, recs, after);
+                        const Btn* was = nullptr;
+                        for (const Btn& q : fromBs) if (q.id == b.id) was = &q;
+                        for (const Btn& q : after)
+                            if (q.id == b.id && was && (q.on != was->on || q.label != was->label))
+                                return true;
+                        // A stepper's value is text drawn beside it: look
+                        // there, and only there.
+                        if (!was || im2.size() != fromIm.size()) return false;
+                        cv::Rect near(was->r.x - 180, was->r.y - 30, was->r.width + 360,
+                                      was->r.height + 60);
+                        near &= cv::Rect(0, 0, fromIm.cols, fromIm.rows);
+                        return cv::norm(fromIm(near), im2(near), cv::NORM_INF) > 0;
+                    };
+                    bool changed = effect(c, bs, im);
+                    // A stepper already at its end, or a choice already made,
+                    // legitimately changes nothing: move a neighbour first and
+                    // click it again from there.
+                    if (!changed) {
+                        Cfg e = c;
+                        for (const Btn& q : bs)
+                            if (q.id != b.id && std::abs(q.id - b.id) <= 3) apply(q.id, e, inputs, recs);
+                        std::vector<Btn> eBs;
+                        const cv::Mat eIm = compose(e, inputs, recs, eBs);
+                        changed = effect(e, eBs, eIm);
+                    }
+                    // A lit choice with nothing beside it to choose instead
+                    // (the policy list with no .onnx found) is correct to
+                    // change nothing.
+                    bool alone = true;
+                    for (const Btn& q : bs)
+                        if (q.id != b.id && std::abs(q.id - b.id) <= 3) alone = false;
+                    if (!changed && !(b.on && alone)) {
+                        std::printf("%s: clicking '%s' (id %d) changes nothing\n", tag.c_str(),
+                                    b.label.c_str(), b.id);
+                        ++bad;
+                    }
                 }
             }
             // GREEN == THE FLAG IS EMITTED, for every plain flag toggle on

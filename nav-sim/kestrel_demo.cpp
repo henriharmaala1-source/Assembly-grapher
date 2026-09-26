@@ -1,6 +1,7 @@
 // The demo. See kestrel_demo.hpp for what it shows and why those four things.
 #include "kestrel_demo.hpp"
 
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -585,7 +586,11 @@ public:
             origin_ = pose; lastEst_ = pose;
             inited_ = true;
         }
-        nav_.step(depth, pose);
+        plan_ = nav_.step(depth, pose);
+        if (const sim::TrajectoryPlanner* tp = nav_.planner()) {
+            chosen_ = tp->chosen();
+            cands_ = tp->candidates();
+        }
         near_.integrate(depth, src_->camera(), pose);
         int valid = 0;
         for (int y = 0; y < depth.rows; ++y) {
@@ -621,6 +626,7 @@ public:
             }
             fpv_ = sim::NavPipeline::renderFpv(ladder, mainEnd, nav_.field(),
                                                nav_.params().farRangeM, pose, fw, fh, hf);
+            drawPlan(fpv_, pose, hf);
             lastFpv_ = now;
         }
         f.mapFpv = fpv_;
@@ -641,6 +647,62 @@ private:
     cv::Mat fpv_;
     sim::VoxelMapParams nearP_;
     sim::VoxelMap near_;                   // the 5 cm rung (display)
+    // What the aircraft's planner decided on the last frame, and what it
+    // weighed: its chosen primitive and every admissible one, world frame.
+    sim::GeneralResult plan_;
+    std::vector<std::array<float, 3>> chosen_;
+    std::vector<std::vector<std::array<float, 3>>> cands_;
+
+    // WHERE IT WOULD FLY, drawn into the first-person map: every admissible
+    // primitive thin, the chosen one as a bold 3D arrow, its bearing and
+    // confirmed-free distance on the image -- or BLOCKED. The planner is
+    // navcore's own (NavPipeline's TrajectoryPlanner), run on this map.
+    //
+    // DRAWN 30 cm BELOW THE EYE, and labelled so. From a first-person eye a
+    // path at eye height straight ahead collapses onto the centre of the image;
+    // dropped to where the airframe's body is, it reads as a path running away
+    // from the viewer, which is what it is.
+    void drawPlan(cv::Mat& im, const sim::CamPose& pose, float hfov) const {
+        const float drop = 0.30f;
+        auto proj = [&](const std::array<float, 3>& w, cv::Point2f& o) {
+            float u, v;
+            const bool in = sim::VoxelMap::fpvProject(pose.e, pose.n, pose.u, pose.yawDeg,
+                                                     pose.pitchDeg, im.cols, im.rows, hfov,
+                                                     w[0], w[1], w[2] - drop, u, v);
+            o = {u, v};
+            return in;
+        };
+        auto poly = [&](const std::vector<std::array<float, 3>>& pts, const cv::Scalar& col,
+                        int th) {
+            cv::Point2f a, b;
+            bool have = false;
+            for (const auto& w : pts) {
+                const bool ok = proj(w, b);
+                if (ok && have) cv::line(im, a, b, col, th, cv::LINE_AA);
+                a = b; have = ok;
+            }
+        };
+        for (const auto& c : cands_) poly(c, cv::Scalar(200, 170, 120), 1);
+        if (plan_.blocked || chosen_.size() < 2) {
+            txt(im, "planner: BLOCKED -- nothing clears the airframe, it would hold",
+                10, im.rows - 14, 0.5, cv::Scalar(80, 80, 240), 1);
+            return;
+        }
+        poly(chosen_, cv::Scalar(20, 20, 20), 7);                 // an outline, for contrast
+        poly(chosen_, cv::Scalar(90, 230, 110), 4);
+        // THE ARROWHEAD on the last visible stretch of the chosen path.
+        cv::Point2f tip, tail;
+        int k = int(chosen_.size()) - 1;
+        while (k > 0 && !proj(chosen_[size_t(k)], tip)) --k;
+        int j = k - 1;
+        while (j >= 0 && (!proj(chosen_[size_t(j)], tail) || cv::norm(tip - tail) < 14.f)) --j;
+        if (k > 0 && j >= 0)
+            cv::arrowedLine(im, tail, tip, cv::Scalar(90, 230, 110), 4, cv::LINE_AA, 0, 0.5);
+        txt(im, cv::format("planner: %03.0f deg  %+.0f up   %.1f m confirmed free", plan_.azDeg,
+                           plan_.elDeg, plan_.freeM),
+            10, im.rows - 34, 0.5, cv::Scalar(90, 230, 110), 1);
+        txt(im, "path drawn 30 cm below the eye", 10, im.rows - 14, 0.42, DIM, 1);
+    }
 };
 
 // ------------------------------------------------------------ the showcase

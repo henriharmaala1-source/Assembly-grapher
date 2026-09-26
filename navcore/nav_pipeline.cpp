@@ -156,7 +156,13 @@ cv::Mat NavPipeline::renderFpv(const CamPose& pose, int w, int h,
 cv::Mat NavPipeline::renderFpv(const VoxelMap& map, float maxIntegM,
                                const BearingField& field, float farRangeM,
                                const CamPose& pose, int w, int h, float hfovDeg) {
-    const std::vector<VoxelMap::Layer> fine{{&map, 0.f, maxIntegM}};
+    return renderFpv(std::vector<VoxelMap::Layer>{{&map, 0.f, maxIntegM}}, maxIntegM, field,
+                     farRangeM, pose, w, h, hfovDeg);
+}
+
+cv::Mat NavPipeline::renderFpv(const std::vector<VoxelMap::Layer>& fine, float maxIntegM,
+                               const BearingField& field, float farRangeM,
+                               const CamPose& pose, int w, int h, float hfovDeg) {
     cv::Mat maskNear, maskFar;
     cv::Mat fpv = VoxelMap::renderLadder(fine, pose.e, pose.n, pose.u,
                                          pose.yawDeg, pose.pitchDeg, w, h,

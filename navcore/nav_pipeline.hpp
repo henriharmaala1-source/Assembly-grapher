@@ -192,6 +192,12 @@ public:
     static cv::Mat renderFpv(const VoxelMap& map, float maxIntegM,
                              const BearingField& field, float farRangeM,
                              const CamPose& pose, int w, int h, float hfovDeg);
+    // ... and with a LADDER of fine maps (finer cells near, coarser further;
+    // VoxelMap::renderLadder), the far tier filling past the last rung.
+    // `ladderEndM` is where the ladder's honest range ends.
+    static cv::Mat renderFpv(const std::vector<VoxelMap::Layer>& ladder, float ladderEndM,
+                             const BearingField& field, float farRangeM,
+                             const CamPose& pose, int w, int h, float hfovDeg);
 
     bool ready()  const { return cam_ != nullptr; }
     int  frames() const { return frames_; }

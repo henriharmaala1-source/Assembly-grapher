@@ -141,7 +141,10 @@ struct Options {
     enum Cuda { CUDA_AUTO = 0, CUDA_ON, CUDA_OFF };
     int  cuda = CUDA_AUTO;
 
-    int  camW = 640, camH = 480, camFps = 30;
+    int  camW = 640, camH = 480, camFps = 30;   // a webcam's capture size
+    // THE D435i's depth mode: 848x480, its native one and the one the aircraft
+    // flies with -- the demo asked for 640x480 and the live panes showed it.
+    int  depthW = 848, depthH = 480;
     bool emitter = true;
 
     // WHERE THE CAMERA IS for the live voxel pane: "fixed" (the map is built

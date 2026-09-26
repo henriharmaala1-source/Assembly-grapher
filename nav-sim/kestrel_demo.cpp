@@ -484,8 +484,9 @@ cv::Mat syntheticColour(int w, int h) {
 // configured from THIS camera, plus the bearing field), placed by the pose
 // source the demo was given, with the image the depth was measured in kept
 // for the detector.
-// The live camera's map cells -- see LiveCamera::step.
-constexpr float kLiveCellM = 0.10f;
+// The live camera's map cells -- see LiveCamera::step: 5 cm near, 10 cm past
+// the near rung's honest range, the far tier's bearings beyond.
+constexpr float kLiveCellM = 0.10f, kNearCellM = 0.05f;
 
 class LiveCamera {
 public:
@@ -498,7 +499,7 @@ public:
             // or people are off. It is refused quietly if the link cannot
             // carry it -- depth is never the price.
             const bool rgb = o.eyes == Options::AUTO || o.eyes == Options::COLOUR;
-            src_ = sim::makeLiveSource(o.camW, o.camH, o.camFps, o.emitter, &err,
+            src_ = sim::makeLiveSource(o.depthW, o.depthH, o.camFps, o.emitter, &err,
                                        o.emitter && track, poseMode_ == sim::PoseMode::Slam,
                                        rgb);
             note_ = src_ ? "RealSense" : ("no live camera: " + err);
@@ -573,10 +574,19 @@ public:
             sim::NavPipelineParams np;
             np.cell = kLiveCellM;
             nav_.init(src_->camera(), np, pose);
+            // THE NEAR RUNG: 5 cm cells out to where 5 cm can honestly be
+            // marked (sqrt of the cell: ~1.6 m at 848x480) -- a hand, a
+            // chair leg, the edge of a desk. Free space is carved only a
+            // little past that: this rung says nothing further out, and
+            // carving 25 m in 5 cm steps would cost the frame rate for it.
+            nearP_ = sim::fineMapParams(src_->camera(), kNearCellM, 2);
+            nearP_.maxCarveM = nearP_.maxIntegM + 1.f;
+            near_.init(nearP_, pose.e, pose.n, pose.u);
             origin_ = pose; lastEst_ = pose;
             inited_ = true;
         }
         nav_.step(depth, pose);
+        near_.integrate(depth, src_->camera(), pose);
         int valid = 0;
         for (int y = 0; y < depth.rows; ++y) {
             const float* r = depth.ptr<float>(y);
@@ -599,7 +609,18 @@ public:
         if (fpv_.empty() || now - lastFpv_ > std::chrono::milliseconds(100)) {
             const float hf = src_->camera().params().hfovDeg;
             const int fw = 640, fh = 640 * depth.rows / std::max(1, depth.cols);
-            fpv_ = nav_.renderFpv(pose, fw, fh, hf);
+            // THE LADDER: near rung, then the pipeline's map, then the far
+            // tier's bearings -- navcore's first-person render, one copy.
+            const float nearEnd = nearP_.maxIntegM, mainEnd = nav_.mapParams().maxIntegM;
+            std::vector<sim::VoxelMap::Layer> ladder;
+            if (nearEnd < mainEnd) {
+                ladder.push_back({&near_, 0.f, nearEnd});
+                ladder.push_back({&nav_.map(), nearEnd, mainEnd});
+            } else {
+                ladder.push_back({&nav_.map(), 0.f, mainEnd});
+            }
+            fpv_ = sim::NavPipeline::renderFpv(ladder, mainEnd, nav_.field(),
+                                               nav_.params().farRangeM, pose, fw, fh, hf);
             lastFpv_ = now;
         }
         f.mapFpv = fpv_;
@@ -618,6 +639,8 @@ private:
     sim::CamPose origin_, lastEst_;
     std::chrono::steady_clock::time_point t0_, lastFpv_;
     cv::Mat fpv_;
+    sim::VoxelMapParams nearP_;
+    sim::VoxelMap near_;                   // the 5 cm rung (display)
 };
 
 // ------------------------------------------------------------ the showcase
@@ -1052,7 +1075,7 @@ int shotShowcase(const Options& o, const std::string& prefix) {
                                                     cf.validFrac * 100.f);
             row.depthWarn = false;
             row.fpv = cf.mapFpv;
-            row.fpvSub = cv::format("%.2f m cells  ", kLiveCellM) + cf.poseNote;
+            row.fpvSub = cv::format("5 cm near, %.0f cm on  ", kLiveCellM * 100.f) + cf.poseNote;
             row.fpvWarn = !cf.poseOk;
             if (!cf.colour.empty()) {
                 peopleIn = cf.colour; peopleDepth = cf.depthRaw;
@@ -1077,8 +1100,8 @@ int shotShowcase(const Options& o, const std::string& prefix) {
     composeShow(canvas, L, p, row, "the aircraft's own autonomy, flying a simulated " + fp.world);
     int n = 0;
     const std::pair<const char*, const cv::Mat*> out[] = {
-        {"flight", &p.chase}, {"depth", &p.depth},
-        {"voxel", &p.fpv}, {"humans", &row.people}, {"window", &canvas}};
+        {"flight", &p.chase}, {"depth", &row.depth},
+        {"voxel", &row.fpv}, {"humans", &row.people}, {"window", &canvas}};
     for (const auto& q : out) n += cv::imwrite(prefix + "_" + q.first + ".png", *q.second) ? 1 : 0;
     const kshow::FlightStats& st = f.stats();
     std::printf("[demo shot] %s, %.0f s flown by the aircraft's own stack: %.1f m, %d legs, "
@@ -1462,7 +1485,7 @@ int runShowcase(const Options& o) {
                                                         cf.validFrac * 100.f);
                 row.depthWarn = false;
                 row.fpv = cf.mapFpv;
-                row.fpvSub = cv::format("%.2f m cells  ", kLiveCellM) + cf.poseNote;
+                row.fpvSub = cv::format("5 cm near, %.0f cm on  ", kLiveCellM * 100.f) + cf.poseNote;
                 row.fpvWarn = !cf.poseOk;
             }
             row.people = ppl.image;

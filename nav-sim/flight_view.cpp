@@ -249,11 +249,13 @@ void drawRibbon(cv::Mat& im, const sim::CamPose& eye, float hfov, const cv::Mat&
     const float dx = b[0] - a[0], dy = b[1] - a[1];
     const float len = std::sqrt(dx * dx + dy * dy);
     if (len < 1e-3f) return;
-    const float fx = dx / len, fy = dy / len, z = b[2] - drop, w = halfW * 1.9f;
+    // The head scales with the ribbon: twice its width across, four long.
+    const float fx = dx / len, fy = dy / len, z = b[2] - drop, w = halfW * 2.f;
+    const float tip = halfW * 4.f;
     const cv::Point3f c[4] = {{b[0] - fy * w, b[1] + fx * w, z},
                               {b[0] + fy * w, b[1] - fx * w, z},
-                              {b[0] + fx * 0.55f, b[1] + fy * 0.55f, z},
-                              {b[0] + fx * 0.55f, b[1] + fy * 0.55f, z}};
+                              {b[0] + fx * tip, b[1] + fy * tip, z},
+                              {b[0] + fx * tip, b[1] + fy * tip, z}};
     quad(c, 1.0);
 }
 
@@ -647,7 +649,7 @@ cv::Mat FlightView::fpv(const ShowSnap& s, int w, int h) const {
         const std::vector<std::array<float, 3>> path{
             {0.f, 0.f, 0.f}, {std::sin(br) * r.freeM, std::cos(br) * r.freeM, 0.f}};
         drawRibbon(view, eye, fov, hitDist, path, cv::Scalar(60, 60 + 170 * q, 230 - 180 * q),
-                   0.05f, 0.6, false, drop);
+                   0.03f, 0.6, false, drop);
     }
     std::vector<std::array<float, 3>> leg;
     if (s.phase == "MOVE" && !s.legs.empty()) {
@@ -660,7 +662,7 @@ cv::Mat FlightView::fpv(const ShowSnap& s, int w, int h) const {
         leg = {{0.f, 0.f, 0.f}, {std::sin(br) * best->freeM, std::cos(br) * best->freeM, 0.f}};
     }
     if (!leg.empty())
-        drawRibbon(view, eye, fov, hitDist, leg, cv::Scalar(255, 110, 40), 0.22f, 0.95, true, drop);
+        drawRibbon(view, eye, fov, hitDist, leg, cv::Scalar(255, 110, 40), 0.08f, 0.95, true, drop);
     label(view, cv::format("%d frames   voxels over the camera image", s.mapFrames),
           {10, 22}, 0.45, kInk, 1);
     label(view, "legs laid 0.6 m below the eye", {10, h - 12}, 0.42, kDim, 1);

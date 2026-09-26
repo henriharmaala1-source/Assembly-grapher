@@ -702,13 +702,13 @@ private:
         int k = 0;
         for (size_t i = 0; i < nc; i += stride, ++k)
             ribbon(cands_[i], (k % 2) ? cv::Scalar(150, 70, 110) : cv::Scalar(60, 60, 200),
-                   0.12f, 0.55, false);
+                   0.04f, 0.55, false);
         if (plan_.blocked || chosen_.size() < 2) {
             txt(im, "planner: BLOCKED -- nothing clears the airframe, it would hold",
                 10, im.rows - 14, 0.5, cv::Scalar(80, 80, 240), 1);
             return;
         }
-        ribbon(chosen_, cv::Scalar(255, 110, 40), 0.25f, 0.95, true);
+        ribbon(chosen_, cv::Scalar(255, 110, 40), 0.08f, 0.95, true);
         txt(im, cv::format("planner: %03.0f deg  %+.0f up   %.1f m confirmed free", plan_.azDeg,
                            plan_.elDeg, plan_.freeM),
             10, im.rows - 34, 0.5, cv::Scalar(255, 170, 90), 1);

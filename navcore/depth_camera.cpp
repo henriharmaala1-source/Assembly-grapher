@@ -1,5 +1,7 @@
 #include "depth_camera.hpp"
 
+#include <opencv2/core/utility.hpp>
+
 #include <cstdlib>
 #include <cmath>
 #include <cstdint>
@@ -99,9 +101,15 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
 
     // PASS 1: geometry. Raycast every pixel, keep the range and the surface's
     // own texture. No dropout decisions yet -- they need the neighbourhood.
+    //
+    // ACROSS CORES: rows are independent and nothing here draws from the
+    // generator, so the result is identical to the serial loop -- only the
+    // passes that call urand() (3 onward) must stay in order. This pass is
+    // nearly all of the cost: ~190 ms at 848x480 on one core.
     cv::Mat raw(p_.height, p_.width, CV_32F, cv::Scalar(-1.f));
     cv::Mat texM(p_.height, p_.width, CV_32F, cv::Scalar(0.f));
-    for (int v = 0; v < p_.height; ++v) {
+    cv::parallel_for_(cv::Range(0, p_.height), [&](const cv::Range& rows) {
+    for (int v = rows.start; v < rows.end; ++v) {
         float* rr = raw.ptr<float>(v);
         float* tr = texM.ptr<float>(v);
         for (int u = 0; u < p_.width; ++u) {
@@ -114,6 +122,7 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
             rr[u] = t; tr[u] = tex;
         }
     }
+    });
 
     // PASS 1b: OCCLUSION SHADOW. A pixel is visible to the left imager but
     // hidden from the right whenever some pixel FURTHER RIGHT maps to the same
@@ -155,7 +164,9 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
     if (p_.edgeWinPx > 0 && p_.edgeBoost > 0.f) {
         cv::Mat boosted = texM.clone();
         const int W = p_.edgeWinPx;
-        for (int v = 0; v < p_.height; ++v)
+        // Pure per pixel (reads raw/texM, writes only boosted): across cores.
+        cv::parallel_for_(cv::Range(0, p_.height), [&](const cv::Range& rows) {
+        for (int v = rows.start; v < rows.end; ++v)
             for (int u = 0; u < p_.width; ++u) {
                 if (!(raw.at<float>(v, u) > 0)) continue;
                 float lo = 1e9f, hi = -1e9f;
@@ -174,6 +185,7 @@ cv::Mat DepthCamera::renderStereo(const VoxelWorld& w, const CamPose& pose,
                 if (sawSky || (hi - lo) > p_.edgeDepthM)
                     boosted.at<float>(v, u) = std::max(texM.at<float>(v, u), p_.edgeBoost);
             }
+        });
         texM = boosted;
     }
 

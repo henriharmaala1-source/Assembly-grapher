@@ -484,6 +484,9 @@ cv::Mat syntheticColour(int w, int h) {
 // configured from THIS camera, plus the bearing field), placed by the pose
 // source the demo was given, with the image the depth was measured in kept
 // for the detector.
+// The live camera's map cells -- see LiveCamera::step.
+constexpr float kLiveCellM = 0.10f;
+
 class LiveCamera {
 public:
     LiveCamera(const Options& o, int iw, int ih) : o_(o), iw_(iw), ih_(ih) {
@@ -560,7 +563,16 @@ public:
             f.poseOk = true;
         }
         if (!inited_) {
-            nav_.init(src_->camera(), sim::NavPipelineParams(), pose);
+            // 0.10 m CELLS FOR THE DESK. The aircraft maps at 0.25 m, which
+            // is right for flying through rooms and reads as a few big blocks
+            // when the camera is pointed round a room from a desk (seen on
+            // the first run with a real D435i). Same pipeline, finer cells;
+            // the honest marking range shrinks with them (sqrt of the cell,
+            // ~2.2 m at 848x480), which is the right trade up close. The
+            // caption says which.
+            sim::NavPipelineParams np;
+            np.cell = kLiveCellM;
+            nav_.init(src_->camera(), np, pose);
             origin_ = pose; lastEst_ = pose;
             inited_ = true;
         }
@@ -580,10 +592,17 @@ public:
         cv::Mat ir;
         if (src_->intensity(ir) && !ir.empty()) cv::cvtColor(ir, f.colour, cv::COLOR_GRAY2BGR);
         src_->colour(f.rgb, f.rgbRange);
-        const float hf = src_->camera().params().hfovDeg;
-        f.mapFpv = letterbox(nav_.renderFpv(pose, 320, 320 * depth.rows / std::max(1, depth.cols),
-                                            hf),
-                             iw_, ih_);
+        // THE FIRST-PERSON MAP at a real resolution (it was 320 px wide and
+        // scaled up: blocks on blocks), redrawn at most 10 times a second --
+        // every frame still goes INTO the map.
+        const auto now = std::chrono::steady_clock::now();
+        if (fpv_.empty() || now - lastFpv_ > std::chrono::milliseconds(100)) {
+            const float hf = src_->camera().params().hfovDeg;
+            const int fw = 640, fh = 640 * depth.rows / std::max(1, depth.cols);
+            fpv_ = nav_.renderFpv(pose, fw, fh, hf);
+            lastFpv_ = now;
+        }
+        f.mapFpv = fpv_;
         return true;
     }
 
@@ -597,7 +616,8 @@ private:
     sim::NavPipeline nav_;
     bool inited_ = false;
     sim::CamPose origin_, lastEst_;
-    std::chrono::steady_clock::time_point t0_;
+    std::chrono::steady_clock::time_point t0_, lastFpv_;
+    cv::Mat fpv_;
 };
 
 // ------------------------------------------------------------ the showcase
@@ -617,6 +637,7 @@ private:
 // one, the flight's own simulated D435i. Every caption says which.
 // The window is data, so `check` can assert it with no display.
 struct ShowLayout {
+    int      unit = 0;             // the small panes' width it was built for
     cv::Size canvas;
     cv::Rect chase, depth, fpv, people;
     cv::Rect strip;
@@ -625,6 +646,7 @@ struct ShowLayout {
 // `u` is one small pane's width; the small panes are 16:9.
 ShowLayout showLayoutFor(int u) {
     ShowLayout L;
+    L.unit = u;
     const int PAD = 8, TOP = 44;
     const int sh = u * 9 / 16;
     // The flight across the whole width, as tall as a 16:9 picture two panes
@@ -644,6 +666,20 @@ ShowLayout showLayoutFor(int u) {
 // (480) makes a 1232 x 875 window -- a 1080p laptop screen with room to spare.
 int showUnit(int paneW) { return std::max(240, paneW * 5 / 6); }
 
+// THE LARGEST LAYOUT THAT FITS a window of `room` pixels, so a maximised or
+// full-screen window is drawn at its size instead of a small picture on grey.
+// Capped: every pixel of the flight picture is a ray cast on the CPU, and past
+// ~640 the window is better served by highgui scaling the image up.
+int showUnitFor(const cv::Size& room) {
+    int u = 640;
+    while (u > 240) {
+        const cv::Size c = showLayoutFor(u).canvas;
+        if (c.width <= room.width && c.height <= room.height) break;
+        u -= 8;
+    }
+    return u;
+}
+
 cv::Size imgSize(const cv::Rect& r) { return {r.width, r.height - CAPTION_H}; }
 
 // The minimap inset in the flight pane: a square, top right -- dropped below
@@ -655,6 +691,7 @@ cv::Rect minimapRect(const cv::Size& img) {
 }
 
 struct ShowPanes {
+    int     unit = 0;              // the layout they were drawn for
     cv::Mat chase, minimap, depth, fpv, cam;
     kshow::ShowSnap snap;          // what they were drawn from (numbers only)
 };
@@ -662,6 +699,7 @@ struct ShowPanes {
 ShowPanes renderShow(kshow::FlightView& v, const kshow::ShowSnap& s, const ShowLayout& L) {
     v.update(s);
     ShowPanes p;
+    p.unit = L.unit;
     // SEQUENTIAL ON PURPOSE. The chase view already spreads across cores
     // (renderFootage's parallel_for); rendering the small pictures on a second
     // thread beside it was measured SLOWER on a 4-core machine -- 3.8 fps
@@ -761,7 +799,7 @@ void composeShow(cv::Mat& canvas, const ShowLayout& L, const ShowPanes& p,
     const kshow::FlightStats& st = s.stats;
     txt(canvas,
         cv::format("%s  map %d   |   t %02d:%02d   flown %.0f m   %d m from start   "
-                   "stops %d   collisions %d   |   [q] quit   [r] next map",
+                   "stops %d   collisions %d   |   [q] quit  [r] next map  [f] full screen",
                    s.worldName.c_str(), s.mapNo + 1, int(st.timeS) / 60, int(st.timeS) % 60,
                    st.travelM, int(st.netM), st.stops, st.collisions),
         L.strip.x + 4, L.strip.y + 18, 0.44, DIM, 1);
@@ -940,6 +978,15 @@ int check() {
             fail(cv::format("showcase window %d px tall at the default pane: taller than a "
                             "1080p screen leaves room for", S.canvas.height));
     }
+    // A RESIZED WINDOW gets the largest layout that fits it -- at the common
+    // screens, fitted, and never bigger than the window it is for.
+    for (const cv::Size room : {cv::Size(1280, 720), cv::Size(1600, 900), cv::Size(1920, 1080),
+                                cv::Size(2560, 1440), cv::Size(1024, 700)}) {
+        const cv::Size c = showLayoutFor(showUnitFor(room)).canvas;
+        if (showUnitFor(room) > 240 && (c.width > room.width || c.height > room.height))
+            fail(cv::format("fitted layout %dx%d overflows a %dx%d window", c.width, c.height,
+                            room.width, room.height));
+    }
     const char* showCaps[] = {"THE AIRCRAFT'S OWN AUTONOMY, FLYING",
                               "LIVE DEPTH", "LIVE VOXEL -- first person", "HUMANS"};
     for (const char* c : showCaps) {
@@ -1005,7 +1052,7 @@ int shotShowcase(const Options& o, const std::string& prefix) {
                                                     cf.validFrac * 100.f);
             row.depthWarn = false;
             row.fpv = cf.mapFpv;
-            row.fpvSub = cf.poseNote;
+            row.fpvSub = cv::format("%.2f m cells  ", kLiveCellM) + cf.poseNote;
             row.fpvWarn = !cf.poseOk;
             if (!cf.colour.empty()) {
                 peopleIn = cf.colour; peopleDepth = cf.depthRaw;
@@ -1217,6 +1264,8 @@ cv::Mat matFrom(const std::vector<uint8_t>& v, int w, int h) {
 int runShowcase(const Options& o) {
     const ShowLayout L = showLayoutFor(showUnit(o.paneW));
     std::atomic<bool> stop{false}, nextMap{false};
+    // The layout the render thread draws for: follows the window's size.
+    std::atomic<int> unit{L.unit};
 
     Slot<kshow::ShowSnap> snapSlot;
     std::thread flight([&] {
@@ -1271,7 +1320,7 @@ int runShowcase(const Options& o) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
             }
-            paneSlot.publish(renderShow(view, s, L));
+            paneSlot.publish(renderShow(view, s, showLayoutFor(unit.load())));
         }
     });
 
@@ -1370,7 +1419,11 @@ int runShowcase(const Options& o) {
     });
 
     const char* WIN = "kestrel demo";
-    cv::namedWindow(WIN, cv::WINDOW_AUTOSIZE);
+    // RESIZABLE, and [f] for full screen. AUTOSIZE pinned the window to the
+    // canvas: maximising it only added grey round a fixed picture.
+    cv::namedWindow(WIN, cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+    cv::resizeWindow(WIN, L.canvas.width, L.canvas.height);
+    bool fullScreen = false;
     ShowPanes panes;
     CameraFrame cf;
     Seen ppl;
@@ -1399,7 +1452,7 @@ int runShowcase(const Options& o) {
             tLog = std::chrono::steady_clock::now();
         }
         if (panes.chase.empty()) {
-            canvas = cv::Mat(L.canvas, CV_8UC3, BG);
+            canvas = cv::Mat(showLayoutFor(unit.load()).canvas, CV_8UC3, BG);
             drawHeader(canvas, "kestrel demo", "building the world...");
         } else {
             LiveRow row = simRow(panes);
@@ -1409,7 +1462,7 @@ int runShowcase(const Options& o) {
                                                         cf.validFrac * 100.f);
                 row.depthWarn = false;
                 row.fpv = cf.mapFpv;
-                row.fpvSub = cf.poseNote;
+                row.fpvSub = cv::format("%.2f m cells  ", kLiveCellM) + cf.poseNote;
                 row.fpvWarn = !cf.poseOk;
             }
             row.people = ppl.image;
@@ -1418,12 +1471,28 @@ int runShowcase(const Options& o) {
             const std::string note = "the aircraft's own autonomy, flying a simulated " +
                                      panes.snap.worldName +
                                      (live.ok() ? "   |   camera row: " + camName : "");
-            composeShow(canvas, L, panes, row, note);
+            composeShow(canvas, showLayoutFor(panes.unit > 0 ? panes.unit : L.unit), panes, row,
+                        note);
         }
         cv::imshow(WIN, canvas);
         const int k = cv::waitKey(15);
         if (k == 'q' || k == 27) break;
         if (k == 'r' || k == 'R') nextMap.store(true);
+        if (k == 'f' || k == 'F') {
+            fullScreen = !fullScreen;
+            cv::setWindowProperty(WIN, cv::WND_PROP_FULLSCREEN,
+                                  fullScreen ? cv::WINDOW_FULLSCREEN : cv::WINDOW_NORMAL);
+        }
+        // FOLLOW THE WINDOW: lay the panes out for the size it now is.
+        try {
+            const cv::Rect r = cv::getWindowImageRect(WIN);
+            if (r.width > 200 && r.height > 200) {
+                const int u = showUnitFor(r.size());
+                if (std::abs(u - unit.load()) >= 16) unit.store(u);
+            }
+        } catch (const cv::Exception&) {
+            // A highgui backend without window geometry keeps the layout.
+        }
     }
     stop.store(true);
     flight.join();

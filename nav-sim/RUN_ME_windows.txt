@@ -346,6 +346,8 @@ columns as the classical ones, on seeds it never trained on.
                      link cannot carry the colour stream it is dropped, the
                      depth is kept, and people fall back to the IR image.
                      Every 30 s it prints how well your machine keeps up.
+                     The window resizes -- the panes are laid out again
+                     for its size -- and f toggles full screen.
 
                      IT RUNS UNTIL YOU CLOSE IT. The default, --world tour,
                      flies the two worlds below in turn -- gallery, hall,

@@ -1,0 +1,11 @@
+# Android / Gradle build artifacts
+.gradle/
+build/
+*/build/
+local.properties
+.cxx/
+*.iml
+.idea/
+
+# The MiDaS model is fetched separately (see README), not committed.
+app/src/main/assets/*.tflite

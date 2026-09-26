@@ -1,0 +1,236 @@
+#pragma once
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <opencv2/core.hpp>
+
+#include "depth_camera.hpp"
+#include "depth_record.hpp"
+#include "voxel_world.hpp"
+
+// ---------------------------------------------------------------------------
+// Where depth frames come from. One seam, three implementations, and the point
+// is that everything downstream cannot tell them apart.
+//
+// The pipeline in voxel_gui/voxel_sim is four lines:
+//
+//     cv::Mat d = cam.renderStereo(world, pose);     <- ONLY this is synthetic
+//     map.integrate(d, cam, pose);
+//     map.recentre(...);
+//     planner.plan(map, ...);
+//
+// Everything after line 1 -- the three-state occupancy rules, the carve limits,
+// the swept-volume test, the trajectory library -- is arithmetic that behaves
+// identically on a desktop and on the aircraft. So the honest way to point this
+// stack at a real camera is not to write a second stack: it is to replace line
+// 1 and change nothing else. Then a bug seen on real data is a bug in the code
+// that would fly, not in a demo built alongside it.
+//
+// THE THREE SOURCES, and why each earns its place:
+//
+//   SIM       the existing raycaster. Ground truth is available, so it is the
+//             only one that can say whether the MAP is wrong rather than just
+//             surprising.
+//   REPLAY    a .kdr recording. Deterministic, repeatable, needs no camera and
+//             no aircraft -- and it is what turns a walk in a forest into a
+//             measurement you can re-run after changing a threshold.
+//   LIVE      librealsense. Compiled only when the SDK is present, so the tree
+//             still builds for everyone else.
+//
+// POSE IS NOT SOLVED HERE, and pretending otherwise would be the whole
+// project's worst possible bug. A depth frame without a pose cannot be
+// integrated into a world-anchored map; the sim has perfect pose by
+// construction and a real camera has none. Sources expose what they know
+// (nothing, for a bare recording) and the CALLER decides -- fixed pose,
+// IMU-derived attitude, or eventually odometry. See PoseHint.
+// ---------------------------------------------------------------------------
+
+namespace sim {
+
+// What a source can say about where the camera was. `valid` false means the
+// caller must supply a pose itself; it does NOT mean the origin.
+// One raw inertial sample, device clock, in the depth (left IR) camera's axes:
+// librealsense rotates D435i motion data into that frame.
+struct ImuRaw {
+    double tS = 0;
+    bool   gyro = false;          // rad/s if true, else m/s^2
+    float  x = 0, y = 0, z = 0;
+};
+
+struct PoseHint {
+    bool  valid = false;
+    bool  attitudeOnly = false;   // orientation known, translation is not
+    CamPose pose;
+};
+
+class FrameSource {
+public:
+    virtual ~FrameSource() = default;
+
+    virtual const char* name() const = 0;
+    virtual bool ok() const = 0;
+    virtual const CamParams& params() const = 0;
+
+    // The camera model matching this source's frames -- the rays the mapper
+    // must carve along. For SIM this is the camera that rendered them; for
+    // REPLAY it is rebuilt from the recording's stored intrinsics; for LIVE
+    // from the device's own.
+    virtual const DepthCamera& camera() const = 0;
+
+    // Next depth frame, CV_32F metres, <=0 invalid. `hint` receives whatever
+    // the source knows about pose. Returns false at end of stream or on error.
+    virtual bool next(cv::Mat& depth, PoseHint& hint) = 0;
+
+    // THE IMAGE THE DEPTH WAS COMPUTED IN, when the source has one. On a
+    // RealSense that is the LEFT infrared imager -- the same sensor the
+    // disparity is measured in, so it is registered with the depth by
+    // construction: pixel (u,v) here and pixel (u,v) in the depth frame are
+    // the same ray, with no alignment step and nothing to calibrate.
+    //
+    // That is the whole reason this is on the interface rather than being a
+    // colour stream added beside it. A box found in a colour image has to be
+    // warped into the depth frame before its distance can be read, and the
+    // warp needs an extrinsic nobody here has measured; a box found in THIS
+    // image can be looked up directly. `demo` uses it for exactly that.
+    //
+    // CV_8U, one channel, the same size as the depth frame. False means this
+    // source has no such image, which is not an error -- the sim renders depth
+    // without ever forming one.
+    virtual bool intensity(cv::Mat& out) const { (void)out; return false; }
+
+    // Was the IR projector lit in that image, per the device's metadata? 1 yes,
+    // 0 no, -1 unknown. INFORMATIONAL: the polarity has been reported inverted
+    // under the strobe, so trackers decide with DarkFrameGate
+    // (emitter_gate.hpp), from the image.
+    virtual int  intensityEmitter() const { return -1; }
+
+    // THE STEREO PAIR, for a stereo SLAM (onboard/orbslam): the RIGHT IR image
+    // of the pair intensity() is the left of, rectified with it, and the
+    // pair's device time in seconds (the IMU samples' clock). False / < 0 for
+    // a source that has no right image.
+    virtual bool   intensityRight(cv::Mat& out) const { (void)out; return false; }
+    virtual double intensityTimeS() const { return -1.0; }
+    // Left -> right distance of that pair, metres (the device's calibration
+    // when it reports one).
+    virtual float  stereoBaselineM() const { return params().baselineM; }
+    // Raw IMU samples since the last call (appended to `out` after clearing
+    // it), for a consumer that integrates them itself. Empty if none.
+    virtual void   takeImu(std::vector<ImuRaw>& out) { out.clear(); }
+
+    // THE COLOUR CAMERA, for a person detector: the RGB image (CV_8UC3 BGR),
+    // and beside it the depth frame's RANGES re-projected into it (CV_32F
+    // metres, <= 0 where no depth landed) through the device's own depth ->
+    // colour calibration -- so a box found in colour reads a measured range,
+    // not one guessed from how tall it looks. False: no colour stream.
+    virtual bool colour(cv::Mat& bgr, cv::Mat& rangeM) const {
+        (void)bgr; (void)rangeM; return false;
+    }
+
+    // Frames available, or -1 for an open-ended stream (live).
+    virtual int  frameCount() const { return -1; }
+    virtual int  index() const { return 0; }
+    virtual bool seek(int) { return false; }
+};
+
+// --- synthetic ------------------------------------------------------------
+// Wraps the raycaster. The pose is supplied by the caller each frame, because
+// in the sim the vehicle state IS the pose and the source has no opinion.
+class SimFrameSource : public FrameSource {
+public:
+    SimFrameSource(const VoxelWorld& w, const CamParams& p, bool truth)
+        : w_(w), cam_(p), truth_(truth) {}
+
+    const char* name() const override { return truth_ ? "sim-truth" : "sim-stereo"; }
+    bool ok() const override { return true; }
+    const CamParams& params() const override { return cam_.params(); }
+    const DepthCamera& camera() const override { return cam_; }
+
+    void setPose(const CamPose& p) { pose_ = p; }
+    bool next(cv::Mat& depth, PoseHint& hint) override;
+
+    // OPT-IN infrared, for a visual pose estimator on the desk (VisualPose):
+    // the left IR image and, with `right`, the right one a baseline to its +x,
+    // rendered with navcore's IR model at each next(). Off by default -- it
+    // costs a raycast per pixel per image, and a consumer that reads
+    // intensity() whenever it exists (the demo's person detector) should not
+    // start doing so by accident. `timeS` is the frame time handed to a SLAM.
+    void enableIR(bool right) { irOn_ = true; irRight_ = right; }
+    void setTimeS(double t) { timeS_ = t; }
+    bool   intensity(cv::Mat& out) const override;
+    bool   intensityRight(cv::Mat& out) const override;
+    double intensityTimeS() const override { return irOn_ ? timeS_ : -1.0; }
+
+private:
+    const VoxelWorld& w_;
+    DepthCamera cam_;
+    bool    truth_;
+    CamPose pose_;
+    bool    irOn_ = false, irRight_ = false;
+    double  timeS_ = -1.0;
+    cv::Mat irL_, irR_;
+};
+
+// --- replay ---------------------------------------------------------------
+class ReplayFrameSource : public FrameSource {
+public:
+    bool open(const std::string& path, std::string* err = nullptr);
+
+    const char* name() const override { return "replay"; }
+    bool ok() const override { return rd_.isOpen(); }
+    const CamParams& params() const override { return cam_->params(); }
+    const DepthCamera& camera() const override { return *cam_; }
+
+    bool next(cv::Mat& depth, PoseHint& hint) override;
+    int  frameCount() const override { return rd_.frameCount(); }
+    int  index() const override { return rd_.index(); }
+    bool seek(int i) override { return rd_.readFrame(i, buf_); }
+
+    const DepthRecordHeader& header() const { return rd_.header(); }
+
+private:
+    DepthRecordReader rd_;
+    std::unique_ptr<DepthCamera> cam_;
+    std::vector<float> buf_;
+};
+
+// --- live -----------------------------------------------------------------
+// Declared unconditionally so callers do not need #ifdef; the factory returns
+// null with a message when the SDK was not compiled in.
+// strobe: alternate the emitter every frame (RS2_OPTION_EMITTER_ON_OFF) so
+// that half the IR images are dot-free for VIO; depth from both halves is
+// still delivered. Ignored when `emitter` is false.
+// stereoIr: also stream the RIGHT IR imager (intensityRight()).
+// colour: also stream the RGB camera (640x480), for colour() -- refused
+// quietly (depth kept) if the link will not carry it.
+std::unique_ptr<FrameSource> makeLiveSource(int width, int height, int fps,
+                                            bool emitter, std::string* err,
+                                            bool strobe = false, bool stereoIr = false,
+                                            bool colour = false);
+
+// DEPTH INTO THE COLOUR CAMERA. Every `stride`-th pixel of a Z16 depth image
+// (raw units x `scale` = metres along the optical axis) is lifted to 3D with
+// the depth intrinsics, moved by `depthToColour` (rs2_extrinsics layout:
+// rotation[9] column-major, translation[3] m), and projected with the colour
+// intrinsics; each lands as its RANGE from the colour camera, nearest kept,
+// splatted over the few colour pixels one depth sample covers. Pinhole: lens
+// distortion is ignored (the D435i's RGB is Brown-Conrady with small
+// coefficients -- a pixel or two at the edge, nothing to a person's median
+// range). CV_32F, colourH x colourW, <= 0 where nothing landed.
+// fx,fy,ppx,ppy for each camera, in that order.
+cv::Mat registerDepthToColour(const uint16_t* z16, int w, int h, float scale,
+                              const float depthK[4], const float colourK[4],
+                              int colourW, int colourH, const float depthToColour[12],
+                              int stride = 2);
+
+// Can a live camera be opened RIGHT NOW -- i.e. can librealsense be loaded.
+// A runtime question, deliberately: this binary is built the same way whether
+// or not the SDK is installed, so there is nothing to ask at compile time.
+bool haveLiveSupport();
+
+// Human-readable: the library version and path when available, and the paths
+// that were tried when not.
+std::string liveSupportDetail();
+
+}  // namespace sim

@@ -1,0 +1,184 @@
+# Working notes for this repository
+
+## Every command must be reachable from the window
+
+`kestrel` has a GUI (`nav-sim/kestrel_gui.cpp`) and a CLI, and they are not
+allowed to drift. **When a subcommand is added or gains an option, wire it into
+the window in the same change** — a mode button and a panel for a new command, a
+control for a new flag. A feature that only exists on the command line is only
+half delivered here: the window is what a reviewer double-clicks, and anything
+missing from it is invisible to them.
+
+This is cheap to honour because of how the GUI is built: it does not implement
+anything. It collects settings, prints the exact `kestrel ...` line it is about
+to run along the bottom, and calls the same function the CLI calls. So wiring a
+command in means adding a panel that builds an argument vector — never a second
+implementation that can disagree with the first.
+
+Checklist for a new subcommand:
+
+- `kestrel_gui.hpp` — add it to `kgui::Actions`
+- `kestrel_gui.cpp` — extend `Mode`/`MODE_NAME`, add a `panelX`, add its button
+  ids, and handle it in `buildArgs`, `blocker` and `apply`
+- `kestrel.cpp` — bind the action in `gui()`, and add the subcommand to `main`
+  and to `--help`
+- `RUN_ME_windows.txt` — document it
+- `kestrel gui --check` must still report 0 violations; it walks every mode, so
+  a new panel is covered automatically
+
+## WHAT THE POLICY IS FOR
+
+**The objective is safe travel, as far as possible. It is not goal-finding.**
+
+The simulator has a goal in it, and for a long time everything here was scored
+on reaching one -- goal rate, closing fraction, "still closing when cut off".
+That was the wrong target. The goal is scaffolding: something to give the
+aircraft a direction. What is actually wanted is an aircraft that keeps flying,
+covers ground, and does not hit anything.
+
+So the columns that matter are:
+
+- **metres travelled before a collision ends it** -- the headline number
+- **collision rate** -- a crash is the failure, not a missed goal
+- **cells visited / net displacement** -- against the degenerate solution, which
+  is to circle in a safe clearing forever and bank distance for free
+
+The bar is `freeM`, the classical openness-seeking planner, because it is a
+greedy version of half this objective: it picks the primitive with the longest
+confirmed-free path. It is also, measured properly, the best planner in this
+tree on every column named above -- it flies furthest, ends furthest from its
+spawn, covers the most ground and does not collide.
+
+THAT IS A CORRECTION. This file used to say freeM "buys that safety by
+circling", looping at 29.5x its own displacement and flying 201 m to finish
+6.8 m from where it started, with coverage growing sub-linearly while
+displacement FELL. All of that was a description of a broken collision check
+(see below): with `sphereClear` corrected, freeM loops at 8.0x and finishes
+29.3 m out. The circling was the veto waving through primitives that grazed
+obstacles and walked it into pockets it then had to turn out of.
+
+So quote it honestly. Held-out maze, seeds 101-106 x 2, 3000-step episodes,
+re-measured 2026-09-21 after `sphereClear` was corrected:
+
+| planner | travel | net | cells | loops | crashes | net x cells |
+|---------|--------|-----|-------|-------|---------|-------------|
+| **freeM** | **232.7 m** | **29.3 m** | **156** | 8.0x | **0/12** | **4549** |
+| freeG | 185.3 m | 18.6 m | 120 | 10.0x | 0/12 | 2232 |
+| learned (base3k) | 150.8 m | 18.8 m | 72 | 8.0x | 0/12 | 1365 |
+| novelG | 168.2 m | 19.4 m | 70 | 8.7x | 0/12 | 1360 |
+| cover | 152.5 m | 18.7 m | 56 | 8.1x | 0/12 | 1049 |
+| random | 135.7 m | 15.8 m | 62 | 8.6x | 0/12 | 982 |
+| frontRaw | 138.5 m | 12.5 m | 54 | 11.1x | 2/12 | 674 |
+| score | 27.2 m | 18.4 m | 30 | 1.5x | 10/12 | 555 |
+| goal | 80.2 m | 16.9 m | 22 | 4.8x | 4/12 | 371 |
+| circler | 112.4 m | 9.5 m | 17 | 11.9x | 2/12 | 164 |
+
+### THE LEARNED POLICY DOES NOT BEAT THE BAR. IT DID, AGAINST A BROKEN VETO.
+
+`sphereClear` walked integer cell offsets from the query's own cell and
+compared centre-to-centre distance, so it missed 60 voxels that intersect the
+body and tested that body as if it sat at its cell's centre, up to 0.217 m from
+where it was. Every number this file has ever carried was measured through it.
+Corrected, and everything re-run on the same episodes:
+
+- **Collisions across all ten planners: 48 in 13.7 km became 18 in 16.6 km.**
+  58.1 were expected at the old rate; P(<= 18) = 7.7e-10. This is the largest
+  safety effect ever measured here, and it was a bug in the collision check.
+- **freeM now beats the learned policy by +3382 +/- 1059 on `net x cells`,
+  paired, RESOLVED.** The old table had the policy beating freeM by -892 +/-
+  307. The result did not weaken; it reversed, with significance both times.
+- **The policy is indistinguishable from novelG (-148 +/- 350), cover
+  (-299 +/- 666) and RANDOM (-150 +/- 659).** On this objective, at this
+  sample size, 150k steps of PPO cannot be told apart from a coin flip over
+  the admissible primitives.
+- **novelG's coverage advantage is gone**: 124 cells to 70, composite 2197 to
+  1360. It was the one classical planner with a resolved edge, and the edge was
+  an artefact.
+- The policy itself got slightly worse, 1551 to 1365, and its safety margin
+  vanished because everything is safe now: six of the ten planners collide zero
+  times in twelve episodes.
+
+freeM wins on every column that matters. It flies furthest, ends furthest from
+its spawn, covers the most ground, never collides, and its looping -- the thing
+this file spent months holding against it -- is 8.0x, not 29.5x. The circling
+was the broken veto letting it graze obstacles and walk into pockets it then
+had to turn out of.
+
+### AND THE RETRAIN SETTLED IT: 150k STEPS DOES NOT LEARN THIS TASK
+
+base3k was trained against the broken veto too, so the retrain was the first
+honest experiment. It was run FOUR times on the corrected veto, identical but
+for the seed:
+
+| seed | net | cells | crash | net x cells |
+|------|-----|-------|-------|-------------|
+| 7 | 3.1 m | 14 | 4/12 | **43** |
+| 10 | 8.7 m | 28 | 6/12 | 245 |
+| 8 | 15.7 m | 66 | 2/12 | 1038 |
+| 9 | 22.5 m | 75 | 1/12 | **1696** |
+
+**A 39x spread between seeds.** Mean 756, standard error 380. Against that:
+random is +0.6 se, base3k's 1365 is +1.6 se, freeM's 4549 is **+10.0 se**.
+
+- base3k was a LUCKY DRAW, not a better policy. Same process, sampled once, at
+  the favourable end of its own distribution.
+- The mean is BELOW random.
+- The best of four seeds is still 2.7x below freeM.
+- The learned runs also collide more -- 1, 2, 4 and 6 in 12, where freeM,
+  freeG, cover, novelG and random all collide zero times on the same episodes.
+
+### 3M STEPS DID NOT CLOSE IT, AND THE EVALUATION WAS NEVER LIKE-FOR-LIKE
+
+Seed 7 -- the worst collapse -- rerun at 3,000,000 steps, 20x the budget. The
+collapse modes went away (154 m flown not 71, 7.0x looping not 23.0x) and the
+gap did not: 1453 against freeM's 4571, inside the range the 150k seeds already
+covered. From 250k on the curve is FLAT: mean 943, se 237, **+0.2 se from
+random**. The swing within that one run, 124 at 750k to 1453 at 3M, is the same
+order as the 39x swing across seeds.
+
+**AND EVERY POLICY NUMBER EVER QUOTED HERE WAS SAMPLED.** The classical
+planners are deterministic by construction -- freeM takes an argmax, every time.
+A deployed aircraft would too. Evaluated the same way:
+
+| policy | sampled | deterministic |
+|--------|---------|---------------|
+| base3k | 1365 (0/12 crashes) | **434** (2/6) |
+| 3M seed 7 | 1453 (1/12) | **514** (0/6) |
+| random | 980 | -- |
+
+Sampling is worth ~2x, and it buys it with exploration: coverage halves without
+it. **Deterministically both policies score below RANDOM.** So the original
+claim had three independent defects -- a broken veto, one lucky seed, and an
+evaluation that handed the policy exploration noise its competitor never got.
+Any one would have voided it.
+
+**THE METHODOLOGICAL CONSEQUENCE IS THE LARGER ONE.** Every 150k-step A/B in
+docs/ compared single draws from a distribution with a 39x spread: the five
+reward-term experiments recorded as "five losses", the base3k/far3k/revisit3k
+sweep, and the comparisons called "two structural wins". None had the power to
+detect an effect smaller than their own noise. Before running another one:
+**at least four seeds per arm**, which is 11 minutes a run and was simply never
+done.
+
+Raw: docs/bar10_maze_3000_fixedveto.csv (the ten-planner table),
+docs/retrain_seeds_maze_3000.csv (the four retrains, 48 episodes).
+
+A GOAL-SHAPED REWARD WILL NOT PRODUCE THIS. Progress-to-goal pays for closing
+distance to one point and stops paying when the aircraft is there; it says
+nothing about staying alive or covering ground, and it actively punishes the
+detour that avoids a tree.
+
+## Things that are load-bearing
+
+- **Unknown is not free.** Pale/grey is UNKNOWN everywhere in this tree and is
+  rendered as fog, never as air. A view that makes unknown look empty is a bug.
+- **The window is checkable without a display.** `gui --shot PREFIX` renders
+  every panel to PNG and `gui --check` asserts the layout; `watch --shot FILE`
+  does the same for the live view. Keep that property — it is the only way any
+  of this gets reviewed over ssh or in CI.
+- **Name the interpreter, never "python".** On a machine with several,
+  `pip install` into the wrong one succeeds and the import still fails. Every
+  install line this program prints quotes an absolute `sys.executable`.
+- **Don't put logic inside `#ifdef _WIN32`.** A block the dev machine never
+  compiles is a block that is never checked; gate behaviour at runtime and keep
+  the code compiling everywhere. One-line platform API calls are the exception.

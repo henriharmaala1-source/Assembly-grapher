@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -30,6 +31,7 @@
 // time. That matters for the same reason librealsense is loaded at run time:
 // the machine the demo is shown on is not the machine it was built on.
 #include <opencv2/core/cuda.hpp>
+#include <opencv2/core/ocl.hpp>
 #if KESTREL_HAVE_VIDEOIO
 #include <opencv2/videoio.hpp>
 #endif
@@ -175,9 +177,57 @@ int cudaDevices() {
     catch (const cv::Exception&) { return 0; }
 }
 
-// Returns the label to print. `want` is Options::Cuda.
-std::string applyBackend(void* netv, int want, bool* usedCuda) {
-    *usedCuda = false;
+// THE GPU WITHOUT CUDA. The prebuilt OpenCV has no CUDA but does have OpenCL,
+// and NVIDIA's (and AMD's, and Intel's) driver ships an OpenCL runtime -- so
+// dnn's OpenCL target reaches the same card. A laptop usually shows TWO GPUs,
+// the integrated one first, so the discrete one is chosen by name before
+// OpenCL first initialises (OPENCV_OPENCL_DEVICE is read once, then). Returns
+// the device's name, or "" when there is no usable OpenCL GPU.
+std::string openclGpu() {
+    static std::string name = [] {
+#if KESTREL_HAVE_DNN
+        try {
+            if (!std::getenv("OPENCV_OPENCL_DEVICE")) {
+                std::vector<cv::ocl::PlatformInfo> plats;
+                cv::ocl::getPlatfomsInfo(plats);
+                std::string pick;
+                int rank = 0;                         // NVIDIA > AMD > anything else
+                for (auto& pl : plats)
+                    for (int d = 0; d < pl.deviceNumber(); ++d) {
+                        cv::ocl::Device dev;
+                        pl.getDevice(dev, d);
+                        if (dev.type() != cv::ocl::Device::TYPE_GPU &&
+                            dev.type() != cv::ocl::Device::TYPE_DGPU) continue;
+                        const int r = dev.isNVidia() ? 3 : dev.isAMD() ? 2 : 1;
+                        if (r > rank) { rank = r; pick = pl.name() + ":GPU:" + dev.name(); }
+                    }
+                if (pick.empty()) return std::string();
+#ifdef _WIN32
+                _putenv_s("OPENCV_OPENCL_DEVICE", pick.c_str());
+#else
+                setenv("OPENCV_OPENCL_DEVICE", pick.c_str(), 0);
+#endif
+            }
+            cv::ocl::setUseOpenCL(true);
+            if (!cv::ocl::haveOpenCL() || !cv::ocl::useOpenCL()) return std::string();
+            const cv::ocl::Device& d = cv::ocl::Device::getDefault();
+            if (!d.available() || (d.type() & cv::ocl::Device::TYPE_GPU) == 0) return std::string();
+            return d.name();
+        } catch (const cv::Exception&) { return std::string(); }
+#else
+        return std::string();
+#endif
+    }();
+    return name;
+}
+
+// Can --cuda be honoured at all: a CUDA device, or failing that an OpenCL GPU.
+bool gpuAvailable() { return cudaDevices() > 0 || !openclGpu().empty(); }
+
+// Returns the label to print. `want` is Options::Cuda. *onGpu: the net was
+// put on a GPU (CUDA or OpenCL).
+std::string applyBackend(void* netv, int want, bool* onGpu) {
+    *onGpu = false;
 #if KESTREL_HAVE_DNN
     cv::dnn::Net& net = *static_cast<cv::dnn::Net*>(netv);
     if (want == Options::CUDA_OFF) {
@@ -192,10 +242,28 @@ std::string applyBackend(void* netv, int want, bool* usedCuda) {
             // FP16 is not free accuracy-wise and this is a detector and a
             // policy, not a benchmark, so the default target is the plain one.
             net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
-            *usedCuda = true;
+            *onGpu = true;
             return cv::format("cuda (%d device%s)", n, n == 1 ? "" : "s");
         } catch (const cv::Exception& e) {
             return std::string("cpu (cuda refused: ") + e.what() + ")";
+        }
+    }
+    // OpenCL only when the GPU was ASKED for: its first frames compile kernels
+    // (a second or two), and on a small net it is not always faster, so the
+    // default stays the CPU and the pane says which it got.
+    if (want == Options::CUDA_ON) {
+        const std::string g = openclGpu();
+        if (!g.empty()) {
+            try {
+                net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+                net.setPreferableTarget(cv::dnn::DNN_TARGET_OPENCL);
+                *onGpu = true;
+                return "gpu via opencl (" + g + ")";
+            } catch (const cv::Exception& e) {
+                net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+                net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+                return std::string("cpu (opencl refused: ") + e.what() + ")";
+            }
         }
     }
     net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
@@ -1005,14 +1073,13 @@ bool parse(const std::vector<std::string>& args, Options& o, std::string& err) {
     // machine with no device is how a rehearsal becomes a surprise, so it is
     // refused here rather than noted on a pane an hour later. AUTO is the
     // default precisely so this is opt-in.
-    if (o.cuda == Options::CUDA_ON && cudaDevices() <= 0) {
+    if (o.cuda == Options::CUDA_ON && !gpuAvailable()) {
         err = opencvHasCuda()
-            ? "--cuda: no CUDA device visible to OpenCV. Drop the flag to run on "
-              "the CPU, or --no-cuda to say so deliberately."
-            : "--cuda: this build's OpenCV was compiled WITHOUT CUDA (the official "
-              "prebuilt release is), so no GPU can be used by it. The networks run "
-              "on the CPU; drop the flag. (What costs the most here -- mapping and "
-              "the ray-cast views -- is CPU code either way.)";
+            ? "--cuda: no CUDA device visible to OpenCV, and no OpenCL GPU either. "
+              "Drop the flag to run on the CPU, or --no-cuda to say so deliberately."
+            : "--cuda: this build's OpenCV has no CUDA (the official prebuilt release "
+              "does not), and no OpenCL GPU was found to use instead -- is the GPU "
+              "driver installed? Drop the flag to run on the CPU.";
         return false;
     }
     // A MISTYPED WORLD IS SILENTLY A FOREST. VoxelEnv::reset falls through to

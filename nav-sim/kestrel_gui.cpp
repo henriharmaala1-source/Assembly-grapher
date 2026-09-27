@@ -1023,9 +1023,9 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
     // sim's depth renderer: that has its own build switch guarding a kernel
     // its own header says has never been compiled or run.
     bs.push_back({cv::Rect(x, 428, 250, 36),
-                  c.dCuda == 1 ? "cuda: required"
-                : c.dCuda == 2 ? "cuda: off"
-                               : "cuda: if present",
+                  c.dCuda == 1 ? "gpu: required"
+                : c.dCuda == 2 ? "gpu: off"
+                               : "gpu: cuda if present",
                   ID_D_CUDA, c.dCuda != 0});
     bs.push_back({cv::Rect(x + 260, 428, 250, 36), "Write the panes as PNG",
                   ID_D_SHOT, false});
@@ -1051,7 +1051,7 @@ void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
 
     // BELOW the buttons, not beside them: at x+520 four lines of this length
     // ran 200 px off a 1060 px canvas, and gui --check caught it.
-    txt(im, "cuda moves the POLICY and YOLOX onto the GPU; HOG has no GPU path.", x, 541, 0.42, DIM);
+    txt(im, "gpu: POLICY and YOLOX on CUDA, or OpenCL on this OpenCV; HOG stays on cpu.", x, 541, 0.42, DIM);
 
     if (c.dSource == 1) {
         txt(im, "librealsense loads at RUN time; with no camera the two live panes "

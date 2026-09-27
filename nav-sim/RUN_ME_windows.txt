@@ -503,7 +503,13 @@ columns as the classical ones, on seeds it never trained on.
                        (neither)                take one if it is there
 
                      --cuda moves the policy and the person detector onto
-                     the GPU through OpenCV's dnn CUDA backend. It does
+                     the GPU through OpenCV's dnn CUDA backend -- and when
+                     OpenCV has no CUDA, which the official prebuilt
+                     Windows release never does, through its OpenCL
+                     backend instead, on the discrete GPU (NVIDIA first)
+                     via the driver's own OpenCL. No CUDA toolkit needed.
+                     The first second or two is slow while it compiles
+                     kernels; the people pane then names the card. It does
                      NOT touch the simulator's depth renderer: that has
                      its own build switch, NAVSIM_WITH_CUDA, guarding a
                      kernel whose own header says it has never been
@@ -517,7 +523,7 @@ columns as the classical ones, on seeds it never trained on.
                      not require, so with --detector hog the people pane
                      says cpu and means it.
 
-                     --cuda REFUSES TO START without a visible device,
+                     --cuda REFUSES TO START without a usable GPU,
                      deliberately: a flag that passes silently on a
                      machine with no GPU is how a rehearsal becomes a
                      surprise. Leave it off to take a GPU when there is

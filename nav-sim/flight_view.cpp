@@ -424,7 +424,8 @@ cv::Mat FlightView::chase(const ShowSnap& s, int w, int h) const {
     // overlays are drawn after, at full resolution, through the same
     // projection (focal length and centre scale with the image).
     cv::Mat im;
-    cv::resize(sim::renderFootage((*s.world), cam, w * 3 / 4, h * 3 / 4, fov, 70.f,
+    cv::resize(sim::renderFootage((*s.world), cam, std::max(16, int(w * chaseScale_)),
+                                  std::max(12, int(h * chaseScale_)), fov, 70.f,
                                   s.floorZ + 0.3f, showStyle()),
                im, {w, h}, 0, 0, cv::INTER_LINEAR);
     // WHAT THIS STOP'S MAP KNOWS, laid over the true scene: air it has
@@ -548,42 +549,38 @@ cv::Mat FlightView::camera(const ShowSnap& s, int w, int h) const {
 }
 
 // -------------------------------------------------------------------- depth
-cv::Mat FlightView::depth(const ShowSnap& s, int w, int h) const {
-    const cv::Mat& d = s.depth;
-    // Only a NEW frame is worth drawing again (a frame arrives at most every
-    // tick, and during a leg every sixth).
-    if (!d.empty() && s.depthSeq == depthOf_ && depthPane_.cols == w && depthPane_.rows == h)
-        return depthPane_.clone();
+cv::Mat depthPane(const cv::Mat& d, int w, int h, float maxM) {
     cv::Mat out(h, w, CV_8UC3, cv::Scalar(30, 27, 24));
-    if (d.empty()) return out;
+    if (d.empty() || d.type() != CV_32F) return out;
     // RED NEAR, BLUE FAR, on a FIXED scale -- a colour means a distance.
     // Holes are grey: unmeasured, not far (depth_vis.hpp, CLAUDE.md).
-    const float maxM = 8.f;
     cv::Mat idx(d.size(), CV_8U), col;
-    for (int y = 0; y < d.rows; ++y) {
-        const float* r = d.ptr<float>(y);
-        uchar* o = idx.ptr<uchar>(y);
-        for (int x = 0; x < d.cols; ++x)
-            o[x] = r[x] > 0.f ? cv::saturate_cast<uchar>(255.f * (1.f - std::min(r[x], maxM) / maxM))
-                              : 0;
-    }
-    cv::applyColorMap(idx, col, cv::COLORMAP_TURBO);
     int valid = 0;
     for (int y = 0; y < d.rows; ++y) {
         const float* r = d.ptr<float>(y);
-        cv::Vec3b* c = col.ptr<cv::Vec3b>(y);
+        uchar* o = idx.ptr<uchar>(y);
         for (int x = 0; x < d.cols; ++x) {
             if (r[x] > 0.f) ++valid;
-            else c[x] = cv::Vec3b(72, 72, 72);
+            o[x] = r[x] > 0.f ? cv::saturate_cast<uchar>(1.f + 254.f * (1.f - std::min(r[x], maxM) / maxM))
+                              : 0;
         }
     }
-    // AREA when shrinking: nearest-neighbour turns a 0.4 % speckle into
-    // confetti at a third of the size. Nearest when enlarging, so a hole
-    // stays a hole.
-    cv::resize(col, out, {w, h}, 0, 0,
-               w < col.cols ? cv::INTER_AREA : cv::INTER_NEAREST);
+    // A 3x3 median on the index, display only: a real D435i frame carries
+    // isolated flyers at every depth edge, and at a third of the size each
+    // one is a stray coloured pixel.
+    cv::medianBlur(idx, idx, 3);
+    cv::applyColorMap(idx, col, cv::COLORMAP_TURBO);
+    for (int y = 0; y < d.rows; ++y) {
+        const uchar* o = idx.ptr<uchar>(y);
+        cv::Vec3b* c = col.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < d.cols; ++x)
+            if (!o[x]) c[x] = cv::Vec3b(72, 72, 72);
+    }
+    // AREA when shrinking: nearest-neighbour turns speckle into confetti.
+    // Nearest when enlarging, so a hole stays a hole.
+    cv::resize(col, out, {w, h}, 0, 0, w < col.cols ? cv::INTER_AREA : cv::INTER_NEAREST);
     // The scale, on the image: a colour is a distance.
-    const int bx = w - 190, by = h - 30, bw = 170, bh = 10;
+    const int bw = std::min(170, w / 3), bx = w - bw - 20, by = h - 30, bh = 10;
     for (int i = 0; i < bw; ++i) {
         cv::Mat one(1, 1, CV_8U, cv::Scalar(uchar(255.f * (1.f - float(i) / bw)))), c;
         cv::applyColorMap(one, c, cv::COLORMAP_TURBO);
@@ -592,14 +589,35 @@ cv::Mat FlightView::depth(const ShowSnap& s, int w, int h) const {
     }
     cv::rectangle(out, {bx - 1, by - 1, bw + 2, bh + 2}, kInk, 1);
     label(out, "0", {bx - 4, by + bh + 14}, 0.4, kInk, 1);
-    label(out, "4 m", {bx + bw / 2 - 12, by + bh + 14}, 0.4, kInk, 1);
-    label(out, "8 m+", {bx + bw - 20, by + bh + 14}, 0.4, kInk, 1);
+    label(out, cv::format("%.0f m+", maxM), {bx + bw - 24, by + bh + 14}, 0.4, kInk, 1);
     label(out, cv::format("%.0f%% of pixels matched   grey = no match",
                           100.0 * valid / std::max(1, d.rows * d.cols)),
           {10, 22}, 0.45, kInk, 1);
+    return out;
+}
+
+cv::Mat FlightView::depth(const ShowSnap& s, int w, int h) const {
+    // Only a NEW frame is worth drawing again (a frame arrives at most every
+    // tick, and during a leg every sixth).
+    if (!s.depth.empty() && s.depthSeq == depthOf_ && depthPane_.cols == w && depthPane_.rows == h)
+        return depthPane_.clone();
+    const cv::Mat out = depthPane(s.depth, w, h, 8.f);
     depthOf_ = s.depthSeq;
     depthPane_ = out.clone();
     return out;
+}
+
+cv::Mat showIR(const cv::Mat& ir8, int w, int h) {
+    // LOCAL CONTRAST, display only. A D435i IR frame is dim and flat -- the
+    // sensor exposes for the projector, not for looking at -- and shown as
+    // is, behind voxels, it reads as a grey wash. CLAHE stretches each tile's
+    // own range, so a dark room and a bright window both keep their detail.
+    cv::Mat g = ir8, eq, bgr;
+    if (g.channels() == 3) cv::cvtColor(g, g, cv::COLOR_BGR2GRAY);
+    cv::createCLAHE(2.5, cv::Size(8, 8))->apply(g, eq);
+    cv::resize(eq, eq, {w, h}, 0, 0, w < eq.cols ? cv::INTER_AREA : cv::INTER_LINEAR);
+    cv::cvtColor(eq, bgr, cv::COLOR_GRAY2BGR);
+    return bgr;
 }
 
 // ---------------------------------------------------------------------- fpv
@@ -612,9 +630,7 @@ cv::Mat FlightView::fpv(const ShowSnap& s, int w, int h) const {
     sim::CamParams cp = s.cam;
     cp.width = w; cp.height = h;
     const sim::DepthCamera cam(cp);
-    cv::Mat view;
-    cv::cvtColor(cam.renderIR(*s.world, s.truth), view, cv::COLOR_GRAY2BGR);
-    view *= 0.85;
+    cv::Mat view = showIR(cam.renderIR(*s.world, s.truth), w, h);
     if (s.mapFrames == 0 || !s.map) {
         label(view, "no map yet", {10, 22}, 0.5, kInk, 1);
         return view;

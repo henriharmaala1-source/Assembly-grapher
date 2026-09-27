@@ -83,7 +83,10 @@ cv::Mat letterbox(const cv::Mat& src, int w, int h) {
     if (src.empty()) return out;
     const double s = std::min(double(w) / src.cols, double(h) / src.rows);
     cv::Mat r;
-    cv::resize(src, r, {}, s, s, cv::INTER_NEAREST);
+    // AREA when shrinking -- nearest-neighbour turned a live 848x480 depth
+    // frame into speckle at pane size -- nearest when enlarging, so a cube
+    // stays a cube.
+    cv::resize(src, r, {}, s, s, s < 1.0 ? cv::INTER_AREA : cv::INTER_NEAREST);
     r.copyTo(out(cv::Rect((w - r.cols) / 2, (h - r.rows) / 2, r.cols, r.rows)));
     return out;
 }
@@ -158,6 +161,15 @@ Layout layoutFor(int paneW, int paneH) {
 // OpenCV will accept DNN_BACKEND_CUDA on a build without CUDA and quietly fall
 // back, which is exactly the silent-wrong-label case -- hence the device count
 // is checked first rather than the request being trusted.
+// Was THIS OpenCV compiled with CUDA at all? The official Windows release is
+// not -- and then no GPU, however good, can be used by it, which is a
+// different thing to say than "no device found".
+bool opencvHasCuda() {
+    const std::string b = cv::getBuildInformation();
+    const size_t i = b.find("NVIDIA CUDA:");
+    return i != std::string::npos && b.find("YES", i) < b.find('\n', i);
+}
+
 int cudaDevices() {
     try { return cv::cuda::getCudaEnabledDeviceCount(); }
     catch (const cv::Exception&) { return 0; }
@@ -188,6 +200,7 @@ std::string applyBackend(void* netv, int want, bool* usedCuda) {
     }
     net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
     net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+    if (!opencvHasCuda()) return "cpu (this OpenCV has no CUDA)";
     return want == Options::CUDA_ON
              ? "cpu -- NO CUDA DEVICE, and --cuda asked for one"
              : "cpu (no cuda device)";
@@ -534,10 +547,24 @@ public:
     const std::string& note() const { return note_; }
 
     // One frame into `f`; false when none arrived.
+    // Mean milliseconds a frame spends in step() after it arrived: mapping,
+    // the planner, the first-person render. For the 30 s performance line.
+    double msPerFrame() const { return msAvg_.load(); }
+
     bool step(CameraFrame& f) {
         cv::Mat depth;
         sim::PoseHint hint;
         if (!ok() || !src_->next(depth, hint) || depth.empty()) return false;
+        const auto tStep = std::chrono::steady_clock::now();
+        struct Timer {
+            std::chrono::steady_clock::time_point t0;
+            std::atomic<double>* avg;
+            ~Timer() {
+                const double ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t0).count();
+                avg->store(avg->load() * 0.9 + ms * 0.1);
+            }
+        } timer{tStep, &msAvg_};
         // POSE IS THE HONEST LIMIT, exactly as in voxel_live: a handheld
         // camera has none, so the map is built from a FIXED pose and says so.
         // Inventing motion here would produce a map that looks plausible and
@@ -575,6 +602,12 @@ public:
             // caption says which.
             sim::NavPipelineParams np;
             np.cell = kLiveCellM;
+            // A DISPLAY MAP: carved to 6 m, not the aircraft's 25 (at 10 cm
+            // that is 250 steps a ray), from every 3rd pixel -- at 2 m a
+            // 10 cm cell is still crossed by ~20 rays. The planner drawn on
+            // it only looks a few metres ahead anyway.
+            np.maxCarveM = 6.f;
+            np.stride = 3;
             nav_.init(src_->camera(), np, pose);
             // THE NEAR RUNG: 5 cm cells out to where 5 cm can honestly be
             // marked (sqrt of the cell: ~1.6 m at 848x480) -- a hand, a
@@ -600,7 +633,8 @@ public:
         }
         f.validFrac = float(valid) / std::max(1, depth.rows * depth.cols);
         f.depthRaw = depth.clone();
-        f.depthVis = sim::colourDepth(depth, kDepthScaleM);
+        f.depthVis = kshow::depthPane(depth, 640, 640 * depth.rows / std::max(1, depth.cols),
+                                      kDepthScaleM);
         // THE IMAGE THE DEPTH WAS MEASURED IN, when the source has one.
         // Registered with the depth by construction, so a box found here
         // indexes straight into f.depthRaw -- which is what makes "person at
@@ -637,10 +671,7 @@ public:
                 // pixels it came from. Where nothing is mapped the pane shows
                 // what the camera sees -- the scene, not a claim that it is
                 // empty: unknown is still not drawn as free air.
-                cv::Mat g;
-                cv::resize(ir, g, {fw, fh}, 0, 0, cv::INTER_LINEAR);
-                cv::cvtColor(g, view, cv::COLOR_GRAY2BGR);
-                view *= 0.85;
+                view = kshow::showIR(ir, fw, fh);
             } else {
                 // No image in this source: navcore's first-person render, the
                 // far tier's bearings past the ladder and fog for unknown.
@@ -667,6 +698,7 @@ private:
     bool inited_ = false;
     sim::CamPose origin_, lastEst_;
     std::chrono::steady_clock::time_point t0_, lastFpv_;
+    std::atomic<double> msAvg_{0.0};
     cv::Mat fpv_;
     sim::VoxelMapParams nearP_;
     sim::VoxelMap near_;                   // the 5 cm rung (display)
@@ -973,9 +1005,14 @@ bool parse(const std::vector<std::string>& args, Options& o, std::string& err) {
     // machine with no device is how a rehearsal becomes a surprise, so it is
     // refused here rather than noted on a pane an hour later. AUTO is the
     // default precisely so this is opt-in.
-    if (o.cuda == Options::CUDA_ON && cudaDevices() == 0) {
-        err = "--cuda: no CUDA device visible to OpenCV. Drop the flag to run "
-              "on the CPU, or --no-cuda to say so deliberately.";
+    if (o.cuda == Options::CUDA_ON && cudaDevices() <= 0) {
+        err = opencvHasCuda()
+            ? "--cuda: no CUDA device visible to OpenCV. Drop the flag to run on "
+              "the CPU, or --no-cuda to say so deliberately."
+            : "--cuda: this build's OpenCV was compiled WITHOUT CUDA (the official "
+              "prebuilt release is), so no GPU can be used by it. The networks run "
+              "on the CPU; drop the flag. (What costs the most here -- mapping and "
+              "the ray-cast views -- is CPU code either way.)";
         return false;
     }
     // A MISTYPED WORLD IS SILENTLY A FOREST. VoxelEnv::reset falls through to
@@ -1360,6 +1397,8 @@ cv::Mat matFrom(const std::vector<uint8_t>& v, int w, int h) {
 int runShowcase(const Options& o) {
     const ShowLayout L = showLayoutFor(showUnit(o.paneW));
     std::atomic<bool> stop{false}, nextMap{false};
+    std::atomic<double> renderMs{0.0}, peopleMs{0.0};
+    std::atomic<float> chaseScale{0.75f};
     // The layout the render thread draws for: follows the window's size.
     std::atomic<int> unit{L.unit};
 
@@ -1416,7 +1455,18 @@ int runShowcase(const Options& o) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
             }
+            const auto t0 = std::chrono::steady_clock::now();
             paneSlot.publish(renderShow(view, s, showLayoutFor(unit.load())));
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+            renderMs.store(renderMs.load() * 0.9 + ms * 0.1);
+            // KEEP THE PICTURES MOVING: past ~6 fps, cast fewer of the flight
+            // view's rays (it is most of the cost) and scale up; give them
+            // back when there is room.
+            const float k = view.chaseScale();
+            if (ms > 160.0) view.setChaseScale(k - 0.05f);
+            else if (ms < 90.0 && k < 0.75f) view.setChaseScale(k + 0.02f);
+            chaseScale.store(view.chaseScale());
         }
     });
 
@@ -1504,6 +1554,7 @@ int runShowcase(const Options& o) {
             drawPeople(shown, ps);
             const double ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - t0).count();
+            peopleMs.store(peopleMs.load() * 0.8 + ms * 0.2);
             Seen out;
             out.image = shown;
             out.sub = cv::format("%s on %s   %d found   %.0f ms", det.kindName(), from.c_str(),
@@ -1541,8 +1592,14 @@ int runShowcase(const Options& o) {
         if (since >= 30.0 && !panes.chase.empty()) {
             const float simNow = panes.snap.stats.timeS;
             if (simNow > simAtLog)
-                std::printf("[demo] last %.0f s: flight at %.2fx real time, pictures at %.1f fps\n",
-                            since, (simNow - simAtLog) / since, pics / since);
+                std::printf("[demo] last %.0f s: flight at %.2fx real time, pictures at %.1f fps "
+                            "(%.0f ms each, flight view at %.0f%% resolution)%s%s\n",
+                            since, (simNow - simAtLog) / since, pics / since, renderMs.load(),
+                            100.0 * chaseScale.load(),
+                            live.ok() ? cv::format("; camera %.0f ms/frame",
+                                                   live.msPerFrame()).c_str() : "",
+                            det.available() ? cv::format("; people %.0f ms",
+                                                         peopleMs.load()).c_str() : "");
             std::fflush(stdout);
             simAtLog = simNow; pics = 0;
             tLog = std::chrono::steady_clock::now();

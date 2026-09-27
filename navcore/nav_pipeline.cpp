@@ -72,6 +72,7 @@ void NavPipeline::init(const DepthCamera& cam, const NavPipelineParams& p,
     cam_ = &cam;
     p_ = p;
     mp_ = fineMapParams(cam, p.cell, p.stride, p.subpixelPx);
+    mp_.maxCarveM = p.maxCarveM;
 
     TrajParams tp;
     tp.robotR = p.robotR;

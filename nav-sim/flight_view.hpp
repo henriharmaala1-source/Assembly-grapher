@@ -55,6 +55,13 @@ void drawRibbon(cv::Mat& im, const sim::CamPose& eye, float hfovDeg, const cv::M
                 const std::vector<std::array<float, 3>>& path, const cv::Scalar& colour,
                 float halfW, double alpha, bool arrow, float drop);
 
+// A depth frame (CV_32F metres, <= 0 = no match) as a w x h picture: red near,
+// blue far on a fixed scale to maxM, holes grey, shrunk by AREA (nearest
+// turned a real D435i's edge flyers into confetti), with its legend.
+cv::Mat depthPane(const cv::Mat& depthM, int w, int h, float maxM);
+// An IR frame for display: CLAHE local contrast, then w x h. Display only.
+cv::Mat showIR(const cv::Mat& ir8, int w, int h);
+
 // Everything the pictures need, copied out of a FlightShow.
 struct ShowSnap {
     std::shared_ptr<const sim::VoxelWorld> world;
@@ -87,6 +94,11 @@ public:
     void update(const ShowSnap& s);
 
     cv::Mat chase(const ShowSnap& s, int w, int h) const;
+    // The fraction of the chase picture's pixels actually ray-cast (then
+    // scaled up): the one knob that trades the flight view's sharpness for
+    // the frame rate. 0.75 by default; the demo lowers it when it falls behind.
+    void  setChaseScale(float k) { chaseScale_ = std::max(0.3f, std::min(1.f, k)); }
+    float chaseScale() const { return chaseScale_; }
     cv::Mat camera(const ShowSnap& s, int w, int h) const;
     cv::Mat depth(const ShowSnap& s, int w, int h) const;
     // The stop's map FROM THE AIRCRAFT'S EYE -- the first-person voxel view
@@ -103,6 +115,7 @@ private:
     float  camYaw_ = 0.f;
     double lastT_ = -1.0;
     float  boomM_ = 4.5f;
+    float  chaseScale_ = 0.75f;
     const sim::VoxelWorld* planOf_ = nullptr;   // which world plan_ was drawn from
     cv::Mat plan_;        // the true world at flight altitude, 1 px per cell
     long cacheKey_ = -1;                        // which map free_/occ_ list

@@ -54,6 +54,11 @@ struct NavPipelineParams {
     float vMax      = 1.5f;   // voxel_live's, not rl_env's 3.0 -- a D435i's
                               // confident range bounds how fast it may fly
     float farRangeM = 20.f;   // bearing field: scores directions, never vetoes
+    // How far free space may be carved along a ray (VoxelMapParams::
+    // maxCarveM). The aircraft keeps 25 m; a DISPLAY map (the demo's live
+    // pane at 10 cm cells) can stop much sooner -- carving is most of the
+    // cost of a frame, and it grows with range over cell size.
+    float maxCarveM = 25.f;
     float fillFrac  = 0.25f;
     // THE VETO'S ATTITUDE TO UNKNOWN SPACE. 0 lets a primitive sweep through
     // air nothing has measured. Measured on nav-sim's maze: 0.45 took pooled

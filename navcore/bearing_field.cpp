@@ -242,7 +242,7 @@ cv::Mat BearingField::render(const BearingField& bf,
                              float yawDeg, float pitchDeg,
                              int outW, int outH, float hfovDeg,
                              float minRange, float maxRange, float eyeAltM,
-                             cv::Mat* hitMask) {
+                             cv::Mat* hitMask, cv::Mat* rangeOut) {
     cv::Mat img(outH, outW, CV_8UC3);
     if (hitMask) *hitMask = cv::Mat(outH, outW, CV_8U, cv::Scalar(0));
     const float HEIGHT_KEY_M = 3.5f;
@@ -325,6 +325,7 @@ cv::Mat BearingField::render(const BearingField& bf,
         }
     }
     (void)eyeAltM;
+    if (rangeOut) *rangeOut = rng;
     return img;
 }
 

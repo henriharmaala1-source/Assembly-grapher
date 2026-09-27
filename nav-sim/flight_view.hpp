@@ -55,6 +55,17 @@ void drawRibbon(cv::Mat& im, const sim::CamPose& eye, float hfovDeg, const cv::M
                 const std::vector<std::array<float, 3>>& path, const cv::Scalar& colour,
                 float halfW, double alpha, bool arrow, float drop);
 
+// THE FAR TIER OVER A CAMERA IMAGE: the bearing field's surfaces from
+// `minR` (where the voxel ladder's honest range ends) to `maxR`, blended at
+// `alpha` into `view` wherever the ladder drew nothing (`hitMask` 0) -- so the
+// walls past a few metres show, and the scene still shows through them. Where
+// it draws, `hitMask` is set and `hitDist` takes its range, so a ribbon
+// drawn afterwards hides behind a far wall too. Unknown stays the camera
+// image: nothing is painted where the field found no depth.
+void overlayFar(cv::Mat& view, cv::Mat& hitMask, cv::Mat& hitDist,
+                const sim::BearingField& field, const sim::CamPose& eye, float hfovDeg,
+                float minR, float maxR, double alpha);
+
 // A depth frame (CV_32F metres, <= 0 = no match) as a w x h picture: red near,
 // blue far on a fixed scale to maxM, holes grey, shrunk by AREA (nearest
 // turned a real D435i's edge flyers into confetti), with its legend.

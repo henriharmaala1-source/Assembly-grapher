@@ -189,7 +189,9 @@ public:
                           float yawDeg, float pitchDeg,
                           int outW, int outH, float hfovDeg,
                           float minRange, float maxRange, float eyeAltM,
-                          cv::Mat* hitMask = nullptr);
+                          cv::Mat* hitMask = nullptr, cv::Mat* rangeOut = nullptr);
+    // rangeOut: CV_32F, the range drawn at each pixel (-1 where none) -- so a
+    // path drawn over the picture can be hidden behind a far wall.
 
 private:
     int azIdx(float azDeg) const;

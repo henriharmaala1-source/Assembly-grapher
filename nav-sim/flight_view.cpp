@@ -165,6 +165,32 @@ void drawPath3d(cv::Mat& im, const sim::VoxelWorld* world, const sim::CamPose& c
 }  // namespace
 
 // ------------------------------------------------------------------ ribbons
+void overlayFar(cv::Mat& view, cv::Mat& hitMask, cv::Mat& hitDist,
+                const sim::BearingField& field, const sim::CamPose& eye, float hfovDeg,
+                float minR, float maxR, double alpha) {
+    if (!(maxR > minR)) return;
+    cv::Mat farMask, farRng;
+    const cv::Mat far_ = sim::BearingField::render(field, eye.yawDeg, eye.pitchDeg, view.cols,
+                                                   view.rows, hfovDeg, minR, maxR, eye.u,
+                                                   &farMask, &farRng);
+    if (hitMask.empty()) hitMask = cv::Mat(view.size(), CV_8U, cv::Scalar(0));
+    if (hitDist.empty()) hitDist = cv::Mat(view.size(), CV_32F, cv::Scalar(-1.f));
+    const float a = float(alpha), b = 1.f - a;
+    for (int v = 0; v < view.rows; ++v) {
+        const uchar* fm = farMask.ptr<uchar>(v);
+        const float* fr = farRng.ptr<float>(v);
+        const cv::Vec3b* fc = far_.ptr<cv::Vec3b>(v);
+        uchar* hm = hitMask.ptr<uchar>(v);
+        float* hd = hitDist.ptr<float>(v);
+        cv::Vec3b* o = view.ptr<cv::Vec3b>(v);
+        for (int u = 0; u < view.cols; ++u) {
+            if (hm[u] || !fm[u]) continue;
+            for (int k = 0; k < 3; ++k) o[u][k] = uchar(a * fc[u][k] + b * o[u][k]);
+            hd[u] = fr[u];
+        }
+    }
+}
+
 void drawRibbon(cv::Mat& im, const sim::CamPose& eye, float hfov, const cv::Mat& hitDist,
                 const std::vector<std::array<float, 3>>& path, const cv::Scalar& col,
                 float halfW, double alpha, bool arrow, float drop) {
@@ -647,6 +673,9 @@ cv::Mat FlightView::fpv(const ShowSnap& s, int w, int h) const {
                                                     eye.pitchDeg, w, h, fov, sim::FpvStyle(),
                                                     &hitMask, &hitDist);
     vox.copyTo(view, hitMask);
+    // The far tier past the map's honest range, as the live pane draws it.
+    if (s.field)
+        overlayFar(view, hitMask, hitDist, *s.field, eye, fov, layers[0].range, s.farRangeM, 0.7);
     // THE LEG FAN, laid under the flight line: every bearing the module
     // certified, as far as it certified it, short red to long green; the leg it
     // chose (or is flying) wide and blue with its arrowhead. 0.6 m below the

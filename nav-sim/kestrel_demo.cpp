@@ -747,6 +747,14 @@ public:
                                                    nav_.params().farRangeM, pose, fw, fh, hf);
             }
             vox.copyTo(view, hitMask);
+            // THE FAR TIER over the camera image too: past the ladder's
+            // honest range (~2.2 m at 10 cm cells) the bearing field is all
+            // the map has, and without it a room's walls were simply absent
+            // -- only the floor at the camera's feet showed. Blended, so the
+            // scene reads through; nothing is painted where it found no depth.
+            if (!ir.empty())
+                kshow::overlayFar(view, hitMask, hitDist, nav_.field(), pose, hf, mainEnd,
+                                  nav_.params().farRangeM, 0.7);
             drawPlan(view, pose, hf, hitDist);
             fpv_ = view;
             lastFpv_ = now;

@@ -186,7 +186,13 @@ public:
         // is exactly the rotation the estimate exists to track.
         for (const auto& m : motion_) {
             if (m.isGyro) { gx_ = m.x; gy_ = m.y; gz_ = m.z; }
-            else          { ax_ = m.x; ay_ = m.y; az_ = m.z; }
+            // GRAVITY, NOT SPECIFIC FORCE. The filter levels to gravity along
+            // +y (attitude_filter.hpp); an accelerometer reports the force
+            // HOLDING IT UP, the opposite sign -- an upright D435i reads about
+            // -9.8 on y. Fed raw, roll came out 180 deg: every live map was
+            // built upside down (seen in the demo's live voxel pane on the
+            // first real camera), and so would the aircraft's have been.
+            else          { ax_ = -m.x; ay_ = -m.y; az_ = -m.z; }
             const double t = m.tMs;
             if (lastImuMs_ > 0.0 && t > lastImuMs_) {
                 att_.update(gx_, gy_, gz_, ax_, ay_, az_,

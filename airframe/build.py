@@ -94,6 +94,33 @@ class Section:
 # Printed parts
 
 
+def nose_cuts(p: Params, L: Layout, off: float, ch: float):
+    """Tools that round the pod's front edges, offset inward by `off` (0 for the
+    outside, the wall for the cavity). The two vertical edges get radius
+    nose_r; along the bottom the 45 deg belly chamfer (size ch) blends into the
+    front face with the same radius, so printed upright nothing overhangs more
+    than 45 deg. The blend stays above the bed for nose_r < ch / (1 - 1/sqrt 2)."""
+    r, ro, hw, zb = p.nose_r, p.nose_r - off, L.half_w, L.z_bottom
+    tools = []
+    if ro > 0:
+        for s in (-1, 1):
+            yc = s * (hw - r)
+            corner = box(-1, r, min(yc, s * (hw + 1)), max(yc, s * (hw + 1)), zb - 1, 30)
+            tools.append(cut(corner, cyl_z(ro, zb - 2, 31, r, yc)))
+    zl = zb + ch + off * math.sqrt(2)                       # chamfer line x + z = zl
+    wp = cq.Workplane("XZ")
+    if ro > 0:
+        zc, a = zb + ch + r * (math.sqrt(2) - 1), math.radians(202.5)
+        wp = (wp.moveTo(-5, zc).lineTo(off, zc)
+              .threePointArc((r + ro * math.cos(a), zc + ro * math.sin(a)),
+                             (r - ro / math.sqrt(2), zc - ro / math.sqrt(2))))
+    else:
+        wp = wp.moveTo(-5, zl - off).lineTo(off, zl - off)
+    tools.append(wp.lineTo(zl - zb + 5, zb - 5).lineTo(-5, zb - 5).close()
+                 .extrude(hw + 10, both=True).val())
+    return tools
+
+
 def make_pod(p: Params, L: Layout, batt_x: float):
     hw, zb, Lp = L.half_w, L.z_bottom, L.pod_len
     ty, rh, rb = L.tube_y, L.r_hole, L.r_boss
@@ -101,19 +128,29 @@ def make_pod(p: Params, L: Layout, batt_x: float):
     zf = zb + w                                             # floor top
 
     outer = (cq.Workplane().box(Lp, 2 * hw, -zb, centered=(False, True, False))
-             .translate((0, 0, zb)).edges("|X and <Z").chamfer(ch)
-             .faces("<X").edges("<Z").chamfer(ch)).val()
+             .translate((0, 0, zb)).edges("|X and <Z").chamfer(ch)).val()
     ch_in = ch + w * math.sqrt(2) - 2 * w                   # keeps the wall even
     inner = (cq.Workplane().box(Lp - fw - w, 2 * (hw - w), 20 - zf, centered=(False, True, False))
-             .translate((fw, 0, zf)).edges("|X and <Z").chamfer(ch_in)
-             .faces("<X").edges("<Z").chamfer(ch + w * math.sqrt(2) - fw - w)).val()
-    pod = cut(outer, inner)
+             .translate((fw, 0, zf)).edges("|X and <Z").chamfer(ch_in)).val()
+    round_front = nose_cuts(p, L, 0.0, ch)
+    pod = cut(cut(outer, *round_front), cut(inner, *nose_cuts(p, L, w, ch)))
 
-    sleeves = [cyl_x(rb, x0, x0 + p.sleeve_len, s * ty, 0)
-               for x0 in (0.0, Lp - p.sleeve_len) for s in (-1, 1)]
-    nose = [box(0, fw, -ty, ty, 0, rb),                     # between the front sleeves
-            box(0, 3.2, -13, 13, 0, p.motor_z),              # motor plate
-            cyl_x(13, 0, 3.2, 0, p.motor_z)]
+    rounded = p.nose_r > 0
+
+    def sleeve(x0, y, nose=0.0):
+        s = cq.Workplane("YZ").circle(rb).extrude(p.sleeve_len)
+        return (s.faces("<X").edges().fillet(nose) if nose else s).val().translate(V(x0, y, 0))
+    sleeves = ([sleeve(0.0, s * ty, rb - 0.9 if rounded else 0.0) for s in (-1, 1)]  # domed noses
+               + [sleeve(Lp - p.sleeve_len, s * ty) for s in (-1, 1)])
+    strip = cq.Workplane().box(fw, 2 * ty, rb, centered=(False, True, False))  # between the sleeves
+    plate = (cq.Workplane("YZ").moveTo(-13, 0).lineTo(13, 0).lineTo(13, p.motor_z)
+             .threePointArc((0, p.motor_z + 13), (-13, p.motor_z)).close().extrude(3.2))  # motor plate
+    if rounded:
+        strip = strip.edges("|Y and >Z and <X").fillet(2.0)
+        plate = plate.faces("<X").edges("not <Z").fillet(1.5)
+    strip, plate = strip.val(), plate.val()
+    nose = [cut(strip, *round_front), plate,
+            cut(cyl_x(13, 0, 3.2, 0, p.motor_z), box(-1, 4, -14, 14, 0, 30))]   # motor boss
     fc = [cyl_z(2.3, zf - 0.1, zf + 3, FC_X + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
     # elevator SG90 lies on its side behind the battery: two ribs locate the body,
     # stopping short of the mounting tabs

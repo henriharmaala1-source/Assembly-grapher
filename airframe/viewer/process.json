@@ -9,15 +9,15 @@
   "n_after": 45,
   "t_after": 1360,
   "e_after": 0.057,
-  "t_print": 26520,
+  "t_print": 26664,
   "t_hands": 5910,
   "t_cure": 2700,
-  "lead": 31886,
-  "filament_g": 71.8,
-  "print_cost": 2.99,
+  "lead": 32030,
+  "filament_g": 71.3,
+  "print_cost": 2.98,
   "bought_cost": 144,
   "grams_by_material": {
-   "PLA/PETG": 27.9,
+   "PLA/PETG": 27.5,
    "LW-PLA": 43.9
   },
   "spool_cost": 65,
@@ -58,10 +58,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 4818,
+   "seconds": 4962,
    "cure": 0.0,
    "start": 0,
-   "finish": 4818,
+   "finish": 4962,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -88,8 +88,8 @@
    "consumables": [],
    "seconds": 6768,
    "cure": 0.0,
-   "start": 4818,
-   "finish": 11886,
+   "start": 4962,
+   "finish": 12030,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -117,8 +117,8 @@
    "consumables": [],
    "seconds": 4344,
    "cure": 0.0,
-   "start": 11886,
-   "finish": 16230,
+   "start": 12030,
+   "finish": 16374,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -143,8 +143,8 @@
    "consumables": [],
    "seconds": 5292,
    "cure": 0.0,
-   "start": 16230,
-   "finish": 21522,
+   "start": 16374,
+   "finish": 21666,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -169,8 +169,8 @@
    "consumables": [],
    "seconds": 5298,
    "cure": 0.0,
-   "start": 21522,
-   "finish": 26820,
+   "start": 21666,
+   "finish": 26964,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -282,8 +282,8 @@
    "consumables": [],
    "seconds": 195,
    "cure": 0,
-   "start": 4818,
-   "finish": 5013,
+   "start": 4962,
+   "finish": 5157,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -310,8 +310,8 @@
    "consumables": [],
    "seconds": 120,
    "cure": 0,
-   "start": 11886,
-   "finish": 12006,
+   "start": 12030,
+   "finish": 12150,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -336,8 +336,8 @@
    "consumables": [],
    "seconds": 80,
    "cure": 0,
-   "start": 16230,
-   "finish": 16310,
+   "start": 16374,
+   "finish": 16454,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -362,8 +362,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 21522,
-   "finish": 21632,
+   "start": 21666,
+   "finish": 21776,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -388,8 +388,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 26820,
-   "finish": 26930,
+   "start": 26964,
+   "finish": 27074,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -420,8 +420,8 @@
    "consumables": [],
    "seconds": 44,
    "cure": 0,
-   "start": 5013,
-   "finish": 5057,
+   "start": 5157,
+   "finish": 5201,
    "anim": [
     {
      "parts": [
@@ -489,8 +489,8 @@
    ],
    "seconds": 54,
    "cure": 0,
-   "start": 5057,
-   "finish": 5111,
+   "start": 5201,
+   "finish": 5255,
    "anim": [
     {
      "parts": [
@@ -561,8 +561,8 @@
    ],
    "seconds": 72,
    "cure": 0,
-   "start": 5111,
-   "finish": 5183,
+   "start": 5255,
+   "finish": 5327,
    "anim": [
     {
      "parts": [
@@ -631,8 +631,8 @@
    ],
    "seconds": 520,
    "cure": 0,
-   "start": 5183,
-   "finish": 5703,
+   "start": 5327,
+   "finish": 5847,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -664,8 +664,8 @@
    ],
    "seconds": 42,
    "cure": 0,
-   "start": 5703,
-   "finish": 5744,
+   "start": 5847,
+   "finish": 5888,
    "anim": [
     {
      "parts": [
@@ -721,8 +721,8 @@
    ],
    "seconds": 64,
    "cure": 0,
-   "start": 12006,
-   "finish": 12070,
+   "start": 12150,
+   "finish": 12214,
    "anim": [
     {
      "parts": [
@@ -808,8 +808,8 @@
    ],
    "seconds": 201,
    "cure": 900,
-   "start": 12070,
-   "finish": 12271,
+   "start": 12214,
+   "finish": 12415,
    "anim": [
     {
      "parts": [
@@ -869,8 +869,8 @@
    ],
    "seconds": 132,
    "cure": 900,
-   "start": 26930,
-   "finish": 27062,
+   "start": 27074,
+   "finish": 27206,
    "anim": [
     {
      "parts": [
@@ -955,8 +955,8 @@
    ],
    "seconds": 116,
    "cure": 0,
-   "start": 27962,
-   "finish": 28078,
+   "start": 28106,
+   "finish": 28222,
    "anim": [
     {
      "parts": [
@@ -1017,8 +1017,8 @@
    ],
    "seconds": 159,
    "cure": 0,
-   "start": 28078,
-   "finish": 28237,
+   "start": 28222,
+   "finish": 28381,
    "anim": [
     {
      "parts": [
@@ -1094,8 +1094,8 @@
    ],
    "seconds": 83,
    "cure": 0,
-   "start": 16310,
-   "finish": 16393,
+   "start": 16454,
+   "finish": 16537,
    "anim": [
     {
      "parts": [
@@ -1201,8 +1201,8 @@
    ],
    "seconds": 159,
    "cure": 0,
-   "start": 16393,
-   "finish": 16552,
+   "start": 16537,
+   "finish": 16696,
    "anim": [
     {
      "parts": [
@@ -1274,8 +1274,8 @@
    ],
    "seconds": 170,
    "cure": 900,
-   "start": 28237,
-   "finish": 28406,
+   "start": 28381,
+   "finish": 28550,
    "anim": [
     {
      "parts": [
@@ -1332,8 +1332,8 @@
    "consumables": [],
    "seconds": 74,
    "cure": 0,
-   "start": 29306,
-   "finish": 29380,
+   "start": 29450,
+   "finish": 29524,
    "anim": [
     {
      "parts": [
@@ -1420,8 +1420,8 @@
    "consumables": [],
    "seconds": 62,
    "cure": 0,
-   "start": 29380,
-   "finish": 29442,
+   "start": 29524,
+   "finish": 29586,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1453,8 +1453,8 @@
    "consumables": [],
    "seconds": 44,
    "cure": 0,
-   "start": 29442,
-   "finish": 29486,
+   "start": 29586,
+   "finish": 29630,
    "anim": [
     {
      "parts": [
@@ -1546,8 +1546,8 @@
    "consumables": [],
    "seconds": 1920,
    "cure": 0,
-   "start": 29486,
-   "finish": 31406,
+   "start": 29630,
+   "finish": 31550,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1574,8 +1574,8 @@
    "consumables": [],
    "seconds": 480,
    "cure": 0,
-   "start": 31406,
-   "finish": 31886,
+   "start": 31550,
+   "finish": 32030,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -2299,26 +2299,26 @@
   {
    "name": "lid",
    "material": "PLA/PETG",
-   "bed": "90 x 43 x 3",
+   "bed": "91 x 43 x 3",
    "minutes": 8.9,
    "grams": 4.36,
    "cost": 0.09,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 3856,
+   "bed_contact_mm2": 3899,
    "slender": 0.1,
    "notes": []
   },
   {
    "name": "pod",
    "material": "PLA/PETG",
-   "bed": "168 x 49 x 40",
-   "minutes": 50.5,
-   "grams": 17.27,
-   "cost": 0.35,
-   "overhang_mm2": 701,
+   "bed": "169 x 49 x 40",
+   "minutes": 52.9,
+   "grams": 16.82,
+   "cost": 0.34,
+   "overhang_mm2": 702,
    "support": "none",
-   "bed_contact_mm2": 5350,
+   "bed_contact_mm2": 5383,
    "slender": 0.8,
    "notes": []
   }

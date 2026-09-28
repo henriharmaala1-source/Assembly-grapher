@@ -111,9 +111,9 @@ Sliced with PrusaSlicer 2.7, A1-mini-like profile (tools/a1mini.ini). Overhangs:
 | rudder_L | PLA/PETG | 4 min | 1.0 g | 0.02 EUR | 3 mm^2 | none | - |
 | bellcrank | PLA/PETG | 1 min | 0.3 g | 0.01 EUR | 0 mm^2 | none | small bed contact (123 mm^2); use a brim or glue stick |
 | lid | PLA/PETG | 9 min | 4.4 g | 0.09 EUR | 0 mm^2 | none | - |
-| pod | PLA/PETG | 50 min | 17.3 g | 0.35 EUR | 701 mm^2 | none | - |
+| pod | PLA/PETG | 53 min | 16.8 g | 0.34 EUR | 702 mm^2 | none | - |
 
-Total: 7 h 22 min of printing, 72 g of filament, about 2.99 EUR of material (PETG 20 EUR/kg, LW-PLA 55 EUR/kg).
+Total: 7 h 24 min of printing, 71 g of filament, about 2.98 EUR of material (PETG 20 EUR/kg, LW-PLA 55 EUR/kg).
 
 ## Cost
 
@@ -133,10 +133,10 @@ Total: 7 h 22 min of printing, 72 g of filament, about 2.99 EUR of material (PET
 | carbon rod 3 / 2 mm | 2 | 2.00 | 4.00 |
 | pushrod rod, wire, horns | 1 | 3.00 | 3.00 |
 | screws, tape, velcro, glue | 1 | 4.00 | 4.00 |
-| printed parts: filament actually used (72 g: 44 g LW-PLA, 28 g PETG) | 1 | 2.99 | 2.99 |
+| printed parts: filament actually used (71 g: 44 g LW-PLA, 28 g PETG) | 1 | 2.98 | 2.98 |
 | **per airframe** | | | **147** |
 
-The whole printed airframe, wing included, is only 72 g of filament: the wing sections are thin one-wall LW-PLA shells (36 g for the centre, both panels and both ailerons). So the filament per airframe is a few euros, but a first build still has to buy the spools:
+The whole printed airframe, wing included, is only 71 g of filament: the wing sections are thin one-wall LW-PLA shells (36 g for the centre, both panels and both ailerons). So the filament per airframe is a few euros, but a first build still has to buy the spools:
 
 | first build | EUR |
 |---|---|

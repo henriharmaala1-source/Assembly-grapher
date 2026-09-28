@@ -71,7 +71,7 @@
   .bar { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; flex-wrap: wrap;
          justify-content: space-between; pointer-events: none; }
   .bar > * { pointer-events: auto; }
-  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--panel); }
+  .seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--panel); }
   .seg button, .toggle { font: 500 12px/1 var(--mono); letter-spacing: .03em; color: var(--ink); background: transparent;
                          border: 0; padding: 8px 10px; cursor: pointer; }
   .seg button + button { border-left: 1px solid var(--rule); }
@@ -167,6 +167,7 @@
           <button id="v-front" data-view="front" aria-pressed="false">Front</button>
           <button id="v-under" data-view="under" aria-pressed="false">Under</button>
           <button id="v-pod" data-view="pod" aria-pressed="false">Pod</button>
+          <button id="v-nose" data-view="nose" aria-pressed="false">Nose</button>
           <button id="v-servo" data-view="servo" aria-pressed="false">Servo</button>
           <button id="v-tail" data-view="tail" aria-pressed="false">Tail</button>
         </div>
@@ -616,6 +617,7 @@ const VIEWS = {
   front: { dir: [-1, 0.06, 0.001] },
   under: { dir: [-0.55, -0.75, 0.75] },
   pod: { dir: [-0.8, 0.75, 0.95], fit: ["pod", "battery", "servo_elev", "wing_centre"] },
+  nose: { dir: [-0.85, -0.3, 0.75], fit: ["motor", "camera", "vtx"], pad: 2.4 },
   servo: { dir: [-0.35, -0.8, -0.55], fit: ["servo_ail_R", "horn_ail_R", "pushrod_ail_R"], pad: 2.6 },
   tail: { dir: [0.75, -0.45, 0.6], fit: ["rudder_R", "rudder_L", "bellcrank", "tail_mount", "fin_R", "fin_L"], pad: 1.05 },
 };

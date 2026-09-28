@@ -15,15 +15,15 @@ so the size comes from a sweep, not a guess. See [Why 450 mm](#why-450-mm).
 | | |
 |---|---|
 | Wingspan | 450 mm, chord 90 mm, NACA 4412 at 2° incidence |
-| Length | 430 mm (prop to elevator trailing edge) |
-| Main struts | 2 × carbon tube 6×5 mm, 389 mm long, 40 mm apart |
+| Length | 431 mm (prop to elevator trailing edge) |
+| Main struts | 2 × carbon tube 6×5 mm, 390 mm long, 40 mm apart |
 | Controls | ailerons, elevator, twin rudders: 4 × SG90 |
 | All-up weight | ~193 g (printed parts ~74 g) |
 | Wing loading | 48 g/dm² |
 | Stall / cruise | ~9.0 / ~13 m/s |
-| Top speed | ~18 m/s (66 km/h) level, estimated; prop pitch speed 86 km/h |
+| Top speed | ~19 m/s (68 km/h) level, estimated; prop pitch speed 86 km/h |
 | Endurance | ~12 min on 2S 450 mAh (rough estimate) |
-| CG | 129.9 mm behind the motor face = 25.2 mm behind the wing LE (28 % chord) |
+| CG | 130.9 mm behind the motor face = 25.2 mm behind the wing LE (28 % chord) |
 | Static margin | ~15 % (neutral point at ~43 % chord) |
 | Printer | every part fits a Bambu Lab A1 mini (180 × 180 × 180 mm) |
 
@@ -36,9 +36,25 @@ regenerated on every build.
 |---|---|
 | ![Pod](preview/pod.png) | ![Aileron servo](preview/servo.png) |
 
-| Rudder linkage, from below |
-|---|
-| ![Tail](preview/tail.png) |
+| Rudder linkage, from below | Rounded nose |
+|---|---|
+| ![Tail](preview/tail.png) | ![Nose](preview/nose.png) |
+
+### Rounded nose
+
+The flat, sharp-edged front of the pod was the largest single drag item, about
+35 % of the total. Its edges are now rounded (`Params.nose_r`, 8 mm):
+
+- the two vertical front edges have an 8 mm radius;
+- the 45° belly chamfer blends into the front face with the same radius;
+- the tube sleeves have domed noses, and the motor plate has 1.5 mm edge
+  fillets.
+
+This cuts the estimated drag area from 20.3 to 17.3 cm². That is worth about
++2 km/h of top speed and roughly 10 % less power at cruise. No surface
+overhangs more than 45° with the pod printed upright, so it still needs no
+supports. The pod takes about 3 minutes longer to print and is 0.5 g lighter.
+Set `nose_r = 0` to get the old square front back.
 
 ## Build process and DFMA
 
@@ -367,5 +383,9 @@ towards the right wing tip and z up, with z = 0 on the tube centre-line.
   term and CLmax 0.95. Expect to trim.
 - The SG90 model uses datasheet dimensions. Clones vary by a few tenths of a
   millimetre, so test-fit a servo in the pocket before gluing.
+- The drag build-up (top speed, the nose's benefit) uses handbook drag
+  coefficients for the pod front. At this size (Reynolds number around 40 000)
+  they could be off by ±50 %; the comparison between options is more
+  reliable than the absolute numbers.
 - The camera, FC, ESC and receiver sizes are generic. Check them against the
   parts you buy.

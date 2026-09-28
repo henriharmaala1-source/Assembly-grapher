@@ -2,38 +2,38 @@
  "span": 450.0,
  "chord": 90.0,
  "area_dm2": 4.05,
- "length": 430,
+ "length": 431,
  "naca": "4412",
  "incidence": 2.0,
  "auw": 193,
  "printed": 74,
- "loading": 47.7,
+ "loading": 47.6,
  "stall": 9.0,
  "cruise": 13.0,
- "top": 18.3,
+ "top": 18.8,
  "pitch_speed": 23.9,
  "endurance": 12,
  "vh": 0.5,
  "cruise_a": 1.9,
  "full_a": 7.5,
  "vv": 0.045,
- "x_le": 104.7,
- "x_te": 194.7,
- "pod_len": 167.7,
- "x_stab": 368.9,
+ "x_le": 105.7,
+ "x_te": 195.7,
+ "pod_len": 168.7,
+ "x_stab": 369.9,
  "c_h": 41.3265306122449,
- "cg_x": 129.9,
+ "cg_x": 130.9,
  "cg_pct": 28,
  "np_pct": 43,
- "np_x": 143.4,
- "battery_x": 89.4,
+ "np_x": 144.4,
+ "battery_x": 90.1,
  "battery_len": 58.0,
  "batt_range": [
   78,
-  101
+  102
  ],
  "tube": "6x5",
- "tube_len": 389,
+ "tube_len": 390,
  "tube_spacing": 40.0,
  "b_h": 175.0,
  "fin_h": 39,
@@ -226,15 +226,15 @@
    "name": "lid",
    "material": "PLA/PETG",
    "grams": 4.3,
-   "bed": "90 x 43 x 3",
+   "bed": "91 x 43 x 3",
    "fits": true,
    "note": "Flat, lips up."
   },
   {
    "name": "pod",
    "material": "PLA/PETG",
-   "grams": 16.8,
-   "bed": "168 x 49 x 40",
+   "grams": 16.4,
+   "bed": "169 x 49 x 40",
    "fits": true,
    "note": "Upright, open top up. 2 walls, 15 % infill."
   }
@@ -243,77 +243,77 @@
   {
    "name": "wing_centre",
    "g": 12.9,
-   "x": 146
+   "x": 147
   },
   {
    "name": "wing_R",
    "g": 10.6,
-   "x": 141
+   "x": 142
   },
   {
    "name": "wing_L",
    "g": 10.6,
-   "x": 141
+   "x": 142
   },
   {
    "name": "aileron_R",
    "g": 2.7,
-   "x": 181
+   "x": 182
   },
   {
    "name": "aileron_L",
    "g": 2.7,
-   "x": 181
+   "x": 182
   },
   {
    "name": "tail_mount",
    "g": 4.0,
-   "x": 383
+   "x": 384
   },
   {
    "name": "stab",
    "g": 3.5,
-   "x": 382
+   "x": 383
   },
   {
    "name": "elevator",
    "g": 1.7,
-   "x": 402
+   "x": 403
   },
   {
    "name": "fin_R",
    "g": 1.0,
-   "x": 382
+   "x": 383
   },
   {
    "name": "fin_L",
    "g": 1.0,
-   "x": 382
+   "x": 383
   },
   {
    "name": "rudder_R",
    "g": 0.8,
-   "x": 402
+   "x": 403
   },
   {
    "name": "rudder_L",
    "g": 0.8,
-   "x": 402
+   "x": 403
   },
   {
    "name": "bellcrank",
    "g": 0.2,
-   "x": 396
+   "x": 397
   },
   {
    "name": "lid",
    "g": 4.3,
-   "x": 59
+   "x": 60
   },
   {
    "name": "pod",
-   "g": 16.8,
-   "x": 72
+   "g": 16.4,
+   "x": 74
   },
   {
    "name": "tube_L",
@@ -328,12 +328,12 @@
   {
    "name": "spar_main",
    "g": 4.8,
-   "x": 127
+   "x": 128
   },
   {
    "name": "spar_rear",
    "g": 2.1,
-   "x": 168
+   "x": 169
   },
   {
    "name": "motor",
@@ -378,67 +378,67 @@
   {
    "name": "battery",
    "g": 27.0,
-   "x": 89
+   "x": 90
   },
   {
    "name": "servo_elev",
    "g": 9.0,
-   "x": 149
+   "x": 150
   },
   {
    "name": "pushrod_elev",
    "g": 0.3,
-   "x": 276
+   "x": 277
   },
   {
    "name": "servo_rud",
    "g": 9.0,
-   "x": 148
+   "x": 149
   },
   {
    "name": "pushrod_rud",
    "g": 0.3,
-   "x": 273
+   "x": 274
   },
   {
    "name": "joiner_R",
    "g": 0.3,
-   "x": 403
+   "x": 404
   },
   {
    "name": "joiner_L",
    "g": 0.3,
-   "x": 403
+   "x": 404
   },
   {
    "name": "servo_ail_R",
    "g": 9.0,
-   "x": 148
+   "x": 149
   },
   {
    "name": "horn_ail_R",
    "g": 0.3,
-   "x": 176
+   "x": 177
   },
   {
    "name": "pushrod_ail_R",
    "g": 0.2,
-   "x": 164
+   "x": 165
   },
   {
    "name": "servo_ail_L",
    "g": 9.0,
-   "x": 148
+   "x": 149
   },
   {
    "name": "horn_ail_L",
    "g": 0.3,
-   "x": 176
+   "x": 177
   },
   {
    "name": "pushrod_ail_L",
    "g": 0.2,
-   "x": 164
+   "x": 165
   },
   {
    "name": "wiring",

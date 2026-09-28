@@ -85,6 +85,7 @@ const shots = [
   ["under", "view=under", 1400, 900],
   ["cutaway", "view=side&cut=1", 1600, 700],
   ["pod", "view=pod&cut=1", 1400, 900],
+  ["nose", "view=nose", 1200, 800],
   ["servo", "view=servo", 1200, 800],
   ["tail", "view=tail", 1400, 900],
 ];

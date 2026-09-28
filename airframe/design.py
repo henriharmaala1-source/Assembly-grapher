@@ -70,6 +70,7 @@ class Params:
     boss_wall: float = 1.3         # printed sleeve round each tube
     sleeve_len: float = 14.0       # sleeves at the pod front and rear
     front_wall: float = 2.4        # carries the motor
+    nose_r: float = 8.0            # radius on the pod's front edges (0 = sharp box)
     pod_depth: float = 18.0        # tube centre-line to pod bottom
     pod_overlap: float = 0.70      # pod runs this far under the wing (chords)
     front_bay: float = 48.0        # camera, VTX, FC; battery behind
@@ -370,13 +371,23 @@ def drag_area(p: Params, L: Layout, k: Kit):
     """Parasite drag area CdA (m^2) built up from the geometry, per item."""
     mm2 = 1e-6
     tail = (L.b_h * L.c_h + 2 * L.fin_h * L.c_h) * mm2
-    pod_front = (2 * L.half_w * (p.pod_depth + L.z_top) + 26 * 13) * mm2       # box + motor plate
-    pod_wet = 2 * L.pod_len * (p.pod_depth + L.z_top + 2 * L.half_w) * mm2
+    w, h = 2 * L.half_w, p.pod_depth + L.z_top
+    pod_front = w * h * mm2
+    plate = 26 * 13 * mm2                                   # motor plate above the pod
+    pod_wet = 2 * L.pod_len * (w + h) * mm2
     tubes_wet = 2 * math.pi * p.tube_od * L.tube_len * mm2
+    # Front + base drag of the pod (Hoerner's forebody trend): a sharp-edged box
+    # face ~0.5; rounding the edges to r/d ~ 0.2 of the hydraulic diameter
+    # removes most of the forebody part, leaving ~0.25 (mostly the blunt base).
+    d_h = 2 * w * h / (w + h)                               # hydraulic diameter, mm
+    rounded = min(1.0, p.nose_r / (0.2 * d_h))
+    cd_pod = 0.5 - 0.25 * rounded
+    cd_plate = 0.5 - 0.1 * rounded                          # small fillets only
     items = {
         "wing (Cd0 0.014, printed surface)": L.area * mm2 * 0.014,
         "tail plates (Cd 0.02, flat 2 mm)": tail * 0.02,
-        "pod front + motor (Cd 0.5)": pod_front * 0.5,
+        f"pod front + base (Cd {cd_pod:.2f})": pod_front * cd_pod,
+        f"motor plate (Cd {cd_plate:.2f})": plate * cd_plate,
         "pod skin friction": pod_wet * 0.006,
         "tubes skin friction": tubes_wet * 0.006,
         "servo bumps, fairing, horns, antenna": 1.5e-4,

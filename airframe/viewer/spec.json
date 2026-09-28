@@ -1,0 +1,343 @@
+{
+ "span": 400.0,
+ "chord": 80.0,
+ "area_dm2": 3.2,
+ "length": 363,
+ "naca": "4412",
+ "incidence": 2.0,
+ "auw": 151,
+ "printed": 58,
+ "loading": 47.2,
+ "stall": 8.9,
+ "cruise": 12.9,
+ "endurance": 14,
+ "vh": 0.5,
+ "vv": 0.045,
+ "x_le": 72.4,
+ "x_te": 152.4,
+ "pod_len": 128.4,
+ "x_stab": 307.4,
+ "c_h": 36.0,
+ "cg_x": 94.8,
+ "cg_pct": 28,
+ "np_pct": 43,
+ "np_x": 107.0,
+ "battery_x": 89.8,
+ "battery_len": 58.0,
+ "batt_range": [
+  82,
+  98
+ ],
+ "tube": "6x5",
+ "tube_len": 324,
+ "tube_spacing": 40.0,
+ "b_h": 158,
+ "fin_h": 36,
+ "stall_limit": 9.0,
+ "min_span": 390,
+ "sweep": [
+  {
+   "span": 300,
+   "auw": 127,
+   "stall": 10.89
+  },
+  {
+   "span": 320,
+   "auw": 131,
+   "stall": 10.37
+  },
+  {
+   "span": 340,
+   "auw": 135,
+   "stall": 9.91
+  },
+  {
+   "span": 360,
+   "auw": 139,
+   "stall": 9.51
+  },
+  {
+   "span": 380,
+   "auw": 144,
+   "stall": 9.16
+  },
+  {
+   "span": 400,
+   "auw": 148,
+   "stall": 8.84
+  },
+  {
+   "span": 420,
+   "auw": 153,
+   "stall": 8.56
+  },
+  {
+   "span": 440,
+   "auw": 158,
+   "stall": 8.31
+  },
+  {
+   "span": 460,
+   "auw": 164,
+   "stall": 8.08
+  },
+  {
+   "span": 480,
+   "auw": 169,
+   "stall": 7.87
+  },
+  {
+   "span": 500,
+   "auw": 175,
+   "stall": 7.68
+  },
+  {
+   "span": 520,
+   "auw": 181,
+   "stall": 7.51
+  },
+  {
+   "span": 540,
+   "auw": 187,
+   "stall": 7.35
+  },
+  {
+   "span": 560,
+   "auw": 193,
+   "stall": 7.21
+  }
+ ],
+ "parts": [
+  {
+   "name": "wing_centre",
+   "material": "LW-PLA",
+   "grams": 8.1,
+   "bed": "80 x 20 x 56",
+   "note": "On its side, spar holes vertical. 0.6 mm walls, 8 % infill."
+  },
+  {
+   "name": "wing_R",
+   "material": "LW-PLA",
+   "grams": 9.2,
+   "bed": "80 x 10 x 172",
+   "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
+  },
+  {
+   "name": "wing_L",
+   "material": "LW-PLA",
+   "grams": 9.2,
+   "bed": "80 x 10 x 172",
+   "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
+  },
+  {
+   "name": "aileron_R",
+   "material": "LW-PLA",
+   "grams": 2.4,
+   "bed": "20 x 155 x 6",
+   "note": "Flat on the lower surface. 1 wall, 0 % infill."
+  },
+  {
+   "name": "aileron_L",
+   "material": "LW-PLA",
+   "grams": 2.4,
+   "bed": "20 x 155 x 6",
+   "note": "Flat on the lower surface. 1 wall, 0 % infill."
+  },
+  {
+   "name": "tail_mount",
+   "material": "PLA/PETG",
+   "grams": 3.3,
+   "bed": "22 x 49 x 9",
+   "note": "Plate face down."
+  },
+  {
+   "name": "stab",
+   "material": "LW-PLA",
+   "grams": 2.8,
+   "bed": "23 x 157 x 2",
+   "note": "Flat. 2 top / 2 bottom layers, 15 % infill."
+  },
+  {
+   "name": "elevator",
+   "material": "LW-PLA",
+   "grams": 1.4,
+   "bed": "12 x 157 x 8",
+   "note": "Top face down, horn up."
+  },
+  {
+   "name": "fin_R",
+   "material": "LW-PLA",
+   "grams": 1.2,
+   "bed": "36 x 36 x 9",
+   "note": "Outer face down, jaws up."
+  },
+  {
+   "name": "fin_L",
+   "material": "LW-PLA",
+   "grams": 1.2,
+   "bed": "36 x 36 x 9",
+   "note": "Outer face down, jaws up."
+  },
+  {
+   "name": "lid",
+   "material": "PLA/PETG",
+   "grams": 2.7,
+   "bed": "58 x 43 x 3",
+   "note": "Flat, lips up."
+  },
+  {
+   "name": "pod",
+   "material": "PLA/PETG",
+   "grams": 14.4,
+   "bed": "128 x 49 x 40",
+   "note": "Upright, open top up. 2 walls, 15 % infill."
+  }
+ ],
+ "mass": [
+  {
+   "name": "wing_centre",
+   "g": 8.1,
+   "x": 110
+  },
+  {
+   "name": "wing_R",
+   "g": 9.2,
+   "x": 104
+  },
+  {
+   "name": "wing_L",
+   "g": 9.2,
+   "x": 104
+  },
+  {
+   "name": "aileron_R",
+   "g": 2.4,
+   "x": 141
+  },
+  {
+   "name": "aileron_L",
+   "g": 2.4,
+   "x": 141
+  },
+  {
+   "name": "tail_mount",
+   "g": 3.3,
+   "x": 319
+  },
+  {
+   "name": "stab",
+   "g": 2.8,
+   "x": 319
+  },
+  {
+   "name": "elevator",
+   "g": 1.4,
+   "x": 337
+  },
+  {
+   "name": "fin_R",
+   "g": 1.2,
+   "x": 324
+  },
+  {
+   "name": "fin_L",
+   "g": 1.2,
+   "x": 324
+  },
+  {
+   "name": "lid",
+   "g": 2.7,
+   "x": 43
+  },
+  {
+   "name": "tube_L",
+   "g": 4.3,
+   "x": 166
+  },
+  {
+   "name": "tube_R",
+   "g": 4.3,
+   "x": 166
+  },
+  {
+   "name": "spar_main",
+   "g": 4.3,
+   "x": 92
+  },
+  {
+   "name": "spar_rear",
+   "g": 1.9,
+   "x": 122
+  },
+  {
+   "name": "motor",
+   "g": 9.0,
+   "x": -6
+  },
+  {
+   "name": "prop",
+   "g": 2.0,
+   "x": -15
+  },
+  {
+   "name": "camera",
+   "g": 6.0,
+   "x": 9
+  },
+  {
+   "name": "fc",
+   "g": 7.5,
+   "x": 39
+  },
+  {
+   "name": "servo_elev",
+   "g": 4.3,
+   "x": 13
+  },
+  {
+   "name": "servo_ail_R",
+   "g": 4.3,
+   "x": 107
+  },
+  {
+   "name": "servo_ail_L",
+   "g": 4.3,
+   "x": 107
+  },
+  {
+   "name": "pushrod",
+   "g": 0.4,
+   "x": 176
+  },
+  {
+   "name": "wiring",
+   "g": 5.0,
+   "x": 64
+  },
+  {
+   "name": "esc",
+   "g": 3.5,
+   "x": 30
+  },
+  {
+   "name": "antenna",
+   "g": 1.5,
+   "x": 20
+  },
+  {
+   "name": "hardware",
+   "g": 3.0,
+   "x": 169
+  },
+  {
+   "name": "pod",
+   "g": 14.4,
+   "x": 52
+  },
+  {
+   "name": "battery",
+   "g": 27.0,
+   "x": 90
+  }
+ ]
+}

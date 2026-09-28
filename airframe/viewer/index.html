@@ -1,0 +1,498 @@
+<title>Kipinä 400</title>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #EEF1F2;
+    --panel: #F8FAFA;
+    --ink: #1B2226;
+    --muted: #5C6A70;
+    --rule: #C9D1D4;
+    --accent: #E4601A;
+    --accent-ink: #B4470C;
+    --carbon: #15191B;
+    --grid-minor: #D6DDDF;
+    --grid-major: #B9C3C7;
+    --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #111517;
+      --panel: #182125;
+      --ink: #E6ECEE;
+      --muted: #94A3A9;
+      --rule: #2C373C;
+      --accent: #F07A35;
+      --accent-ink: #F59A62;
+      --carbon: #0B0E0F;
+      --grid-minor: #1F292D;
+      --grid-major: #34424A;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #111517;
+    --panel: #182125;
+    --ink: #E6ECEE;
+    --muted: #94A3A9;
+    --rule: #2C373C;
+    --accent: #F07A35;
+    --accent-ink: #F59A62;
+    --carbon: #0B0E0F;
+    --grid-minor: #1F292D;
+    --grid-major: #34424A;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--ground); color: var(--ink); font: 16px/1.5 var(--body); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 56px;
+          display: grid; gap: 40px; }
+
+  header { display: grid; gap: 6px; }
+  .eyebrow { font: 500 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { font: 700 clamp(44px, 7vw, 72px)/0.95 var(--display); letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+  h1 span { color: var(--accent); }
+  .lede { max-width: 62ch; color: var(--muted); margin: 4px 0 0; }
+  h2 { font: 600 28px/1.1 var(--display); margin: 0; text-wrap: balance; letter-spacing: .01em; }
+  h3 { font: 600 13px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+
+  .top { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
+  @media (max-width: 920px) { .top { grid-template-columns: minmax(0, 1fr); } }
+
+  .stage { position: relative; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+           aspect-ratio: 16 / 10.5; max-width: 100%; min-height: 320px; overflow: hidden; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .bar { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; flex-wrap: wrap;
+         justify-content: space-between; pointer-events: none; }
+  .bar > * { pointer-events: auto; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--panel); }
+  .seg button, .toggle { font: 500 12px/1 var(--mono); letter-spacing: .03em; color: var(--ink); background: transparent;
+                         border: 0; padding: 8px 10px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .toggles { display: inline-flex; gap: 6px; }
+  .toggle { border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); display: inline-flex; gap: 6px; align-items: center; }
+  .toggle::before { content: ""; width: 8px; height: 8px; border-radius: 2px; border: 1.5px solid var(--muted); }
+  .toggle[aria-pressed="true"]::before { background: var(--accent); border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .foot { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; justify-content: space-between; gap: 8px;
+          font: 400 11px/1.3 var(--mono); color: var(--muted); pointer-events: none; }
+  .status { position: absolute; inset: 0; display: grid; place-items: center; font: 500 13px var(--mono); color: var(--muted); }
+
+  .rail { display: grid; gap: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 12px; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; font-size: 14px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+  dd b { font-weight: 500; color: var(--ink); }
+
+  .parts { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+  .parts button { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 8px; text-align: left; font: 14px/1.3 var(--body);
+                  color: var(--ink); background: transparent; border: 0; border-radius: 3px; padding: 6px 8px; cursor: pointer; }
+  .parts button span:last-child { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .parts button:hover { background: var(--ground); }
+  .parts button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .parts button[aria-pressed="true"] span:last-child { color: var(--panel); }
+  .note { font-size: 13px; color: var(--muted); margin: 0; min-height: 2.6em; }
+  .kit { margin: 0; padding-left: 18px; font-size: 14px; display: grid; gap: 3px; }
+
+  section { display: grid; gap: 14px; }
+  .two { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr); } }
+  .prose { max-width: 62ch; display: grid; gap: 10px; }
+  .prose p { margin: 0; }
+  .figure { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; overflow-x: auto; }
+  svg text { font-family: var(--mono); }
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font: 500 11px/1.2 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  td.num { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td code { font: 13px var(--mono); }
+  tr:last-child td { border-bottom: 0; }
+  footer { font: 12px/1.5 var(--mono); color: var(--muted); }
+
+  body.shot .wrap { max-width: none; padding: 0; }
+  body.shot header, body.shot .rail, body.shot section, body.shot footer, body.shot .bar, body.shot .foot { display: none; }
+  body.shot .top { display: block; }
+  body.shot .stage { border: 0; border-radius: 0; aspect-ratio: auto; height: 100vh; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Twin-tube micro FPV · 3D printed · parametric CadQuery</div>
+    <h1>Kipinä <span>400</span></h1>
+    <p class="lede">A 400 mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail; everything else prints on a normal bed. It is the smallest span that still hand-launches below 9 m/s with an analog FPV kit.</p>
+  </header>
+
+  <div class="top">
+    <div class="stage" id="stage">
+      <div class="status" id="status">Loading model…</div>
+      <div class="bar">
+        <div class="seg" role="group" aria-label="View">
+          <button id="v-quarter" data-view="quarter" aria-pressed="true">3/4</button>
+          <button id="v-top" data-view="top" aria-pressed="false">Top</button>
+          <button id="v-side" data-view="side" aria-pressed="false">Side</button>
+          <button id="v-front" data-view="front" aria-pressed="false">Front</button>
+          <button id="v-under" data-view="under" aria-pressed="false">Under</button>
+        </div>
+        <div class="toggles">
+          <button class="toggle" id="t-elec" aria-pressed="true">Electronics</button>
+          <button class="toggle" id="t-cut" aria-pressed="false">Cutaway</button>
+        </div>
+      </div>
+      <div class="foot"><span>Grid 10 mm</span><span id="picked">Drag to orbit · click a part</span></div>
+    </div>
+
+    <aside class="rail">
+      <div class="card">
+        <h3>Numbers</h3>
+        <dl id="specs"></dl>
+      </div>
+      <div class="card">
+        <h3>Printed parts</h3>
+        <ul class="parts" id="parts"></ul>
+        <p class="note" id="part-note">Select a part to see how it prints.</p>
+      </div>
+    </aside>
+  </div>
+
+  <section class="two">
+    <div class="prose">
+      <h2>Why 400 mm</h2>
+      <p>A printed plane does not shrink evenly. The electronics weigh the same at any size, and a printed skin cannot get thinner than one nozzle line, so the wing loading climbs as the span drops.</p>
+      <p>The sweep rebuilds the layout at each span, re-balances it and estimates the weight. <b id="min-span">390 mm</b> is the first span that stalls below the 9 m/s hand-launch limit. The build rounds up to 400 mm for a little margin.</p>
+      <p>Going smaller means a lighter kit: a 2S 300 mAh pack and 5×4 mm tubes save about 10 g, which is worth roughly 20 mm of span.</p>
+    </div>
+    <div class="figure"><svg id="chart" viewBox="0 0 560 300" role="img" aria-label="Stall speed against wingspan"></svg></div>
+  </section>
+
+  <section>
+    <h2>Balance</h2>
+    <p class="prose" style="margin:0">Distances from the motor mounting face. The battery slides in the pod to set the CG; the strap slots allow the travel shown.</p>
+    <div class="figure"><svg id="balance" viewBox="0 0 900 190" role="img" aria-label="Side layout with CG and battery position"></svg></div>
+  </section>
+
+  <section>
+    <h2>Print list</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>File</th><th>Material</th><th>Grams</th><th>On the bed, mm</th><th>Orientation</th></tr></thead>
+      <tbody id="print"></tbody>
+    </table></div>
+  </section>
+
+  <section class="two">
+    <div class="prose">
+      <h2>Also needed</h2>
+      <ul class="kit">
+        <li>2 × carbon tube 6×5 mm, 330 mm (6×0.5 aluminium also fits, +6 g)</li>
+        <li>Carbon rod 3 mm and 2 mm, 400 mm each (wing spars)</li>
+        <li>1404 3800 KV motor, 4×2.5 two-blade prop, 12 A ESC</li>
+        <li>20×20 wing flight controller (INAV), ELRS nano receiver</li>
+        <li>Nano camera (14 mm) with 25–200 mW VTX</li>
+        <li>3 × 4 g micro servo, 1 mm pushrod, 2 micro control horns</li>
+        <li>2S 450 mAh LiPo, 10 mm velcro strap, hinge tape</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h2>Source</h2>
+      <p>Everything is generated from <code>airframe/design.py</code> and <code>airframe/build.py</code> in the Assembly-grapher repository. Change a number and rebuild to get new STLs, the STEP assembly and this model.</p>
+    </div>
+  </section>
+
+  <footer>henriharmaala1-source/Assembly-grapher · branch claude/cad-software-connection-l8ls4m · airframe/</footer>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const LABEL = {
+  pod: "Pod", lid: "Hatch lid", wing_centre: "Wing centre", wing_R: "Wing panel R", wing_L: "Wing panel L",
+  aileron_R: "Aileron R", aileron_L: "Aileron L", tail_mount: "Tail mount", stab: "Stabiliser",
+  elevator: "Elevator", fin_R: "Fin R", fin_L: "Fin L", tube_L: "Tube L (6×5 carbon)", tube_R: "Tube R (6×5 carbon)",
+  spar_main: "Main spar, 3 mm rod", spar_rear: "Rear spar, 2 mm rod", motor: "Motor, 1404", prop: "Prop, 4×2.5",
+  battery: "Battery, 2S 450 mAh", camera: "Nano camera + VTX", fc: "FC + receiver", servo_elev: "Elevator servo",
+  servo_ail_R: "Aileron servo R", servo_ail_L: "Aileron servo L", pushrod: "Elevator pushrod",
+};
+const ELECTRONICS = new Set(["motor", "prop", "battery", "camera", "fc", "servo_elev", "servo_ail_R", "servo_ail_L", "pushrod"]);
+const params = new URLSearchParams(location.search);
+if (params.has("shot")) document.body.classList.add("shot");
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- spec panels
+const spec = await fetch("spec.json").then((r) => r.json());
+const f1 = (v) => Number(v).toFixed(1);
+const rows = [
+  ["Wingspan", `<b>${spec.span}</b> mm`],
+  ["Chord", `${spec.chord} mm · NACA ${spec.naca}`],
+  ["Length", `${spec.length} mm`],
+  ["All-up weight", `<b>${spec.auw}</b> g`],
+  ["Printed parts", `${spec.printed} g`],
+  ["Wing loading", `${f1(spec.loading)} g/dm²`],
+  ["Stall / cruise", `${f1(spec.stall)} / ${f1(spec.cruise)} m/s`],
+  ["Endurance", `≈ ${spec.endurance} min`],
+  ["CG from motor face", `<b>${f1(spec.cg_x)}</b> mm`],
+  ["CG / neutral point", `${spec.cg_pct} % / ${spec.np_pct} % MAC`],
+  ["Main struts", `2 × ${spec.tube.replace("x", "×")} mm, ${spec.tube_len}`],
+];
+$("specs").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+$("min-span").textContent = `${spec.min_span} mm`;
+$("print").innerHTML = spec.parts.map((p) =>
+  `<tr><td><code>stl/${p.name}.stl</code></td><td>${p.material}</td><td class="num">${f1(p.grams)}</td>` +
+  `<td class="num">${p.bed.replaceAll(" x ", " × ")}</td><td>${p.note}</td></tr>`).join("");
+$("parts").innerHTML = spec.parts.map((p) =>
+  `<li><button id="p-${p.name}" data-part="${p.name}" aria-pressed="false"><span>${LABEL[p.name]}</span><span>${f1(p.grams)} g</span></button></li>`).join("");
+
+function svg(tag, attrs, text) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function drawChart() {
+  const g = $("chart");
+  g.replaceChildren();
+  const ink = css("--ink"), muted = css("--muted"), rule = css("--rule"), accent = css("--accent"), panel = css("--panel");
+  const L = 56, R = 540, T = 20, B = 250;
+  const x = (s) => L + (s - 300) / (560 - 300) * (R - L);
+  const y = (v) => B - (v - 7) / (11 - 7) * (B - T);
+  for (let v = 7; v <= 11; v++) {
+    g.append(svg("line", { x1: L, x2: R, y1: y(v), y2: y(v), stroke: rule, "stroke-width": 1 }));
+    g.append(svg("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: muted }, v));
+  }
+  for (let s = 300; s <= 540; s += 40)
+    g.append(svg("text", { x: x(s), y: B + 18, "text-anchor": "middle", "font-size": 11, fill: muted }, s));
+  g.append(svg("text", { x: (L + R) / 2, y: B + 40, "text-anchor": "middle", "font-size": 11, fill: muted }, "Wingspan, mm"));
+  g.append(svg("text", { x: 14, y: (T + B) / 2, "text-anchor": "middle", "font-size": 11, fill: muted,
+                         transform: `rotate(-90 14 ${(T + B) / 2})` }, "Stall speed, m/s"));
+  const lim = spec.stall_limit;
+  g.append(svg("line", { x1: L, x2: R, y1: y(lim), y2: y(lim), stroke: accent, "stroke-width": 1.5, "stroke-dasharray": "5 4" }));
+  g.append(svg("text", { x: R, y: y(lim) - 7, "text-anchor": "end", "font-size": 11, fill: accent }, `${lim} m/s hand-launch limit`));
+  const pts = spec.sweep.map((r) => [x(r.span), y(r.stall)]);
+  g.append(svg("polyline", { points: pts.map((p) => p.join(",")).join(" "), fill: "none", stroke: ink, "stroke-width": 1.75 }));
+  spec.sweep.forEach((r) => {
+    const ok = r.stall <= lim;
+    g.append(svg("circle", { cx: x(r.span), cy: y(r.stall), r: 3.6, fill: ok ? ink : panel, stroke: ink, "stroke-width": 1.5 }));
+  });
+  const chosen = spec.sweep.find((r) => r.span === spec.span);
+  if (chosen) {
+    g.append(svg("circle", { cx: x(chosen.span), cy: y(chosen.stall), r: 8, fill: "none", stroke: accent, "stroke-width": 2 }));
+    g.append(svg("text", { x: x(chosen.span) + 14, y: y(chosen.stall) - 12, "font-size": 11, fill: ink },
+                 `${chosen.span} mm build`));
+  }
+}
+
+function drawBalance() {
+  const g = $("balance");
+  g.replaceChildren();
+  const ink = css("--ink"), muted = css("--muted"), rule = css("--rule"), accent = css("--accent"),
+        carbon = css("--carbon"), panel = css("--panel");
+  const end = spec.x_stab + spec.c_h;
+  const L = 40, R = 870;
+  const x = (mm) => L + (mm + 20) / (end + 20) * (R - L);
+  const axisY = 150;
+  for (let mm = 0; mm <= end; mm += 50) {
+    g.append(svg("line", { x1: x(mm), x2: x(mm), y1: axisY, y2: axisY + 6, stroke: muted }));
+    g.append(svg("text", { x: x(mm), y: axisY + 20, "text-anchor": "middle", "font-size": 11, fill: muted }, mm));
+  }
+  g.append(svg("line", { x1: x(-20), x2: x(end), y1: axisY, y2: axisY, stroke: muted }));
+  // tubes, pod, wing, tail, battery
+  g.append(svg("rect", { x: x(4), y: 83, width: x(spec.x_stab + spec.c_h - 15) - x(4), height: 5, fill: carbon }));
+  g.append(svg("rect", { x: x(0), y: 88, width: x(spec.pod_len) - x(0), height: 34, fill: "none", stroke: ink, "stroke-width": 1.5, rx: 3 }));
+  g.append(svg("rect", { x: x(spec.x_le), y: 62, width: x(spec.x_te) - x(spec.x_le), height: 14, fill: rule, stroke: ink, "stroke-width": 1.2, rx: 7 }));
+  g.append(svg("rect", { x: x(spec.x_stab), y: 78, width: x(spec.x_stab + spec.c_h) - x(spec.x_stab), height: 4, fill: ink }));
+  g.append(svg("rect", { x: x(spec.x_stab + 2), y: 44, width: x(spec.x_stab + spec.c_h) - x(spec.x_stab + 2), height: 34, fill: "none", stroke: ink, "stroke-width": 1.2 }));
+  const bl = spec.battery_len;
+  g.append(svg("rect", { x: x(spec.battery_x - bl / 2), y: 104, width: x(bl) - x(0), height: 14, fill: accent, opacity: 0.85, rx: 2 }));
+  g.append(svg("text", { x: x(spec.battery_x - bl / 2) + 2, y: 139, "font-size": 11, fill: ink }, `battery ${Math.round(spec.battery_x)}`));
+  const [b0, b1] = spec.batt_range;
+  g.append(svg("line", { x1: x(b0), x2: x(b1), y1: 99, y2: 99, stroke: accent, "stroke-width": 2 }));
+  g.append(svg("rect", { x: x(-16), y: 70, width: 3, height: 40, fill: muted }));
+  g.append(svg("text", { x: x(-20), y: 64, "font-size": 11, fill: muted }, "prop"));
+  // CG and neutral point
+  const cx = x(spec.cg_x);
+  g.append(svg("line", { x1: cx, x2: cx, y1: 30, y2: axisY, stroke: ink, "stroke-width": 1.2, "stroke-dasharray": "3 3" }));
+  g.append(svg("circle", { cx, cy: 30, r: 7, fill: panel, stroke: ink, "stroke-width": 1.5 }));
+  g.append(svg("path", { d: `M${cx} 23 A7 7 0 0 1 ${cx + 7} 30 L${cx} 30 Z M${cx} 37 A7 7 0 0 1 ${cx - 7} 30 L${cx} 30 Z`, fill: ink }));
+  g.append(svg("text", { x: cx - 12, y: 26, "text-anchor": "end", "font-size": 12, fill: ink }, `CG ${f1(spec.cg_x)} (${spec.cg_pct} %)`));
+  const nx = x(spec.np_x);
+  g.append(svg("line", { x1: nx, x2: nx, y1: 44, y2: 62, stroke: muted, "stroke-width": 1.5 }));
+  g.append(svg("text", { x: nx + 6, y: 52, "font-size": 11, fill: muted }, `NP ${f1(spec.np_x)}`));
+  g.append(svg("text", { x: x(spec.x_stab - 4), y: 38, "text-anchor": "end", "font-size": 11, fill: muted }, "H-tail"));
+  g.append(svg("text", { x: x(210), y: 78, "text-anchor": "middle", "font-size": 11, fill: muted }, "two 6 mm tubes"));
+}
+drawChart();
+drawBalance();
+
+// ---------------------------------------------------------------- 3D viewer
+const stage = $("stage");
+const canvas = document.createElement("canvas");
+stage.prepend(canvas);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.localClippingEnabled = true;
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(-0.4, 1.0, 0.6);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(28, 1, 0.01, 20);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+
+const clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.0002);
+const meshes = new Map();
+let grid, center = new THREE.Vector3(), radius = 0.3;
+
+const gltf = await new GLTFLoader().loadAsync("airframe.glb").catch((e) => {
+  $("status").textContent = "The 3D model did not load. Reload the page to try again.";
+  throw e;
+});
+$("status").hidden = true;
+const root = gltf.scene;
+root.traverse((o) => {
+  if (!o.isMesh) return;
+  const name = o.name.replace(/_\d+$/, "");
+  const src = o.material;
+  o.material = new THREE.MeshStandardMaterial({
+    color: src.color.clone(), roughness: name.startsWith("tube") || name.startsWith("spar") ? 0.35 : 0.62,
+    metalness: name === "motor" ? 0.6 : 0.0, side: THREE.DoubleSide,
+  });
+  o.userData.part = name;
+  o.userData.base = o.material.color.clone();
+  meshes.set(name, o);
+});
+scene.add(root);
+const box = new THREE.Box3().setFromObject(root);
+box.getCenter(center);
+radius = box.getSize(new THREE.Vector3()).length() / 2;
+
+function buildGrid() {
+  if (grid) scene.remove(grid);
+  grid = new THREE.GridHelper(0.6, 60, new THREE.Color(css("--grid-major")), new THREE.Color(css("--grid-minor")));
+  grid.position.set(center.x, box.min.y - 0.004, center.z);
+  scene.add(grid);
+}
+buildGrid();
+
+const VIEWS = {
+  quarter: [-0.95, 0.62, 0.9],
+  top: [0, 1, 0.02],
+  side: [0, 0.02, 1],
+  front: [-1, 0.06, 0.001],
+  under: [-0.55, -0.75, 0.75],
+};
+let tween = null;
+function fitDistance(dir) {
+  const fwd = dir.clone().negate(), right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
+  const up = new THREE.Vector3().crossVectors(right, fwd);
+  let hw = 0, hh = 0, depth = 0;
+  for (const cx of [box.min.x, box.max.x]) for (const cy of [box.min.y, box.max.y]) for (const cz of [box.min.z, box.max.z]) {
+    const d = new THREE.Vector3(cx, cy, cz).sub(center);
+    hw = Math.max(hw, Math.abs(d.dot(right))); hh = Math.max(hh, Math.abs(d.dot(up))); depth = Math.max(depth, Math.abs(d.dot(dir)));
+  }
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  return 0.35 * depth + Math.max(hh / t, hw / (t * camera.aspect)) * 1.08;
+}
+function setView(name, instant) {
+  const dir = new THREE.Vector3(...VIEWS[name]).normalize();
+  const to = center.clone().add(dir.clone().multiplyScalar(fitDistance(dir)));
+  if (grid) grid.visible = name === "quarter" || name === "top";
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === name)));
+  if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(center); controls.update(); return; }
+  tween = { from: camera.position.clone(), to, fromT: controls.target.clone(), t0: performance.now() };
+}
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+
+function toggle(btn, fn) {
+  btn.addEventListener("click", () => {
+    const on = btn.getAttribute("aria-pressed") !== "true";
+    btn.setAttribute("aria-pressed", String(on));
+    fn(on);
+  });
+}
+toggle($("t-elec"), (on) => meshes.forEach((m, n) => { if (ELECTRONICS.has(n)) m.visible = on; }));
+toggle($("t-cut"), (on) => meshes.forEach((m) => { m.material.clippingPlanes = on ? [clip] : []; m.material.needsUpdate = true; }));
+
+let selected = null;
+function select(name) {
+  selected = selected === name ? null : name;
+  const accent = new THREE.Color(css("--accent"));
+  meshes.forEach((m, n) => {
+    const dim = selected && n !== selected;
+    m.material.transparent = dim;
+    m.material.opacity = dim ? 0.16 : 1;
+    m.material.depthWrite = !dim;
+    m.material.emissive.copy(n === selected ? accent : new THREE.Color(0));
+    m.material.emissiveIntensity = n === selected ? 0.35 : 0;
+  });
+  document.querySelectorAll(".parts button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.part === selected)));
+  const p = spec.parts.find((q) => q.name === selected);
+  $("part-note").textContent = p ? `stl/${p.name}.stl · ${p.material} · ${p.note}` : "Select a part to see how it prints.";
+  $("picked").textContent = selected ? LABEL[selected] ?? selected : "Drag to orbit · click a part";
+}
+document.querySelectorAll(".parts button").forEach((b) => b.addEventListener("click", () => select(b.dataset.part)));
+
+const ray = new THREE.Raycaster();
+let down = null;
+canvas.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
+canvas.addEventListener("pointerup", (e) => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+  const r = canvas.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
+  const hit = ray.intersectObjects([...meshes.values()].filter((m) => m.visible && m.material.opacity > 0.5))[0];
+  if (hit) select(hit.object.userData.part);
+});
+
+function resize() {
+  const { clientWidth: w, clientHeight: h } = stage;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(() => { resize(); }).observe(stage);
+resize();
+
+function retheme() { buildGrid(); drawChart(); drawBalance(); if (selected) { const s = selected; selected = null; select(s); } }
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
+new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+const hash = location.hash.slice(1);
+setView(params.get("view") || (VIEWS[hash] ? hash : "quarter"), true);
+if (params.get("elec") === "0") $("t-elec").click();
+if (params.get("cut") === "1") $("t-cut").click();
+
+renderer.setAnimationLoop((now) => {
+  if (tween) {
+    const k = Math.min(1, (now - tween.t0) / 650), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+    camera.position.lerpVectors(tween.from, tween.to, e);
+    controls.target.lerpVectors(tween.fromT, center, e);
+    if (k >= 1) tween = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+window.__ready = true;
+</script>

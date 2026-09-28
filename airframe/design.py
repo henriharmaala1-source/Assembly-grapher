@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+"""Twin-tube micro FPV plane: parameters, layout and first-order sizing.
+
+Pure Python (no CAD dependency) so the numbers can be checked quickly:
+
+    python3 airframe/design.py
+
+prints the span sweep that picks the smallest workable wing, and the layout
+of the chosen design. build.py turns the same parameters into printable parts.
+
+Coordinates are millimetres: x runs aft from the motor mounting face, y towards
+the right wing tip, z up. The tube centre-line is z = 0.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, replace
+
+RHO_AIR = 1.225   # kg/m^3, sea level
+NU_AIR = 1.46e-5  # m^2/s, 15 C
+G = 9.81
+
+# Material densities, g/cm^3 (= mg/mm^3)
+PLA = 1.24
+LW_PLA = 0.75     # ColorFabb LW-PLA, foamed (~40 % lighter than PLA)
+CARBON = 1.55
+
+
+@dataclass(frozen=True)
+class Params:
+    # Wing: straight, rectangular, like the Molniya's
+    span: float = 400.0
+    aspect_ratio: float = 5.0
+    naca: str = "4412"             # Clark-Y-like, forgiving at Re 50-80k
+    incidence: float = 2.0         # deg, wing chord vs tube line
+    te_min: float = 0.8            # printable trailing-edge thickness
+    center_width: float = 56.0     # printed centre section across the pod
+    wing_gap: float = 0.6          # wing lower surface above the pod top
+    main_spar_d: float = 3.0       # carbon rod
+    main_spar_pos: float = 0.25    # fraction of chord
+    rear_spar_d: float = 2.0       # carbon rod
+    rear_spar_pos: float = 0.62
+    hinge_pos: float = 0.75        # aileron hinge, fraction of chord
+    aileron_root_gap: float = 10.0
+    aileron_tip_gap: float = 6.0
+    skin: float = 0.45             # printed wing shell (1 perimeter, 0 % infill)
+    cl_max: float = 0.95           # 3D wing, Re 50-70k
+
+    # Tail: flat plates, H-tail with a fin on each stabiliser tip
+    tail_arm: float = 2.8          # wing c/4 to stab c/4, in wing chords
+    vh: float = 0.50               # horizontal tail volume coefficient
+    vv: float = 0.045              # vertical tail volume (both fins)
+    stab_chord_ratio: float = 0.45
+    elevator_frac: float = 0.36
+    plate: float = 2.0             # tail plate thickness
+    fin_below: float = 6.0         # fin depth below the stabiliser
+
+    # The two main struts: plain round tubes
+    tube_od: float = 6.0
+    tube_id: float = 5.0
+    tube_density: float = CARBON   # 6x0.5 aluminium tube: 2.7
+    tube_spacing: float = 40.0     # centre to centre = pod width
+    clearance: float = 0.2         # hole oversize for glued fits
+
+    # Pod (between the tubes, like the Molniya's payload position)
+    wall: float = 0.8
+    boss_wall: float = 1.3         # printed sleeve round each tube
+    sleeve_len: float = 14.0       # sleeves at the pod front and rear
+    front_wall: float = 2.4        # carries the motor
+    pod_depth: float = 18.0        # tube centre-line to pod bottom
+    pod_overlap: float = 0.70      # pod runs this far under the wing (chords)
+    front_bay: float = 52.0        # camera, elevator servo, FC; battery aft
+    motor_z: float = 9.0           # thrust line above the tube centre-line
+
+    cg_target: float = 0.28        # fraction of chord, first flights
+    stall_limit: float = 9.0       # m/s, "as small as possible" criterion
+
+
+@dataclass(frozen=True)
+class Kit:
+    """Reference electronics (analog FPV, INAV-capable). Grams / mm."""
+    motor: float = 9.0             # 1404 3800KV class, 2S
+    prop: float = 2.0              # 4x2.5 two-blade
+    esc: float = 3.5               # 12 A single ESC
+    fc: float = 6.0                # 20x20 wing FC (servo outputs)
+    rx: float = 1.5                # ELRS nano
+    cam_vtx: float = 6.0           # nano camera + AIO 25-200 mW VTX
+    antenna: float = 1.5
+    servo: float = 4.3             # 4 g class digital micro servo, x3
+    battery: float = 27.0          # 2S 450 mAh LiPo
+    batt_len: float = 58.0
+    batt_w: float = 31.0
+    batt_h: float = 13.0
+    batt_wh: float = 3.33          # 450 mAh * 7.4 V
+    wiring: float = 5.0
+    hardware: float = 3.0          # screws, horns, pushrod, hinge tape
+
+
+def round_to(v: float, step: float) -> float:
+    return step * round(v / step)
+
+
+# --------------------------------------------------------------------------
+# Airfoil
+
+
+def naca4(code: str, n: int = 60, te_frac: float = 0.0):
+    """Upper and lower surfaces of a NACA 4-digit airfoil, LE -> TE, chord 1.
+
+    te_frac thickens the section linearly so the trailing edge is te_frac
+    thick instead of a knife edge that can't be printed.
+    """
+    m, p, t = int(code[0]) / 100, int(code[1]) / 10, int(code[2:]) / 100
+    upper, lower = [], []
+    for i in range(n):
+        x = 0.5 * (1 - math.cos(math.pi * i / (n - 1)))
+        yt = 5 * t * (0.2969 * math.sqrt(x) - 0.1260 * x - 0.3516 * x ** 2
+                      + 0.2843 * x ** 3 - 0.1036 * x ** 4) + 0.5 * te_frac * x
+        yc, dyc = camber(code, x)
+        th = math.atan(dyc)
+        upper.append((x - yt * math.sin(th), yc + yt * math.cos(th)))
+        lower.append((x + yt * math.sin(th), yc - yt * math.cos(th)))
+    return upper, lower
+
+
+def camber(code: str, x: float):
+    m, p = int(code[0]) / 100, int(code[1]) / 10
+    if p == 0:
+        return 0.0, 0.0
+    if x < p:
+        return m / p ** 2 * (2 * p * x - x ** 2), 2 * m / p ** 2 * (p - x)
+    return (m / (1 - p) ** 2 * ((1 - 2 * p) + 2 * p * x - x ** 2),
+            2 * m / (1 - p) ** 2 * (p - x))
+
+
+def lift_slope(ar: float) -> float:
+    """Helmbold finite-wing lift slope, per radian."""
+    return 2 * math.pi * ar / (2 + math.sqrt(ar ** 2 + 4))
+
+
+# --------------------------------------------------------------------------
+# Layout
+
+
+class Layout:
+    """Every derived dimension for a given wing leading-edge station x_le."""
+
+    def __init__(self, p: Params, x_le: float):
+        self.p = p
+        c = self.chord = p.span / p.aspect_ratio
+        self.area = p.span * c                       # mm^2
+        self.x_le = x_le
+        self.x_te = x_le + c
+        self.x_qc = x_le + 0.25 * c
+        self.l_h = p.tail_arm * c
+        self.c_h = p.stab_chord_ratio * c
+        self.b_h = round_to(p.vh * self.area * c / (self.l_h * self.c_h), 2)
+        self.c_e = p.elevator_frac * self.c_h
+        self.c_fix = self.c_h - self.c_e
+        self.x_stab = self.x_qc + self.l_h - 0.25 * self.c_h
+        fin_area = p.vv * self.area * p.span / self.l_h / 2   # per fin
+        self.fin_h = round_to(fin_area / self.c_h, 1)         # total height
+        self.fin_above = self.fin_h - p.fin_below - p.plate
+
+        self.tube_y = p.tube_spacing / 2
+        self.r_hole = p.tube_od / 2 + p.clearance / 2
+        self.r_boss = self.r_hole + p.boss_wall
+        self.z_top = self.r_boss                     # pod top = wing seat
+        self.half_w = self.tube_y + p.wall / 2       # side walls under the tubes
+        self.z_bottom = -p.pod_depth
+        self.pod_len = x_le + p.pod_overlap * c
+        self.tail_z = self.r_hole + 1.2              # stab seat on the tail mount
+        self.tube_x0 = p.front_wall + 1.6
+        self.tube_x1 = self.x_stab + self.c_fix - 2.0
+        self.tube_len = self.tube_x1 - self.tube_x0
+        self.pushrod_z = 0.8                         # over the battery, under the lid
+        self.batt_min = p.front_bay + 0.5            # battery front limit
+        self.batt_max = self.pod_len - p.wall - 0.5  # battery rear limit
+        self.length = self.x_stab + self.c_h + 20.0  # prop to elevator TE
+
+    @property
+    def s_h(self):
+        return self.b_h * self.c_h
+
+    @property
+    def vh_actual(self):
+        return self.s_h * self.l_h / (self.area * self.chord)
+
+    @property
+    def vv_actual(self):
+        return 2 * self.fin_h * self.c_h * self.l_h / (self.area * self.p.span)
+
+
+# --------------------------------------------------------------------------
+# Mass model (analytic; build.py replaces the structure with CAD volumes)
+
+
+def rod_mass(d: float, length: float, di: float = 0.0, rho: float = CARBON):
+    return rho * math.pi / 4 * (d ** 2 - di ** 2) * length / 1000
+
+
+def structure_estimate(p: Params, L: Layout):
+    """(name, grams, x) for the printed parts, tubes and rods."""
+    c, b = L.chord, p.span
+    wing_area = (2.06 * c + math.pi * (p.main_spar_d + p.rear_spar_d + 4)) * b
+    tail_plan = L.b_h * L.c_h + 2 * L.fin_h * L.c_h
+    plate_equiv = 2 * 0.4 + 0.15 * (p.plate - 0.8)     # 2+2 solid layers, 15 % infill
+    pod_vol = (L.pod_len * (2 * p.wall * (p.pod_depth - L.r_hole) + p.wall * 2 * L.half_w)
+               + 4 * math.pi * (L.r_boss ** 2 - L.r_hole ** 2) * p.sleeve_len
+               + p.front_wall * 2 * L.half_w * (p.pod_depth + L.z_top))
+    lid_len = L.x_le - p.sleeve_len
+    lid_vol = lid_len * (2 * L.tube_y * 0.8 + 2 * 0.8 * 3.0)
+    return [
+        ("wing shell", LW_PLA * p.skin * wing_area / 1000, L.x_le + 0.42 * c),
+        ("wing centre + saddle", 4.0 * c / 80, L.x_le + 0.6 * c),
+        ("spar rods", rod_mass(p.main_spar_d, b - 10) + rod_mass(p.rear_spar_d, b - 10),
+         L.x_le + 0.43 * c),
+        ("tail plates", LW_PLA * plate_equiv * tail_plan / 1000, L.x_stab + 0.45 * L.c_h),
+        ("tail mount", 3.5, L.x_stab + L.c_fix / 2),
+        ("tubes", 2 * rod_mass(p.tube_od, L.tube_len, p.tube_id, p.tube_density),
+         (L.tube_x0 + L.tube_x1) / 2),
+        ("pod", PLA * pod_vol / 1000, 0.45 * L.pod_len),
+        ("lid", PLA * lid_vol / 1000, (p.sleeve_len + L.x_le) / 2),
+    ]
+
+
+def components(p: Params, k: Kit, L: Layout):
+    """(name, grams, x, z) for everything that isn't printed, battery excluded."""
+    servo_x = L.x_le + 0.30 * L.chord + 10.5
+    return [
+        ("motor", k.motor, -7.0, p.motor_z),
+        ("prop", k.prop, -16.0, p.motor_z),
+        ("camera + VTX", k.cam_vtx, 10.0, -9.0),
+        ("antenna", k.antenna, 20.0, 5.0),
+        ("FC", k.fc, 39.0, -12.0),
+        ("receiver", k.rx, 46.0, -8.0),
+        ("ESC", k.esc, 30.0, -10.0),
+        ("elevator servo", k.servo, 13.0, -8.0),
+        ("aileron servos", 2 * k.servo, servo_x, 8.0),
+        ("wiring", k.wiring, 0.5 * L.pod_len, -8.0),
+        ("hardware (fwd)", k.hardware / 2, L.x_le, 0.0),
+        ("hardware (tail)", k.hardware / 2, L.x_stab + L.c_h / 2, 0.0),
+    ]
+
+
+def battery_for_cg(items, k: Kit, target_x: float) -> float:
+    """Battery centre station that puts the CG on target_x."""
+    m = sum(i[1] for i in items)
+    mx = sum(i[1] * i[2] for i in items)
+    return (target_x * (m + k.battery) - mx) / k.battery
+
+
+def solve_x_le(p: Params, k: Kit, structure=structure_estimate) -> float:
+    """Wing station that balances with the battery mid-way in its travel."""
+
+    def f(x_le):
+        L = Layout(p, x_le)
+        items = [(n, g, x) for n, g, x in structure(p, L)]
+        items += [(n, g, x) for n, g, x, _ in components(p, k, L)]
+        need = battery_for_cg(items, k, x_le + p.cg_target * L.chord)
+        mid = (L.batt_min + L.batt_max) / 2
+        return need - mid
+
+    lo, hi = 20.0, 400.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if f(lo) * f(mid) <= 0:
+            hi = mid
+        else:
+            lo = mid
+    return round((lo + hi) / 2, 1)
+
+
+# --------------------------------------------------------------------------
+# Aerodynamics
+
+
+def neutral_point(p: Params, L: Layout) -> float:
+    """Neutral point as a fraction of chord (wing + tail - pod)."""
+    ar = p.aspect_ratio
+    a_w = lift_slope(ar)
+    a_h = lift_slope(L.b_h / L.c_h)
+    downwash = 2 * a_w / (math.pi * ar)
+    h_n = 0.25 + 0.9 * L.vh_actual * (a_h / a_w) * (1 - downwash)
+    # Pod: Gilruth/Raymer K_f estimate, per degree
+    k_f = 0.005 + 0.02 * min(L.x_le / L.pod_len, 1.0) ** 2
+    cm_pod = k_f * (2 * L.half_w) ** 2 * L.pod_len / (L.chord * L.area)
+    return h_n - cm_pod / (a_w / 57.3)
+
+
+def performance(p: Params, auw_g: float, L: Layout, k: Kit):
+    s = L.area / 1e6
+    w = auw_g / 1000 * G
+    v_s = math.sqrt(2 * w / (RHO_AIR * s * p.cl_max))
+    v_c = 1.45 * v_s
+    # Rough endurance: L/D 5, 40 % prop-motor-ESC efficiency, 1.5 W avionics, 80 % usable
+    p_elec = w * v_c / 5 / 0.40 + 1.5
+    return {
+        "stall": v_s,
+        "cruise": v_c,
+        "re_stall": v_s * L.chord / 1000 / NU_AIR,
+        "loading": auw_g / (L.area / 1e4),                               # g/dm^2
+        "wcl": (auw_g / 28.35) / ((L.area / 92903) ** 1.5),              # oz/ft^1.5
+        "endurance_min": 0.8 * k.batt_wh / p_elec * 60,
+    }
+
+
+def evaluate(p: Params, k: Kit):
+    x_le = solve_x_le(p, k)
+    L = Layout(p, x_le)
+    items = [(n, g, x) for n, g, x in structure_estimate(p, L)]
+    items += [(n, g, x) for n, g, x, _ in components(p, k, L)]
+    auw = sum(i[1] for i in items) + k.battery
+    return L, auw, performance(p, auw, L, k)
+
+
+def sweep(p: Params, k: Kit, spans=range(300, 561, 20)):
+    rows = []
+    for b in spans:
+        q = replace(p, span=float(b))
+        L, auw, perf = evaluate(q, k)
+        rows.append((b, L, auw, perf))
+    return rows
+
+
+def smallest_span(p: Params, k: Kit, step: int = 10) -> int:
+    for b in range(260, 800, step):
+        _, _, perf = evaluate(replace(p, span=float(b)), k)
+        if perf["stall"] <= p.stall_limit:
+            return b
+    raise ValueError("no span meets the stall limit")
+
+
+def report(p: Params = Params(), k: Kit = Kit()) -> str:
+    out = ["## Span sweep (analytic mass model)", "",
+           f"Criterion: stall speed <= {p.stall_limit} m/s at CLmax {p.cl_max} "
+           "(comfortable hand launch, FPV-flyable).", "",
+           "| span mm | chord mm | AUW g | loading g/dm^2 | WCL | stall m/s | Re at stall |",
+           "|---|---|---|---|---|---|---|"]
+    for b, L, auw, perf in sweep(p, k):
+        ok = "**" if perf["stall"] <= p.stall_limit else ""
+        out.append(f"| {ok}{b}{ok} | {L.chord:.0f} | {auw:.0f} | {perf['loading']:.1f} | "
+                   f"{perf['wcl']:.1f} | {ok}{perf['stall']:.2f}{ok} | {perf['re_stall']/1000:.0f}k |")
+    b_min = smallest_span(p, k)
+    out += ["", f"Smallest span meeting the criterion: **{b_min} mm** "
+            f"(design uses {p.span:.0f} mm)."]
+    return "\n".join(out)
+
+
+if __name__ == "__main__":
+    p, k = Params(), Kit()
+    print(report(p, k))
+    L, auw, perf = evaluate(p, k)
+    print()
+    print(f"x_le {L.x_le:.1f}  chord {L.chord:.1f}  pod {L.pod_len:.1f}  "
+          f"stab {L.b_h:.0f}x{L.c_h:.1f} @ {L.x_stab:.1f}  fin h {L.fin_h:.1f}  "
+          f"tube {L.tube_len:.0f}  length {L.length:.0f}")
+    print(f"AUW {auw:.1f} g  stall {perf['stall']:.2f} m/s  cruise {perf['cruise']:.1f} m/s  "
+          f"endurance ~{perf['endurance_min']:.0f} min")
+    print(f"Vh {L.vh_actual:.3f}  Vv {L.vv_actual:.3f}  NP {neutral_point(p, L):.3f} c  "
+          f"SM {neutral_point(p, L) - p.cg_target:.3f}")

@@ -1,0 +1,62 @@
+{
+ "wing_centre": {
+  "seconds": 5615.0,
+  "grams": 13.35
+ },
+ "wing_R": {
+  "seconds": 5174.0,
+  "grams": 9.09
+ },
+ "wing_L": {
+  "seconds": 5178.0,
+  "grams": 9.1
+ },
+ "aileron_R": {
+  "seconds": 994.0,
+  "grams": 2.48
+ },
+ "aileron_L": {
+  "seconds": 995.0,
+  "grams": 2.48
+ },
+ "tail_mount": {
+  "seconds": 640.0,
+  "grams": 3.97
+ },
+ "stab": {
+  "seconds": 1423.0,
+  "grams": 3.48
+ },
+ "elevator": {
+  "seconds": 812.0,
+  "grams": 1.78
+ },
+ "fin_R": {
+  "seconds": 513.0,
+  "grams": 1.06
+ },
+ "fin_L": {
+  "seconds": 513.0,
+  "grams": 1.06
+ },
+ "rudder_R": {
+  "seconds": 211.0,
+  "grams": 1.02
+ },
+ "rudder_L": {
+  "seconds": 210.0,
+  "grams": 1.02
+ },
+ "bellcrank": {
+  "seconds": 73.0,
+  "grams": 0.27
+ },
+ "lid": {
+  "seconds": 537.0,
+  "grams": 4.36
+ },
+ "pod": {
+  "seconds": 3031.0,
+  "grams": 17.27
+ }
+}

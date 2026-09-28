@@ -1,0 +1,2389 @@
+{
+ "summary": {
+  "n_actual": 53,
+  "n_min": 26,
+  "t_ma": 1995,
+  "t_handle_insert": 403,
+  "e_ma": 0.039,
+  "e_hi": 0.194,
+  "n_after": 45,
+  "t_after": 1360,
+  "e_after": 0.057,
+  "t_print": 26520,
+  "t_hands": 5910,
+  "t_cure": 2700,
+  "lead": 31886,
+  "filament_g": 71.8,
+  "print_cost": 2.99,
+  "bought_cost": 144,
+  "slicer": "PrusaSlicer 2.7, A1-mini-like profile (tools/a1mini.ini)"
+ },
+ "critical": [
+  "P1",
+  "P2",
+  "P3",
+  "P4",
+  "P5",
+  "Q5",
+  "A8",
+  "A13",
+  "A14",
+  "A15",
+  "A16",
+  "S1",
+  "S2"
+ ],
+ "ops": [
+  {
+   "id": "P1",
+   "title": "Print plate 1: pod, lid, tail mount, rudders, bellcrank",
+   "short": "Plate 1 PETG",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "pod",
+    "lid",
+    "tail_mount",
+    "rudder_R",
+    "rudder_L",
+    "bellcrank"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 4818,
+   "cure": 0.0,
+   "start": 0,
+   "finish": 4818,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P2",
+   "title": "Print plate 2: wing centre, fins",
+   "short": "Plate 2",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "wing_centre",
+    "fin_R",
+    "fin_L"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 6768,
+   "cure": 0.0,
+   "start": 4818,
+   "finish": 11886,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P3",
+   "title": "Print plate 3: stabiliser, elevator, ailerons",
+   "short": "Plate 3",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "stab",
+    "elevator",
+    "aileron_R",
+    "aileron_L"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 4344,
+   "cure": 0.0,
+   "start": 11886,
+   "finish": 16230,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P4",
+   "title": "Print plate 4: right wing panel",
+   "short": "Plate 4",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "wing_R"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 5292,
+   "cure": 0.0,
+   "start": 16230,
+   "finish": 21522,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P5",
+   "title": "Print plate 5: left wing panel",
+   "short": "Plate 5",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "wing_L"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 5298,
+   "cure": 0.0,
+   "start": 21522,
+   "finish": 26820,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "F1",
+   "title": "Cut the carbon tubes and spars",
+   "short": "Cut carbon",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [],
+   "parts": [],
+   "tools": [
+    "rotary tool or fine saw",
+    "ruler",
+    "file"
+   ],
+   "consumables": [],
+   "seconds": 180,
+   "cure": 0,
+   "start": 0,
+   "finish": 180,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "F2",
+   "title": "Make the pushrods, aileron links and rudder joiners",
+   "short": "Make linkages",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [],
+   "parts": [],
+   "tools": [
+    "wire bender or pliers",
+    "cutter",
+    "heat gun"
+   ],
+   "consumables": [
+    "CA",
+    "heat-shrink"
+   ],
+   "seconds": 660,
+   "cure": 0,
+   "start": 180,
+   "finish": 840,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "F3",
+   "title": "Trim the elevator (13.5 mm) and rudder (11 mm) servo horns",
+   "short": "Trim horns",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [],
+   "parts": [],
+   "tools": [
+    "side cutter"
+   ],
+   "consumables": [],
+   "seconds": 60,
+   "cure": 0,
+   "start": 840,
+   "finish": 900,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q1",
+   "title": "Finish plate 1 parts, ream tube and pivot holes",
+   "short": "Finish plate 1",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P1"
+   ],
+   "parts": [],
+   "tools": [
+    "6.2 / 1.6 mm drill bits in a pin vice"
+   ],
+   "consumables": [],
+   "seconds": 195,
+   "cure": 0,
+   "start": 4818,
+   "finish": 5013,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q2",
+   "title": "Finish the wing centre and fins, ream holes",
+   "short": "Finish plate 2",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P2"
+   ],
+   "parts": [],
+   "tools": [
+    "6.2 / 3.2 / 2.2 mm drill bits"
+   ],
+   "consumables": [],
+   "seconds": 120,
+   "cure": 0,
+   "start": 11886,
+   "finish": 12006,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q3",
+   "title": "Finish the tail surfaces and ailerons",
+   "short": "Finish plate 3",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P3"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 80,
+   "cure": 0,
+   "start": 16230,
+   "finish": 16310,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q4",
+   "title": "Remove the brim from the right panel, ream spar holes",
+   "short": "Finish plate 4",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P4"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 110,
+   "cure": 0,
+   "start": 21522,
+   "finish": 21632,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q5",
+   "title": "Remove the brim from the left panel, ream spar holes",
+   "short": "Finish plate 5",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "P5"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 110,
+   "cure": 0,
+   "start": 26820,
+   "finish": 26930,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "A1",
+   "title": "Screw the motor to the pod",
+   "short": "Motor",
+   "station": "Pod",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "Q1"
+   ],
+   "parts": [
+    "pod",
+    "motor",
+    "M2 screw (motor)"
+   ],
+   "tools": [
+    "1.5 mm hex driver"
+   ],
+   "consumables": [],
+   "seconds": 44,
+   "cure": 0,
+   "start": 5013,
+   "finish": 5057,
+   "anim": [
+    {
+     "parts": [
+      "pod"
+     ],
+     "from": [
+      0,
+      0,
+      -30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "motor"
+     ],
+     "from": [
+      -45,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "pod"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.8,
+    0.8,
+    0.9
+   ]
+  },
+  {
+   "id": "A2",
+   "title": "Fit the camera and VTX",
+   "short": "Camera, VTX",
+   "station": "Pod",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A1"
+   ],
+   "parts": [
+    "camera",
+    "vtx"
+   ],
+   "tools": [],
+   "consumables": [
+    "CA",
+    "foam tape"
+   ],
+   "seconds": 54,
+   "cure": 0,
+   "start": 5057,
+   "finish": 5111,
+   "anim": [
+    {
+     "parts": [
+      "camera"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "vtx"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "pod"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.8,
+    0.8,
+    0.9
+   ]
+  },
+  {
+   "id": "A3",
+   "title": "Mount the FC, ESC and receiver",
+   "short": "FC, ESC, RX",
+   "station": "Pod",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A2"
+   ],
+   "parts": [
+    "fc",
+    "M2 screw (FC)",
+    "esc",
+    "receiver"
+   ],
+   "tools": [
+    "1.5 mm hex driver"
+   ],
+   "consumables": [
+    "foam tape"
+   ],
+   "seconds": 72,
+   "cure": 0,
+   "start": 5111,
+   "finish": 5183,
+   "anim": [
+    {
+     "parts": [
+      "fc"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "esc",
+      "receiver"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "pod"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.8,
+    0.8,
+    0.9
+   ]
+  },
+  {
+   "id": "A4",
+   "title": "Solder the power, motor, video and receiver wiring",
+   "short": "Solder",
+   "station": "Pod",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A3"
+   ],
+   "parts": [],
+   "tools": [
+    "soldering iron"
+   ],
+   "consumables": [
+    "solder",
+    "heat-shrink",
+    "silicone wire"
+   ],
+   "seconds": 520,
+   "cure": 0,
+   "start": 5183,
+   "finish": 5703,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "A5",
+   "title": "Glue the elevator servo into the rear bay",
+   "short": "Elevator servo",
+   "station": "Pod",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A4",
+    "F3"
+   ],
+   "parts": [
+    "servo_elev",
+    "servo horn (elevator)",
+    "horn screw"
+   ],
+   "tools": [],
+   "consumables": [
+    "hot glue"
+   ],
+   "seconds": 42,
+   "cure": 0,
+   "start": 5703,
+   "finish": 5744,
+   "anim": [
+    {
+     "parts": [
+      "servo_elev"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "pod"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.8,
+    0.8,
+    0.9
+   ]
+  },
+  {
+   "id": "A6",
+   "title": "Fit the rudder servo and its pushrod in the wing centre",
+   "short": "Rudder servo",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "Q2",
+    "F2",
+    "F3"
+   ],
+   "parts": [
+    "servo_rud",
+    "servo horn (rudder)",
+    "horn screw",
+    "pushrod_rud"
+   ],
+   "tools": [],
+   "consumables": [
+    "hot glue"
+   ],
+   "seconds": 64,
+   "cure": 0,
+   "start": 12006,
+   "finish": 12070,
+   "anim": [
+    {
+     "parts": [
+      "wing_centre"
+     ],
+     "from": [
+      0,
+      0,
+      60
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "servo_rud"
+     ],
+     "from": [
+      0,
+      0,
+      -40
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "pushrod_rud"
+     ],
+     "from": [
+      120,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "pod",
+    "wing_centre"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.8,
+    0.8,
+    0.9
+   ]
+  },
+  {
+   "id": "A7",
+   "title": "Join the tubes, pod and wing centre",
+   "short": "Join frame",
+   "station": "Frame",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A5",
+    "A6",
+    "F1"
+   ],
+   "parts": [
+    "wing_centre",
+    "tube_L",
+    "tube_R"
+   ],
+   "tools": [],
+   "consumables": [
+    "5-minute epoxy"
+   ],
+   "seconds": 201,
+   "cure": 900,
+   "start": 12070,
+   "finish": 12271,
+   "anim": [
+    {
+     "parts": [
+      "tube_L",
+      "tube_R"
+     ],
+     "from": [
+      300,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "pod",
+    "wing_centre",
+    "tube_L"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "A8",
+   "title": "Slide in the spars and glue on both wing panels",
+   "short": "Wing panels",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A7",
+    "Q4",
+    "Q5",
+    "F1"
+   ],
+   "parts": [
+    "spar_main",
+    "spar_rear",
+    "wing_R",
+    "wing_L"
+   ],
+   "tools": [],
+   "consumables": [
+    "5-minute epoxy"
+   ],
+   "seconds": 132,
+   "cure": 900,
+   "start": 26930,
+   "finish": 27062,
+   "anim": [
+    {
+     "parts": [
+      "spar_main",
+      "spar_rear"
+     ],
+     "from": [
+      0,
+      320,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "wing_R"
+     ],
+     "from": [
+      0,
+      140,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "wing_L"
+     ],
+     "from": [
+      0,
+      -140,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "wing_R",
+    "wing_L",
+    "pod"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "A9",
+   "title": "Fit the aileron servos and route their leads",
+   "short": "Aileron servos",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A8"
+   ],
+   "parts": [
+    "servo_ail_R",
+    "servo_ail_L"
+   ],
+   "tools": [],
+   "consumables": [
+    "hot glue"
+   ],
+   "seconds": 116,
+   "cure": 0,
+   "start": 27962,
+   "finish": 28078,
+   "anim": [
+    {
+     "parts": [
+      "servo_ail_R",
+      "servo_ail_L"
+     ],
+     "from": [
+      0,
+      0,
+      -45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "wing_R",
+    "wing_L"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.45,
+    -0.8,
+    -0.6
+   ]
+  },
+  {
+   "id": "A10",
+   "title": "Hinge the ailerons, glue the horns, fit the links",
+   "short": "Ailerons",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A9",
+    "Q3",
+    "F2"
+   ],
+   "parts": [
+    "aileron_R",
+    "aileron_L",
+    "horn_ail_R",
+    "horn_ail_L",
+    "pushrod_ail_R",
+    "pushrod_ail_L"
+   ],
+   "tools": [],
+   "consumables": [
+    "hinge tape",
+    "CA"
+   ],
+   "seconds": 159,
+   "cure": 0,
+   "start": 28078,
+   "finish": 28237,
+   "anim": [
+    {
+     "parts": [
+      "aileron_R",
+      "aileron_L"
+     ],
+     "from": [
+      45,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "horn_ail_R",
+      "horn_ail_L",
+      "pushrod_ail_R",
+      "pushrod_ail_L"
+     ],
+     "from": [
+      0,
+      0,
+      -30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "wing_R",
+    "wing_L"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.45,
+    -0.8,
+    -0.6
+   ]
+  },
+  {
+   "id": "A11",
+   "title": "Glue the stabiliser to the tail mount and the fins to the tips",
+   "short": "Tail glue-up",
+   "station": "Tail",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "Q1",
+    "Q2",
+    "Q3"
+   ],
+   "parts": [
+    "tail_mount",
+    "stab",
+    "fin_R",
+    "fin_L"
+   ],
+   "tools": [],
+   "consumables": [
+    "CA"
+   ],
+   "seconds": 83,
+   "cure": 0,
+   "start": 16310,
+   "finish": 16393,
+   "anim": [
+    {
+     "parts": [
+      "tail_mount"
+     ],
+     "from": [
+      90,
+      0,
+      -40
+     ],
+     "to": [
+      90,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "stab"
+     ],
+     "from": [
+      90,
+      0,
+      40
+     ],
+     "to": [
+      90,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "fin_R"
+     ],
+     "from": [
+      90,
+      60,
+      0
+     ],
+     "to": [
+      90,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "fin_L"
+     ],
+     "from": [
+      90,
+      -60,
+      0
+     ],
+     "to": [
+      90,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "stab",
+    "fin_R",
+    "fin_L",
+    "tail_mount"
+   ],
+   "focus_offset": [
+    90,
+    0,
+    0
+   ],
+   "view": [
+    0.9,
+    0.55,
+    0.85
+   ]
+  },
+  {
+   "id": "A12",
+   "title": "Hinge the elevator and rudders, screw on the bellcrank",
+   "short": "Tail hinges",
+   "station": "Tail",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A11",
+    "Q1"
+   ],
+   "parts": [
+    "elevator",
+    "rudder_R",
+    "rudder_L",
+    "bellcrank",
+    "M2 screw (bellcrank)"
+   ],
+   "tools": [
+    "1.5 mm hex driver"
+   ],
+   "consumables": [
+    "hinge tape"
+   ],
+   "seconds": 159,
+   "cure": 0,
+   "start": 16393,
+   "finish": 16552,
+   "anim": [
+    {
+     "parts": [
+      "elevator",
+      "rudder_R",
+      "rudder_L"
+     ],
+     "from": [
+      125,
+      0,
+      0
+     ],
+     "to": [
+      90,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "bellcrank"
+     ],
+     "from": [
+      90,
+      0,
+      -30
+     ],
+     "to": [
+      90,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "stab",
+    "fin_R",
+    "fin_L",
+    "tail_mount"
+   ],
+   "focus_offset": [
+    90,
+    0,
+    0
+   ],
+   "view": [
+    0.75,
+    -0.5,
+    0.6
+   ]
+  },
+  {
+   "id": "A13",
+   "title": "Slide the tail onto the tubes, square it and glue",
+   "short": "Tail on tubes",
+   "station": "Frame",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A12",
+    "A8"
+   ],
+   "parts": [
+    "tail sub-assembly"
+   ],
+   "tools": [],
+   "consumables": [
+    "5-minute epoxy"
+   ],
+   "seconds": 170,
+   "cure": 900,
+   "start": 28237,
+   "finish": 28406,
+   "anim": [
+    {
+     "parts": [
+      "tail_mount",
+      "stab",
+      "fin_R",
+      "fin_L",
+      "elevator",
+      "rudder_R",
+      "rudder_L",
+      "bellcrank"
+     ],
+     "from": [
+      90,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "A14",
+   "title": "Connect the elevator pushrod, rudder pushrod and joiners",
+   "short": "Linkages",
+   "station": "Final",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A13",
+    "F2"
+   ],
+   "parts": [
+    "pushrod_elev",
+    "joiner_R",
+    "joiner_L"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 74,
+   "cure": 0,
+   "start": 29306,
+   "finish": 29380,
+   "anim": [
+    {
+     "parts": [
+      "pushrod_elev"
+     ],
+     "from": [
+      140,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "joiner_R"
+     ],
+     "from": [
+      0,
+      60,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "joiner_L"
+     ],
+     "from": [
+      0,
+      -60,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "tail_mount",
+    "stab",
+    "fin_R",
+    "fin_L",
+    "elevator",
+    "rudder_R",
+    "rudder_L",
+    "bellcrank"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    0.75,
+    -0.5,
+    0.6
+   ]
+  },
+  {
+   "id": "A15",
+   "title": "Plug in the servo leads and tidy the wiring",
+   "short": "Servo leads",
+   "station": "Final",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A14",
+    "A10",
+    "A9",
+    "A6"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 62,
+   "cure": 0,
+   "start": 29380,
+   "finish": 29442,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "A16",
+   "title": "Fit the prop, battery, antenna and lid",
+   "short": "Prop, battery",
+   "station": "Final",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A15"
+   ],
+   "parts": [
+    "prop",
+    "battery",
+    "antenna",
+    "lid"
+   ],
+   "tools": [
+    "prop wrench"
+   ],
+   "consumables": [],
+   "seconds": 44,
+   "cure": 0,
+   "start": 29442,
+   "finish": 29486,
+   "anim": [
+    {
+     "parts": [
+      "battery"
+     ],
+     "from": [
+      0,
+      0,
+      50
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "antenna"
+     ],
+     "from": [
+      0,
+      0,
+      40
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "lid"
+     ],
+     "from": [
+      0,
+      0,
+      30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "prop"
+     ],
+     "from": [
+      -45,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "S1",
+   "title": "Bind the receiver and set up INAV",
+   "short": "INAV setup",
+   "station": "Setup",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A16"
+   ],
+   "parts": [],
+   "tools": [
+    "laptop with INAV Configurator"
+   ],
+   "consumables": [],
+   "seconds": 1920,
+   "cure": 0,
+   "start": 29486,
+   "finish": 31406,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "S2",
+   "title": "Balance and run the pre-flight checks",
+   "short": "Balance, checks",
+   "station": "Setup",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "S1"
+   ],
+   "parts": [],
+   "tools": [
+    "CG balancer or fingertips"
+   ],
+   "consumables": [],
+   "seconds": 480,
+   "cure": 0,
+   "start": 31406,
+   "finish": 31886,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  }
+ ],
+ "dfma": [
+  {
+   "op": "A1",
+   "item": "pod",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I00",
+   "t_each": 3.0,
+   "t_total": 3.0,
+   "n_min": 1,
+   "why": "base part"
+  },
+  {
+   "op": "A1",
+   "item": "motor",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 1,
+   "why": "rotates"
+  },
+  {
+   "op": "A1",
+   "item": "M2 screw (motor)",
+   "qty": 4,
+   "handling": "Hs",
+   "insertion": "I38",
+   "t_each": 8.5,
+   "t_total": 34.0,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A2",
+   "item": "camera",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I08",
+   "t_each": 7.63,
+   "t_total": 7.63,
+   "n_min": 1,
+   "why": "separate function, optics"
+  },
+  {
+   "op": "A2",
+   "item": "vtx",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I06",
+   "t_each": 6.63,
+   "t_total": 6.63,
+   "n_min": 0,
+   "why": "could be one camera+VTX module"
+  },
+  {
+   "op": "A3",
+   "item": "fc",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I01",
+   "t_each": 3.63,
+   "t_total": 3.63,
+   "n_min": 1,
+   "why": "separate electronics"
+  },
+  {
+   "op": "A3",
+   "item": "M2 screw (FC)",
+   "qty": 4,
+   "handling": "Hs",
+   "insertion": "I38",
+   "t_each": 8.5,
+   "t_total": 34.0,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A3",
+   "item": "esc",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 0,
+   "why": "could be integrated in the FC"
+  },
+  {
+   "op": "A3",
+   "item": "receiver",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 0,
+   "why": "could be integrated in the FC"
+  },
+  {
+   "op": "A5",
+   "item": "servo_elev",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A5",
+   "item": "servo horn (elevator)",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I01",
+   "t_each": 5.0,
+   "t_total": 5.0,
+   "n_min": 0,
+   "why": "supplied with the servo"
+  },
+  {
+   "op": "A5",
+   "item": "horn screw",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I38",
+   "t_each": 8.5,
+   "t_total": 8.5,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A6",
+   "item": "servo_rud",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A6",
+   "item": "servo horn (rudder)",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I01",
+   "t_each": 5.0,
+   "t_total": 5.0,
+   "n_min": 0,
+   "why": "supplied with the servo"
+  },
+  {
+   "op": "A6",
+   "item": "horn screw",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I38",
+   "t_each": 8.5,
+   "t_total": 8.5,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A6",
+   "item": "pushrod_rud",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A7",
+   "item": "wing_centre",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "different material (LW-PLA)"
+  },
+  {
+   "op": "A7",
+   "item": "tube_L",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I03",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 1,
+   "why": "different material (carbon)"
+  },
+  {
+   "op": "A7",
+   "item": "tube_R",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I03",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 0,
+   "why": "could be one U-frame with tube_L"
+  },
+  {
+   "op": "A8",
+   "item": "spar_main",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I03",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 1,
+   "why": "different material (carbon)"
+  },
+  {
+   "op": "A8",
+   "item": "spar_rear",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I03",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 0,
+   "why": "could merge with the main spar"
+  },
+  {
+   "op": "A8",
+   "item": "wing_R",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "separate only for the 180 mm bed"
+  },
+  {
+   "op": "A8",
+   "item": "wing_L",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "separate only for the 180 mm bed"
+  },
+  {
+   "op": "A9",
+   "item": "servo_ail_R",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A9",
+   "item": "servo_ail_L",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A10",
+   "item": "aileron_R",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A10",
+   "item": "aileron_L",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A10",
+   "item": "horn_ail_R",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I08",
+   "t_each": 9.0,
+   "t_total": 9.0,
+   "n_min": 0,
+   "why": "could be printed into the aileron"
+  },
+  {
+   "op": "A10",
+   "item": "horn_ail_L",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I08",
+   "t_each": 9.0,
+   "t_total": 9.0,
+   "n_min": 0,
+   "why": "could be printed into the aileron"
+  },
+  {
+   "op": "A10",
+   "item": "pushrod_ail_R",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A10",
+   "item": "pushrod_ail_L",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A11",
+   "item": "tail_mount",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I00",
+   "t_each": 3.0,
+   "t_total": 3.0,
+   "n_min": 0,
+   "why": "could be printed with the stabiliser"
+  },
+  {
+   "op": "A11",
+   "item": "stab",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "different material (LW-PLA)"
+  },
+  {
+   "op": "A11",
+   "item": "fin_R",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I31",
+   "t_each": 6.13,
+   "t_total": 6.13,
+   "n_min": 0,
+   "why": "could be printed with the stabiliser"
+  },
+  {
+   "op": "A11",
+   "item": "fin_L",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I31",
+   "t_each": 6.13,
+   "t_total": 6.13,
+   "n_min": 0,
+   "why": "could be printed with the stabiliser"
+  },
+  {
+   "op": "A12",
+   "item": "elevator",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A12",
+   "item": "rudder_R",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I08",
+   "t_each": 7.63,
+   "t_total": 7.63,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A12",
+   "item": "rudder_L",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I08",
+   "t_each": 7.63,
+   "t_total": 7.63,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A12",
+   "item": "bellcrank",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I01",
+   "t_each": 5.0,
+   "t_total": 5.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A12",
+   "item": "M2 screw (bellcrank)",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I39",
+   "t_each": 10.5,
+   "t_total": 10.5,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A13",
+   "item": "tail sub-assembly",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "sub-assembly, already counted"
+  },
+  {
+   "op": "A14",
+   "item": "pushrod_elev",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A14",
+   "item": "joiner_R",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I08",
+   "t_each": 10.5,
+   "t_total": 10.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A14",
+   "item": "joiner_L",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I08",
+   "t_each": 10.5,
+   "t_total": 10.5,
+   "n_min": 0,
+   "why": "could be one wire with joiner_R"
+  },
+  {
+   "op": "A16",
+   "item": "prop",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I38",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "rotates, replaced after crashes"
+  },
+  {
+   "op": "A16",
+   "item": "battery",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 1,
+   "why": "removed for charging"
+  },
+  {
+   "op": "A16",
+   "item": "antenna",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I01",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 0,
+   "why": "part of the VTX"
+  },
+  {
+   "op": "A16",
+   "item": "lid",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I30",
+   "t_each": 3.13,
+   "t_total": 3.13,
+   "n_min": 1,
+   "why": "opened for battery changes"
+  }
+ ],
+ "dfm": [
+  {
+   "name": "wing_centre",
+   "material": "LW-PLA",
+   "bed": "90 x 24 x 100",
+   "minutes": 93.6,
+   "grams": 13.35,
+   "cost": 0.73,
+   "overhang_mm2": 1536,
+   "support": "bridge 16 mm",
+   "bed_contact_mm2": 753,
+   "slender": 4.1,
+   "notes": []
+  },
+  {
+   "name": "wing_R",
+   "material": "LW-PLA",
+   "bed": "90 x 12 x 175",
+   "minutes": 86.2,
+   "grams": 9.09,
+   "cost": 0.5,
+   "overhang_mm2": 365,
+   "support": "none",
+   "bed_contact_mm2": 674,
+   "slender": 15.2,
+   "notes": [
+    "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
+   ]
+  },
+  {
+   "name": "wing_L",
+   "material": "LW-PLA",
+   "bed": "90 x 12 x 175",
+   "minutes": 86.3,
+   "grams": 9.1,
+   "cost": 0.5,
+   "overhang_mm2": 365,
+   "support": "none",
+   "bed_contact_mm2": 674,
+   "slender": 15.2,
+   "notes": [
+    "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
+   ]
+  },
+  {
+   "name": "aileron_R",
+   "material": "LW-PLA",
+   "bed": "22 x 158 x 6",
+   "minutes": 16.6,
+   "grams": 2.48,
+   "cost": 0.14,
+   "overhang_mm2": 13,
+   "support": "none",
+   "bed_contact_mm2": 102,
+   "slender": 0.3,
+   "notes": [
+    "small bed contact (102 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "aileron_L",
+   "material": "LW-PLA",
+   "bed": "22 x 158 x 6",
+   "minutes": 16.6,
+   "grams": 2.48,
+   "cost": 0.14,
+   "overhang_mm2": 13,
+   "support": "none",
+   "bed_contact_mm2": 102,
+   "slender": 0.3,
+   "notes": [
+    "small bed contact (102 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "tail_mount",
+   "material": "PLA/PETG",
+   "bed": "27 x 49 x 9",
+   "minutes": 10.7,
+   "grams": 3.97,
+   "cost": 0.08,
+   "overhang_mm2": 238,
+   "support": "none",
+   "bed_contact_mm2": 1237,
+   "slender": 0.3,
+   "notes": []
+  },
+  {
+   "name": "stab",
+   "material": "LW-PLA",
+   "bed": "26 x 174 x 2",
+   "minutes": 23.7,
+   "grams": 3.48,
+   "cost": 0.19,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 4469,
+   "slender": 0.1,
+   "notes": []
+  },
+  {
+   "name": "elevator",
+   "material": "LW-PLA",
+   "bed": "14 x 163 x 8",
+   "minutes": 13.5,
+   "grams": 1.78,
+   "cost": 0.1,
+   "overhang_mm2": 2,
+   "support": "none",
+   "bed_contact_mm2": 2327,
+   "slender": 0.6,
+   "notes": []
+  },
+  {
+   "name": "fin_R",
+   "material": "LW-PLA",
+   "bed": "26 x 39 x 9",
+   "minutes": 8.6,
+   "grams": 1.06,
+   "cost": 0.06,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 990,
+   "slender": 0.3,
+   "notes": []
+  },
+  {
+   "name": "fin_L",
+   "material": "LW-PLA",
+   "bed": "26 x 39 x 9",
+   "minutes": 8.6,
+   "grams": 1.06,
+   "cost": 0.06,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 990,
+   "slender": 0.3,
+   "notes": []
+  },
+  {
+   "name": "rudder_R",
+   "material": "PLA/PETG",
+   "bed": "15 x 44 x 6",
+   "minutes": 3.5,
+   "grams": 1.02,
+   "cost": 0.02,
+   "overhang_mm2": 3,
+   "support": "none",
+   "bed_contact_mm2": 630,
+   "slender": 0.4,
+   "notes": []
+  },
+  {
+   "name": "rudder_L",
+   "material": "PLA/PETG",
+   "bed": "15 x 44 x 6",
+   "minutes": 3.5,
+   "grams": 1.02,
+   "cost": 0.02,
+   "overhang_mm2": 3,
+   "support": "none",
+   "bed_contact_mm2": 630,
+   "slender": 0.4,
+   "notes": []
+  },
+  {
+   "name": "bellcrank",
+   "material": "PLA/PETG",
+   "bed": "16 x 19 x 2",
+   "minutes": 1.2,
+   "grams": 0.27,
+   "cost": 0.01,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 123,
+   "slender": 0.1,
+   "notes": [
+    "small bed contact (123 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "lid",
+   "material": "PLA/PETG",
+   "bed": "90 x 43 x 3",
+   "minutes": 8.9,
+   "grams": 4.36,
+   "cost": 0.09,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 3856,
+   "slender": 0.1,
+   "notes": []
+  },
+  {
+   "name": "pod",
+   "material": "PLA/PETG",
+   "bed": "168 x 49 x 40",
+   "minutes": 50.5,
+   "grams": 17.27,
+   "cost": 0.35,
+   "overhang_mm2": 701,
+   "support": "none",
+   "bed_contact_mm2": 5350,
+   "slender": 0.8,
+   "notes": []
+  }
+ ],
+ "suggestions": [
+  {
+   "title": "Print the aileron control horns into the ailerons",
+   "parts": 2,
+   "seconds": 48,
+   "trade": "PETG ailerons, or a thicker LW-PLA horn; +0.3 g"
+  },
+  {
+   "title": "Use an FC with a built-in ELRS receiver",
+   "parts": 1,
+   "seconds": 147,
+   "trade": "fewer board choices in 20x20 wing FCs"
+  },
+  {
+   "title": "Use a nano camera with an integrated VTX",
+   "parts": 1,
+   "seconds": 107,
+   "trade": "fixed VTX power, harder to replace"
+  },
+  {
+   "title": "Print the tail mount and fins in one piece with the stabiliser (PETG)",
+   "parts": 3,
+   "seconds": 75,
+   "trade": "about +3 g in the tail (PETG instead of LW-PLA), needs supports under the fins"
+  },
+  {
+   "title": "Replace tape hinges with printed pin hinges",
+   "parts": 0,
+   "seconds": 100,
+   "trade": "stiffer surfaces, 0.8 mm pins; slightly more drag at the gap"
+  },
+  {
+   "title": "Key the tube ends (a flat) so the tail squares itself",
+   "parts": 0,
+   "seconds": 60,
+   "trade": "a file stroke per tube; no alignment jig needed"
+  },
+  {
+   "title": "One U-shaped joiner wire instead of two joiners",
+   "parts": 1,
+   "seconds": 26,
+   "trade": "must be threaded past the bellcrank"
+  },
+  {
+   "title": "Snap-fit tabs for the servos instead of hot glue",
+   "parts": 0,
+   "seconds": 72,
+   "trade": "SG90 clones vary; needs a test print of the pocket"
+  }
+ ],
+ "handling": {
+  "H00": 1.13,
+  "H10": 1.5,
+  "H20": 1.8,
+  "Hs": 2.5,
+  "Hf": 4.0,
+  "H2h": 3.0
+ },
+ "insertion": {
+  "I00": 1.5,
+  "I01": 2.5,
+  "I03": 3.5,
+  "I06": 5.5,
+  "I08": 6.5,
+  "I30": 2.0,
+  "I31": 5.0,
+  "I38": 6.0,
+  "I39": 8.0
+ }
+}

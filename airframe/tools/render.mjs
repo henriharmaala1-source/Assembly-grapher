@@ -2,11 +2,17 @@
 // Render preview PNGs from viewer/index.html in headless Chromium.
 //
 //   npm install three@0.169.0 playwright   (or use a global playwright)
-//   node airframe/tools/render.mjs [--three node_modules/three]
+//   node airframe/tools/render.mjs [--three node_modules/three] [--page]
+//   node airframe/tools/render.mjs --video [--ffmpeg path/to/ffmpeg] [--fps 30]
+//
+// --video steps the viewer's assembly animation frame by frame and encodes
+// preview/assembly.mp4 (H.264) with ffmpeg.
 //
 // three.js is served from a local copy so no network access is needed.
 import { createServer } from "node:http";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import os from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +51,32 @@ async function page(w, h) {
 }
 
 await mkdir(out, { recursive: true });
+if (process.argv.includes("--video")) {
+  const fps = Number(arg("--fps", "30"));
+  const p = await page(1280, 720);
+  await p.goto(`${base}?shot=1&record=1`);
+  await p.waitForFunction(() => window.__ready === true, null, { timeout: 60000 });
+  await p.waitForTimeout(500);
+  const duration = await p.evaluate(() => window.__anim.duration);
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "frames-"));
+  const n = Math.ceil(duration * fps);
+  for (let i = 0; i <= n; i++) {
+    await p.evaluate((t) => window.__anim.seek(t), i / fps);
+    await p.screenshot({ path: path.join(tmp, `f${String(i).padStart(5, "0")}.png`) });
+    if (i % (fps * 10) === 0) console.log(`frame ${i} / ${n}`);
+  }
+  await p.close();
+  const mp4 = path.join(out, "assembly.mp4");
+  const res = spawnSync(arg("--ffmpeg", "ffmpeg"), ["-y", "-loglevel", "error", "-framerate", String(fps),
+    "-i", path.join(tmp, "f%05d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "24",
+    "-preset", "slow", "-movflags", "+faststart", mp4], { stdio: "inherit" });
+  if (res.status !== 0) throw new Error("ffmpeg failed");
+  await rm(tmp, { recursive: true, force: true });
+  console.log("wrote", mp4, `${duration.toFixed(1)} s`);
+  await browser.close();
+  server.close();
+  process.exit(0);
+}
 const shots = [
   ["hero", "view=quarter", 1600, 1000],
   ["top", "view=top", 1400, 1000],

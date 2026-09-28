@@ -39,6 +39,49 @@ regenerated on every build.
 |---|
 | ![Tail](preview/tail.png) |
 
+## Build process and DFMA
+
+`process.py` turns the model into a **bill of process** ([BOP.md](BOP.md)) and a
+**DFMA analysis** ([DFMA.md](DFMA.md)). The same data drives the viewer's
+**Assemble** button and the video [preview/assembly.mp4](preview/assembly.mp4).
+
+- **31 operations** in five groups:
+  - 5 print jobs on the A1 mini;
+  - 8 prep steps (cut carbon, make linkages, finish prints);
+  - 16 assembly steps;
+  - 2 setup steps.
+
+  Each has its predecessors, tools, consumables and a time.
+- **Print times are real slicer output.** They come from PrusaSlicer 2.7 on an
+  A1-mini-like profile (`tools/a1mini.ini`): 7 h 22 min in total and
+  72 g of filament. The wing panels take about 1 h 26 min
+  each, because LW-PLA prints slowly.
+- **Hand times are estimates.** They use Boothroyd–Dewhurst handling and
+  insertion values plus shop times for gluing, soldering, taping and bending.
+  Hands-on time is 1 h 38 min, including 30 min of INAV setup.
+- **Schedule.** One builder works while one printer runs. That gives a lead
+  time of **8 h 51 min**, and the critical path runs through the five
+  prints in series.
+
+| DFMA | |
+|---|---|
+| Parts and fasteners | 53 (theoretical minimum 26) |
+| Manual assembly time | 33 min (7 min handling and insertion) |
+| Design efficiency | 4% (19% counting handling and insertion only) |
+| With the redesign suggestions | 45 parts, 23 min, 6% |
+| Printability | no part needs support; the only wide overhang is a 16 mm bridge over the rudder servo pocket |
+| Cost | about 147 EUR, of which 2.99 EUR is filament |
+
+Most of the assembly time goes into joints (solder, epoxy, CA, tape), not into
+handling parts. The suggestions that save the most are:
+
+- an FC with a built-in receiver;
+- a camera with an integrated VTX;
+- printed hinges;
+- printing the tail as one piece.
+
+DFMA.md lists each one with its trade-off.
+
 ## Why 450 mm
 
 A printed plane does not scale down evenly. The electronics weigh the same at
@@ -275,9 +318,12 @@ pip install cadquery trimesh
 python3 airframe/design.py      # sizing sweep and layout, no CAD needed
 python3 airframe/build.py       # STLs, STEP, GLB, REPORT.md, sizing + interference checks
 
-# optional: PNG previews from the three.js viewer (headless Chromium)
+python3 airframe/process.py     # BOP.md, DFMA.md, viewer/process.json (slices with prusa-slicer if installed)
+
+# optional: PNG previews and the assembly video from the three.js viewer (headless Chromium)
 npm install three@0.169.0 playwright
 node airframe/tools/render.mjs
+node airframe/tools/render.mjs --video --ffmpeg /path/to/ffmpeg
 ```
 
 The code is split into four files:

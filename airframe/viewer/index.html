@@ -366,7 +366,17 @@ const clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.0002);
 const meshes = new Map();
 let grid, center = new THREE.Vector3(), radius = 0.3;
 
-const gltf = await new GLTFLoader().loadAsync("airframe.glb").catch((e) => {
+async function loadModel() {
+  const loader = new GLTFLoader();
+  try {
+    return await loader.loadAsync("airframe.glb");
+  } catch {
+    // Hosts that don't serve .glb get the same binary as base64 JSON
+    const { glb } = await fetch("airframe-glb.json").then((r) => r.json());
+    return loader.parseAsync(Uint8Array.from(atob(glb), (c) => c.charCodeAt(0)).buffer, "");
+  }
+}
+const gltf = await loadModel().catch((e) => {
   $("status").textContent = "The 3D model did not load. Reload the page to try again.";
   throw e;
 });

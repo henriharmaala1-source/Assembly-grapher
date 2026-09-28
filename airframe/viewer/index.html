@@ -1,4 +1,4 @@
-<title>Kipinä 400</title>
+<title>Kipinä 430</title>
 <meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -127,8 +127,8 @@
 <div class="wrap">
   <header>
     <div class="eyebrow">Twin-tube micro FPV · 3D printed · parametric CadQuery</div>
-    <h1>Kipinä <span>400</span></h1>
-    <p class="lede">A 400 mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail; everything else prints on a normal bed. It is the smallest span that still hand-launches below 9 m/s with an analog FPV kit.</p>
+    <h1>Kipinä <span>430</span></h1>
+    <p class="lede">A 430 mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail; everything else prints on a normal bed. It flies on three SG90 servos and an analog FPV kit, and it is the smallest span that still hand-launches below 9 m/s with them.</p>
   </header>
 
   <div class="top">
@@ -141,6 +141,8 @@
           <button id="v-side" data-view="side" aria-pressed="false">Side</button>
           <button id="v-front" data-view="front" aria-pressed="false">Front</button>
           <button id="v-under" data-view="under" aria-pressed="false">Under</button>
+          <button id="v-pod" data-view="pod" aria-pressed="false">Pod</button>
+          <button id="v-servo" data-view="servo" aria-pressed="false">Servo</button>
         </div>
         <div class="toggles">
           <button class="toggle" id="t-elec" aria-pressed="true">Electronics</button>
@@ -160,15 +162,19 @@
         <ul class="parts" id="parts"></ul>
         <p class="note" id="part-note">Select a part to see how it prints.</p>
       </div>
+      <div class="card">
+        <h3>Bought parts</h3>
+        <ul class="parts" id="bought"></ul>
+      </div>
     </aside>
   </div>
 
   <section class="two">
     <div class="prose">
-      <h2>Why 400 mm</h2>
+      <h2>Why <span id="why-span">430</span> mm</h2>
       <p>A printed plane does not shrink evenly. The electronics weigh the same at any size, and a printed skin cannot get thinner than one nozzle line, so the wing loading climbs as the span drops.</p>
-      <p>The sweep rebuilds the layout at each span, re-balances it and estimates the weight. <b id="min-span">390 mm</b> is the first span that stalls below the 9 m/s hand-launch limit. The build rounds up to 400 mm for a little margin.</p>
-      <p>Going smaller means a lighter kit: a 2S 300 mAh pack and 5×4 mm tubes save about 10 g, which is worth roughly 20 mm of span.</p>
+      <p>The sweep rebuilds the layout at each span, re-balances it and estimates the weight. <b id="min-span">420 mm</b> is the first span that stalls below the 9 m/s hand-launch limit and still fits an SG90's mounting tabs between the wing spars. The build rounds up by 10 mm for margin.</p>
+      <p>The three SG90s weigh 27 g together. With 4 g micro servos the same sweep lands at 400 mm.</p>
     </div>
     <div class="figure"><svg id="chart" viewBox="0 0 560 300" role="img" aria-label="Stall speed against wingspan"></svg></div>
   </section>
@@ -191,12 +197,13 @@
     <div class="prose">
       <h2>Also needed</h2>
       <ul class="kit">
-        <li>2 × carbon tube 6×5 mm, 330 mm (6×0.5 aluminium also fits, +6 g)</li>
-        <li>Carbon rod 3 mm and 2 mm, 400 mm each (wing spars)</li>
+        <li id="kit-tubes">2 × carbon tube 6×5 mm (6×0.5 aluminium also fits, +6 g)</li>
+        <li id="kit-spars">Carbon rod 3 mm and 2 mm (wing spars)</li>
+        <li>3 × SG90 servo (9 g), with their single-arm horns</li>
         <li>1404 3800 KV motor, 4×2.5 two-blade prop, 12 A ESC</li>
         <li>20×20 wing flight controller (INAV), ELRS nano receiver</li>
         <li>Nano camera (14 mm) with 25–200 mW VTX</li>
-        <li>3 × 4 g micro servo, 1 mm pushrod, 2 micro control horns</li>
+        <li>1 mm carbon rod and 0.8 mm wire for pushrods, 2 micro control horns</li>
         <li>2S 450 mAh LiPo, 10 mm velcro strap, hinge tape</li>
       </ul>
     </div>
@@ -224,12 +231,18 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 const LABEL = {
   pod: "Pod", lid: "Hatch lid", wing_centre: "Wing centre", wing_R: "Wing panel R", wing_L: "Wing panel L",
   aileron_R: "Aileron R", aileron_L: "Aileron L", tail_mount: "Tail mount", stab: "Stabiliser",
-  elevator: "Elevator", fin_R: "Fin R", fin_L: "Fin L", tube_L: "Tube L (6×5 carbon)", tube_R: "Tube R (6×5 carbon)",
+  elevator: "Elevator", fin_R: "Fin R", fin_L: "Fin L", tube_L: "Tube L, 6×5 carbon", tube_R: "Tube R, 6×5 carbon",
   spar_main: "Main spar, 3 mm rod", spar_rear: "Rear spar, 2 mm rod", motor: "Motor, 1404", prop: "Prop, 4×2.5",
-  battery: "Battery, 2S 450 mAh", camera: "Nano camera + VTX", fc: "FC + receiver", servo_elev: "Elevator servo",
-  servo_ail_R: "Aileron servo R", servo_ail_L: "Aileron servo L", pushrod: "Elevator pushrod",
+  battery: "Battery, 2S 450 mAh", camera: "Nano camera", vtx: "VTX", antenna: "VTX antenna", fc: "Flight controller",
+  receiver: "ELRS receiver", esc: "ESC, 12 A", servo_elev: "SG90, elevator", servo_ail_R: "SG90, aileron R",
+  servo_ail_L: "SG90, aileron L", pushrod_elev: "Elevator pushrod", pushrod_ail_R: "Aileron pushrod R",
+  pushrod_ail_L: "Aileron pushrod L", horn_ail_R: "Control horn R", horn_ail_L: "Control horn L",
 };
-const ELECTRONICS = new Set(["motor", "prop", "battery", "camera", "fc", "servo_elev", "servo_ail_R", "servo_ail_L", "pushrod"]);
+const ELECTRONICS = new Set(["motor", "prop", "battery", "camera", "vtx", "antenna", "fc", "receiver", "esc",
+                             "servo_elev", "servo_ail_R", "servo_ail_L"]);
+const BOUGHT = ["servo_ail_R", "servo_ail_L", "servo_elev", "motor", "prop", "battery", "fc", "receiver", "esc",
+                "camera", "vtx", "antenna", "tube_L", "tube_R", "spar_main", "spar_rear"];
+const base = (n) => n.replace(/_(horn|shaft|lens|chips|leads)$/, "");
 const params = new URLSearchParams(location.search);
 if (params.has("shot")) document.body.classList.add("shot");
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -251,9 +264,16 @@ const rows = [
   ["CG from motor face", `<b>${f1(spec.cg_x)}</b> mm`],
   ["CG / neutral point", `${spec.cg_pct} % / ${spec.np_pct} % MAC`],
   ["Main struts", `2 × ${spec.tube.replace("x", "×")} mm, ${spec.tube_len}`],
+  ["Servos", "3 × SG90"],
 ];
 $("specs").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 $("min-span").textContent = `${spec.min_span} mm`;
+$("why-span").textContent = spec.span;
+$("kit-tubes").textContent = `2 × carbon tube ${spec.tube.replace("x", "×")} mm, ${spec.tube_len} mm long (6×0.5 aluminium also fits, +6 g)`;
+$("kit-spars").textContent = `Carbon rod 3 mm and 2 mm, ${spec.span - 10} mm each (wing spars)`;
+const grams = Object.fromEntries(spec.mass.map((m) => [m.name, m.g]));
+$("bought").innerHTML = BOUGHT.filter((n) => n in grams).map((n) =>
+  `<li><button id="p-${n}" data-part="${n}" aria-pressed="false"><span>${LABEL[n]}</span><span>${f1(grams[n])} g</span></button></li>`).join("");
 $("print").innerHTML = spec.parts.map((p) =>
   `<tr><td><code>stl/${p.name}.stl</code></td><td>${p.material}</td><td class="num">${f1(p.grams)}</td>` +
   `<td class="num">${p.bed.replaceAll(" x ", " × ")}</td><td>${p.note}</td></tr>`).join("");
@@ -390,7 +410,7 @@ root.traverse((o) => {
     color: src.color.clone(), roughness: name.startsWith("tube") || name.startsWith("spar") ? 0.35 : 0.62,
     metalness: name === "motor" ? 0.6 : 0.0, side: THREE.DoubleSide,
   });
-  o.userData.part = name;
+  o.userData.part = base(name);
   o.userData.base = o.material.color.clone();
   meshes.set(name, o);
 });
@@ -408,30 +428,40 @@ function buildGrid() {
 buildGrid();
 
 const VIEWS = {
-  quarter: [-0.95, 0.62, 0.9],
-  top: [0, 1, 0.02],
-  side: [0, 0.02, 1],
-  front: [-1, 0.06, 0.001],
-  under: [-0.55, -0.75, 0.75],
+  quarter: { dir: [-0.95, 0.62, 0.9] },
+  top: { dir: [0, 1, 0.02] },
+  side: { dir: [0, 0.02, 1] },
+  front: { dir: [-1, 0.06, 0.001] },
+  under: { dir: [-0.55, -0.75, 0.75] },
+  pod: { dir: [-0.8, 0.75, 0.95], fit: ["pod", "battery", "servo_elev", "wing_centre"] },
+  servo: { dir: [-0.35, -0.8, -0.55], fit: ["servo_ail_R", "horn_ail_R", "pushrod_ail_R"], pad: 2.6 },
 };
-let tween = null;
-function fitDistance(dir) {
+let tween = null, target = center.clone();
+function frame(names) {
+  if (!names) return box;
+  const b = new THREE.Box3();
+  meshes.forEach((m, n) => { if (names.includes(base(n))) b.expandByObject(m); });
+  return b;
+}
+function fitDistance(dir, b, c, pad) {
   const fwd = dir.clone().negate(), right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
   const up = new THREE.Vector3().crossVectors(right, fwd);
   let hw = 0, hh = 0, depth = 0;
-  for (const cx of [box.min.x, box.max.x]) for (const cy of [box.min.y, box.max.y]) for (const cz of [box.min.z, box.max.z]) {
-    const d = new THREE.Vector3(cx, cy, cz).sub(center);
+  for (const cx of [b.min.x, b.max.x]) for (const cy of [b.min.y, b.max.y]) for (const cz of [b.min.z, b.max.z]) {
+    const d = new THREE.Vector3(cx, cy, cz).sub(c);
     hw = Math.max(hw, Math.abs(d.dot(right))); hh = Math.max(hh, Math.abs(d.dot(up))); depth = Math.max(depth, Math.abs(d.dot(dir)));
   }
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  return 0.35 * depth + Math.max(hh / t, hw / (t * camera.aspect)) * 1.08;
+  return 0.35 * depth + Math.max(hh / t, hw / (t * camera.aspect)) * 1.08 * pad;
 }
 function setView(name, instant) {
-  const dir = new THREE.Vector3(...VIEWS[name]).normalize();
-  const to = center.clone().add(dir.clone().multiplyScalar(fitDistance(dir)));
+  const v = VIEWS[name], dir = new THREE.Vector3(...v.dir).normalize();
+  const b = frame(v.fit), c = b.getCenter(new THREE.Vector3());
+  const to = c.clone().add(dir.clone().multiplyScalar(fitDistance(dir, b, c, v.pad ?? 1)));
   if (grid) grid.visible = name === "quarter" || name === "top";
   document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === name)));
-  if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(center); controls.update(); return; }
+  target = c;
+  if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(c); controls.update(); return; }
   tween = { from: camera.position.clone(), to, fromT: controls.target.clone(), t0: performance.now() };
 }
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
@@ -443,7 +473,7 @@ function toggle(btn, fn) {
     fn(on);
   });
 }
-toggle($("t-elec"), (on) => meshes.forEach((m, n) => { if (ELECTRONICS.has(n)) m.visible = on; }));
+toggle($("t-elec"), (on) => meshes.forEach((m, n) => { if (ELECTRONICS.has(base(n))) m.visible = on; }));
 toggle($("t-cut"), (on) => meshes.forEach((m) => { m.material.clippingPlanes = on ? [clip] : []; m.material.needsUpdate = true; }));
 
 let selected = null;
@@ -451,16 +481,17 @@ function select(name) {
   selected = selected === name ? null : name;
   const accent = new THREE.Color(css("--accent"));
   meshes.forEach((m, n) => {
-    const dim = selected && n !== selected;
+    const on = base(n) === selected, dim = selected && !on;
     m.material.transparent = dim;
     m.material.opacity = dim ? 0.16 : 1;
     m.material.depthWrite = !dim;
-    m.material.emissive.copy(n === selected ? accent : new THREE.Color(0));
-    m.material.emissiveIntensity = n === selected ? 0.35 : 0;
+    m.material.emissive.copy(on ? accent : new THREE.Color(0));
+    m.material.emissiveIntensity = on ? 0.35 : 0;
   });
   document.querySelectorAll(".parts button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.part === selected)));
   const p = spec.parts.find((q) => q.name === selected);
-  $("part-note").textContent = p ? `stl/${p.name}.stl · ${p.material} · ${p.note}` : "Select a part to see how it prints.";
+  $("part-note").textContent = p ? `stl/${p.name}.stl · ${p.material} · ${p.note}`
+    : selected ? `${LABEL[selected] ?? selected} is a bought part.` : "Select a part to see how it prints.";
   $("picked").textContent = selected ? LABEL[selected] ?? selected : "Drag to orbit · click a part";
 }
 document.querySelectorAll(".parts button").forEach((b) => b.addEventListener("click", () => select(b.dataset.part)));
@@ -498,7 +529,7 @@ renderer.setAnimationLoop((now) => {
   if (tween) {
     const k = Math.min(1, (now - tween.t0) / 650), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
     camera.position.lerpVectors(tween.from, tween.to, e);
-    controls.target.lerpVectors(tween.fromT, center, e);
+    controls.target.lerpVectors(tween.fromT, target, e);
     if (k >= 1) tween = null;
   }
   controls.update();

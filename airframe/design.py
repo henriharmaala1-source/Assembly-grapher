@@ -29,7 +29,7 @@ CARBON = 1.55
 @dataclass(frozen=True)
 class Params:
     # Wing: straight, rectangular, like the Molniya's
-    span: float = 400.0
+    span: float = 430.0
     aspect_ratio: float = 5.0
     naca: str = "4412"             # Clark-Y-like, forgiving at Re 50-80k
     incidence: float = 2.0         # deg, wing chord vs tube line
@@ -39,7 +39,7 @@ class Params:
     main_spar_d: float = 3.0       # carbon rod
     main_spar_pos: float = 0.25    # fraction of chord
     rear_spar_d: float = 2.0       # carbon rod
-    rear_spar_pos: float = 0.62
+    rear_spar_pos: float = 0.70    # aft enough for SG90 tabs between the spars
     hinge_pos: float = 0.75        # aileron hinge, fraction of chord
     aileron_root_gap: float = 10.0
     aileron_tip_gap: float = 6.0
@@ -69,11 +69,42 @@ class Params:
     front_wall: float = 2.4        # carries the motor
     pod_depth: float = 18.0        # tube centre-line to pod bottom
     pod_overlap: float = 0.70      # pod runs this far under the wing (chords)
-    front_bay: float = 52.0        # camera, elevator servo, FC; battery aft
+    front_bay: float = 48.0        # camera, VTX, FC; battery behind
+    batt_trim: float = 16.0        # battery travel for balancing
+    servo_bay: float = 36.0        # elevator servo lies behind the battery
     motor_z: float = 9.0           # thrust line above the tube centre-line
 
     cg_target: float = 0.28        # fraction of chord, first flights
     stall_limit: float = 9.0       # m/s, "as small as possible" criterion
+
+
+@dataclass(frozen=True)
+class Servo:
+    """Tower Pro SG90 micro servo, datasheet dimensions (mm, g)."""
+    name: str = "SG90"
+    mass: float = 9.0
+    length: float = 22.8           # body, along the mounting tabs
+    width: float = 12.2
+    height: float = 22.7           # base to top of the case
+    tab_span: float = 32.3
+    tab_t: float = 2.5
+    tab_z: float = 15.9            # base to the underside of the tabs
+    shaft_from_end: float = 5.9
+    boss_d: float = 11.8
+    boss_h: float = 4.0
+    spline_d: float = 4.8
+    spline_h: float = 3.2
+    horn_len: float = 16.0         # single-arm horn
+    horn_t: float = 1.5
+    horn_hole: float = 11.5        # pushrod hole radius on the horn
+
+    @property
+    def shaft_x(self):             # shaft offset from the body centre, along length
+        return self.length / 2 - self.shaft_from_end
+
+    @property
+    def horn_z(self):              # horn arm mid-plane above the base
+        return self.height + self.boss_h + self.spline_h - self.horn_t / 2
 
 
 @dataclass(frozen=True)
@@ -86,14 +117,14 @@ class Kit:
     rx: float = 1.5                # ELRS nano
     cam_vtx: float = 6.0           # nano camera + AIO 25-200 mW VTX
     antenna: float = 1.5
-    servo: float = 4.3             # 4 g class digital micro servo, x3
+    servo: Servo = Servo()         # x3: two ailerons, one elevator
     battery: float = 27.0          # 2S 450 mAh LiPo
     batt_len: float = 58.0
     batt_w: float = 31.0
     batt_h: float = 13.0
     batt_wh: float = 3.33          # 450 mAh * 7.4 V
     wiring: float = 5.0
-    hardware: float = 3.0          # screws, horns, pushrod, hinge tape
+    hardware: float = 2.0          # screws, hinge tape, velcro (horns, rods modelled)
 
 
 def round_to(v: float, step: float) -> float:
@@ -145,8 +176,8 @@ def lift_slope(ar: float) -> float:
 class Layout:
     """Every derived dimension for a given wing leading-edge station x_le."""
 
-    def __init__(self, p: Params, x_le: float):
-        self.p = p
+    def __init__(self, p: Params, x_le: float, k: Kit = Kit()):
+        self.p, self.k = p, k
         c = self.chord = p.span / p.aspect_ratio
         self.area = p.span * c                       # mm^2
         self.x_le = x_le
@@ -168,15 +199,30 @@ class Layout:
         self.z_top = self.r_boss                     # pod top = wing seat
         self.half_w = self.tube_y + p.wall / 2       # side walls under the tubes
         self.z_bottom = -p.pod_depth
-        self.pod_len = x_le + p.pod_overlap * c
+        self.pod_len = max(x_le + p.pod_overlap * c,
+                           p.front_bay + k.batt_len + p.batt_trim + p.servo_bay + p.wall)
         self.tail_z = self.r_hole + 1.2              # stab seat on the tail mount
         self.tube_x0 = p.front_wall + 1.6
         self.tube_x1 = self.x_stab + self.c_fix - 2.0
         self.tube_len = self.tube_x1 - self.tube_x0
-        self.pushrod_z = 0.8                         # over the battery, under the lid
+        self.z_floor = self.z_bottom + p.wall
+        # elevator servo lies on its side on the floor, base against the left
+        # wall, shaft pointing right, horn arm up
+        sv = k.servo
+        self.elev_servo_x = self.pod_len - p.wall - p.servo_bay / 2      # body centre
+        self.elev_servo_base_y = -(self.half_w - p.wall) + 3.9   # clear of the belly chamfer
+        self.pushrod_y = self.elev_servo_base_y + sv.horn_z
+        self.pushrod_z = self.z_floor + sv.width / 2 + sv.horn_hole
         self.batt_min = p.front_bay + 0.5            # battery front limit
-        self.batt_max = self.pod_len - p.wall - 0.5  # battery rear limit
+        self.batt_max = self.pod_len - p.wall - p.servo_bay - 0.5
         self.length = self.x_stab + self.c_h + 20.0  # prop to elevator TE
+
+    def servo_slack(self) -> float:
+        """Room left between the spars for the aileron servo's tabs (mm)."""
+        p, c = self.p, self.chord
+        room = ((p.rear_spar_pos - p.main_spar_pos) * c
+                - (p.main_spar_d + p.rear_spar_d) / 2 - 0.8)
+        return room - self.k.servo.tab_span
 
     @property
     def s_h(self):
@@ -226,17 +272,17 @@ def structure_estimate(p: Params, L: Layout):
 
 def components(p: Params, k: Kit, L: Layout):
     """(name, grams, x, z) for everything that isn't printed, battery excluded."""
-    servo_x = L.x_le + 0.30 * L.chord + 10.5
+    servo_x = L.x_le + (p.main_spar_pos + p.rear_spar_pos) / 2 * L.chord
     return [
         ("motor", k.motor, -7.0, p.motor_z),
-        ("prop", k.prop, -16.0, p.motor_z),
-        ("camera + VTX", k.cam_vtx, 10.0, -9.0),
-        ("antenna", k.antenna, 20.0, 5.0),
-        ("FC", k.fc, 39.0, -12.0),
-        ("receiver", k.rx, 46.0, -8.0),
-        ("ESC", k.esc, 30.0, -10.0),
-        ("elevator servo", k.servo, 13.0, -8.0),
-        ("aileron servos", 2 * k.servo, servo_x, 8.0),
+        ("prop", k.prop, -15.0, p.motor_z),
+        ("camera + VTX", k.cam_vtx, 11.0, -8.0),
+        ("antenna", k.antenna, 22.0, 10.0),
+        ("FC", k.fc, 33.0, -13.0),
+        ("receiver", k.rx, 41.0, -11.0),
+        ("ESC", k.esc, 32.0, -11.0),
+        ("elevator servo", k.servo.mass, L.elev_servo_x, L.z_floor + 6.0),
+        ("aileron servos", 2 * k.servo.mass, servo_x, 4.0),
         ("wiring", k.wiring, 0.5 * L.pod_len, -8.0),
         ("hardware (fwd)", k.hardware / 2, L.x_le, 0.0),
         ("hardware (tail)", k.hardware / 2, L.x_stab + L.c_h / 2, 0.0),
@@ -254,7 +300,7 @@ def solve_x_le(p: Params, k: Kit, structure=structure_estimate) -> float:
     """Wing station that balances with the battery mid-way in its travel."""
 
     def f(x_le):
-        L = Layout(p, x_le)
+        L = Layout(p, x_le, k)
         items = [(n, g, x) for n, g, x in structure(p, L)]
         items += [(n, g, x) for n, g, x, _ in components(p, k, L)]
         need = battery_for_cg(items, k, x_le + p.cg_target * L.chord)
@@ -307,7 +353,7 @@ def performance(p: Params, auw_g: float, L: Layout, k: Kit):
 
 def evaluate(p: Params, k: Kit):
     x_le = solve_x_le(p, k)
-    L = Layout(p, x_le)
+    L = Layout(p, x_le, k)
     items = [(n, g, x) for n, g, x in structure_estimate(p, L)]
     items += [(n, g, x) for n, g, x, _ in components(p, k, L)]
     auw = sum(i[1] for i in items) + k.battery
@@ -325,22 +371,24 @@ def sweep(p: Params, k: Kit, spans=range(300, 561, 20)):
 
 def smallest_span(p: Params, k: Kit, step: int = 10) -> int:
     for b in range(260, 800, step):
-        _, _, perf = evaluate(replace(p, span=float(b)), k)
-        if perf["stall"] <= p.stall_limit:
+        L, _, perf = evaluate(replace(p, span=float(b)), k)
+        if perf["stall"] <= p.stall_limit and L.servo_slack() >= 0:
             return b
     raise ValueError("no span meets the stall limit")
 
 
 def report(p: Params = Params(), k: Kit = Kit()) -> str:
     out = ["## Span sweep (analytic mass model)", "",
-           f"Criterion: stall speed <= {p.stall_limit} m/s at CLmax {p.cl_max} "
-           "(comfortable hand launch, FPV-flyable).", "",
-           "| span mm | chord mm | AUW g | loading g/dm^2 | WCL | stall m/s | Re at stall |",
-           "|---|---|---|---|---|---|---|"]
+           f"Criteria: stall speed <= {p.stall_limit} m/s at CLmax {p.cl_max} "
+           f"(comfortable hand launch, FPV-flyable), and the {k.servo.name} aileron servo's "
+           "mounting tabs fit between the spars.", "",
+           "| span mm | chord mm | AUW g | loading g/dm^2 | WCL | stall m/s | servo room mm | Re at stall |",
+           "|---|---|---|---|---|---|---|---|"]
     for b, L, auw, perf in sweep(p, k):
-        ok = "**" if perf["stall"] <= p.stall_limit else ""
+        ok = "**" if perf["stall"] <= p.stall_limit and L.servo_slack() >= 0 else ""
         out.append(f"| {ok}{b}{ok} | {L.chord:.0f} | {auw:.0f} | {perf['loading']:.1f} | "
-                   f"{perf['wcl']:.1f} | {ok}{perf['stall']:.2f}{ok} | {perf['re_stall']/1000:.0f}k |")
+                   f"{perf['wcl']:.1f} | {ok}{perf['stall']:.2f}{ok} | {L.servo_slack():+.1f} | "
+                   f"{perf['re_stall']/1000:.0f}k |")
     b_min = smallest_span(p, k)
     out += ["", f"Smallest span meeting the criterion: **{b_min} mm** "
             f"(design uses {p.span:.0f} mm)."]
@@ -352,7 +400,7 @@ if __name__ == "__main__":
     print(report(p, k))
     L, auw, perf = evaluate(p, k)
     print()
-    print(f"x_le {L.x_le:.1f}  chord {L.chord:.1f}  pod {L.pod_len:.1f}  "
+    print(f"x_le {L.x_le:.1f}  chord {L.chord:.1f}  pod {L.pod_len:.1f}  servo room {L.servo_slack():+.1f}  "
           f"stab {L.b_h:.0f}x{L.c_h:.1f} @ {L.x_stab:.1f}  fin h {L.fin_h:.1f}  "
           f"tube {L.tube_len:.0f}  length {L.length:.0f}")
     print(f"AUW {auw:.1f} g  stall {perf['stall']:.2f} m/s  cruise {perf['cruise']:.1f} m/s  "

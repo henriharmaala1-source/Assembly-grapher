@@ -23,49 +23,12 @@ from cadquery import Vector as V
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from design import (CARBON, LW_PLA, PLA, Kit, Layout, Params, camber,  # noqa: E402
+import components as parts_lib  # noqa: E402
+from design import (LW_PLA, PLA, Kit, Layout, Params, camber,  # noqa: E402
                     naca4, neutral_point, performance, report, rod_mass,
                     solve_x_le, structure_estimate)
-
-# --------------------------------------------------------------------------
-# Small solid helpers (all coordinates in the flight frame)
-
-
-def box(x0, x1, y0, y1, z0, z1):
-    return cq.Solid.makeBox(x1 - x0, y1 - y0, z1 - z0, V(x0, y0, z0))
-
-
-def cyl_x(r, x0, x1, y, z):
-    return cq.Solid.makeCylinder(r, x1 - x0, V(x0, y, z), V(1, 0, 0))
-
-
-def cyl_y(r, y0, y1, x, z):
-    return cq.Solid.makeCylinder(r, y1 - y0, V(x, y0, z), V(0, 1, 0))
-
-
-def cyl_z(r, z0, z1, x, y):
-    return cq.Solid.makeCylinder(r, z1 - z0, V(x, y, z0), V(0, 0, 1))
-
-
-def prism_y(pts_xz, y0, y1):
-    """Extrude a closed polygon drawn in x-z along y."""
-    wire = cq.Wire.makePolygon([V(x, y0, z) for x, z in pts_xz], close=True)
-    return cq.Solid.extrudeLinear(cq.Face.makeFromWires(wire), V(0, y1 - y0, 0))
-
-
-def prism_z(pts_xy, z0, z1):
-    """Extrude a closed polygon drawn in x-y along z."""
-    wire = cq.Wire.makePolygon([V(x, y, z0) for x, y in pts_xy], close=True)
-    return cq.Solid.extrudeLinear(cq.Face.makeFromWires(wire), V(0, 0, z1 - z0))
-
-
-def fuse(*shapes):
-    return shapes[0].fuse(*shapes[1:]).clean()
-
-
-def cut(shape, *tools):
-    return shape.cut(*tools).clean()
-
+from geom import (box, cut, cyl_x, cyl_y, cyl_z, fuse, prism_y, prism_z,  # noqa: E402
+                  rod, shaft_along_y)
 
 # --------------------------------------------------------------------------
 # Wing section
@@ -151,15 +114,20 @@ def make_pod(p: Params, L: Layout, batt_x: float):
     nose = [box(0, fw, -ty, ty, 0, rb),                     # between the front sleeves
             box(0, 3.2, -13, 13, 0, p.motor_z),              # motor plate
             cyl_x(13, 0, 3.2, 0, p.motor_z)]
-    fc = [cyl_z(2.3, zf - 0.1, zf + 3, 39 + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
-    # elevator servo stands upright beside the camera, horn up at the pushrod height
-    sx0, sx1, sy0, sy1 = fw + 0.6, fw + 0.6 + 20.8, 9.6, 18.6
-    cradle = cut(box(sx0 - 1, sx1 + 1, sy0 - 1, sy1 + 0.5, zf - 0.1, zf + 5),
-                 box(sx0, sx1, sy0, sy1, zf, zf + 6))
-    pod = fuse(pod, *sleeves, *nose, *fc, cradle)
+    fc = [cyl_z(2.3, zf - 0.1, zf + 3, FC_X + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
+    # elevator SG90 lies on its side behind the battery: two ribs locate the body,
+    # stopping short of the mounting tabs
+    sv = Kit().servo
+    ribs = [box(L.elev_servo_x + sx * (sv.length / 2 + 0.2) - (1.2 if sx < 0 else 0),
+                L.elev_servo_x + sx * (sv.length / 2 + 0.2) + (1.2 if sx > 0 else 0),
+                -(hw - w) - 0.1, L.elev_servo_base_y + sv.tab_z - 0.5, zf - 0.1, zf + 4)
+            for sx in (-1, 1)]
+    pod = fuse(pod, *sleeves, *nose, *fc, *ribs)
 
     holes = [cyl_x(rh, L.tube_x0, Lp + 1, s * ty, 0) for s in (-1, 1)]
-    holes += [cyl_z(0.85, zf, zf + 4, 39 + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
+    holes += [cyl_z(0.85, zf, zf + 4, FC_X + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
+    holes.append(box(Lp - 3, Lp + 1, L.pushrod_y - 2, L.pushrod_y + 2,
+                     L.pushrod_z - 2.5, 1))                    # pushrod over the rear wall
     holes.append(cyl_x(3.2, -1, 4, 0, p.motor_z))           # motor shaft / circlip
     for a in (45, 135, 225, 315):                           # 9x9, 12 mm and 16 mm patterns
         r = (5.9 + 8.6) / 2
@@ -190,11 +158,19 @@ def make_lid(p: Params, L: Layout):
 def make_wing_centre(p: Params, L: Layout, sec: Section):
     cw = p.center_width
     body = sec.centre_solid(-cw / 2, cw / 2, L.z_top)
+    ty, rb = L.tube_y, L.r_boss
+    # caps that sit over the pod's rear tube sleeves
+    c0, c1 = max(L.x_le, L.pod_len - p.sleeve_len), min(L.x_te - 1.0, L.pod_len)
+    caps = [cut(box(c0, c1, s * ty - rb - 1.2, s * ty + rb + 1.2, 0, L.z_top + 0.4),
+                cyl_x(rb + 0.15, c0 - 1, c1 + 1, s * ty, 0)) for s in (-1, 1)]
+    body = fuse(body, *caps)
+    holes = []
     x0, x1 = L.pod_len + 0.3, L.x_te - 1.5                  # saddle behind the pod
-    saddle = [cyl_x(L.r_boss, x0, x1, s * L.tube_y, 0) for s in (-1, 1)]
-    saddle.append(box(x0, x1, -L.tube_y, L.tube_y, 2.0, L.z_top + 0.4))
-    body = fuse(body, *saddle)
-    holes = [cyl_x(L.r_hole, x0 - 1, x1 + 1, s * L.tube_y, 0) for s in (-1, 1)]
+    if x1 - x0 >= 10:
+        saddle = [cyl_x(rb, x0, x1, s * ty, 0) for s in (-1, 1)]
+        saddle.append(box(x0, x1, -ty, ty, 2.0, L.z_top + 0.4))
+        body = fuse(body, *saddle)
+        holes += [cyl_x(L.r_hole, x0 - 1, x1 + 1, s * ty, 0) for s in (-1, 1)]
     for pos, d in ((p.main_spar_pos, p.main_spar_d), (p.rear_spar_pos, p.rear_spar_d)):
         x, z = sec.camber_point(pos)
         holes.append(cyl_y(d / 2 + 0.1, -cw, cw, x, z))
@@ -204,15 +180,33 @@ def make_wing_centre(p: Params, L: Layout, sec: Section):
     return cut(body, *holes)
 
 
-def servo_pocket(p: Params, L: Layout, sec: Section, y0: float):
-    """Flat-mounted aileron servo, output shaft pointing at the tip."""
-    xa = sec.x_at(0.30)
-    xb = xa + 21.0
-    zt = min(sec.upper_z(x) for x in np.linspace(xa, xb, 12)) - 1.2
-    zb = min(sec.lower_z(x) for x in np.linspace(xa, xb, 12)) - 3
-    ya, yb = y0 + 4.0, y0 + 4.0 + 18.8
-    xs = xb - 5.5                                            # shaft station
-    return [box(xa, xb, ya, yb, zb, zt), box(xs - 6, xs + 6, yb - 1, yb + 4.5, zb, zt)], xs, yb
+def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
+    """Right aileron SG90: lies on its side under the panel, tabs between the
+    spars, shaft pointing at the tip, horn hanging below the wing."""
+    sv = k.servo
+    y0 = p.center_width / 2
+    xa = sec.camber_point(p.main_spar_pos)[0] + p.main_spar_d / 2 + 0.4
+    xb = sec.camber_point(p.rear_spar_pos)[0] - p.rear_spar_d / 2 - 0.4
+    if xb - xa < sv.tab_span:
+        raise ValueError(f"{sv.name} tabs need {sv.tab_span} mm between the spars, "
+                         f"only {xb - xa:.1f} mm at this chord")
+    xm = (xa + xb) / 2                                       # body centre
+    xs = xm + sv.shaft_x                                     # output shaft
+    span = np.linspace(xm - sv.tab_span / 2, xm + sv.tab_span / 2, 16)
+    zt = min(sec.upper_z(x) for x in span) - 1.2            # top of the servo
+    zc = zt - sv.width / 2                                   # shaft axis height
+    zl = min(sec.lower_z(x) for x in span) - 3
+    ya = y0 + 3.0                                            # servo base
+    top = ya + sv.height
+    pocket = [
+        box(xm - sv.length / 2 - 0.2, xm + sv.length / 2 + 0.2, ya - 0.2, top + 0.2, zl, zt),
+        box(xm - sv.tab_span / 2 - 0.3, xm + sv.tab_span / 2 + 0.3,
+            ya + sv.tab_z - 0.2, ya + sv.tab_z + sv.tab_t + 0.2, zl, zt),
+        box(xm - 5.5, xs + 7.5, top, top + sv.boss_h + sv.spline_h + 1.2, zl, zt),
+        box(xm - sv.length / 2 - 6, xm - sv.length / 2, ya + 2.0, ya + 6.0, zl, zt),   # lead
+    ]
+    return {"pocket": pocket, "origin": (xm, ya, zc), "horn_deg": 90.0,
+            "link": (xs, ya + sv.horn_z, zc - sv.horn_hole)}
 
 
 def make_panel(p: Params, L: Layout, sec: Section):
@@ -225,8 +219,7 @@ def make_panel(p: Params, L: Layout, sec: Section):
         holes.append(cyl_y(d / 2 + 0.1, y0 - 1, y1 - 5, x, z))
     xw, zw = sec.camber_point(0.45)
     holes.append(cyl_y(2.0, y0 - 1, y0 + 8, xw, zw))
-    pocket, _, _ = servo_pocket(p, L, sec, y0)
-    holes += pocket
+    holes += aileron_servo(p, L, sec, Kit())["pocket"]
     xh = sec.x_at(p.hinge_pos)
     holes.append(box(xh - 0.3, L.x_te + 5, y0 + p.aileron_root_gap, y1 - p.aileron_tip_gap, -20, 40))
     return cut(panel, *holes)
@@ -239,7 +232,9 @@ def make_aileron(p: Params, L: Layout, sec: Section):
     ail = ail.intersect(box(xh, L.x_te + 5, -y1, y1, -20, 40))
     zl, zu = sec.lower_z(xh), sec.upper_z(xh)
     bevel = prism_y([(xh - 0.1, zl - 1), (xh - 0.1, zu - 1.0), (xh + 2.5, zl - 1)], -y1, y1)
-    return cut(ail, bevel)
+    ly = aileron_servo(p, L, sec, Kit())["link"][1]
+    slot = box(xh + 0.4, xh + 9.8, ly - 0.75, ly + 0.75, zl - 2, sec.lower_z(xh + 5) + 1.6)
+    return cut(ail, bevel, slot)
 
 
 def make_tail_mount(p: Params, L: Layout):
@@ -247,9 +242,10 @@ def make_tail_mount(p: Params, L: Layout):
     r_out = L.r_hole + 1.2
     body = fuse(box(x0, x1, -L.tube_y - r_out, L.tube_y + r_out, L.tail_z - 1.4, L.tail_z),
                 *[cyl_x(r_out, x0, x1, s * L.tube_y, 0) for s in (-1, 1)],
-                box(x0 + 2.5, x0 + 10.5, -1.5, 1.5, L.pushrod_z - 2.5, L.tail_z - 1.2))
+                box(x0 + 2.5, x0 + 10.5, L.pushrod_y - 1.5, L.pushrod_y + 1.5,
+                    L.pushrod_z - 2.5, L.tail_z - 1.2))
     holes = [cyl_x(L.r_hole, x0 - 1, L.tube_x1 + 0.2, s * L.tube_y, 0) for s in (-1, 1)]
-    holes.append(cyl_x(0.8, x0, x0 + 12, 0, L.pushrod_z))   # 1 mm pushrod guide
+    holes.append(cyl_x(0.8, x0, x0 + 12, L.pushrod_y, L.pushrod_z))   # 1 mm pushrod guide
     return cut(body, *holes)
 
 
@@ -264,13 +260,14 @@ def make_elevator(p: Params, L: Layout):
     y = L.b_h / 2 - 0.6
     z0, z1 = L.tail_z, L.tail_z + p.plate
     el = box(x0, x1, -y, y, z0, z1)
+    hy = L.pushrod_y
     horn = prism_y([(x0 + 0.5, z0 + 0.1), (x0 + 8, z0 + 0.1), (x0 + 4, L.pushrod_z - 2.2),
-                    (x0 + 0.5, L.pushrod_z - 2.2)], -0.8, 0.8)
+                    (x0 + 0.5, L.pushrod_z - 2.2)], hy - 0.8, hy + 0.8)
     el = fuse(el, horn)
-    cuts = [prism_y([(x0 - 0.1, z0 - 0.1), (x0 - 0.1, z1 - 0.6), (x0 + 2.0, z0 - 0.1)], -y - 1, -0.8),
-            prism_y([(x0 - 0.1, z0 - 0.1), (x0 - 0.1, z1 - 0.6), (x0 + 2.0, z0 - 0.1)], 0.8, y + 1),
+    bevel = [(x0 - 0.1, z0 - 0.1), (x0 - 0.1, z1 - 0.6), (x0 + 2.0, z0 - 0.1)]
+    cuts = [prism_y(bevel, -y - 1, hy - 0.8), prism_y(bevel, hy + 0.8, y + 1),
             prism_y([(x1 - 7, z0 - 0.1), (x1 + 0.1, z0 - 0.1), (x1 + 0.1, z0 + 1.3)], -y - 1, y + 1),
-            cyl_y(0.6, -2, 2, x0 + 3.0, L.pushrod_z)]
+            cyl_y(0.6, hy - 2, hy + 2, x0 + 3.0, L.pushrod_z)]
     return cut(el, *cuts)
 
 
@@ -290,35 +287,91 @@ def make_fin(p: Params, L: Layout):
 
 
 # --------------------------------------------------------------------------
-# Non-printed reference bodies (for the preview, the STEP and the CG)
+# Bought parts in flight position (for the STEP, the viewer and the CG)
+
+FC_X = 33.0                     # flight controller centre
+ELEV_HORN_LEN = 13.5            # elevator servo horn trimmed to clear the wing centre
+BLACK, WHITE = (0.08, 0.08, 0.09), (0.93, 0.93, 0.92)
 
 
-def reference_bodies(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
-    zf = L.z_bottom + p.wall
-    ref = {}
-    ref["tube_L"] = cut(cyl_x(p.tube_od / 2, L.tube_x0, L.tube_x1, -L.tube_y, 0),
-                        cyl_x(p.tube_id / 2, L.tube_x0 - 1, L.tube_x1 + 1, -L.tube_y, 0))
-    ref["tube_R"] = ref["tube_L"].mirror("XZ")
+class Ref:
+    """A non-printed item: shape, colour, mass and which assembly group it joins."""
+
+    def __init__(self, name, shape, colour, mass, group):
+        self.name, self.shape, self.colour, self.mass, self.group = name, shape, colour, mass, group
+
+
+def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
+    zf, sv = L.z_floor, k.servo
+    out = []
+
+    def add(name, shapes, colours, mass, group):
+        """shapes: {suffix: shape} from components.py; mass goes on the main body."""
+        for suffix, shape in shapes.items():
+            out.append(Ref(name + ("_" + suffix if suffix else ""), shape,
+                           colours.get(suffix, colours[""]), mass if not suffix else 0.0, group))
+
+    # structure
+    tube = cut(cyl_x(p.tube_od / 2, L.tube_x0, L.tube_x1, -L.tube_y, 0),
+               cyl_x(p.tube_id / 2, L.tube_x0 - 1, L.tube_x1 + 1, -L.tube_y, 0))
+    tube_g = rod_mass(p.tube_od, L.tube_len, p.tube_id, p.tube_density)
+    out += [Ref("tube_L", tube, BLACK, tube_g, "hardware"),
+            Ref("tube_R", tube.mirror("XZ"), BLACK, tube_g, "hardware")]
     for pos, d, name in ((p.main_spar_pos, p.main_spar_d, "spar_main"),
                          (p.rear_spar_pos, p.rear_spar_d, "spar_rear")):
         x, z = sec.camber_point(pos)
-        ref[name] = cyl_y(d / 2, -p.span / 2 + 5, p.span / 2 - 5, x, z)
-    ref["motor"] = fuse(cyl_x(9.0, -12.5, 0, 0, p.motor_z), cyl_x(2.5, -17, -12.5, 0, p.motor_z))
-    blade = box(-15.5, -14.5, -50.8, 50.8, p.motor_z - 4, p.motor_z + 4)
-    ref["prop"] = fuse(blade, cyl_x(4, -16.5, -13.5, 0, p.motor_z))
-    ref["battery"] = box(batt_x - k.batt_len / 2, batt_x + k.batt_len / 2,
-                         -k.batt_w / 2, k.batt_w / 2, zf, zf + k.batt_h)
-    ref["camera"] = box(p.front_wall, p.front_wall + 14, -7, 7, -16, -2)
-    ref["fc"] = box(39 - 13.5, 39 + 13.5, -13.5, 13.5, zf + 3, zf + 8)
-    ref["servo_elev"] = box(p.front_wall + 0.6, p.front_wall + 21.4, 9.6, 18.6, zf, zf + 16)
-    _, xs, yb = servo_pocket(p, L, sec, p.center_width / 2)
-    zt = sec.upper_z(xs) - 1.2
-    servo = box(xs - 15.5, xs + 5.5, p.center_width / 2 + 4, yb, zt - 8.5, zt)
-    ref["servo_ail_R"] = servo
-    ref["servo_ail_L"] = servo.mirror("XZ")
-    x_h = L.x_stab + L.c_fix + 3.6
-    ref["pushrod"] = cyl_x(0.5, p.front_wall + 16, x_h, 0, L.pushrod_z)
-    return ref
+        out.append(Ref(name, cyl_y(d / 2, -p.span / 2 + 5, p.span / 2 - 5, x, z), BLACK,
+                       rod_mass(d, p.span - 10), "hardware"))
+
+    # propulsion
+    add("motor", {n: s.translate(V(0, 0, p.motor_z)) for n, s in parts_lib.motor_1404().items()},
+        {"": (0.62, 0.64, 0.68), "shaft": (0.25, 0.25, 0.28)}, k.motor, "electronics")
+    add("prop", {n: s.translate(V(-14.8, 0, p.motor_z)) for n, s in parts_lib.prop_4x25().items()},
+        {"": (0.10, 0.42, 0.85)}, k.prop, "electronics")
+
+    # pod contents
+    add("camera", {n: s.translate(V(3.0, 0, -9.0)) for n, s in parts_lib.nano_camera().items()},
+        {"": (0.10, 0.10, 0.11), "lens": (0.20, 0.35, 0.55)}, k.cam_vtx * 0.55, "electronics")
+    vtx = box(15.6, 18.6, -10, 10, zf + 0.4, zf + 19.4)
+    out.append(Ref("vtx", vtx, (0.12, 0.40, 0.25), k.cam_vtx * 0.45, "electronics"))
+    ant_x, ant_y = p.sleeve_len + 0.3 + 8, -9
+    add("antenna", {n: s.translate(V(ant_x, ant_y, -4.0)) for n, s in parts_lib.whip_antenna(38).items()},
+        {"": BLACK}, k.antenna, "electronics")
+    add("fc", {n: s.translate(V(FC_X, 0, zf + 3)) for n, s in parts_lib.flight_controller().items()},
+        {"": (0.10, 0.12, 0.14), "chips": (0.55, 0.58, 0.62)}, k.fc, "electronics")
+    out.append(Ref("receiver", box(37, 47, 16.2, 19.2, zf + 4, zf + 14), (0.22, 0.22, 0.25),
+                   k.rx, "electronics"))
+    out.append(Ref("esc", box(22, 42, -18.8, -14.8, zf + 3, zf + 13), (0.45, 0.25, 0.65),
+                   k.esc, "electronics"))
+    add("battery", {n: s.translate(V(batt_x, 0, zf + k.batt_h / 2 + 0.1))
+                    for n, s in parts_lib.battery_2s(k.batt_len, k.batt_w, k.batt_h).items()},
+        {"": (0.88, 0.74, 0.16), "leads": (0.75, 0.20, 0.15)}, k.battery, "electronics")
+
+    # servos
+    servo_colours = {"": (0.16, 0.38, 0.85), "horn": WHITE}
+    el_origin = (L.elev_servo_x, L.elev_servo_base_y, zf + sv.width / 2)
+    trimmed = parts_lib.sg90(sv, -90, horn_len=ELEV_HORN_LEN)
+    add("servo_elev", {n: shaft_along_y(s, el_origin) for n, s in trimmed.items()},
+        servo_colours, sv.mass, "electronics")
+    hx, _, _ = parts_lib.horn_point(sv, -90)
+    el_link = (L.elev_servo_x + hx, L.elev_servo_base_y + sv.horn_z, zf + sv.width / 2 + sv.horn_hole)
+    x_eh = L.x_stab + L.c_fix + 0.6 + 3.0                    # elevator horn hole
+    out.append(Ref("pushrod_elev", rod(0.5, el_link, (x_eh - 1.5, L.pushrod_y, L.pushrod_z)), BLACK,
+                   rod_mass(1.0, x_eh - el_link[0]), "hardware"))
+
+    ail = aileron_servo(p, L, sec, k)
+    servo = {n: shaft_along_y(s, ail["origin"]) for n, s in parts_lib.sg90(sv, ail["horn_deg"]).items()}
+    xh = sec.x_at(p.hinge_pos) + 0.3
+    zl = sec.lower_z(xh + 1.8)
+    ly = ail["link"][1]
+    horn = parts_lib.micro_horn()[""].translate(V(xh + 0.3, ly, zl + 0.2))
+    rod_r = rod(0.4, ail["link"], (xh + 2.1, ly, zl - 7.8))
+    for side, m in (("R", lambda s: s), ("L", lambda s: s.mirror("XZ"))):
+        add(f"servo_ail_{side}", {n: m(s) for n, s in servo.items()}, servo_colours, sv.mass,
+            "electronics")
+        out.append(Ref(f"horn_ail_{side}", m(horn), WHITE, 0.3, "hardware"))
+        out.append(Ref(f"pushrod_ail_{side}", m(rod_r), BLACK, 0.2, "hardware"))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -354,31 +407,11 @@ PRINT_NOTES = {
     "fin_R": "Outer face down, jaws up.",
     "fin_L": "Outer face down, jaws up.",
 }
-REF_COLOUR = {
-    "tube": (0.08, 0.08, 0.09), "spar": (0.08, 0.08, 0.09), "motor": (0.55, 0.57, 0.60),
-    "prop": (0.10, 0.45, 0.85), "battery": (0.85, 0.75, 0.15), "camera": (0.10, 0.10, 0.10),
-    "fc": (0.10, 0.55, 0.30), "servo": (0.15, 0.30, 0.70), "pushrod": (0.08, 0.08, 0.09),
-}
-
-
 def print_mass(name, shape):
     rho, shell, infill, _ = PRINT[name]
     vol, area = shape.Volume(), shape.Area()
     solid = min(vol, area * shell)
     return rho * (solid + infill * max(0.0, vol - solid)) / 1000
-
-
-def ref_mass(name, p: Params, k: Kit, L: Layout):
-    if name.startswith("tube"):
-        return rod_mass(p.tube_od, L.tube_len, p.tube_id, p.tube_density)
-    table = {
-        "spar_main": rod_mass(p.main_spar_d, p.span - 10),
-        "spar_rear": rod_mass(p.rear_spar_d, p.span - 10),
-        "motor": k.motor, "prop": k.prop, "battery": k.battery, "camera": k.cam_vtx,
-        "fc": k.fc + k.rx, "servo_elev": k.servo, "servo_ail_R": k.servo,
-        "servo_ail_L": k.servo, "pushrod": rod_mass(1.0, L.tube_len, rho=CARBON),
-    }
-    return table[name]
 
 
 # --------------------------------------------------------------------------
@@ -404,8 +437,27 @@ def to_bed(shape, name):
 
 
 def build(p: Params = Params(), k: Kit = Kit()):
-    x_le = solve_x_le(p, k)
-    L = Layout(p, x_le)
+    """Place the wing so the battery balances the plane mid-way in its travel,
+    using CAD masses (secant steps from the analytic first guess)."""
+    def miss(x_le):
+        r = build_at(p, k, x_le)
+        L, batt_x = r[2], r[-1]
+        return batt_x - (L.batt_min + L.batt_max) / 2, r
+
+    x0 = solve_x_le(p, k)
+    f0, r = miss(x0)
+    x1 = x0 + 3.0
+    for _ in range(4):
+        if abs(f0) < 0.5:
+            break
+        f1, r1 = miss(x1)
+        x0, x1, f0, r = x1, x1 - f1 * (x1 - x0) / (f1 - f0), f1, r1
+    return r
+
+
+def build_at(p: Params, k: Kit, x_le: float):
+    x_le = round(x_le, 1)
+    L = Layout(p, x_le, k)
     sec = Section(p, L)
     batt_nominal = (L.batt_min + L.batt_max) / 2
 
@@ -424,29 +476,28 @@ def build(p: Params = Params(), k: Kit = Kit()):
 
     # CG with CAD masses: solve the battery station, then build the pod around it
     parts["pod"] = make_pod(p, L, batt_nominal)
-    ref = reference_bodies(p, k, L, sec, batt_nominal)
-    items = []
-    for name, shape in parts.items():
-        c = shape.Center()
-        items.append((name, print_mass(name, shape), c.x, c.z))
-    for name, shape in ref.items():
-        if name == "battery":
-            continue
-        c = shape.Center()
-        items.append((name, ref_mass(name, p, k, L), c.x, c.z))
-    items += [("wiring", k.wiring, 0.5 * L.pod_len, -8.0), ("esc", k.esc, 30.0, -10.0),
-              ("antenna", k.antenna, 20.0, 5.0), ("hardware", k.hardware, 0.55 * L.x_stab, 0.0)]
+    refs = bought_parts(p, k, L, sec, batt_nominal)
+
+    def mass_items():
+        items = []
+        for name, shape in parts.items():
+            c = shape.Center()
+            items.append((name, print_mass(name, shape), c.x, c.z))
+        for r in refs:
+            if r.mass > 0:
+                c = r.shape.Center()
+                items.append((r.name, r.mass, c.x, c.z))
+        items += [("wiring", k.wiring, 0.5 * L.pod_len, -8.0),
+                  ("hardware", k.hardware, 0.55 * L.x_stab, 0.0)]
+        return items
+
+    others = [i for i in mass_items() if i[0] != "battery"]
     target = L.x_le + p.cg_target * L.chord
-    m = sum(i[1] for i in items)
-    batt_x = (target * (m + k.battery) - sum(i[1] * i[2] for i in items)) / k.battery
-    batt_x = round(batt_x, 1)
+    m = sum(i[1] for i in others)
+    batt_x = round((target * (m + k.battery) - sum(i[1] * i[2] for i in others)) / k.battery, 1)
     parts["pod"] = make_pod(p, L, batt_x)
-    ref = reference_bodies(p, k, L, sec, batt_x)
-    items = [i for i in items if i[0] != "pod"]
-    c = parts["pod"].Center()
-    items.append(("pod", print_mass("pod", parts["pod"]), c.x, c.z))
-    items.append(("battery", k.battery, batt_x, ref["battery"].Center().z))
-    return p, k, L, sec, parts, ref, items, batt_x
+    refs = bought_parts(p, k, L, sec, batt_x)
+    return p, k, L, sec, parts, refs, mass_items(), batt_x
 
 
 # --------------------------------------------------------------------------
@@ -458,44 +509,43 @@ def tessellate(shape, tol=0.08, ang=0.25):
     return np.array([(v.x, v.y, v.z) for v in vs]), np.array(tris, dtype=np.int64)
 
 
-def colour_of(name):
-    if name in PRINT:
-        return PRINT[name][3]
-    return REF_COLOUR[name.split("_")[0]]
-
-
 def srgb_to_linear(rgb):
     return [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
 
 
-def export_all(p, k, L, parts, ref, out: Path):
+def export_all(p, k, L, parts, refs, out: Path):
     (out / "stl").mkdir(parents=True, exist_ok=True)
     (out / "cad").mkdir(parents=True, exist_ok=True)
     for name, shape in parts.items():
         cq.exporters.export(to_bed(shape, name), str(out / "stl" / f"{name}.stl"),
                             tolerance=0.03, angularTolerance=0.15)
 
-    assy = cq.Assembly(name="twin_tube_micro")
-    for name, shape in {**parts, **ref}.items():
-        assy.add(shape, name=name, color=cq.Color(*colour_of(name)))
+    bodies = [(n, s, PRINT[n][3], "printed") for n, s in parts.items()]
+    bodies += [(r.name, r.shape, r.colour, r.group) for r in refs]
+    assy = cq.Assembly(name=f"kipina_{p.span:.0f}")
+    groups = {g: cq.Assembly(name=g) for g in ("printed", "hardware", "electronics")}
+    for name, shape, colour, group in bodies:
+        groups[group].add(shape, name=name, color=cq.Color(*colour))
+    for g in groups.values():
+        assy.add(g)
     assy.export(str(out / "cad" / "airframe.step"))
 
     import trimesh
     from trimesh.visual.material import PBRMaterial
     scene = trimesh.Scene()
-    for name, shape in {**parts, **ref}.items():
+    for name, shape, colour, group in bodies:
         v, t = tessellate(shape, 0.05, 0.2)
         v = np.column_stack([v[:, 0], v[:, 2], -v[:, 1]]) / 1000.0  # z-up mm -> y-up m
         mesh = trimesh.Trimesh(v, t, process=False)
         mesh.visual = trimesh.visual.TextureVisuals(material=PBRMaterial(
-            name=name, baseColorFactor=[*srgb_to_linear(colour_of(name)), 1.0],
+            name=name, baseColorFactor=[*srgb_to_linear(colour), 1.0],
             metallicFactor=0.0, roughnessFactor=0.6))
         scene.add_geometry(mesh, node_name=name, geom_name=name)
     (out / "viewer").mkdir(exist_ok=True)
     scene.export(str(out / "viewer" / "airframe.glb"), include_normals=True)
 
 
-def write_report(p, k, L, parts, items, batt_x, out: Path):
+def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
     auw = sum(i[1] for i in items)
     cg = sum(i[1] * i[2] for i in items) / auw
     cgz = sum(i[1] * i[3] for i in items) / auw
@@ -530,6 +580,10 @@ def write_report(p, k, L, parts, items, batt_x, out: Path):
         f"| Neutral point | {np_ * 100:.0f} % chord -> static margin {(np_ - p.cg_target) * 100:.0f} % |",
         f"| Battery centre | **{batt_x:.0f} mm** from the motor face "
         f"(travel {L.batt_min + k.batt_len / 2:.0f}-{L.batt_max - k.batt_len / 2:.0f} mm) |",
+        "",
+        "Interference check (bought parts against everything, pushrod-in-horn links "
+        "excluded): " + ("**" + "; ".join(f"{a} / {b} {v} mm^3" for a, b, v in hits) + "**"
+                         if hits else "no overlaps."),
         "",
         f"Analytic structure estimate for comparison: {est:.0f} g "
         f"(CAD printed + rods/tubes: {sum(i[1] for i in items if i[0] in PRINT or i[0].startswith(('tube', 'spar'))):.0f} g).",
@@ -585,13 +639,44 @@ def write_report(p, k, L, parts, items, batt_x, out: Path):
     return auw, cg
 
 
+# pushrods are meant to pass through their horns
+LINKS = {frozenset(pair) for pair in (
+    ("pushrod_elev", "elevator"), ("pushrod_elev", "servo_elev_horn"),
+    ("pushrod_ail_R", "servo_ail_R_horn"), ("pushrod_ail_R", "horn_ail_R"),
+    ("pushrod_ail_L", "servo_ail_L_horn"), ("pushrod_ail_L", "horn_ail_L"))}
+
+
+def interference(parts, refs, tol=0.05):
+    """Pairs of bodies that overlap by more than tol mm^3."""
+    bodies = [(n, s) for n, s in parts.items()] + [(r.name, r.shape) for r in refs]
+    boxes = {n: s.BoundingBox() for n, s in bodies}
+    hits = []
+    for i, (a, sa) in enumerate(bodies):
+        for b, sb in bodies[i + 1:]:
+            if a in parts and b in parts:
+                continue                                   # printed parts are glued, not checked
+            if a.split("_")[0] == b.split("_")[0] or frozenset((a, b)) in LINKS:
+                continue
+            ba, bb = boxes[a], boxes[b]
+            if (ba.xmax < bb.xmin or bb.xmax < ba.xmin or ba.ymax < bb.ymin or bb.ymax < ba.ymin
+                    or ba.zmax < bb.zmin or bb.zmax < ba.zmin):
+                continue
+            v = sa.intersect(sb).Volume()
+            if v > tol:
+                hits.append((a, b, round(v, 2)))
+    return hits
+
+
 def main():
     out = HERE
-    p, k, L, sec, parts, ref, items, batt_x = build()
+    p, k, L, sec, parts, refs, items, batt_x = build()
     for name, s in parts.items():
         assert s.isValid(), f"{name} is not a valid solid"
-    auw, cg = write_report(p, k, L, parts, items, batt_x, out)
-    export_all(p, k, L, parts, ref, out)
+    hits = interference(parts, refs)
+    for a, b, v in hits:
+        print(f"WARNING: {a} overlaps {b} by {v} mm^3")
+    auw, cg = write_report(p, k, L, parts, items, batt_x, out, hits)
+    export_all(p, k, L, parts, refs, out)
     print(f"AUW {auw:.1f} g, CG {cg:.1f} mm, battery centre {batt_x:.1f} mm, x_le {L.x_le:.1f}")
 
 

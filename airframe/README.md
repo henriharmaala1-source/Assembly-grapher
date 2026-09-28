@@ -1,6 +1,6 @@
-# Kipinä 400: twin-tube micro FPV plane
+# Kipinä 430: twin-tube micro FPV plane
 
-![Kipinä 400](preview/hero.png)
+![Kipinä 430](preview/hero.png)
 
 A 3D-printed fixed wing with a Molniya-style layout. Two plain round tubes are
 the whole fuselage structure: they run from the motor to the tail and carry the
@@ -8,52 +8,58 @@ pod, the straight rectangular wing and an H-tail. It is a hobby FPV airframe
 only. There is no payload bay or release mechanism, just a pod for the flight
 battery and the FPV electronics.
 
-The brief was "as small as possible". The size comes from a sweep, not a guess.
-See [Why 400 mm](#why-400-mm).
+It flies on three **SG90** servos, one per aileron and one for the elevator, as
+on the original layout. The brief was "as small as possible", so the size
+comes from a sweep, not a guess. See [Why 430 mm](#why-430-mm).
 
 | | |
 |---|---|
-| Wingspan | 400 mm, chord 80 mm, NACA 4412 at 2° incidence |
-| Length | 363 mm (prop to elevator trailing edge) |
-| Main struts | 2 × carbon tube 6×5 mm, 324 mm long, 40 mm apart |
-| All-up weight | ~151 g (printed parts ~58 g) |
+| Wingspan | 430 mm, chord 86 mm, NACA 4412 at 2° incidence |
+| Length | 401 mm (prop to elevator trailing edge) |
+| Main struts | 2 × carbon tube 6×5 mm, 361 mm long, 40 mm apart |
+| Servos | 3 × SG90 |
+| All-up weight | ~175 g (printed parts ~67 g) |
 | Wing loading | 47 g/dm² |
 | Stall / cruise | ~8.9 / ~13 m/s |
-| Endurance | ~14 min on 2S 450 mAh (rough estimate) |
-| CG | 94.8 mm behind the motor face = 22.4 mm behind the wing LE (28 % chord) |
+| Endurance | ~13 min on 2S 450 mAh (rough estimate) |
+| CG | 113.8 mm behind the motor face = 24.1 mm behind the wing LE (28 % chord) |
 | Static margin | ~15 % (neutral point at ~43 % chord) |
 
 All numbers are first-order estimates from `design.py` and the CAD volumes.
 Nothing here has been flight-tested yet. [REPORT.md](REPORT.md) has the full
-mass breakdown and the print list, regenerated on every build.
+mass breakdown, the print list and the interference check, regenerated on
+every build.
 
-| Top | Side cutaway |
+| Pod, cut open | Aileron SG90 under the wing |
 |---|---|
-| ![Top](preview/top.png) | ![Cutaway](preview/cutaway.png) |
+| ![Pod](preview/pod.png) | ![Aileron servo](preview/servo.png) |
 
-## Why 400 mm
+## Why 430 mm
 
 A printed plane does not scale down evenly. The electronics weigh the same at
 any size, and a printed skin can't get thinner than one nozzle line. So as the
 span drops, the wing loading and the stall speed climb.
 
 `design.py` rebuilds the layout at each span, re-balances it (tail volumes, CG,
-battery station) and estimates the weight. The criterion is a stall speed of
-at most 9 m/s at CLmax 0.95, which keeps hand launches and FPV landings
-comfortable.
+battery station) and estimates the weight. A span passes when:
+
+- the stall speed is at most 9 m/s at CLmax 0.95, which keeps hand launches and
+  FPV landings comfortable, and
+- an SG90's 32.3 mm mounting tabs fit between the two wing spars. That needs a
+  chord of at least about 80 mm.
 
 | span | AUW | stall |
 |---|---|---|
-| 300 mm | 127 g | 10.9 m/s |
-| 340 mm | 135 g | 9.9 m/s |
-| 380 mm | 144 g | 9.2 m/s |
-| **390 mm** | | **9.0 m/s (first to pass)** |
-| **400 mm** | **148 g** | **8.8 m/s (built)** |
-| 460 mm | 164 g | 8.1 m/s |
+| 300 mm | 146 g | 11.7 m/s |
+| 380 mm | 160 g | 9.7 m/s |
+| 400 mm | 164 g | 9.3 m/s |
+| **420 mm** | **168 g** | **9.0 m/s (first to pass)** |
+| **430 mm** | | **8.9 m/s (built)** |
+| 460 mm | 177 g | 8.4 m/s |
 
-The build rounds up to 400 mm for margin. To go smaller, lighten the kit: a 2S
-300 mAh pack and 5×4 mm tubes save about 10 g, which is worth roughly 20 mm
-of span. Change `Kit` and `Params` in `design.py`, then rerun.
+The build rounds up by 10 mm for margin. The three SG90s weigh 27 g together;
+with 4 g micro servos the same sweep lands at 400 mm. Change `Kit` and `Params`
+in `design.py` and rerun to try other parts.
 
 ## Parts
 
@@ -71,55 +77,74 @@ of span. Change `Kit` and `Params` in `design.py`, then rerun.
 | `elevator.stl` | LW-PLA | Top face down, horn up |
 | `fin_R.stl`, `fin_L.stl` | LW-PLA | Outer face down |
 
-The tallest part is a wing panel at 172 mm, and nothing is wider than 157 mm,
-so everything fits a 180 × 180 × 180 mm bed. The masses assume LW-PLA foamed to
+The tallest part is a wing panel at 187 mm, and nothing is longer than 170 mm,
+so everything fits a 200 × 200 × 200 mm bed. The masses assume LW-PLA foamed to
 about 0.75 g/cm³. Plain PLA works, but it adds roughly 25 g to the wing and tail.
 
 ### Bought
 
+Everything in this table is modelled in `cad/airframe.step`, under the
+`electronics` and `hardware` groups.
+
 | item | example spec | g |
 |---|---|---|
-| Main struts | 2 × carbon tube 6×5 mm, cut to 324 mm (6×0.5 aluminium also fits, +6 g) | 8.6 |
-| Wing spars | carbon rod 3 mm and 2 mm, 390 mm each | 6.2 |
+| Servos | 3 × Tower Pro SG90 with single-arm horns | 27 |
+| Main struts | 2 × carbon tube 6×5 mm, cut to 361 mm (6×0.5 aluminium also fits, +6 g) | 9.6 |
+| Wing spars | carbon rod 3 mm and 2 mm, 420 mm each | 6.6 |
 | Motor + prop | 1404 3800 KV, 4×2.5 two-blade | 11 |
-| ESC | 12 A single, BLHeli_S | 3.5 |
+| ESC | 12 A single, BLHeli_S, about 20 × 10 × 4 mm | 3.5 |
 | Flight controller | 20×20 wing FC with servo outputs (INAV) | 6 |
 | Receiver | ELRS nano | 1.5 |
-| FPV | nano camera (14 mm) + 25–200 mW VTX | 6 |
-| Servos | 3 × 4 g class digital micro servo (~20 × 8.5 × 18 mm) | 13 |
-| Battery | 2S 450 mAh LiPo (58 × 31 × 13 mm) | 27 |
-| Small parts | 1 mm carbon pushrod, 2 micro control horns, hinge tape, 10 mm velcro strap, M2 screws | ~5 |
+| FPV | nano camera (14 mm) + 25–200 mW VTX + whip antenna | 7.5 |
+| Battery | 2S 450 mAh LiPo (58 × 31 × 13 mm), XT30 | 27 |
+| Linkages | 1 mm carbon rod (~225 mm) with wire Z-bend ends for the elevator, 2 × 0.8 mm Z-bend wire for the ailerons, 2 micro control horns | ~1 |
+| Small parts | M2 screws, hinge tape, 10 mm velcro strap | ~2 |
 
 ## Assembly
 
 1. **Check the fits.** Tube holes are 6.2 mm and spar holes 3.2/2.2 mm for glued
    joints. Ream any tight hole with a drill bit by hand.
-2. **Fit out the pod.** Screw the motor to the front plate with M2 screws from
-   inside. The slots take 9×9 mm, 12 mm and 16 mm patterns. Glue the camera
-   behind its window and stand the elevator servo in its cradle (horn up, at
-   tube height). Screw the FC to the four bosses and stick the ESC to the
-   left wall. Motor wires go through the slot beside the camera.
-3. **Join the tubes.** Thread the wing centre's saddle onto both tubes. Push the
-   tubes into the pod from the rear until they bottom out in the front sleeves,
-   then slide the wing centre forward onto the rear sleeves. Glue everything
-   with epoxy or thick CA.
-4. **Build the wing.** Slide the 3 mm and 2 mm rods through the centre section
-   and glue both panels on. Press the aileron servos into the pockets under the
-   panels. They sit about 1 mm proud; tape over them. Their leads run through
-   the wire channel into the pod.
-5. **Hinge the ailerons.** Tape along the top surface. The bevel under the
-   hinge line gives about 25° of up travel.
-6. **Build the tail.** Glue the stabiliser onto the tail mount and push the fins'
+2. **Fit out the pod.**
+   - Screw the motor to the front plate with M2 screws from inside. The slots
+     take 9×9 mm, 12 mm and 16 mm patterns.
+   - Glue the camera behind its window and stand the VTX board right behind it.
+     The whip antenna goes up through the hole in the lid.
+   - Screw the FC to the four bosses, 33 mm behind the motor face. Stick the
+     ESC to the left wall and the receiver to the right wall, both about 3 mm
+     above the floor so they clear the belly chamfer. The motor wires go
+     through the slot beside the camera.
+3. **Fit the elevator SG90.** Lay it on its side in the rear bay, between the
+   two floor ribs, with its base towards the left wall and the shaft pointing
+   right. The horn points straight up. Trim the horn to 13.5 mm so it clears
+   the wing centre, and use the hole 11.5 mm from the shaft. Hot glue it, or
+   screw through the tabs into the ribs.
+4. **Join the tubes.** Thread the wing centre's saddle onto both tubes. Push the
+   tubes into the pod from the rear until they bottom out in the front sleeves.
+   Then slide the wing centre forward until its caps sit over the pod's rear
+   sleeves, and glue everything with epoxy or thick CA.
+5. **Build the wing.**
+   - Slide the 3 mm and 2 mm rods through the centre section and glue both
+     panels on.
+   - Each aileron SG90 lies on its side in the pocket under its panel: tabs
+     between the spars, shaft pointing at the tip, horn hanging down. About
+     3 mm of the servo stands proud of the lower surface.
+   - The servo leads run through the wire channel and down into the pod.
+6. **Hinge and link the ailerons.**
+   - Tape the hinge along the top surface. The bevel under the hinge line gives
+     about 25° of up travel.
+   - Glue a micro control horn into the slot under each aileron.
+   - Link it to the servo horn (11.5 mm hole) with 0.8 mm Z-bend wire.
+7. **Build the tail.** Glue the stabiliser onto the tail mount and push the fins'
    jaws onto the stabiliser tips. Hinge the elevator with tape on top. Push the
    tail mount onto the tube ends. Sight from behind to get it square to the
    wing, then glue.
-7. **Fit the pushrod.** Run a 1 mm carbon rod with wire Z-bend ends from the
-   servo horn, over the battery and through the tail mount guide, to the
-   elevator horn.
-8. **Balance.** Strap the battery through the floor slots and slide it until the
-   plane balances 22 mm behind the wing LE (94.8 mm from the motor face). The
-   nominal battery centre is 90 mm from the motor face, and the travel is
-   82–98 mm.
+8. **Fit the elevator pushrod.** It runs 13.5 mm right of the centre-line: from
+   the servo horn, over the pod's rear wall and through the tail mount guide,
+   to the printed elevator horn.
+9. **Balance.** Strap the battery through the floor slots and slide it until the
+   plane balances 24 mm behind the wing LE (113.8 mm from the motor face).
+   The nominal battery centre is 85 mm from the motor face, and the travel is
+   78–92 mm. The XT30 folds back over the top of the pack.
 
 The hatch lid rests on the tubes between the sleeves. Hold it with tape or two
 3 mm magnets.
@@ -139,20 +164,28 @@ The hatch lid rests on the tubes between the sleeves. Hold it with tape or two
 ```sh
 pip install cadquery trimesh
 python3 airframe/design.py      # sizing sweep and layout, no CAD needed
-python3 airframe/build.py       # STLs, STEP, GLB, REPORT.md
+python3 airframe/build.py       # STLs, STEP, GLB, REPORT.md, interference check
 
 # optional: PNG previews from the three.js viewer (headless Chromium)
 npm install three@0.169.0 playwright
 node airframe/tools/render.mjs
 ```
 
-Every dimension comes from `Params` and `Kit` in `design.py`: span, aspect
-ratio, airfoil, tail volumes, tube size and spacing, pod depth, CG target. The
-solver moves the wing along the tubes so the battery balances the plane in the
-middle of its travel. It then sizes the tail from the volume coefficients.
+The code is split into four files:
 
-- `cad/airframe.step` is the full assembly in flight position, with reference
-  bodies for the electronics. Open it in Fusion, FreeCAD or SolidWorks.
+- `design.py` holds every dimension (`Params`), the electronics (`Kit`) and the
+  SG90 datasheet dimensions (`Servo`).
+- `build.py` makes the printed parts.
+- `components.py` models the bought parts.
+- `geom.py` holds the shared solid helpers.
+
+The build moves the wing along the tubes until the battery balances the plane
+in the middle of its travel, using the CAD masses. It then checks every bought
+part against every other body for overlaps.
+
+- `cad/airframe.step` is the full assembly in flight position, in three groups:
+  `printed`, `hardware` and `electronics`. Open it in Fusion, FreeCAD or
+  SolidWorks.
 - `viewer/index.html` is an interactive 3D viewer. Serve the `viewer/` folder
   over HTTP, for example with `npx http-server airframe/viewer`.
 
@@ -166,5 +199,7 @@ towards the right wing tip and z up, with z = 0 on the tube centre-line.
   `build.py` (`PRINT`) before trusting the CG.
 - The aerodynamics are first-order: Helmbold lift slope, a Gilruth-style pod
   term and CLmax 0.95. Expect to trim.
-- Servo, camera and FC sizes are generic. Check the pocket and cradle
-  dimensions against the parts you buy.
+- The SG90 model uses datasheet dimensions. Clones vary by a few tenths of a
+  millimetre, so test-fit a servo in the pocket before gluing.
+- The camera, FC, ESC and receiver sizes are generic. Check them against the
+  parts you buy.

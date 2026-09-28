@@ -5,24 +5,26 @@
  "length": 401,
  "naca": "4412",
  "incidence": 2.0,
- "auw": 175,
- "printed": 67,
- "loading": 47.3,
- "stall": 8.9,
- "cruise": 12.9,
+ "auw": 176,
+ "printed": 68,
+ "loading": 47.7,
+ "stall": 9.0,
+ "cruise": 13.0,
  "endurance": 13,
  "vh": 0.5,
+ "cruise_a": 1.7,
+ "full_a": 6.6,
  "vv": 0.045,
- "x_le": 89.7,
- "x_te": 175.7,
+ "x_le": 89.9,
+ "x_te": 175.9,
  "pod_len": 158.8,
- "x_stab": 342.3,
+ "x_stab": 342.5,
  "c_h": 38.7,
- "cg_x": 113.8,
+ "cg_x": 114.0,
  "cg_pct": 28,
  "np_pct": 43,
- "np_x": 126.9,
- "battery_x": 84.9,
+ "np_x": 127.1,
+ "battery_x": 85.1,
  "battery_len": 58.0,
  "batt_range": [
   78,
@@ -107,40 +109,51 @@
    "stall": 7.47
   }
  ],
+ "bed": [
+  180.0,
+  180.0,
+  180.0
+ ],
+ "centre_w": 80.0,
  "parts": [
   {
    "name": "wing_centre",
    "material": "LW-PLA",
-   "grams": 8.7,
-   "bed": "86 x 20 x 56",
+   "grams": 11.8,
+   "bed": "86 x 20 x 80",
+   "fits": true,
    "note": "On its side, spar holes vertical. 0.6 mm walls, 8 % infill."
   },
   {
    "name": "wing_R",
    "material": "LW-PLA",
-   "grams": 10.7,
-   "bed": "86 x 11 x 187",
+   "grams": 10.1,
+   "bed": "86 x 11 x 175",
+   "fits": true,
    "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
   },
   {
    "name": "wing_L",
    "material": "LW-PLA",
-   "grams": 10.7,
-   "bed": "86 x 11 x 187",
+   "grams": 10.1,
+   "bed": "86 x 11 x 175",
+   "fits": true,
    "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
   },
   {
    "name": "aileron_R",
    "material": "LW-PLA",
-   "grams": 2.8,
-   "bed": "21 x 170 x 6",
+   "grams": 2.6,
+   "bed": "21 x 158 x 6",
+   "fits": true,
    "note": "Flat on the lower surface. 1 wall, 0 % infill."
   },
   {
    "name": "aileron_L",
    "material": "LW-PLA",
-   "grams": 2.8,
-   "bed": "21 x 170 x 6",
+   "grams": 2.6,
+   "bed": "21 x 158 x 6",
+   "fits": true,
    "note": "Flat on the lower surface. 1 wall, 0 % infill."
   },
   {
@@ -148,6 +161,7 @@
    "material": "PLA/PETG",
    "grams": 3.5,
    "bed": "24 x 49 x 9",
+   "fits": true,
    "note": "Plate face down."
   },
   {
@@ -155,6 +169,7 @@
    "material": "LW-PLA",
    "grams": 3.2,
    "bed": "25 x 169 x 2",
+   "fits": true,
    "note": "Flat. 2 top / 2 bottom layers, 15 % infill."
   },
   {
@@ -162,6 +177,7 @@
    "material": "LW-PLA",
    "grams": 1.7,
    "bed": "13 x 169 x 8",
+   "fits": true,
    "note": "Top face down, horn up."
   },
   {
@@ -169,6 +185,7 @@
    "material": "LW-PLA",
    "grams": 1.3,
    "bed": "39 x 38 x 9",
+   "fits": true,
    "note": "Outer face down, jaws up."
   },
   {
@@ -176,6 +193,7 @@
    "material": "LW-PLA",
    "grams": 1.3,
    "bed": "39 x 38 x 9",
+   "fits": true,
    "note": "Outer face down, jaws up."
   },
   {
@@ -183,6 +201,7 @@
    "material": "PLA/PETG",
    "grams": 3.5,
    "bed": "75 x 43 x 3",
+   "fits": true,
    "note": "Flat, lips up."
   },
   {
@@ -190,33 +209,34 @@
    "material": "PLA/PETG",
    "grams": 16.3,
    "bed": "159 x 49 x 40",
+   "fits": true,
    "note": "Upright, open top up. 2 walls, 15 % infill."
   }
  ],
  "mass": [
   {
    "name": "wing_centre",
-   "g": 8.7,
-   "x": 130
+   "g": 11.8,
+   "x": 129
   },
   {
    "name": "wing_R",
-   "g": 10.7,
+   "g": 10.1,
    "x": 124
   },
   {
    "name": "wing_L",
-   "g": 10.7,
+   "g": 10.1,
    "x": 124
   },
   {
    "name": "aileron_R",
-   "g": 2.8,
+   "g": 2.6,
    "x": 163
   },
   {
    "name": "aileron_L",
-   "g": 2.8,
+   "g": 2.6,
    "x": 163
   },
   {
@@ -267,7 +287,7 @@
   {
    "name": "spar_main",
    "g": 4.6,
-   "x": 111
+   "x": 112
   },
   {
    "name": "spar_rear",

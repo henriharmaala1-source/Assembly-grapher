@@ -156,7 +156,7 @@ def make_lid(p: Params, L: Layout):
 
 
 def make_wing_centre(p: Params, L: Layout, sec: Section):
-    cw = p.center_width
+    cw = p.centre_w
     body = sec.centre_solid(-cw / 2, cw / 2, L.z_top)
     ty, rb = L.tube_y, L.r_boss
     # caps that sit over the pod's rear tube sleeves
@@ -184,7 +184,7 @@ def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
     """Right aileron SG90: lies on its side under the panel, tabs between the
     spars, shaft pointing at the tip, horn hanging below the wing."""
     sv = k.servo
-    y0 = p.center_width / 2
+    y0 = p.centre_w / 2
     xa = sec.camber_point(p.main_spar_pos)[0] + p.main_spar_d / 2 + 0.4
     xb = sec.camber_point(p.rear_spar_pos)[0] - p.rear_spar_d / 2 - 0.4
     if xb - xa < sv.tab_span:
@@ -211,7 +211,7 @@ def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
 
 def make_panel(p: Params, L: Layout, sec: Section):
     """Right wing panel (the left one is its mirror image)."""
-    y0, y1 = p.center_width / 2, p.span / 2
+    y0, y1 = p.centre_w / 2, p.span / 2
     panel = sec.solid(y0, y1)
     holes = []
     for pos, d in ((p.main_spar_pos, p.main_spar_d), (p.rear_spar_pos, p.rear_spar_d)):
@@ -226,7 +226,7 @@ def make_panel(p: Params, L: Layout, sec: Section):
 
 
 def make_aileron(p: Params, L: Layout, sec: Section):
-    y0, y1 = p.center_width / 2, p.span / 2
+    y0, y1 = p.centre_w / 2, p.span / 2
     xh = sec.x_at(p.hinge_pos) + 0.3
     ail = sec.solid(y0 + p.aileron_root_gap + 0.5, y1 - p.aileron_tip_gap - 0.5)
     ail = ail.intersect(box(xh, L.x_te + 5, -y1, y1, -20, 40))
@@ -545,6 +545,14 @@ def export_all(p, k, L, parts, refs, out: Path):
     scene.export(str(out / "viewer" / "airframe.glb"), include_normals=True)
 
 
+def fits_bed(p: Params, shape, name) -> bool:
+    """Does the print-oriented part fit the build volume (footprint may turn 90 deg)?"""
+    bb = to_bed(shape, name).BoundingBox()
+    bx, by, bz = p.bed
+    flat = (bb.xlen <= bx and bb.ylen <= by) or (bb.xlen <= by and bb.ylen <= bx)
+    return flat and bb.zlen <= bz
+
+
 def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
     auw = sum(i[1] for i in items)
     cg = sum(i[1] * i[2] for i in items) / auw
@@ -571,8 +579,11 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         f"| Fins | 2 x {L.c_h:.1f} x {L.fin_h:.0f} mm |",
         f"| All-up weight | **{auw:.0f} g** (printed parts {printed:.0f} g) |",
         f"| Wing loading | {perf['loading']:.1f} g/dm^2 |",
-        f"| Stall / cruise | {perf['stall']:.1f} / {perf['cruise']:.1f} m/s |",
+        f"| Stall / cruise | {perf['stall']:.2f} / {perf['cruise']:.1f} m/s |",
         f"| Endurance (rough) | ~{perf['endurance_min']:.0f} min on 2S 450 mAh |",
+        f"| Current (rough) | cruise ~{perf['cruise_a']:.1f} A ({perf['cruise_w']:.0f} W), "
+        f"full throttle at 1:1 thrust ~{perf['full_a']:.0f} A |",
+        f"| Thrust target | >= {auw:.0f} g static (1:1) |",
         f"| Tail volumes | Vh {L.vh_actual:.2f}, Vv {L.vv_actual:.3f} |",
         f"| CG target | {p.cg_target * 100:.0f} % chord = **{L.x_le + p.cg_target * L.chord:.1f} mm** "
         f"from the motor face ({p.cg_target * L.chord:.1f} mm behind the wing LE) |",
@@ -595,17 +606,22 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
     ]
     for name, g, x, _ in sorted(items, key=lambda i: i[2]):
         lines.append(f"| {name} | {g:.1f} | {x:.0f} |")
+    bed = " x ".join(f"{v:.0f}" for v in p.bed)
     lines += ["", "## Print list", "",
-              "| file | material | est. g | on the bed, mm | orientation |", "|---|---|---|---|---|"]
+              f"Build volume checked: {bed} mm (Bambu Lab A1 mini).", "",
+              "| file | material | est. g | on the bed, mm | fits | orientation |",
+              "|---|---|---|---|---|---|"]
     print_list = []
     for name, shape in parts.items():
         bb = to_bed(shape, name).BoundingBox()
         mat = "LW-PLA" if PRINT[name][0] == LW_PLA else "PLA/PETG"
-        bed = f"{bb.xlen:.0f} x {bb.ylen:.0f} x {bb.zlen:.0f}"
+        dims = f"{bb.xlen:.0f} x {bb.ylen:.0f} x {bb.zlen:.0f}"
         grams = print_mass(name, shape)
-        lines.append(f"| stl/{name}.stl | {mat} | {grams:.1f} | {bed} | {PRINT_NOTES[name]} |")
+        fits = fits_bed(p, shape, name)
+        lines.append(f"| stl/{name}.stl | {mat} | {grams:.1f} | {dims} | {'yes' if fits else '**no**'} | "
+                     f"{PRINT_NOTES[name]} |")
         print_list.append({"name": name, "material": mat, "grams": round(grams, 1),
-                           "bed": bed, "note": PRINT_NOTES[name]})
+                           "bed": dims, "fits": fits, "note": PRINT_NOTES[name]})
     lines += ["", report(p, k), ""]
     (out / "REPORT.md").write_text("\n".join(lines))
 
@@ -621,6 +637,7 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         "auw": round(auw), "printed": round(printed), "loading": round(perf["loading"], 1),
         "stall": round(perf["stall"], 1), "cruise": round(perf["cruise"], 1),
         "endurance": round(perf["endurance_min"]), "vh": round(L.vh_actual, 2),
+        "cruise_a": round(perf["cruise_a"], 1), "full_a": round(perf["full_a"], 1),
         "vv": round(L.vv_actual, 3), "x_le": L.x_le, "x_te": round(L.x_te, 1),
         "pod_len": round(L.pod_len, 1), "x_stab": round(L.x_stab, 1), "c_h": L.c_h,
         "cg_x": round(cg, 1), "cg_pct": round(p.cg_target * 100), "np_pct": round(np_ * 100),
@@ -630,6 +647,7 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         "tube": f"{p.tube_od:.0f}x{p.tube_id:.0f}", "tube_len": round(L.tube_len),
         "tube_spacing": p.tube_spacing, "b_h": L.b_h, "fin_h": L.fin_h,
         "stall_limit": p.stall_limit, "min_span": smallest_span(p, k), "sweep": sweep,
+        "bed": list(p.bed), "centre_w": p.centre_w,
         "parts": print_list,
         "mass": [{"name": n, "g": round(g, 1), "x": round(x)} for n, g, x, _ in items],
     }
@@ -672,6 +690,9 @@ def main():
     p, k, L, sec, parts, refs, items, batt_x = build()
     for name, s in parts.items():
         assert s.isValid(), f"{name} is not a valid solid"
+    for name, shape in parts.items():
+        if not fits_bed(p, shape, name):
+            print(f"WARNING: {name} does not fit the {p.bed} mm build volume")
     hits = interference(parts, refs)
     for a, b, v in hits:
         print(f"WARNING: {a} overlaps {b} by {v} mm^3")

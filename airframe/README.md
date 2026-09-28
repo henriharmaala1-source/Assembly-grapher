@@ -18,11 +18,12 @@ comes from a sweep, not a guess. See [Why 430 mm](#why-430-mm).
 | Length | 401 mm (prop to elevator trailing edge) |
 | Main struts | 2 × carbon tube 6×5 mm, 361 mm long, 40 mm apart |
 | Servos | 3 × SG90 |
-| All-up weight | ~175 g (printed parts ~67 g) |
-| Wing loading | 47 g/dm² |
-| Stall / cruise | ~8.9 / ~13 m/s |
+| All-up weight | ~176 g (printed parts ~68 g) |
+| Wing loading | 48 g/dm² |
+| Stall / cruise | ~9.0 / ~13 m/s |
 | Endurance | ~13 min on 2S 450 mAh (rough estimate) |
-| CG | 113.8 mm behind the motor face = 24.1 mm behind the wing LE (28 % chord) |
+| CG | 114.0 mm behind the motor face = 24.1 mm behind the wing LE (28 % chord) |
+| Printer | every part fits a Bambu Lab A1 mini (180 × 180 × 180 mm) |
 | Static margin | ~15 % (neutral point at ~43 % chord) |
 
 All numbers are first-order estimates from `design.py` and the CAD volumes.
@@ -65,38 +66,89 @@ in `design.py` and rerun to try other parts.
 
 ### Printed (`stl/`, already in print orientation)
 
-| file | material | orientation |
+| file | material | on the bed, mm | orientation |
+|---|---|---|---|
+| `pod.stl` | PLA/PETG | 159 × 49 × 40 | Upright, open top up. 2 walls, 15 % infill |
+| `lid.stl` | PLA/PETG | 75 × 43 × 3 | Flat, lips up |
+| `wing_centre.stl` | LW-PLA | 86 × 20 × 80 | On its side. 0.6 mm walls, 8 % infill |
+| `wing_R.stl`, `wing_L.stl` | LW-PLA | 86 × 11 × 175 | Standing on the root rib, brim. 1 wall, 0 % infill |
+| `aileron_R.stl`, `aileron_L.stl` | LW-PLA | 21 × 158 × 6 | Flat. 1 wall, 0 % infill |
+| `tail_mount.stl` | PLA/PETG | 24 × 49 × 9 | Plate face down |
+| `stab.stl` | LW-PLA | 25 × 169 × 2 | Flat. 2 top / 2 bottom layers, 15 % infill |
+| `elevator.stl` | LW-PLA | 13 × 169 × 8 | Top face down, horn up |
+| `fin_R.stl`, `fin_L.stl` | LW-PLA | 39 × 38 × 9 | Outer face down |
+
+The masses assume LW-PLA foamed to about 0.75 g/cm³. Plain PLA works, but it
+adds roughly 25 g to the wing and tail.
+
+### Printing on a Bambu Lab A1 mini
+
+Everything fits the A1 mini's 180 × 180 × 180 mm volume. The tallest parts are
+the wing panels at 175 mm. `Params.bed` holds the build volume: the centre
+section widens automatically so the panels fit under it, and every build checks
+each part against it (see the print list in REPORT.md). For a bigger printer,
+set `bed` to its volume and the centre section shrinks back to 56 mm.
+
+Five plates cover the whole airframe:
+
+| plate | parts | material |
 |---|---|---|
-| `pod.stl` | PLA/PETG | Upright, open top up. 2 walls, 15 % infill |
-| `lid.stl` | PLA/PETG | Flat, lips up |
-| `wing_centre.stl` | LW-PLA | On its side. 0.6 mm walls, 8 % infill |
-| `wing_R.stl`, `wing_L.stl` | LW-PLA | Standing on the root rib, brim. 1 wall, 0 % infill |
-| `aileron_R.stl`, `aileron_L.stl` | LW-PLA | Flat. 1 wall, 0 % infill |
-| `tail_mount.stl` | PLA/PETG | Plate face down |
-| `stab.stl` | LW-PLA | Flat. 2 top / 2 bottom layers, 15 % infill |
-| `elevator.stl` | LW-PLA | Top face down, horn up |
-| `fin_R.stl`, `fin_L.stl` | LW-PLA | Outer face down |
+| 1 | pod, lid, tail mount | PETG or PLA |
+| 2 | stabiliser, elevator, both ailerons | LW-PLA |
+| 3 | wing centre, both fins | LW-PLA |
+| 4 | right wing panel | LW-PLA |
+| 5 | left wing panel | LW-PLA |
 
-The tallest part is a wing panel at 187 mm, and nothing is longer than 170 mm,
-so everything fits a 200 × 200 × 200 mm bed. The masses assume LW-PLA foamed to
-about 0.75 g/cm³. Plain PLA works, but it adds roughly 25 g to the wing and tail.
+Plates 2 and 3 mix different wall and infill settings, so set them per object
+in Bambu Studio.
 
-### Bought
+- **Tall wing panels.** The A1 mini moves its bed front to back, which shakes
+  tall, thin parts. Turn each panel so its 86 mm chord runs front to back, add
+  an 8–10 mm brim, and print at reduced speed (Silent mode).
+- **LW-PLA** is not a Bambu filament, so make a custom filament profile. A
+  starting point: about 240 °C with the flow at 55–60 %, little or no
+  retraction. Print a test cube, weigh it and adjust the flow until the density
+  is near 0.75 g/cm³. The hotend reaches these temperatures without upgrades.
+- **Plain PLA** prints with the stock profile if you want to skip LW-PLA for a
+  first test airframe.
 
-Everything in this table is modelled in `cad/airframe.step`, under the
-`electronics` and `hardware` groups.
+### Electronics
 
-| item | example spec | g |
+Everything below is modelled in `cad/airframe.step` (the `electronics` and
+`hardware` groups) and in the CG calculation. The pod bays are sized for these
+dimensions, so check sizes before substituting parts.
+
+| part | spec | requirements | g |
+|---|---|---|---|
+| Servos | 3 × Tower Pro SG90: 4.8–6 V, ~1.8 kg·cm, 0.1 s/60° | 22.8 × 12.2 × 22.7 mm body, 32.3 mm across the tabs | 27 |
+| Motor | 1404 outrunner, 3000–3800 KV | Rated for 2S; ≥ 176 g static thrust on a 4" prop (1:1). 9×9, 12 or 16 mm mounting | 9 |
+| Prop | 4" two-blade, 2.4–2.5" pitch (Gemfan 4024 class) | Hub to match the motor shaft | 2 |
+| ESC | 12 A single, BLHeli_S or AM32, 2S | About 20 × 10 × 4 mm; full-throttle draw is about 7 A | 3.5 |
+| Flight controller | INAV-supported wing FC, 20×20 M2 mounting | Board ≤ 27 × 27 mm; ≥ 4 outputs (motor + 3 servos); analog OSD (AT7456E); 2S input; 5 V BEC ≥ 2 A for the servos (or add a separate UBEC); UART for the receiver | 6 |
+| Receiver | ExpressLRS 2.4 GHz nano | CRSF to an FC UART | 1.5 |
+| Camera | analog nano, 14 mm (Caddx Ant / RunCam Nano class) | 14 × 14 mm body, ≤ 12 mm deep | 3.3 |
+| VTX | 5.8 GHz analog, 25–200 mW | ≤ 20 × 20 mm, 2S or 5 V input; whip antenna through the lid | 4.2 |
+| Battery | 2S 450 mAh LiPo, ≥ 30C, XT30 | ≤ 58 × 31 × 13 mm | 27 |
+
+Some electrical numbers from the model (`design.py`), all first-order:
+
+- **Cruise:** about 1.7 A (13 W), which gives about 13 minutes on the 450 mAh
+  pack with 20 % held in reserve.
+- **Full throttle:** about 7 A at 1:1 thrust. That is about 16C from the pack
+  and just over half of the ESC's rating.
+- **Servo supply:** the three SG90s can together draw well over an amp when
+  they stall or buzz. Size the 5 V supply for at least 2 A.
+
+GPS is not included. An M10 module adds about 5 g, which raises the stall
+speed by about 0.1 m/s to 9.1 m/s, just past the sizing limit. That is fine
+once you know the plane; otherwise build the wing at 440 mm.
+
+### Also needed
+
+| item | spec | g |
 |---|---|---|
-| Servos | 3 × Tower Pro SG90 with single-arm horns | 27 |
 | Main struts | 2 × carbon tube 6×5 mm, cut to 361 mm (6×0.5 aluminium also fits, +6 g) | 9.6 |
 | Wing spars | carbon rod 3 mm and 2 mm, 420 mm each | 6.6 |
-| Motor + prop | 1404 3800 KV, 4×2.5 two-blade | 11 |
-| ESC | 12 A single, BLHeli_S, about 20 × 10 × 4 mm | 3.5 |
-| Flight controller | 20×20 wing FC with servo outputs (INAV) | 6 |
-| Receiver | ELRS nano | 1.5 |
-| FPV | nano camera (14 mm) + 25–200 mW VTX + whip antenna | 7.5 |
-| Battery | 2S 450 mAh LiPo (58 × 31 × 13 mm), XT30 | 27 |
 | Linkages | 1 mm carbon rod (~225 mm) with wire Z-bend ends for the elevator, 2 × 0.8 mm Z-bend wire for the ailerons, 2 micro control horns | ~1 |
 | Small parts | M2 screws, hinge tape, 10 mm velcro strap | ~2 |
 
@@ -142,7 +194,7 @@ Everything in this table is modelled in `cad/airframe.step`, under the
    the servo horn, over the pod's rear wall and through the tail mount guide,
    to the printed elevator horn.
 9. **Balance.** Strap the battery through the floor slots and slide it until the
-   plane balances 24 mm behind the wing LE (113.8 mm from the motor face).
+   plane balances 24 mm behind the wing LE (114.0 mm from the motor face).
    The nominal battery centre is 85 mm from the motor face, and the travel is
    78–92 mm. The XT30 folds back over the top of the pack.
 

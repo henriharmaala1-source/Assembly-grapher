@@ -34,7 +34,7 @@ class Params:
     naca: str = "4412"             # Clark-Y-like, forgiving at Re 50-80k
     incidence: float = 2.0         # deg, wing chord vs tube line
     te_min: float = 0.8            # printable trailing-edge thickness
-    center_width: float = 56.0     # printed centre section across the pod
+    center_width: float = 56.0     # minimum printed centre section across the pod
     wing_gap: float = 0.6          # wing lower surface above the pod top
     main_spar_d: float = 3.0       # carbon rod
     main_spar_pos: float = 0.25    # fraction of chord
@@ -75,6 +75,14 @@ class Params:
     motor_z: float = 9.0           # thrust line above the tube centre-line
 
     cg_target: float = 0.28        # fraction of chord, first flights
+    bed: tuple = (180.0, 180.0, 180.0)   # printer build volume: Bambu Lab A1 mini
+    bed_margin: float = 5.0
+
+    @property
+    def centre_w(self) -> float:
+        """Centre section width: wide enough that a wing panel standing on its
+        root rib fits the printer's build height."""
+        return max(self.center_width, self.span - 2 * (self.bed[2] - self.bed_margin))
     stall_limit: float = 9.0       # m/s, "as small as possible" criterion
 
 
@@ -341,7 +349,14 @@ def performance(p: Params, auw_g: float, L: Layout, k: Kit):
     v_c = 1.45 * v_s
     # Rough endurance: L/D 5, 40 % prop-motor-ESC efficiency, 1.5 W avionics, 80 % usable
     p_elec = w * v_c / 5 / 0.40 + 1.5
+    # Static thrust for a 1:1 thrust-to-weight: ideal induced power of the 4" disc,
+    # figure of merit 0.5, motor + ESC 70 %, 7.0 V under load
+    disc = math.pi * 0.0508 ** 2
+    p_static = (w ** 1.5 / math.sqrt(2 * RHO_AIR * disc)) / 0.5 / 0.70
     return {
+        "cruise_w": p_elec,
+        "cruise_a": p_elec / 7.4,
+        "full_a": p_static / 7.0,
         "stall": v_s,
         "cruise": v_c,
         "re_stall": v_s * L.chord / 1000 / NU_AIR,

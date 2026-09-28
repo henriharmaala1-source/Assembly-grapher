@@ -29,7 +29,7 @@ CARBON = 1.55
 @dataclass(frozen=True)
 class Params:
     # Wing: straight, rectangular, like the Molniya's
-    span: float = 430.0
+    span: float = 450.0
     aspect_ratio: float = 5.0
     naca: str = "4412"             # Clark-Y-like, forgiving at Re 50-80k
     incidence: float = 2.0         # deg, wing chord vs tube line
@@ -54,6 +54,9 @@ class Params:
     elevator_frac: float = 0.36
     plate: float = 2.0             # tail plate thickness
     fin_below: float = 6.0         # fin depth below the stabiliser
+    rudders: bool = True           # rudder on each fin, hinged on the elevator hinge line
+    rudder_horn: float = 8.0       # rudder horn hole behind the hinge (below the rudder)
+    rudder_servo_hole: float = 9.0 # inner hole on the rudder servo's trimmed horn
 
     # The two main struts: plain round tubes
     tube_od: float = 6.0
@@ -193,7 +196,10 @@ class Layout:
         self.x_qc = x_le + 0.25 * c
         self.l_h = p.tail_arm * c
         self.c_h = p.stab_chord_ratio * c
-        self.b_h = round_to(p.vh * self.area * c / (self.l_h * self.c_h), 2)
+        s_h = p.vh * self.area * c / self.l_h
+        # keep the stabiliser short enough to print flat; widen its chord instead
+        self.b_h = min(round_to(s_h / self.c_h, 2), p.bed[0] - p.bed_margin)
+        self.c_h = s_h / self.b_h
         self.c_e = p.elevator_frac * self.c_h
         self.c_fix = self.c_h - self.c_e
         self.x_stab = self.x_qc + self.l_h - 0.25 * self.c_h
@@ -221,6 +227,13 @@ class Layout:
         self.elev_servo_base_y = -(self.half_w - p.wall) + 3.9   # clear of the belly chamfer
         self.pushrod_y = self.elev_servo_base_y + sv.horn_z
         self.pushrod_z = self.z_floor + sv.width / 2 + sv.horn_hole
+        # yaw: rudder servo under the wing centre, bellcrank under the tail mount,
+        # joiner wires to both rudders below the fins
+        self.x_hinge = self.x_stab + self.c_fix
+        self.joiner_z = -(self.r_hole + 1.2) - 1.2           # below the tail mount sleeves
+        self.bellcrank_x = self.x_hinge - 2.0
+        self.rudder_pushrod_y = -13.0
+        self.elevator_inset = 6.0 if p.rudders else 0.6      # room for the rudders to swing
         self.batt_min = p.front_bay + 0.5            # battery front limit
         self.batt_max = self.pod_len - p.wall - p.servo_bay - 0.5
         self.length = self.x_stab + self.c_h + 20.0  # prop to elevator TE
@@ -256,7 +269,8 @@ def rod_mass(d: float, length: float, di: float = 0.0, rho: float = CARBON):
 def structure_estimate(p: Params, L: Layout):
     """(name, grams, x) for the printed parts, tubes and rods."""
     c, b = L.chord, p.span
-    wing_area = (2.06 * c + math.pi * (p.main_spar_d + p.rear_spar_d + 4)) * b
+    panels = b - p.centre_w                              # the centre section is counted separately
+    wing_area = (2.06 * c + math.pi * (p.main_spar_d + p.rear_spar_d + 4)) * panels
     tail_plan = L.b_h * L.c_h + 2 * L.fin_h * L.c_h
     plate_equiv = 2 * 0.4 + 0.15 * (p.plate - 0.8)     # 2+2 solid layers, 15 % infill
     pod_vol = (L.pod_len * (2 * p.wall * (p.pod_depth - L.r_hole) + p.wall * 2 * L.half_w)
@@ -265,8 +279,10 @@ def structure_estimate(p: Params, L: Layout):
     lid_len = L.x_le - p.sleeve_len
     lid_vol = lid_len * (2 * L.tube_y * 0.8 + 2 * 0.8 * 3.0)
     return [
-        ("wing shell", LW_PLA * p.skin * wing_area / 1000, L.x_le + 0.42 * c),
-        ("wing centre + saddle", 4.0 * c / 80, L.x_le + 0.6 * c),
+        ("wing panels", LW_PLA * p.skin * wing_area / 1000, L.x_le + 0.42 * c),
+        # calibrated on the CAD: 0.5 mm walls, 5 % infill, saddle, caps, servo fairing
+        ("wing centre + saddle", 0.128 * p.centre_w * c / 90 - (0 if p.rudders else 1.0),
+         L.x_le + 0.6 * c),
         ("spar rods", rod_mass(p.main_spar_d, b - 10) + rod_mass(p.rear_spar_d, b - 10),
          L.x_le + 0.43 * c),
         ("tail plates", LW_PLA * plate_equiv * tail_plan / 1000, L.x_stab + 0.45 * L.c_h),
@@ -291,6 +307,8 @@ def components(p: Params, k: Kit, L: Layout):
         ("ESC", k.esc, 32.0, -11.0),
         ("elevator servo", k.servo.mass, L.elev_servo_x, L.z_floor + 6.0),
         ("aileron servos", 2 * k.servo.mass, servo_x, 4.0),
+        *([("rudder servo", k.servo.mass, servo_x, 8.0),
+           ("rudder linkage", 2.0, L.x_stab + L.c_fix, -4.0)] if p.rudders else []),
         ("wiring", k.wiring, 0.5 * L.pod_len, -8.0),
         ("hardware (fwd)", k.hardware / 2, L.x_le, 0.0),
         ("hardware (tail)", k.hardware / 2, L.x_stab + L.c_h / 2, 0.0),

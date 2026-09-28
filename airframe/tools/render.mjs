@@ -54,6 +54,7 @@ const shots = [
   ["cutaway", "view=side&cut=1", 1600, 700],
   ["pod", "view=pod&cut=1", 1400, 900],
   ["servo", "view=servo", 1200, 800],
+  ["tail", "view=tail", 1400, 900],
 ];
 for (const [name, q, w, h] of shots) {
   const p = await page(w, h);

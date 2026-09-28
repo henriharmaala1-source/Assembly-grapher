@@ -128,6 +128,9 @@ def make_pod(p: Params, L: Layout, batt_x: float):
     holes += [cyl_z(0.85, zf, zf + 4, FC_X + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
     holes.append(box(Lp - 3, Lp + 1, L.pushrod_y - 2, L.pushrod_y + 2,
                      L.pushrod_z - 2.5, 1))                    # pushrod over the rear wall
+    if p.rudders:
+        holes.append(box(Lp - 3, Lp + 1, L.rudder_pushrod_y - 2, L.rudder_pushrod_y + 2,
+                         -4.5, 1))                             # rudder pushrod
     holes.append(cyl_x(3.2, -1, 4, 0, p.motor_z))           # motor shaft / circlip
     for a in (45, 135, 225, 315):                           # 9x9, 12 mm and 16 mm patterns
         r = (5.9 + 8.6) / 2
@@ -177,14 +180,27 @@ def make_wing_centre(p: Params, L: Layout, sec: Section):
     xw, zw = sec.camber_point(0.45)                          # servo leads into the pod
     holes.append(cyl_y(2.0, -cw, cw, xw, zw))
     holes.append(cyl_z(3.0, L.z_top - 1, zw, xw, 0))
+    if p.rudders:
+        rs = rudder_servo(p, L, sec, Kit())
+        sv = Kit().servo
+        ya = -L.rudder_pushrod_y - sv.horn_z                 # as in rudder_servo, then mirrored
+        y0f, y1f = -(ya + sv.height + sv.boss_h + sv.spline_h + 3.5), -(ya - 2.5)
+        hump = (cq.Workplane().box(sv.tab_span + 8, y1f - y0f, rs["top"] + 1.6 - L.z_top,
+                                   centered=(True, False, False))
+                .translate((rs["xm"], y0f, L.z_top)).edges(">Z").fillet(2.0)).val()
+        body = fuse(body, hump)
+        holes += [h.mirror("XZ") for h in rs["pocket"]]
+        holes.append(box(x0 - 0.2, x1 + 1, L.rudder_pushrod_y - 1.3, L.rudder_pushrod_y + 1.3,
+                         -2, 3.8))                           # rudder pushrod through the saddle
     return cut(body, *holes)
 
 
-def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
-    """Right aileron SG90: lies on its side under the panel, tabs between the
-    spars, shaft pointing at the tip, horn hanging below the wing."""
+def side_servo(p: Params, sec: Section, k: Kit, ya: float, horn_deg: float = 90.0,
+               horn_len: float = None, hole: float = None, z_base: float = None):
+    """SG90 lying on its side in a wing pocket: tabs between the spars, shaft
+    pointing +y from its base at y = ya, horn hanging below the wing."""
     sv = k.servo
-    y0 = p.centre_w / 2
+    hole = hole or sv.horn_hole
     xa = sec.camber_point(p.main_spar_pos)[0] + p.main_spar_d / 2 + 0.4
     xb = sec.camber_point(p.rear_spar_pos)[0] - p.rear_spar_d / 2 - 0.4
     if xb - xa < sv.tab_span:
@@ -194,9 +210,10 @@ def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
     xs = xm + sv.shaft_x                                     # output shaft
     span = np.linspace(xm - sv.tab_span / 2, xm + sv.tab_span / 2, 16)
     zt = min(sec.upper_z(x) for x in span) - 1.2            # top of the servo
+    if z_base is not None:                                   # raised into a fairing
+        zt = z_base + sv.width
     zc = zt - sv.width / 2                                   # shaft axis height
-    zl = min(sec.lower_z(x) for x in span) - 3
-    ya = y0 + 3.0                                            # servo base
+    zl = min(min(sec.lower_z(x) for x in span), zt - sv.width) - 3
     top = ya + sv.height
     pocket = [
         box(xm - sv.length / 2 - 0.2, xm + sv.length / 2 + 0.2, ya - 0.2, top + 0.2, zl, zt),
@@ -205,8 +222,23 @@ def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
         box(xm - 5.5, xs + 7.5, top, top + sv.boss_h + sv.spline_h + 1.2, zl, zt),
         box(xm - sv.length / 2 - 6, xm - sv.length / 2, ya + 2.0, ya + 6.0, zl, zt),   # lead
     ]
-    return {"pocket": pocket, "origin": (xm, ya, zc), "horn_deg": 90.0,
-            "link": (xs, ya + sv.horn_z, zc - sv.horn_hole)}
+    return {"pocket": pocket, "origin": (xm, ya, zc), "horn_deg": horn_deg, "horn_len": horn_len,
+            "link": (xs, ya + sv.horn_z, zc - hole), "top": zt, "xm": xm}
+
+
+def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
+    """Right aileron SG90 under the panel, shaft pointing at the tip."""
+    return side_servo(p, sec, k, p.centre_w / 2 + 3.0)
+
+
+def rudder_servo(p: Params, L: Layout, sec: Section, k: Kit):
+    """Rudder SG90 in the wing centre, between the tubes. Built with the shaft
+    pointing +y and mirrored, so it ends up pointing left with its horn at
+    y = L.rudder_pushrod_y. It sits high, in a fairing on top of the centre
+    section, so its horn clears the elevator servo and pushrod in the pod."""
+    ya = -L.rudder_pushrod_y - k.servo.horn_z               # base, before mirroring
+    return side_servo(p, sec, k, ya, 90.0, RUDDER_HORN_LEN, p.rudder_servo_hole,
+                      z_base=L.z_top + 1.8)
 
 
 def make_panel(p: Params, L: Layout, sec: Section):
@@ -246,7 +278,21 @@ def make_tail_mount(p: Params, L: Layout):
                     L.pushrod_z - 2.5, L.tail_z - 1.2))
     holes = [cyl_x(L.r_hole, x0 - 1, L.tube_x1 + 0.2, s * L.tube_y, 0) for s in (-1, 1)]
     holes.append(cyl_x(0.8, x0, x0 + 12, L.pushrod_y, L.pushrod_z))   # 1 mm pushrod guide
+    if p.rudders:                                            # bellcrank pivot, M2 from below
+        body = fuse(body, cyl_z(2.8, L.joiner_z + 1.0, L.tail_z - 1.3, L.bellcrank_x, 0))
+        holes.append(cyl_z(0.8, L.joiner_z, L.joiner_z + 7, L.bellcrank_x, 0))
     return cut(body, *holes)
+
+
+def make_bellcrank(p: Params, L: Layout):
+    """90 degree bellcrank under the tail mount: the rudder pushrod pulls the
+    left arm, the forward arm drives the joiner wires to both rudders."""
+    bx, z0, z1 = L.bellcrank_x, L.joiner_z - 0.8, L.joiner_z + 0.8
+    iy, ox = L.rudder_pushrod_y, L.x_hinge + p.rudder_horn
+    body = fuse(cyl_z(3.4, z0, z1, bx, 0), cyl_z(2.4, z0, z1, bx, iy), cyl_z(2.4, z0, z1, ox, 0),
+                box(bx - 2.2, bx + 2.2, iy, 0, z0, z1), box(bx, ox, -2.2, 2.2, z0, z1))
+    return cut(body, cyl_z(1.1, z0 - 1, z1 + 1, bx, 0),
+               cyl_z(0.55, z0 - 1, z1 + 1, bx, iy), cyl_z(0.55, z0 - 1, z1 + 1, ox, 0))
 
 
 def make_stab(p: Params, L: Layout):
@@ -257,7 +303,7 @@ def make_stab(p: Params, L: Layout):
 
 def make_elevator(p: Params, L: Layout):
     x0, x1 = L.x_stab + L.c_fix + 0.6, L.x_stab + L.c_h
-    y = L.b_h / 2 - 0.6
+    y = L.b_h / 2 - L.elevator_inset
     z0, z1 = L.tail_z, L.tail_z + p.plate
     el = box(x0, x1, -y, y, z0, z1)
     hy = L.pushrod_y
@@ -283,7 +329,28 @@ def make_fin(p: Params, L: Layout):
                              (L.tail_z + p.plate + g, L.tail_z + p.plate + g + 1.2))]
     x_te = L.x_stab + L.c_h
     te = prism_z([(x_te - 7, y0 - 0.1), (x_te + 0.1, y0 - 0.1), (x_te + 0.1, y0 + 1.3)], z0 - 1, z1 + 1)
+    if p.rudders:                                            # rudder takes everything aft of the hinge
+        return cut(fuse(fin, *jaws), box(L.x_hinge - 0.3, x_te + 1, y0 - 1, y0 + p.plate + 1, z0 - 1, z1 + 1))
     return cut(fuse(fin, *jaws), te)
+
+
+def make_rudder(p: Params, L: Layout):
+    """Right rudder: the fin aft of the hinge line, with a horn tab below it for the
+    joiner wire. Tape hinge on the outboard face."""
+    y0, t = L.b_h / 2, p.plate
+    z0, z1 = L.tail_z - p.fin_below, L.tail_z + p.plate + L.fin_above
+    xh, x_te, zj = L.x_hinge, L.x_stab + L.c_h, L.joiner_z
+    xr = xh + 0.3
+    xo = xh + p.rudder_horn                                  # joiner hole
+    rudder = fuse(
+        box(xr, x_te, y0, y0 + t, z0, z1),
+        prism_y([(xr, z0 + 0.5), (xo + 5, z0 + 0.5), (xo + 2.5, zj - 1.6), (xr, zj - 1.6)],
+                y0, y0 + t),
+        box(xo - 2.5, xo + 2.5, y0 - 4.0, y0 + 0.1, zj - 1.6, zj + 1.6))   # flange for the wire
+    cuts = [prism_z([(xr - 0.1, y0 - 0.1), (xr + 2.0, y0 - 0.1), (xr - 0.1, y0 + t - 0.6)], z0 - 1, z1 + 1),
+            prism_z([(x_te - 7, y0 - 0.1), (x_te + 0.1, y0 - 0.1), (x_te + 0.1, y0 + 1.3)], z0 - 1, z1 + 1),
+            cyl_z(0.55, zj - 3, zj + 3, xo, y0 - 2.0)]
+    return cut(rudder, *cuts)
 
 
 # --------------------------------------------------------------------------
@@ -291,6 +358,7 @@ def make_fin(p: Params, L: Layout):
 
 FC_X = 33.0                     # flight controller centre
 ELEV_HORN_LEN = 13.5            # elevator servo horn trimmed to clear the wing centre
+RUDDER_HORN_LEN = 11.0          # rudder servo horn trimmed to clear the elevator servo
 BLACK, WHITE = (0.08, 0.08, 0.09), (0.93, 0.93, 0.92)
 
 
@@ -359,6 +427,22 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
     out.append(Ref("pushrod_elev", rod(0.5, el_link, (x_eh - 1.5, L.pushrod_y, L.pushrod_z)), BLACK,
                    rod_mass(1.0, x_eh - el_link[0]), "hardware"))
 
+    if p.rudders:
+        rs = rudder_servo(p, L, sec, k)
+        servo = parts_lib.sg90(sv, rs["horn_deg"], horn_len=rs["horn_len"])
+        add("servo_rud", {n: shaft_along_y(s, rs["origin"]).mirror("XZ") for n, s in servo.items()},
+            {"": (0.16, 0.38, 0.85), "horn": WHITE}, sv.mass, "electronics")
+        lx, ly, lz = rs["link"]
+        start = (lx, -ly, lz)
+        crank_in = (L.bellcrank_x, L.rudder_pushrod_y, L.joiner_z)
+        out.append(Ref("pushrod_rud", rod(0.5, start, crank_in), BLACK,
+                       rod_mass(1.0, crank_in[0] - start[0]), "hardware"))
+        crank_out = (L.x_hinge + p.rudder_horn, 0, L.joiner_z)
+        for side, sgn in (("R", 1), ("L", -1)):
+            horn = (L.x_hinge + p.rudder_horn, sgn * (L.b_h / 2 - 2.0), L.joiner_z)
+            out.append(Ref(f"joiner_{side}", rod(0.4, crank_out, horn), BLACK,
+                           rod_mass(0.8, L.b_h / 2, rho=7.8), "hardware"))
+
     ail = aileron_servo(p, L, sec, k)
     servo = {n: shaft_along_y(s, ail["origin"]) for n, s in parts_lib.sg90(sv, ail["horn_deg"]).items()}
     xh = sec.x_at(p.hinge_pos) + 0.3
@@ -382,7 +466,7 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
 PRINT = {
     "pod":         (PLA, 0.8, 0.15, (0.20, 0.22, 0.25)),
     "lid":         (PLA, 0.8, 0.15, (0.28, 0.30, 0.34)),
-    "wing_centre": (LW_PLA, 0.6, 0.08, (0.86, 0.87, 0.84)),
+    "wing_centre": (LW_PLA, 0.5, 0.05, (0.86, 0.87, 0.84)),
     "wing_R":      (LW_PLA, 0.45, 0.0, (0.93, 0.93, 0.90)),
     "wing_L":      (LW_PLA, 0.45, 0.0, (0.93, 0.93, 0.90)),
     "aileron_R":   (LW_PLA, 0.45, 0.0, (0.96, 0.45, 0.10)),
@@ -392,11 +476,14 @@ PRINT = {
     "elevator":    (LW_PLA, 0.4, 0.15, (0.96, 0.45, 0.10)),
     "fin_R":       (LW_PLA, 0.4, 0.15, (0.93, 0.93, 0.90)),
     "fin_L":       (LW_PLA, 0.4, 0.15, (0.93, 0.93, 0.90)),
+    "rudder_R":    (PLA, 0.4, 0.15, (0.96, 0.45, 0.10)),
+    "rudder_L":    (PLA, 0.4, 0.15, (0.96, 0.45, 0.10)),
+    "bellcrank":   (PLA, 0.8, 0.5, (0.20, 0.22, 0.25)),
 }
 PRINT_NOTES = {
     "pod": "Upright, open top up. 2 walls, 15 % infill.",
     "lid": "Flat, lips up.",
-    "wing_centre": "On its side, spar holes vertical. 0.6 mm walls, 8 % infill.",
+    "wing_centre": "On its side, spar holes vertical. 0.5 mm walls, 5 % infill.",
     "wing_R": "Standing on the root rib, brim. 1 wall, 0 % infill.",
     "wing_L": "Standing on the root rib, brim. 1 wall, 0 % infill.",
     "aileron_R": "Flat on the lower surface. 1 wall, 0 % infill.",
@@ -406,6 +493,9 @@ PRINT_NOTES = {
     "elevator": "Top face down, horn up.",
     "fin_R": "Outer face down, jaws up.",
     "fin_L": "Outer face down, jaws up.",
+    "rudder_R": "Outer face down, wire flange up. 2 top / 2 bottom layers, 15 % infill.",
+    "rudder_L": "Outer face down, wire flange up. 2 top / 2 bottom layers, 15 % infill.",
+    "bellcrank": "Flat. Solid.",
 }
 def print_mass(name, shape):
     rho, shell, infill, _ = PRINT[name]
@@ -422,9 +512,9 @@ def to_bed(shape, name):
     s = shape
     if name == "lid" or name == "tail_mount" or name == "elevator":
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), 180)
-    elif name in ("wing_centre", "wing_R", "fin_L"):
+    elif name in ("wing_centre", "wing_R", "fin_L", "rudder_L"):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), 90)
-    elif name in ("wing_L", "fin_R"):
+    elif name in ("wing_L", "fin_R", "rudder_R"):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), -90)
     elif name.startswith("aileron"):
         s = s.rotate(V(0, 0, 0), V(0, 1, 0), -Params().incidence)
@@ -472,6 +562,10 @@ def build_at(p: Params, k: Kit, x_le: float):
     parts["elevator"] = make_elevator(p, L)
     parts["fin_R"] = make_fin(p, L)
     parts["fin_L"] = parts["fin_R"].mirror("XZ")
+    if p.rudders:
+        parts["rudder_R"] = make_rudder(p, L)
+        parts["rudder_L"] = parts["rudder_R"].mirror("XZ")
+        parts["bellcrank"] = make_bellcrank(p, L)
     parts["lid"] = make_lid(p, L)
 
     # CG with CAD masses: solve the battery station, then build the pod around it
@@ -592,6 +686,9 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         f"| Battery centre | **{batt_x:.0f} mm** from the motor face "
         f"(travel {L.batt_min + k.batt_len / 2:.0f}-{L.batt_max - k.batt_len / 2:.0f} mm) |",
         "",
+        f"Sizing check with CAD weights: stall {perf['stall']:.2f} m/s against the "
+        f"{p.stall_limit} m/s limit: **{'passes' if perf['stall'] <= p.stall_limit else 'FAILS'}**.",
+        "",
         "Interference check (bought parts against everything, pushrod-in-horn links "
         "excluded): " + ("**" + "; ".join(f"{a} / {b} {v} mm^3" for a, b, v in hits) + "**"
                          if hits else "no overlaps."),
@@ -661,7 +758,18 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
 LINKS = {frozenset(pair) for pair in (
     ("pushrod_elev", "elevator"), ("pushrod_elev", "servo_elev_horn"),
     ("pushrod_ail_R", "servo_ail_R_horn"), ("pushrod_ail_R", "horn_ail_R"),
-    ("pushrod_ail_L", "servo_ail_L_horn"), ("pushrod_ail_L", "horn_ail_L"))}
+    ("pushrod_ail_L", "servo_ail_L_horn"), ("pushrod_ail_L", "horn_ail_L"),
+    ("pushrod_rud", "servo_rud_horn"), ("pushrod_rud", "bellcrank"),
+    ("joiner_R", "bellcrank"), ("joiner_L", "bellcrank"),
+    ("joiner_R", "rudder_R"), ("joiner_L", "rudder_L"), ("joiner_R", "joiner_L"))}
+
+
+def component(name):
+    """servo_ail_R_horn -> servo_ail_R: sub-bodies of one bought part."""
+    for suffix in ("_horn", "_shaft", "_lens", "_chips", "_leads"):
+        if name.endswith(suffix) and not name.startswith("horn_"):
+            return name[: -len(suffix)]
+    return name
 
 
 def interference(parts, refs, tol=0.05):
@@ -673,7 +781,7 @@ def interference(parts, refs, tol=0.05):
         for b, sb in bodies[i + 1:]:
             if a in parts and b in parts:
                 continue                                   # printed parts are glued, not checked
-            if a.split("_")[0] == b.split("_")[0] or frozenset((a, b)) in LINKS:
+            if component(a) == component(b) or frozenset((a, b)) in LINKS:
                 continue
             ba, bb = boxes[a], boxes[b]
             if (ba.xmax < bb.xmin or bb.xmax < ba.xmin or ba.ymax < bb.ymin or bb.ymax < ba.ymin

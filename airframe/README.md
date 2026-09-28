@@ -70,7 +70,7 @@ regenerated on every build.
 | Design efficiency | 4% (19% counting handling and insertion only) |
 | With the redesign suggestions | 45 parts, 23 min, 6% |
 | Printability | no part needs support; the only wide overhang is a 16 mm bridge over the rudder servo pocket |
-| Cost | about 147 EUR, of which 2.99 EUR is filament |
+| Cost | about 147 EUR per airframe; the whole printed airframe is only 72 g of filament (about 3 EUR), but a first build also buys an LW-PLA and a PETG spool (about 65 EUR), so about 210 EUR up front |
 
 Most of the assembly time goes into joints (solder, epoxy, CA, tape), not into
 handling parts. The suggestions that save the most are:
@@ -148,6 +148,12 @@ the outboard face.
 | `fin_R.stl`, `fin_L.stl` | LW-PLA | 26 × 39 × 9 | Outer face down |
 | `rudder_R.stl`, `rudder_L.stl` | PLA/PETG | 15 × 44 × 6 | Outer face down, wire flange up |
 | `bellcrank.stl` | PLA/PETG | 16 × 19 × 2 | Flat, solid |
+
+Every wing piece is a printed NACA 4412 section: a closed one-wall LW-PLA shell
+with the spar holes, servo pocket and hinge gap built in. The wing centre and both
+panels plus the ailerons come to 36 g of filament.
+
+![Wing sections cut from the STLs](preview/wing_sections.png)
 
 The masses assume LW-PLA foamed to about 0.75 g/cm³. Plain PLA works, but it
 adds roughly 25 g to the wing and tail. The rudders and bellcrank are plain

@@ -461,7 +461,8 @@ function drawProcess() {
     ["Assembly time", fmtMin(S.t_ma), `${fmtMin(S.t_handle_insert)} handling and insertion`],
     ["Design efficiency", `${Math.round(S.e_ma * 100)} %`, `${Math.round(S.e_hi * 100)} % counting handling and insertion only`],
     ["With the suggestions", `${Math.round(S.e_after * 100)} %`, `${S.n_after} parts, ${fmtMin(S.t_after)} to assemble`],
-    ["Cost", `≈ ${Math.round(S.bought_cost + S.print_cost)} EUR`, `${S.print_cost.toFixed(2)} EUR of it is filament`],
+    ["Cost per airframe", `≈ ${Math.round(S.bought_cost + S.print_cost)} EUR`,
+     `filament used ${Math.round(S.filament_g)} g ≈ ${Math.round(S.print_cost)} EUR; first build ≈ ${S.first_build_cost} EUR with spools`],
   ]);
   const share = Math.round(S.t_handle_insert / S.t_ma * 100);
   $("dfma-note").textContent = `Handling and inserting parts is ${share} % of the assembly time; gluing, soldering, taping and bending take the rest. The suggestions that pay most remove joints (solder, glue, tape) rather than just parts.`;

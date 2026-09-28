@@ -133,7 +133,18 @@ Total: 7 h 22 min of printing, 72 g of filament, about 2.99 EUR of material (PET
 | carbon rod 3 / 2 mm | 2 | 2.00 | 4.00 |
 | pushrod rod, wire, horns | 1 | 3.00 | 3.00 |
 | screws, tape, velcro, glue | 1 | 4.00 | 4.00 |
-| printed parts (filament) | 1 | 2.99 | 2.99 |
-| **total** | | | **147** |
+| printed parts: filament actually used (72 g: 44 g LW-PLA, 28 g PETG) | 1 | 2.99 | 2.99 |
+| **per airframe** | | | **147** |
 
-Prices are rough street prices for comparison only; the flight controller is most of it.
+The whole printed airframe, wing included, is only 72 g of filament: the wing sections are thin one-wall LW-PLA shells (36 g for the centre, both panels and both ailerons). So the filament per airframe is a few euros, but a first build still has to buy the spools:
+
+| first build | EUR |
+|---|---|
+| bought parts | 144 |
+| LW-PLA spool, 750 g | 45 |
+| PETG spool, 1 kg | 20 |
+| **first build outlay** | **209** |
+
+Budget some LW-PLA for calibration: test cubes to set the flow, and possibly a failed 1.5-hour wing panel. Later airframes from the same spools cost the bought parts plus a few euros of filament.
+
+Prices are rough street prices for comparison only; the flight controller is the biggest item.

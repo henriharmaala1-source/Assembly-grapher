@@ -16,6 +16,12 @@
   "filament_g": 71.8,
   "print_cost": 2.99,
   "bought_cost": 144,
+  "grams_by_material": {
+   "PLA/PETG": 27.9,
+   "LW-PLA": 43.9
+  },
+  "spool_cost": 65,
+  "first_build_cost": 209,
   "slicer": "PrusaSlicer 2.7, A1-mini-like profile (tools/a1mini.ini)"
  },
  "critical": [

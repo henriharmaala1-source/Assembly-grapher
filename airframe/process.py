@@ -86,6 +86,8 @@ EPOXY_CURE = 15 * 60          # 5-minute epoxy to handling strength
 BRIDGE_MAX = 30.0             # mm a flat ceiling can bridge without support
 FILAMENT_CHANGE = 300         # swap spools between materials
 EUR_PER_KG = {"PLA/PETG": 20.0, "LW-PLA": 55.0}   # rough street prices
+# A first build buys whole spools and loses some LW-PLA to calibration and failed prints
+SPOOLS = [("LW-PLA spool, 750 g", "LW-PLA", 45.0), ("PETG spool, 1 kg", "PLA/PETG", 20.0)]
 
 # Rough street prices for the bought parts, EUR, for relative comparison only
 BOUGHT = [
@@ -588,6 +590,8 @@ def main():
     lead = max(ready.values())
     filament = sum((r["grams"] or 0) for r in dfm_list)
     print_cost = sum(r["cost"] for r in dfm_list)
+    grams_by = {m: round(sum(r["grams"] or 0 for r in dfm_list if r["material"] == m), 1) for m in EUR_PER_KG}
+    spool_cost = sum(c for _, _, c in SPOOLS)
     bought_cost = sum(q * c for _, q, c in BOUGHT)
 
     suggestions = []
@@ -604,6 +608,8 @@ def main():
         "e_after": round(e_after, 3), "t_print": round(t_print), "t_hands": round(t_hands),
         "t_cure": round(t_cure), "lead": round(lead), "filament_g": round(filament, 1),
         "print_cost": round(print_cost, 2), "bought_cost": round(bought_cost),
+        "grams_by_material": grams_by, "spool_cost": round(spool_cost),
+        "first_build_cost": round(bought_cost + spool_cost),
         "slicer": "PrusaSlicer 2.7, A1-mini-like profile (tools/a1mini.ini)" if sliced else "not sliced",
     }
 
@@ -702,9 +708,22 @@ def main():
           "## Cost", "", "| item | qty | EUR each | EUR |", "|---|---|---|---|"]
     for name, q, c in BOUGHT:
         D.append(f"| {name} | {q} | {c:.2f} | {q * c:.2f} |")
-    D += [f"| printed parts (filament) | 1 | {print_cost:.2f} | {print_cost:.2f} |",
-          f"| **total** | | | **{bought_cost + print_cost:.0f}** |", "",
-          "Prices are rough street prices for comparison only; the flight controller is most of it."]
+    D += [f"| printed parts: filament actually used ({filament:.0f} g: {grams_by['LW-PLA']:.0f} g LW-PLA, "
+          f"{grams_by['PLA/PETG']:.0f} g PETG) | 1 | {print_cost:.2f} | {print_cost:.2f} |",
+          f"| **per airframe** | | | **{bought_cost + print_cost:.0f}** |", "",
+          "The whole printed airframe, wing included, is only "
+          f"{filament:.0f} g of filament: the wing sections are thin one-wall LW-PLA shells "
+          f"({sum(r['grams'] or 0 for r in dfm_list if r['name'].startswith(('wing', 'aileron'))):.0f} g for "
+          "the centre, both panels and both ailerons). So the filament per airframe is a few euros, "
+          "but a first build still has to buy the spools:", "",
+          "| first build | EUR |", "|---|---|",
+          f"| bought parts | {bought_cost:.0f} |"]
+    D += [f"| {name} | {c:.0f} |" for name, _, c in SPOOLS]
+    D += [f"| **first build outlay** | **{bought_cost + spool_cost:.0f}** |", "",
+          "Budget some LW-PLA for calibration: test cubes to set the flow, and possibly a failed "
+          "1.5-hour wing panel. Later airframes from the same spools cost the bought parts plus "
+          "a few euros of filament.", "",
+          "Prices are rough street prices for comparison only; the flight controller is the biggest item."]
     (HERE / "DFMA.md").write_text("\n".join(D) + "\n")
 
     print(f"parts {n_actual}, min {n_min}, t_ma {t_ma:.0f} s, E {e_ma:.1%} (h+i {e_hi:.1%}); "

@@ -10,6 +10,8 @@
  "loading": 47.7,
  "stall": 9.0,
  "cruise": 13.0,
+ "top": 18.3,
+ "pitch_speed": 23.9,
  "endurance": 12,
  "vh": 0.5,
  "cruise_a": 1.9,

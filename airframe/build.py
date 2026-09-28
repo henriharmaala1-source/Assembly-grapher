@@ -674,6 +674,8 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         f"| All-up weight | **{auw:.0f} g** (printed parts {printed:.0f} g) |",
         f"| Wing loading | {perf['loading']:.1f} g/dm^2 |",
         f"| Stall / cruise | {perf['stall']:.2f} / {perf['cruise']:.1f} m/s |",
+        f"| Top speed (level, estimate) | {perf['top']:.1f} m/s = {perf['top'] * 3.6:.0f} km/h "
+        f"(pitch speed {perf['pitch_speed'] * 3.6:.0f} km/h, CdA {perf['cda'] * 1e4:.1f} cm^2) |",
         f"| Endurance (rough) | ~{perf['endurance_min']:.0f} min on 2S 450 mAh |",
         f"| Current (rough) | cruise ~{perf['cruise_a']:.1f} A ({perf['cruise_w']:.0f} W), "
         f"full throttle at 1:1 thrust ~{perf['full_a']:.0f} A |",
@@ -733,6 +735,7 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         "length": round(L.length), "naca": p.naca, "incidence": p.incidence,
         "auw": round(auw), "printed": round(printed), "loading": round(perf["loading"], 1),
         "stall": round(perf["stall"], 1), "cruise": round(perf["cruise"], 1),
+        "top": round(perf["top"], 1), "pitch_speed": round(perf["pitch_speed"], 1),
         "endurance": round(perf["endurance_min"]), "vh": round(L.vh_actual, 2),
         "cruise_a": round(perf["cruise_a"], 1), "full_a": round(perf["full_a"], 1),
         "vv": round(L.vv_actual, 3), "x_le": L.x_le, "x_te": round(L.x_te, 1),

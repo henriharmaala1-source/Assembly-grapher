@@ -21,6 +21,7 @@ so the size comes from a sweep, not a guess. See [Why 450 mm](#why-450-mm).
 | All-up weight | ~193 g (printed parts ~74 g) |
 | Wing loading | 48 g/dm² |
 | Stall / cruise | ~9.0 / ~13 m/s |
+| Top speed | ~18 m/s (66 km/h) level, estimated; prop pitch speed 86 km/h |
 | Endurance | ~12 min on 2S 450 mAh (rough estimate) |
 | CG | 129.9 mm behind the motor face = 25.2 mm behind the wing LE (28 % chord) |
 | Static margin | ~15 % (neutral point at ~43 % chord) |

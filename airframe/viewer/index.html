@@ -332,6 +332,7 @@ const rows = [
   ["Printed parts", `${spec.printed} g`],
   ["Wing loading", `${f1(spec.loading)} g/dm²`],
   ["Stall / cruise", `${f1(spec.stall)} / ${f1(spec.cruise)} m/s`],
+  ["Top speed", `≈ ${Math.round(spec.top * 3.6)} km/h level`],
   ["Endurance", `≈ ${spec.endurance} min`],
   ["CG from motor face", `<b>${f1(spec.cg_x)}</b> mm`],
   ["CG / neutral point", `${spec.cg_pct} % / ${spec.np_pct} % MAC`],

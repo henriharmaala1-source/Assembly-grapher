@@ -128,7 +128,7 @@ class Kit:
     rx: float = 1.5                # ELRS nano
     cam_vtx: float = 6.0           # nano camera + AIO 25-200 mW VTX
     antenna: float = 1.5
-    servo: Servo = Servo()         # x3: two ailerons, one elevator
+    servo: Servo = Servo()         # x4: two ailerons, elevator, rudder
     battery: float = 27.0          # 2S 450 mAh LiPo
     batt_len: float = 58.0
     batt_w: float = 31.0
@@ -136,6 +136,12 @@ class Kit:
     batt_wh: float = 3.33          # 450 mAh * 7.4 V
     wiring: float = 5.0
     hardware: float = 2.0          # screws, hinge tape, velcro (horns, rods modelled)
+    # propulsion, for the top-speed estimate
+    motor_kv: float = 3800.0
+    prop_d_in: float = 4.0
+    prop_pitch_in: float = 2.5
+    v_loaded: float = 7.0          # 2S under load
+    rpm_frac: float = 0.85         # motor rpm at top speed / (kv * v_loaded)
 
 
 def round_to(v: float, step: float) -> float:
@@ -360,6 +366,48 @@ def neutral_point(p: Params, L: Layout) -> float:
     return h_n - cm_pod / (a_w / 57.3)
 
 
+def drag_area(p: Params, L: Layout, k: Kit):
+    """Parasite drag area CdA (m^2) built up from the geometry, per item."""
+    mm2 = 1e-6
+    tail = (L.b_h * L.c_h + 2 * L.fin_h * L.c_h) * mm2
+    pod_front = (2 * L.half_w * (p.pod_depth + L.z_top) + 26 * 13) * mm2       # box + motor plate
+    pod_wet = 2 * L.pod_len * (p.pod_depth + L.z_top + 2 * L.half_w) * mm2
+    tubes_wet = 2 * math.pi * p.tube_od * L.tube_len * mm2
+    items = {
+        "wing (Cd0 0.014, printed surface)": L.area * mm2 * 0.014,
+        "tail plates (Cd 0.02, flat 2 mm)": tail * 0.02,
+        "pod front + motor (Cd 0.5)": pod_front * 0.5,
+        "pod skin friction": pod_wet * 0.006,
+        "tubes skin friction": tubes_wet * 0.006,
+        "servo bumps, fairing, horns, antenna": 1.5e-4,
+    }
+    return {n: v * 1.15 for n, v in items.items()}     # +15 % interference
+
+
+def top_speed(p: Params, auw_g: float, L: Layout, k: Kit):
+    """Level top speed where prop thrust meets drag.
+
+    Thrust falls linearly from the static value (the 1:1 thrust target) to zero
+    at the loaded pitch speed; drag is parasite CdA plus induced drag."""
+    s = L.area / 1e6
+    w = auw_g / 1000 * G
+    rpm = k.motor_kv * k.v_loaded * k.rpm_frac
+    v_pitch = rpm / 60 * k.prop_pitch_in * 0.0254
+    cda = sum(drag_area(p, L, k).values())
+    t0 = w                                                 # static thrust = weight (1:1)
+    lo, hi = 1.0, v_pitch
+    for _ in range(60):
+        v = (lo + hi) / 2
+        q = 0.5 * RHO_AIR * v * v
+        cl = w / (q * s)
+        drag = q * (cda + s * cl * cl / (math.pi * 0.8 * p.aspect_ratio))
+        if t0 * (1 - v / v_pitch) > drag:
+            lo = v
+        else:
+            hi = v
+    return {"v_max": lo, "v_pitch": v_pitch, "cda": cda}
+
+
 def performance(p: Params, auw_g: float, L: Layout, k: Kit):
     s = L.area / 1e6
     w = auw_g / 1000 * G
@@ -371,7 +419,11 @@ def performance(p: Params, auw_g: float, L: Layout, k: Kit):
     # figure of merit 0.5, motor + ESC 70 %, 7.0 V under load
     disc = math.pi * 0.0508 ** 2
     p_static = (w ** 1.5 / math.sqrt(2 * RHO_AIR * disc)) / 0.5 / 0.70
+    top = top_speed(p, auw_g, L, k)
     return {
+        "top": top["v_max"],
+        "pitch_speed": top["v_pitch"],
+        "cda": top["cda"],
         "cruise_w": p_elec,
         "cruise_a": p_elec / 7.4,
         "full_a": p_static / 7.0,

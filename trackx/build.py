@@ -47,12 +47,13 @@ TRACK_W, TRACK_T = 560.0, 45.0
 TRACK_Y0, TRACK_Y1 = 915.0, 1475.0           # outer track edge sets the 2.95 m width
 TRACK_YC = (TRACK_Y0 + TRACK_Y1) / 2
 
-WHEEL_R = 300.0
-WHEEL_X = [2250.0 - 940.0 * i for i in range(6)]
-IDLER = (-3150.0, TRACK_T + 340.0, 340.0)    # x, z, radius (inner path radius)
-SPROCKET = (3000.0, 650.0, 350.0)
+WHEEL_R = 330.0
+WHEEL_X = [2150.0 - 850.0 * i for i in range(6)]
+END_R = 470.0                                # big front and rear wheels, so the top run is level
+IDLER = (-2950.0, TRACK_T + END_R, END_R)    # x, z, radius (inner path radius)
+SPROCKET = (2985.0, TRACK_T + END_R, END_R)
 ROLLER_R = 95.0
-ROLLER_X = [-1000.0, 1300.0]
+ROLLER_X = [-800.0, 1100.0]
 CLEAT_PITCH = 190.0
 
 # colours
@@ -265,7 +266,7 @@ def make_running_gear(side):
         arms.append(rod(46, (x, TRACK_Y0 - 70, z), (x + 430, TRACK_Y0 - 70, z + 300)))
         arms.append(cyl_y(60, TRACK_Y0 - 120, TRACK_Y0 - 30, x + 430, z + 300))
     ix, iz, ir = IDLER
-    t, rm, c = wheel(ix, iz, ir - 4, yc)
+    t, rm, c = wheel(ix, iz, ir - 8, yc)
     tyres += t; rims += rm; hubs += c
     arms.append(cyl_y(55, TRACK_Y0 - 70, yc - 205, ix, iz))
     arms.append(rod(50, (ix, TRACK_Y0 - 70, iz), (ix + 450, TRACK_Y0 - 70, iz + 420)))
@@ -276,10 +277,11 @@ def make_running_gear(side):
         z = hull_z_at(inner, x) - ROLLER_R
         rollers.append(disc(x, z, ROLLER_R, yc - 60, yc + 60, 6))
         arms.append(rod(24, (x, yc - 60, z), (x, TRACK_Y0 - 60, z + 130)))
-    # sprocket
-    sx, sz, _ = SPROCKET
-    sprocket = fuse(toothed_disc(sx, sz, yc - 205, yc - 120), toothed_disc(sx, sz, yc + 120, yc + 205),
-                    disc(sx, sz, 240, yc - 205, yc + 205, 8), disc(sx, sz, 95, yc + 205, yc + 232, 8))
+    # sprocket: dual wheel, plus the toothed ring that runs in the track's centre gap
+    sx, sz, sr = SPROCKET
+    t, rm, c = wheel(sx, sz, sr - 8, yc)
+    tyres += t; rims += rm; hubs += c
+    sprocket = toothed_disc(sx, sz, yc - 34, yc + 34, teeth=24, r_tip=sr - 34, r_root=sr - 76)
     arms.append(cyl_y(60, TRACK_Y0 - 90, yc - 205, sx, sz))
     groups = {
         "tyres": fuse(*tyres), "rims": fuse(*rims), "hubs": fuse(*hubs),
@@ -432,8 +434,8 @@ def make_bumper():
     wing = prism_z([(1900.0, TRACK_Y0), (X_NOSE, TRACK_Y0), (3580.0, 1100.0), (3580.0, TRACK_Y1), (1900.0, TRACK_Y1)],
                    Z_SPONSON, Z_SPONSON + 45)
     wings = fuse(wing, mirror_y(wing))
-    flap = box(X_REAR - 30, X_REAR - 6, 960, 1440, 790, Z_SPONSON)
-    guard = box(-3300.0, 1900.0, BOX_HW, TRACK_Y1, Z_SPONSON - 40, Z_SPONSON)         # guard along the track top
+    flap = box(X_REAR - 60, X_REAR - 36, 960, 1440, 800, Z_SPONSON)
+    guard = box(-3300.0, 1900.0, BOX_HW, TRACK_Y1, Z_SPONSON - 30, Z_SPONSON)         # guard along the track top
     return fuse(beam, wings, flap, mirror_y(flap), guard, mirror_y(guard))
 
 

@@ -8,7 +8,7 @@ armoured carrier shown at DSEI in September 2025. It is generated from
 
 | | published | model |
 |---|---|---|
-| Length | just over 7 m | 7.23 m |
+| Length | just over 7 m | 7.16 m |
 | Width | under 3 m | 3.00 m |
 | Height | 2 m to the roof plate | 2.00 m (hatches 2.06 m) |
 | Tracks | 56 cm rubber | 56 cm |
@@ -32,8 +32,9 @@ off the pictures against the published width, so they are estimates.
 - **Sides and rear:** mirrors on outrigger frames, a rail where the armour
   slopes, rows of armour bolts, guards along the tracks, rear mud flaps, rear
   lights, tow shackles and a rear door hinged on the left.
-- **Running gear:** dual road wheels with dished rims and no bolts, chunky
-  track cleats.
+- **Running gear:** a level track loop with large front and rear wheels
+  (about 1 m across) and smaller dual road wheels between them, dished rims
+  with no bolts, chunky track cleats.
 
 **Left off:** the roof weapon station, the pintle gun and the drone jammer,
 antennas, camouflage and markings, and everything inside.
@@ -48,7 +49,7 @@ Generated into `out/`:
   suspension arms)
 - `trackx.glb`: the same model for viewers (copied to `viewer/`)
 - `trackx_1to1.stl`: one mesh, millimetres, z up
-- `trackx_1to43.stl`: the same at 1:43, 168 × 70 × 49 mm, which fits the
+- `trackx_1to43.stl`: the same at 1:43, 167 × 70 × 49 mm, which fits the
   180 mm bed of a Bambu Lab A1 mini. Small parts such as cleats and bolts are
   finer than a 0.4 mm nozzle prints, so expect a soft detail level.
 

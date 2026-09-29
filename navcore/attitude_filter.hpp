@@ -58,11 +58,24 @@ struct AttitudeParams {
     float disagreeFullDeg = 5.f;    // believed entirely below this
     float disagreeNoneDeg = 15.f;   // ignored entirely above it
     float gMs2 = 9.81f;
+    // GYRO BIAS, LEARNED AT REST. A MEMS gyro reads a small constant rate
+    // with the camera perfectly still (the D435i's BMI055: up to ~1 deg/s).
+    // Roll and pitch shrug it off -- gravity pulls them back -- but yaw has no
+    // such reference, so it walks: a camera on a desk turned its map by
+    // degrees a minute, voxels painted at each new heading on top of the old.
+    // While the body looks still (gyro under `stillRadS`, accelerometer
+    // agreeing with gravity) the reading IS the bias, and it is followed with
+    // time constant `biasTauS`. Slow enough that a deliberate slow pan is
+    // barely absorbed; 0 turns it off.
+    float biasTauS = 4.f;
+    float stillRadS = 0.03f;          // ~1.7 deg/s
 };
 
 class AttitudeFilter {
 public:
-    void init(const AttitudeParams& p) { p_ = p; roll_ = pitch_ = yaw_ = 0.f; seeded_ = false; }
+    void init(const AttitudeParams& p) {
+        p_ = p; roll_ = pitch_ = yaw_ = 0.f; bx_ = by_ = bz_ = 0.f; seeded_ = false;
+    }
 
     // Level the filter from one accelerometer sample, with no blending. Use it
     // once at startup: a complementary filter started at zero in a tilted
@@ -79,6 +92,13 @@ public:
         if (dt <= 0.f || dt > 0.5f) return;      // a gap is not an integration
         if (!seeded_) { seed(ax, ay, az); return; }
 
+        const float mag0 = std::sqrt(ax*ax + ay*ay + az*az);
+        wx -= bx_; wy -= by_; wz -= bz_;
+        if (p_.biasTauS > 0.f && std::fabs(mag0 - p_.gMs2) < 0.3f &&
+            std::sqrt(wx*wx + wy*wy + wz*wz) < p_.stillRadS) {
+            const float k = std::min(1.f, dt / p_.biasTauS);
+            bx_ += k * wx; by_ += k * wy; bz_ += k * wz;
+        }
         // Gyro first: rotation about the forward axis is roll, about the right
         // axis is pitch, about the down axis is yaw.
         roll_  += wz * dt * kRad2Deg;
@@ -112,6 +132,9 @@ public:
     float yawDeg()   const { return yaw_; }        // DRIFTS. No absolute reference.
     bool  accelTrusted() const { return accelTrusted_; }
     bool  seeded() const { return seeded_; }
+    float gyroBiasDegS(int axis) const {             // 0 x, 1 y (yaw), 2 z
+        return (axis == 0 ? bx_ : axis == 1 ? by_ : bz_) * kRad2Deg;
+    }
     void  setYawDeg(float y) { yaw_ = wrap360(y); }   // from a compass, if there is one
 
 private:
@@ -137,6 +160,7 @@ private:
 
     AttitudeParams p_;
     float roll_ = 0, pitch_ = 0, yaw_ = 0;
+    float bx_ = 0, by_ = 0, bz_ = 0;                 // learned gyro bias, rad/s
     bool  seeded_ = false, accelTrusted_ = true;
 };
 

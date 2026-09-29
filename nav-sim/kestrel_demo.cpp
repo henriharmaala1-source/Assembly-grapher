@@ -571,6 +571,22 @@ cv::Mat syntheticColour(int w, int h) {
 // the near rung's honest range, the far tier's bearings beyond.
 constexpr float kLiveCellM = 0.10f, kNearCellM = 0.05f;
 
+// A LEVEL first-person picture turned into a camera ROLLED by `rollDeg`
+// (DepthCamera::camToWorld's roll: positive = the right side down). Roll is
+// about the optical axis, so for a pinhole it is exactly a rotation of the
+// image about its centre: camera pixel p shows level pixel R(roll) p. Pass
+// -roll to go the other way.
+cv::Mat rollImage(const cv::Mat& src, float rollDeg, int interp) {
+    const double a = rollDeg * CV_PI / 180.0, c = std::cos(a), s = std::sin(a);
+    const double cx = (src.cols - 1) * 0.5, cy = (src.rows - 1) * 0.5;
+    const cv::Matx23d M(c, -s, cx - c * cx + s * cy,
+                        s,  c, cy - s * cx - c * cy);
+    cv::Mat out;
+    cv::warpAffine(src, out, M, src.size(), interp | cv::WARP_INVERSE_MAP,
+                   cv::BORDER_CONSTANT, cv::Scalar::all(0));
+    return out;
+}
+
 class LiveCamera {
 public:
     LiveCamera(const Options& o, int iw, int ih) : o_(o), iw_(iw), ih_(ih) {
@@ -739,23 +755,51 @@ public:
                 // pixels it came from. Where nothing is mapped the pane shows
                 // what the camera sees -- the scene, not a claim that it is
                 // empty: unknown is still not drawn as free air.
-                view = kshow::showIR(ir, fw, fh);
+                //
+                // AND IN THE CAMERA'S ROLL. The map is built with the IMU's
+                // roll, but the first-person renders are level (yaw and pitch
+                // only), while the IR image is in the camera's own frame -- so
+                // a camera held a few degrees off level showed its voxels
+                // turned by that much against the scene they came from. Roll
+                // is a rotation about the optical axis, which for a pinhole is
+                // exactly a rotation of the image about its centre: the
+                // overlay is composed LEVEL (over the IR turned level) and
+                // turned back by the roll onto the untouched IR.
+                const cv::Mat irv = kshow::showIR(ir, fw, fh);
+                const float roll = pose.rollDeg;
+                const bool rolled = std::fabs(roll) > 0.3f;
+                cv::Mat lvl = rolled ? rollImage(irv, -roll, cv::INTER_LINEAR) : irv.clone();
+                const cv::Mat bare = lvl.clone();
+                vox.copyTo(lvl, hitMask);
+                // THE FAR TIER over the camera image too: past the ladder's
+                // honest range (~2.2 m at 10 cm cells) the bearing field is
+                // all the map has, and without it a room's walls were simply
+                // absent. Blended, so the scene reads through; nothing is
+                // painted where it found no depth.
+                kshow::overlayFar(lvl, hitMask, hitDist, nav_.field(), pose, hf, mainEnd,
+                                  nav_.params().farRangeM, 0.7);
+                drawPlan(lvl, pose, hf, hitDist);
+                if (rolled) {
+                    // Only what was drawn goes back: the IR stays sharp.
+                    cv::Mat drawn;
+                    cv::absdiff(lvl, bare, drawn);
+                    cv::cvtColor(drawn, drawn, cv::COLOR_BGR2GRAY);
+                    drawn = drawn > 0;
+                    view = irv.clone();
+                    rollImage(lvl, roll, cv::INTER_LINEAR)
+                        .copyTo(view, rollImage(drawn, roll, cv::INTER_NEAREST));
+                } else {
+                    view = lvl;
+                }
             } else {
                 // No image in this source: navcore's first-person render, the
                 // far tier's bearings past the ladder and fog for unknown.
                 view = sim::NavPipeline::renderFpv(ladder, mainEnd, nav_.field(),
                                                    nav_.params().farRangeM, pose, fw, fh, hf);
+                vox.copyTo(view, hitMask);
+                drawPlan(view, pose, hf, hitDist);
             }
-            vox.copyTo(view, hitMask);
-            // THE FAR TIER over the camera image too: past the ladder's
-            // honest range (~2.2 m at 10 cm cells) the bearing field is all
-            // the map has, and without it a room's walls were simply absent
-            // -- only the floor at the camera's feet showed. Blended, so the
-            // scene reads through; nothing is painted where it found no depth.
-            if (!ir.empty())
-                kshow::overlayFar(view, hitMask, hitDist, nav_.field(), pose, hf, mainEnd,
-                                  nav_.params().farRangeM, 0.7);
-            drawPlan(view, pose, hf, hitDist);
+            planText(view);
             fpv_ = view;
             lastFpv_ = now;
         }
@@ -811,12 +855,17 @@ private:
         for (size_t i = 0; i < nc; i += stride, ++k)
             ribbon(cands_[i], (k % 2) ? cv::Scalar(150, 70, 110) : cv::Scalar(60, 60, 200),
                    0.04f, 0.55, false);
+        if (plan_.blocked || chosen_.size() < 2) return;
+        ribbon(chosen_, cv::Scalar(255, 110, 40), 0.08f, 0.95, true);
+    }
+    // The planner's verdict in words, along the pane's foot -- drawn on the
+    // final picture, never on the level one that gets rotated by the roll.
+    void planText(cv::Mat& im) const {
         if (plan_.blocked || chosen_.size() < 2) {
             txt(im, "planner: BLOCKED -- nothing clears the airframe, it would hold",
                 10, im.rows - 14, 0.5, cv::Scalar(80, 80, 240), 1);
             return;
         }
-        ribbon(chosen_, cv::Scalar(255, 110, 40), 0.08f, 0.95, true);
         txt(im, cv::format("planner: %03.0f deg  %+.0f up   %.1f m confirmed free", plan_.azDeg,
                            plan_.elDeg, plan_.freeM),
             10, im.rows - 34, 0.5, cv::Scalar(255, 170, 90), 1);

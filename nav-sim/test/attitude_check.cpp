@@ -91,6 +91,28 @@ int main() {
               std::fabs(f.rollDeg()) > 15.f, "roll " + f2(f.rollDeg()) + " deg");
     }
 
+    {   // GYRO BIAS AT REST. A still camera whose gyro reads 0.8 deg/s about
+        // its down axis: yaw must stop walking once the bias is learned --
+        // and a real 20 deg/s turn afterwards must still be seen in full.
+        AttitudeFilter f; f.init(ap);
+        float ax, ay, az; gravityAt(0.f, 0.f, ax, ay, az);
+        f.seed(ax, ay, az);
+        const float b = 0.8f / 57.2958f;
+        for (int i = 0; i < 200 * 30; ++i) f.update(0.f, b, 0.f, ax, ay, az, 0.005f);
+        const float y0 = f.yawDeg();
+        for (int i = 0; i < 200 * 60; ++i) f.update(0.f, b, 0.f, ax, ay, az, 0.005f);
+        const float walk = std::fabs(f.yawDeg() - y0);
+        check("a still gyro's bias is learned: yaw stops walking",
+              walk < 2.f, f2(walk) + " deg in the next 60 s (unlearned: 48)");
+        const float y1 = f.yawDeg();
+        const float w = 20.f / 57.2958f;
+        for (int i = 0; i < 200; ++i) f.update(0.f, w + b, 0.f, ax, ay, az, 0.005f);
+        float turned = f.yawDeg() - y1;
+        if (turned < 0.f) turned += 360.f;
+        check("and a real turn is still seen in full", std::fabs(turned - 20.f) < 1.f,
+              f2(turned) + " deg for a 20 deg turn");
+    }
+
     std::printf("%s (%d failures)\n", failures ? "FAILURES" : "all checks passed", failures);
     return failures ? 1 : 0;
 }

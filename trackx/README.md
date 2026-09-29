@@ -61,6 +61,12 @@ Generated into `out/`:
 
 `preview/` holds stills rendered from the viewer.
 
+## Drag
+
+`python3 aero/optimize.py trackx` estimates the air resistance of this shape
+and ranks what would lower it. See [aero/README.md](../aero/README.md) and
+[aero/REPORT_trackx.md](../aero/REPORT_trackx.md).
+
 ## Regenerating
 
 ```sh

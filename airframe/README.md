@@ -473,6 +473,15 @@ Each build:
 The coordinates are millimetres. x runs aft from the pod's nose, y towards the
 right wing tip and z up, with z = 0 on the boom centre-line.
 
+## Drag
+
+[`aero/`](../aero/README.md) has a simple air-resistance optimizer that runs on
+this design (`python3 aero/optimize.py airframe`). It finds the sizing already
+at its optimum and about 20 % less drag from small changes to the details: a
+rounded top front edge on the pod, the rudder joiners in a groove, horn
+fairings, a tapered pod rear and a laid-back antenna. See
+[aero/REPORT_airframe.md](../aero/REPORT_airframe.md).
+
 ## Known limitations
 
 - The weights are estimates. LW-PLA density depends heavily on print

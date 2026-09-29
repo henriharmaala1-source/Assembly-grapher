@@ -19,6 +19,25 @@ def cyl_z(r, z0, z1, x, y):
     return cq.Solid.makeCylinder(r, z1 - z0, V(x, y, z0), V(0, 0, 1))
 
 
+def rbox(x0, x1, y0, y1, z0, z1, r, edges="|Z"):
+    """Box with the selected edges rounded (falls back to a sharp box if the fillet fails)."""
+    w = cq.Workplane().box(x1 - x0, y1 - y0, z1 - z0, centered=False).translate((x0, y0, z0))
+    try:
+        return w.edges(edges).fillet(r).val()
+    except Exception:
+        return w.val()
+
+
+def ball(r, x, y, z):
+    return cq.Solid.makeSphere(r, V(x, y, z), V(0, 0, 1), -90, 90, 360)
+
+
+def wire_path(r, pts):
+    """Round wire of radius r along a polyline, with rounded corners."""
+    segs = [rod(r, a, b) for a, b in zip(pts, pts[1:])]
+    return fuse(*segs, *[ball(r, *p) for p in pts[1:-1]])
+
+
 def rod(r, p0, p1):
     """Cylinder of radius r from point p0 to point p1."""
     a, b = V(*p0), V(*p1)

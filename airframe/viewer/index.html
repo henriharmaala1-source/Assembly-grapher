@@ -1,4 +1,4 @@
-<title>Kipinä 450</title>
+<title>Kipinä 465</title>
 <meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -152,8 +152,8 @@
 <div class="wrap">
   <header>
     <div class="eyebrow">Twin-tube micro FPV · 3D printed · parametric CadQuery</div>
-    <h1>Kipinä <span>450</span></h1>
-    <p class="lede">A 450 mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail with twin rudders; every other part prints on a Bambu Lab A1 mini. Four SG90 servos give roll, pitch and yaw, and 450 mm is the smallest span that still hand-launches below 9 m/s with them and an analog FPV kit.</p>
+    <h1>Kipinä <span id="h1-span">465</span></h1>
+    <p class="lede" id="lede">A 465 mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail with twin rudders; every other part prints on a Bambu Lab A1 mini. Four SG90 servos give roll, pitch and yaw, and 465 mm is the smallest span that still hand-launches below 9 m/s with them and an analog FPV kit.</p>
   </header>
 
   <div class="top">
@@ -168,6 +168,8 @@
           <button id="v-under" data-view="under" aria-pressed="false">Under</button>
           <button id="v-pod" data-view="pod" aria-pressed="false">Pod</button>
           <button id="v-nose" data-view="nose" aria-pressed="false">Nose</button>
+          <button id="v-bay" data-view="bay" aria-pressed="false">Bay</button>
+          <button id="v-esc" data-view="esc" aria-pressed="false">ESC</button>
           <button id="v-servo" data-view="servo" aria-pressed="false">Servo</button>
           <button id="v-tail" data-view="tail" aria-pressed="false">Tail</button>
         </div>
@@ -210,8 +212,8 @@
     <div class="prose">
       <h2>Why <span id="why-span">430</span> mm</h2>
       <p>A printed plane does not shrink evenly. The electronics weigh the same at any size, and a printed skin cannot get thinner than one nozzle line, so the wing loading climbs as the span drops.</p>
-      <p>The sweep rebuilds the layout at each span, re-balances it and estimates the weight. <b id="min-span">440 mm</b> is the first span that stalls below the 9 m/s hand-launch limit and still fits an SG90's mounting tabs between the wing spars. The build rounds up by 10 mm, and the CAD weights confirm it passes.</p>
-      <p>Yaw control costs about 11 g: a fourth SG90, two printed rudders and the linkage. Without rudders the same sweep lands at 420 mm.</p>
+      <p>The sweep rebuilds the layout at each span, re-balances it and estimates the weight. <b id="min-span">440 mm</b> is the first span that stalls below the 9 m/s hand-launch limit and still fits an SG90's mounting tabs between the wing spars. The build then re-checks with the CAD weights, which include the printed detail and wiring, and takes the smallest 5 mm step that still passes: <b id="build-span">465 mm</b>.</p>
+      <p>Yaw control costs about 11 g: a fourth SG90, two printed rudders and the linkage. Without rudders the same sweep lands at <span id="no-rud">440</span> mm.</p>
     </div>
     <div class="figure"><svg id="chart" viewBox="0 0 560 300" role="img" aria-label="Stall speed against wingspan"></svg></div>
   </section>
@@ -270,8 +272,9 @@
         <li id="kit-tubes">2 × carbon tube 6×5 mm (6×0.5 aluminium also fits, +6 g)</li>
         <li id="kit-spars">Carbon rod 3 mm and 2 mm (wing spars)</li>
         <li>4 × SG90 servo (9 g), with their single-arm horns</li>
-        <li>1404 3800 KV motor, 4×2.5 two-blade prop, 12 A ESC</li>
-        <li>20×20 wing flight controller (INAV), ELRS nano receiver</li>
+        <li>1404 3800 KV motor, 4×2.5 two-blade prop</li>
+        <li id="kit-esc">Hobbywing XRotor Micro 30A ESC (BLHeli_S, 2–4S, 23.8 × 14.5 × 5.8 mm)</li>
+        <li id="kit-fc">Matek F405-WMN flight controller (INAV or ArduPilot, 31 × 26 mm on 22 mm holes), ELRS nano receiver</li>
         <li>Nano camera (14 mm) with 25–200 mW VTX</li>
         <li>1 mm carbon rod and 0.8 mm wire for pushrods and rudder joiners, 2 micro control horns, M2 screw for the bellcrank</li>
         <li>2S 450 mAh LiPo, 10 mm velcro strap, hinge tape</li>
@@ -303,8 +306,8 @@ const LABEL = {
   aileron_R: "Aileron R", aileron_L: "Aileron L", tail_mount: "Tail mount", stab: "Stabiliser",
   elevator: "Elevator", fin_R: "Fin R", fin_L: "Fin L", tube_L: "Tube L, 6×5 carbon", tube_R: "Tube R, 6×5 carbon",
   spar_main: "Main spar, 3 mm rod", spar_rear: "Rear spar, 2 mm rod", motor: "Motor, 1404", prop: "Prop, 4×2.5",
-  battery: "Battery, 2S 450 mAh", camera: "Nano camera", vtx: "VTX", antenna: "VTX antenna", fc: "Flight controller",
-  receiver: "ELRS receiver", esc: "ESC, 12 A", servo_elev: "SG90, elevator", servo_ail_R: "SG90, aileron R",
+  battery: "Battery, 2S 450 mAh", camera: "Nano camera", vtx: "VTX", antenna: "VTX antenna", fc: "Flight controller, F405-WMN",
+  receiver: "ELRS receiver", esc: "ESC, XRotor Micro 30A", servo_elev: "SG90, elevator", servo_ail_R: "SG90, aileron R",
   servo_ail_L: "SG90, aileron L", pushrod_elev: "Elevator pushrod", pushrod_ail_R: "Aileron pushrod R",
   pushrod_ail_L: "Aileron pushrod L", horn_ail_R: "Control horn R", horn_ail_L: "Control horn L",
   rudder_R: "Rudder R", rudder_L: "Rudder L", bellcrank: "Rudder bellcrank", servo_rud: "SG90, rudder",
@@ -314,7 +317,7 @@ const ELECTRONICS = new Set(["motor", "prop", "battery", "camera", "vtx", "anten
                              "servo_elev", "servo_ail_R", "servo_ail_L", "servo_rud"]);
 const BOUGHT = ["servo_ail_R", "servo_ail_L", "servo_elev", "servo_rud", "motor", "prop", "battery", "fc", "receiver", "esc",
                 "camera", "vtx", "antenna", "tube_L", "tube_R", "spar_main", "spar_rear"];
-const base = (n) => n.replace(/_(horn|shaft|lens|chips|leads)$/, "");
+const base = (n) => n.replace(/_(horn|shaft|lens|chips|leads|wires|pcb|pads|base|coil|nut|metal|xt30|jst|conn)$/, "");
 const params = new URLSearchParams(location.search);
 if (params.has("shot")) document.body.classList.add("shot");
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -339,11 +342,18 @@ const rows = [
   ["CG / neutral point", `${spec.cg_pct} % / ${spec.np_pct} % MAC`],
   ["Main struts", `2 × ${spec.tube.replace("x", "×")} mm, ${spec.tube_len}`],
   ["Servos", "4 × SG90"],
+  ["Flight controller", spec.fc],
+  ["ESC", spec.esc],
   ["Current", `≈ ${f1(spec.cruise_a)} A cruise, ${Math.round(spec.full_a)} A full`],
   ["Printer", `fits ${spec.bed.map((v) => Math.round(v)).join(" × ")} mm`],
 ];
 $("specs").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 $("min-span").textContent = `${spec.min_span} mm`;
+$("build-span").textContent = `${spec.span} mm`;
+$("no-rud").textContent = spec.no_rudder_span;
+$("h1-span").textContent = spec.span;
+document.title = `Kipinä ${spec.span}`;
+$("lede").textContent = `A ${spec.span} mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail with twin rudders; every other part prints on a Bambu Lab A1 mini. Four SG90 servos give roll, pitch and yaw, and ${spec.span} mm is the smallest span that still hand-launches below ${spec.stall_limit} m/s with them and an analog FPV kit.`;
 $("why-span").textContent = spec.span;
 $("kit-tubes").textContent = `2 × carbon tube ${spec.tube.replace("x", "×")} mm, ${spec.tube_len} mm long (6×0.5 aluminium also fits, +6 g)`;
 $("kit-spars").textContent = `Carbon rod 3 mm and 2 mm, ${spec.span - 10} mm each (wing spars)`;
@@ -610,6 +620,15 @@ function buildGrid() {
 }
 buildGrid();
 
+// parts that hide the pod interior from above; the Bay and ESC views take them off
+const WING = ["wing_centre", "wing_R", "wing_L", "aileron_R", "aileron_L", "spar_main", "spar_rear", "servo_ail_R",
+              "servo_ail_L", "servo_rud", "horn_ail_R", "horn_ail_L", "pushrod_ail_R", "pushrod_ail_L", "pushrod_rud"];
+const hidden = new Set();
+function applyVis() {
+  if (anim.on) return;
+  const elec = $("t-elec").getAttribute("aria-pressed") === "true";
+  meshes.forEach((m, n) => { const b = base(n); m.visible = (elec || !ELECTRONICS.has(b)) && !hidden.has(b); });
+}
 const VIEWS = {
   quarter: { dir: [-0.95, 0.62, 0.9] },
   top: { dir: [0, 1, 0.02] },
@@ -618,7 +637,9 @@ const VIEWS = {
   under: { dir: [-0.55, -0.75, 0.75] },
   pod: { dir: [-0.8, 0.75, 0.95], fit: ["pod", "battery", "servo_elev", "wing_centre"] },
   nose: { dir: [-0.85, -0.3, 0.75], fit: ["motor", "camera", "vtx"], pad: 2.4 },
-  servo: { dir: [-0.35, -0.8, -0.55], fit: ["servo_ail_R", "horn_ail_R", "pushrod_ail_R"], pad: 2.6 },
+  bay: { dir: [-0.3, 1, 0.5], fit: ["camera", "vtx", "fc", "receiver"], pad: 1.2, hide: ["lid"] },
+  esc: { dir: [0.9, 0.8, 0.35], fit: ["esc"], pad: 3.4, hide: ["lid", ...WING, "servo_elev", "pushrod_elev"] },
+  servo: { dir: [-0.35, -0.8, -0.55], fit: ["servo_ail_R", "horn_ail_R", "pushrod_ail_R"], pad: 1.5 },
   tail: { dir: [0.75, -0.45, 0.6], fit: ["rudder_R", "rudder_L", "bellcrank", "tail_mount", "fin_R", "fin_L"], pad: 1.05 },
 };
 let tween = null, target = center.clone();
@@ -644,6 +665,9 @@ function setView(name, instant) {
   const b = frame(v.fit), c = b.getCenter(new THREE.Vector3());
   const to = c.clone().add(dir.clone().multiplyScalar(fitDistance(dir, b, c, v.pad ?? 1)));
   if (grid) grid.visible = name === "quarter" || name === "top";
+  hidden.clear();
+  (v.hide || []).forEach((h) => hidden.add(h));
+  applyVis();
   document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === name)));
   target = c;
   if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(c); controls.update(); return; }
@@ -658,7 +682,7 @@ function toggle(btn, fn) {
     fn(on);
   });
 }
-toggle($("t-elec"), (on) => meshes.forEach((m, n) => { if (ELECTRONICS.has(base(n))) m.visible = on; }));
+toggle($("t-elec"), applyVis);
 toggle($("t-cut"), (on) => meshes.forEach((m) => { m.material.clippingPlanes = on ? [clip] : []; m.material.needsUpdate = true; }));
 
 let selected = null;

@@ -29,7 +29,7 @@ CARBON = 1.55
 @dataclass(frozen=True)
 class Params:
     # Wing: straight, rectangular, like the Molniya's
-    span: float = 450.0
+    span: float = 465.0
     aspect_ratio: float = 5.0
     naca: str = "4412"             # Clark-Y-like, forgiving at Re 50-80k
     incidence: float = 2.0         # deg, wing chord vs tube line
@@ -73,7 +73,8 @@ class Params:
     nose_r: float = 8.0            # radius on the pod's front edges (0 = sharp box)
     pod_depth: float = 18.0        # tube centre-line to pod bottom
     pod_overlap: float = 0.70      # pod runs this far under the wing (chords)
-    front_bay: float = 48.0        # camera, VTX, FC; battery behind
+    front_bay: float = 53.5        # camera, VTX, FC; battery behind
+    esc_bay: float = 8.4           # ESC card in its two ribs, between the battery and the servo bay
     batt_trim: float = 16.0        # battery travel for balancing
     servo_bay: float = 36.0        # elevator servo lies behind the battery
     motor_z: float = 9.0           # thrust line above the tube centre-line
@@ -124,8 +125,8 @@ class Kit:
     """Reference electronics (analog FPV, INAV-capable). Grams / mm."""
     motor: float = 9.0             # 1404 3800KV class, 2S
     prop: float = 2.0              # 4x2.5 two-blade
-    esc: float = 3.5               # 12 A single ESC
-    fc: float = 6.0                # 20x20 wing FC (servo outputs)
+    esc: float = 6.0               # Hobbywing XRotor Micro 30A (BLHeli_S, 2-4S, no BEC)
+    fc: float = 10.0               # Matek F405-WMN wing FC (12 outputs, 5 A servo BEC)
     rx: float = 1.5                # ELRS nano
     cam_vtx: float = 6.0           # nano camera + AIO 25-200 mW VTX
     antenna: float = 1.5
@@ -135,7 +136,17 @@ class Kit:
     batt_w: float = 31.0
     batt_h: float = 13.0
     batt_wh: float = 3.33          # 450 mAh * 7.4 V
-    wiring: float = 5.0
+    wiring: float = 6.0            # the ESC sits behind the battery: long motor and signal runs
+    # outer dimensions from retailer listings (the maker's drawings are not reachable)
+    fc_name: str = "Matek F405-WMN"
+    fc_len: float = 31.0
+    fc_wid: float = 26.0
+    fc_hgt: float = 16.5           # vendor-quoted clearance height
+    fc_holes: float = 22.0         # square hole pattern, 2 mm holes
+    esc_name: str = "Hobbywing XRotor Micro 30A"
+    esc_len: float = 23.8
+    esc_wid: float = 14.5
+    esc_thk: float = 5.8
     hardware: float = 2.0          # screws, hinge tape, velcro (horns, rods modelled)
     # propulsion, for the top-speed estimate
     motor_kv: float = 3800.0
@@ -221,7 +232,7 @@ class Layout:
         self.half_w = self.tube_y + p.wall / 2       # side walls under the tubes
         self.z_bottom = -p.pod_depth
         self.pod_len = max(x_le + p.pod_overlap * c,
-                           p.front_bay + k.batt_len + p.batt_trim + p.servo_bay + p.wall)
+                           p.front_bay + k.batt_len + p.batt_trim + p.esc_bay + p.servo_bay + p.wall)
         self.tail_z = self.r_hole + 1.2              # stab seat on the tail mount
         self.tube_x0 = p.front_wall + 1.6
         self.tube_x1 = self.x_stab + self.c_fix - 2.0
@@ -241,8 +252,19 @@ class Layout:
         self.bellcrank_x = self.x_hinge - 2.0
         self.rudder_pushrod_y = -13.0
         self.elevator_inset = 6.0 if p.rudders else 0.6      # room for the rudders to swing
+        # front bay, x from the motor face: camera 3..15, VTX card 15.6..18.6, then the FC
+        self.vtx_x = 15.6
+        self.fc_x = self.vtx_x + 3.0 + 0.4 + k.fc_len / 2                # FC centre
+        if self.fc_x + k.fc_len / 2 + 3.0 > p.front_bay:
+            raise ValueError(f"front bay {p.front_bay} mm is too short for the {k.fc_name}: "
+                             f"needs {self.fc_x + k.fc_len / 2 + 3.0:.1f} mm")
+        # VTX antenna: MMCX socket on the card's -y edge, plug and whip above it
+        self.ant_x, self.ant_y, self.ant_z = self.vtx_x + 1.5, -(10.0 + 3.6), -6.5
+        # ESC card stands crosswise between two ribs, behind the battery
+        self.esc_bay_x = self.pod_len - p.wall - p.servo_bay - p.esc_bay      # bay front
+        self.esc_x = self.esc_bay_x + 1.0 + 0.3                              # card front face
         self.batt_min = p.front_bay + 0.5            # battery front limit
-        self.batt_max = self.pod_len - p.wall - p.servo_bay - 0.5
+        self.batt_max = self.esc_bay_x - 0.5
         self.length = self.x_stab + self.c_h + 20.0  # prop to elevator TE
 
     def servo_slack(self) -> float:
@@ -308,10 +330,10 @@ def components(p: Params, k: Kit, L: Layout):
         ("motor", k.motor, -7.0, p.motor_z),
         ("prop", k.prop, -15.0, p.motor_z),
         ("camera + VTX", k.cam_vtx, 11.0, -8.0),
-        ("antenna", k.antenna, 22.0, 10.0),
-        ("FC", k.fc, 33.0, -13.0),
-        ("receiver", k.rx, 41.0, -11.0),
-        ("ESC", k.esc, 32.0, -11.0),
+        ("antenna", k.antenna, L.ant_x, 10.0),
+        ("FC", k.fc, L.fc_x, -13.0),
+        ("receiver", k.rx, 42.0, -8.0),
+        ("ESC", k.esc, L.esc_x + k.esc_thk / 2, -10.0),
         ("elevator servo", k.servo.mass, L.elev_servo_x, L.z_floor + 6.0),
         ("aileron servos", 2 * k.servo.mass, servo_x, 4.0),
         *([("rudder servo", k.servo.mass, servo_x, 8.0),

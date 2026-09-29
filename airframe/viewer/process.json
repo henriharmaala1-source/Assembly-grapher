@@ -2,26 +2,26 @@
  "summary": {
   "n_actual": 53,
   "n_min": 26,
-  "t_ma": 1995,
-  "t_handle_insert": 403,
-  "e_ma": 0.039,
-  "e_hi": 0.194,
+  "t_ma": 2482,
+  "t_handle_insert": 400,
+  "e_ma": 0.031,
+  "e_hi": 0.195,
   "n_after": 45,
-  "t_after": 1360,
-  "e_after": 0.057,
-  "t_print": 26664,
-  "t_hands": 5910,
+  "t_after": 1847,
+  "e_after": 0.042,
+  "t_print": 27918,
+  "t_hands": 6397,
   "t_cure": 2700,
-  "lead": 32030,
-  "filament_g": 71.3,
-  "print_cost": 2.98,
-  "bought_cost": 144,
+  "lead": 33284,
+  "filament_g": 76.0,
+  "print_cost": 3.16,
+  "bought_cost": 166,
   "grams_by_material": {
-   "PLA/PETG": 27.5,
-   "LW-PLA": 43.9
+   "PLA/PETG": 28.8,
+   "LW-PLA": 47.2
   },
   "spool_cost": 65,
-  "first_build_cost": 209,
+  "first_build_cost": 231,
   "slicer": "PrusaSlicer 2.7, A1-mini-like profile (tools/a1mini.ini)"
  },
  "critical": [
@@ -58,10 +58,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 4962,
+   "seconds": 5196,
    "cure": 0.0,
    "start": 0,
-   "finish": 4962,
+   "finish": 5196,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -86,10 +86,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 6768,
+   "seconds": 7548,
    "cure": 0.0,
-   "start": 4962,
-   "finish": 12030,
+   "start": 5196,
+   "finish": 13044,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -115,10 +115,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 4344,
+   "seconds": 4518,
    "cure": 0.0,
-   "start": 12030,
-   "finish": 16374,
+   "start": 13044,
+   "finish": 17562,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -141,10 +141,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 5292,
+   "seconds": 5328,
    "cure": 0.0,
-   "start": 16374,
-   "finish": 21666,
+   "start": 17562,
+   "finish": 22890,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -167,10 +167,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 5298,
+   "seconds": 5328,
    "cure": 0.0,
-   "start": 21666,
-   "finish": 26964,
+   "start": 22890,
+   "finish": 28218,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -282,8 +282,8 @@
    "consumables": [],
    "seconds": 195,
    "cure": 0,
-   "start": 4962,
-   "finish": 5157,
+   "start": 5196,
+   "finish": 5391,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -310,8 +310,8 @@
    "consumables": [],
    "seconds": 120,
    "cure": 0,
-   "start": 12030,
-   "finish": 12150,
+   "start": 13044,
+   "finish": 13164,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -336,8 +336,8 @@
    "consumables": [],
    "seconds": 80,
    "cure": 0,
-   "start": 16374,
-   "finish": 16454,
+   "start": 17562,
+   "finish": 17642,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -362,8 +362,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 21666,
-   "finish": 21776,
+   "start": 22890,
+   "finish": 23000,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -388,8 +388,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 26964,
-   "finish": 27074,
+   "start": 28218,
+   "finish": 28328,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -420,8 +420,8 @@
    "consumables": [],
    "seconds": 44,
    "cure": 0,
-   "start": 5157,
-   "finish": 5201,
+   "start": 5391,
+   "finish": 5435,
    "anim": [
     {
      "parts": [
@@ -489,8 +489,8 @@
    ],
    "seconds": 54,
    "cure": 0,
-   "start": 5201,
-   "finish": 5255,
+   "start": 5435,
+   "finish": 5489,
    "anim": [
     {
      "parts": [
@@ -539,7 +539,7 @@
   },
   {
    "id": "A3",
-   "title": "Mount the FC, ESC and receiver",
+   "title": "Screw the FC on its posts, drop the ESC into its ribs, add the receiver",
    "short": "FC, ESC, RX",
    "station": "Pod",
    "resource": "builder",
@@ -559,10 +559,10 @@
    "consumables": [
     "foam tape"
    ],
-   "seconds": 72,
+   "seconds": 69,
    "cure": 0,
-   "start": 5255,
-   "finish": 5327,
+   "start": 5489,
+   "finish": 5558,
    "anim": [
     {
      "parts": [
@@ -629,10 +629,10 @@
     "heat-shrink",
     "silicone wire"
    ],
-   "seconds": 520,
+   "seconds": 1010,
    "cure": 0,
-   "start": 5327,
-   "finish": 5847,
+   "start": 5558,
+   "finish": 6568,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -664,8 +664,8 @@
    ],
    "seconds": 42,
    "cure": 0,
-   "start": 5847,
-   "finish": 5888,
+   "start": 6568,
+   "finish": 6609,
    "anim": [
     {
      "parts": [
@@ -721,8 +721,8 @@
    ],
    "seconds": 64,
    "cure": 0,
-   "start": 12150,
-   "finish": 12214,
+   "start": 13164,
+   "finish": 13228,
    "anim": [
     {
      "parts": [
@@ -808,8 +808,8 @@
    ],
    "seconds": 201,
    "cure": 900,
-   "start": 12214,
-   "finish": 12415,
+   "start": 13228,
+   "finish": 13429,
    "anim": [
     {
      "parts": [
@@ -869,8 +869,8 @@
    ],
    "seconds": 132,
    "cure": 900,
-   "start": 27074,
-   "finish": 27206,
+   "start": 28328,
+   "finish": 28460,
    "anim": [
     {
      "parts": [
@@ -955,8 +955,8 @@
    ],
    "seconds": 116,
    "cure": 0,
-   "start": 28106,
-   "finish": 28222,
+   "start": 29360,
+   "finish": 29476,
    "anim": [
     {
      "parts": [
@@ -1017,8 +1017,8 @@
    ],
    "seconds": 159,
    "cure": 0,
-   "start": 28222,
-   "finish": 28381,
+   "start": 29476,
+   "finish": 29635,
    "anim": [
     {
      "parts": [
@@ -1094,8 +1094,8 @@
    ],
    "seconds": 83,
    "cure": 0,
-   "start": 16454,
-   "finish": 16537,
+   "start": 17642,
+   "finish": 17725,
    "anim": [
     {
      "parts": [
@@ -1201,8 +1201,8 @@
    ],
    "seconds": 159,
    "cure": 0,
-   "start": 16537,
-   "finish": 16696,
+   "start": 17725,
+   "finish": 17884,
    "anim": [
     {
      "parts": [
@@ -1274,8 +1274,8 @@
    ],
    "seconds": 170,
    "cure": 900,
-   "start": 28381,
-   "finish": 28550,
+   "start": 29635,
+   "finish": 29804,
    "anim": [
     {
      "parts": [
@@ -1332,8 +1332,8 @@
    "consumables": [],
    "seconds": 74,
    "cure": 0,
-   "start": 29450,
-   "finish": 29524,
+   "start": 30704,
+   "finish": 30778,
    "anim": [
     {
      "parts": [
@@ -1420,8 +1420,8 @@
    "consumables": [],
    "seconds": 62,
    "cure": 0,
-   "start": 29524,
-   "finish": 29586,
+   "start": 30778,
+   "finish": 30840,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1453,8 +1453,8 @@
    "consumables": [],
    "seconds": 44,
    "cure": 0,
-   "start": 29586,
-   "finish": 29630,
+   "start": 30840,
+   "finish": 30884,
    "anim": [
     {
      "parts": [
@@ -1546,8 +1546,8 @@
    "consumables": [],
    "seconds": 1920,
    "cure": 0,
-   "start": 29630,
-   "finish": 31550,
+   "start": 30884,
+   "finish": 32804,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1574,8 +1574,8 @@
    "consumables": [],
    "seconds": 480,
    "cure": 0,
-   "start": 31550,
-   "finish": 32030,
+   "start": 32804,
+   "finish": 33284,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1669,9 +1669,9 @@
    "item": "esc",
    "qty": 1,
    "handling": "H10",
-   "insertion": "I06",
-   "t_each": 7.0,
-   "t_total": 7.0,
+   "insertion": "I01",
+   "t_each": 4.0,
+   "t_total": 4.0,
    "n_min": 0,
    "why": "could be integrated in the FC"
   },
@@ -2120,27 +2120,27 @@
   {
    "name": "wing_centre",
    "material": "LW-PLA",
-   "bed": "90 x 24 x 100",
-   "minutes": 93.6,
-   "grams": 13.35,
-   "cost": 0.73,
-   "overhang_mm2": 1536,
+   "bed": "93 x 24 x 115",
+   "minutes": 105.8,
+   "grams": 15.37,
+   "cost": 0.85,
+   "overhang_mm2": 1543,
    "support": "bridge 16 mm",
-   "bed_contact_mm2": 753,
-   "slender": 4.1,
+   "bed_contact_mm2": 802,
+   "slender": 4.7,
    "notes": []
   },
   {
    "name": "wing_R",
    "material": "LW-PLA",
-   "bed": "90 x 12 x 175",
-   "minutes": 86.2,
-   "grams": 9.09,
-   "cost": 0.5,
-   "overhang_mm2": 365,
+   "bed": "93 x 12 x 175",
+   "minutes": 86.8,
+   "grams": 9.4,
+   "cost": 0.52,
+   "overhang_mm2": 383,
    "support": "none",
-   "bed_contact_mm2": 674,
-   "slender": 15.2,
+   "bed_contact_mm2": 721,
+   "slender": 14.7,
    "notes": [
     "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
    ]
@@ -2148,14 +2148,14 @@
   {
    "name": "wing_L",
    "material": "LW-PLA",
-   "bed": "90 x 12 x 175",
-   "minutes": 86.3,
-   "grams": 9.1,
-   "cost": 0.5,
-   "overhang_mm2": 365,
+   "bed": "93 x 12 x 175",
+   "minutes": 86.8,
+   "grams": 9.39,
+   "cost": 0.52,
+   "overhang_mm2": 383,
    "support": "none",
-   "bed_contact_mm2": 674,
-   "slender": 15.2,
+   "bed_contact_mm2": 721,
+   "slender": 14.7,
    "notes": [
     "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
    ]
@@ -2163,121 +2163,121 @@
   {
    "name": "aileron_R",
    "material": "LW-PLA",
-   "bed": "22 x 158 x 6",
-   "minutes": 16.6,
-   "grams": 2.48,
+   "bed": "23 x 158 x 6",
+   "minutes": 16.9,
+   "grams": 2.56,
    "cost": 0.14,
-   "overhang_mm2": 13,
+   "overhang_mm2": 12,
    "support": "none",
-   "bed_contact_mm2": 102,
+   "bed_contact_mm2": 115,
    "slender": 0.3,
    "notes": [
-    "small bed contact (102 mm^2); use a brim or glue stick"
+    "small bed contact (115 mm^2); use a brim or glue stick"
    ]
   },
   {
    "name": "aileron_L",
    "material": "LW-PLA",
-   "bed": "22 x 158 x 6",
-   "minutes": 16.6,
-   "grams": 2.48,
+   "bed": "23 x 158 x 6",
+   "minutes": 16.9,
+   "grams": 2.56,
    "cost": 0.14,
-   "overhang_mm2": 13,
+   "overhang_mm2": 12,
    "support": "none",
-   "bed_contact_mm2": 102,
+   "bed_contact_mm2": 115,
    "slender": 0.3,
    "notes": [
-    "small bed contact (102 mm^2); use a brim or glue stick"
+    "small bed contact (115 mm^2); use a brim or glue stick"
    ]
   },
   {
    "name": "tail_mount",
    "material": "PLA/PETG",
-   "bed": "27 x 49 x 9",
-   "minutes": 10.7,
-   "grams": 3.97,
+   "bed": "29 x 49 x 9",
+   "minutes": 11.1,
+   "grams": 4.21,
    "cost": 0.08,
-   "overhang_mm2": 238,
+   "overhang_mm2": 254,
    "support": "none",
-   "bed_contact_mm2": 1237,
+   "bed_contact_mm2": 1324,
    "slender": 0.3,
    "notes": []
   },
   {
    "name": "stab",
    "material": "LW-PLA",
-   "bed": "26 x 174 x 2",
-   "minutes": 23.7,
-   "grams": 3.48,
-   "cost": 0.19,
+   "bed": "28 x 174 x 2",
+   "minutes": 25.2,
+   "grams": 3.71,
+   "cost": 0.2,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 4469,
+   "bed_contact_mm2": 4781,
    "slender": 0.1,
    "notes": []
   },
   {
    "name": "elevator",
    "material": "LW-PLA",
-   "bed": "14 x 163 x 8",
-   "minutes": 13.5,
-   "grams": 1.78,
+   "bed": "15 x 163 x 8",
+   "minutes": 14.3,
+   "grams": 1.9,
    "cost": 0.1,
-   "overhang_mm2": 2,
+   "overhang_mm2": 1,
    "support": "none",
-   "bed_contact_mm2": 2327,
-   "slender": 0.6,
+   "bed_contact_mm2": 2492,
+   "slender": 0.5,
    "notes": []
   },
   {
    "name": "fin_R",
    "material": "LW-PLA",
-   "bed": "26 x 39 x 9",
-   "minutes": 8.6,
-   "grams": 1.06,
+   "bed": "28 x 39 x 9",
+   "minutes": 9.0,
+   "grams": 1.14,
    "cost": 0.06,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 990,
+   "bed_contact_mm2": 1060,
    "slender": 0.3,
    "notes": []
   },
   {
    "name": "fin_L",
    "material": "LW-PLA",
-   "bed": "26 x 39 x 9",
-   "minutes": 8.6,
-   "grams": 1.06,
+   "bed": "28 x 39 x 9",
+   "minutes": 9.0,
+   "grams": 1.14,
    "cost": 0.06,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 990,
+   "bed_contact_mm2": 1060,
    "slender": 0.3,
    "notes": []
   },
   {
    "name": "rudder_R",
    "material": "PLA/PETG",
-   "bed": "15 x 44 x 6",
-   "minutes": 3.5,
-   "grams": 1.02,
+   "bed": "16 x 44 x 6",
+   "minutes": 3.6,
+   "grams": 1.08,
    "cost": 0.02,
    "overhang_mm2": 3,
    "support": "none",
-   "bed_contact_mm2": 630,
+   "bed_contact_mm2": 669,
    "slender": 0.4,
    "notes": []
   },
   {
    "name": "rudder_L",
    "material": "PLA/PETG",
-   "bed": "15 x 44 x 6",
-   "minutes": 3.5,
-   "grams": 1.02,
+   "bed": "16 x 44 x 6",
+   "minutes": 3.7,
+   "grams": 1.1,
    "cost": 0.02,
    "overhang_mm2": 3,
    "support": "none",
-   "bed_contact_mm2": 630,
+   "bed_contact_mm2": 669,
    "slender": 0.4,
    "notes": []
   },
@@ -2299,26 +2299,26 @@
   {
    "name": "lid",
    "material": "PLA/PETG",
-   "bed": "91 x 43 x 3",
-   "minutes": 8.9,
-   "grams": 4.36,
+   "bed": "96 x 43 x 3",
+   "minutes": 9.4,
+   "grams": 4.66,
    "cost": 0.09,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 3899,
+   "bed_contact_mm2": 4116,
    "slender": 0.1,
    "notes": []
   },
   {
    "name": "pod",
    "material": "PLA/PETG",
-   "bed": "169 x 49 x 40",
-   "minutes": 52.9,
-   "grams": 16.82,
-   "cost": 0.34,
+   "bed": "176 x 49 x 40",
+   "minutes": 55.6,
+   "grams": 17.48,
+   "cost": 0.35,
    "overhang_mm2": 702,
    "support": "none",
-   "bed_contact_mm2": 5383,
+   "bed_contact_mm2": 5613,
    "slender": 0.8,
    "notes": []
   }
@@ -2334,7 +2334,7 @@
    "title": "Use an FC with a built-in ELRS receiver",
    "parts": 1,
    "seconds": 147,
-   "trade": "fewer board choices in 20x20 wing FCs"
+   "trade": "few wing FCs have one (the Matek F405-WTE does, but it is 44 mm long and end-of-life)"
   },
   {
    "title": "Use a nano camera with an integrated VTX",

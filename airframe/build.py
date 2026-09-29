@@ -151,7 +151,12 @@ def make_pod(p: Params, L: Layout, batt_x: float):
     strip, plate = strip.val(), plate.val()
     nose = [cut(strip, *round_front), plate,
             cut(cyl_x(13, 0, 3.2, 0, p.motor_z), box(-1, 4, -14, 14, 0, 30))]   # motor boss
-    fc = [cyl_z(2.3, zf - 0.1, zf + 3, FC_X + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
+    hp = Kit().fc_holes / 2
+    fc = [cyl_z(2.0, zf - 0.1, zf + 3, L.fc_x + dx, dy) for dx in (-hp, hp) for dy in (-hp, hp)]
+    # ESC card stands crosswise between two ribs, behind the battery
+    ek = Kit()
+    esc_ribs = [box(x0, x0 + 1.0, -9.0, 9.0, zf - 0.1, zf + 6.0)
+                for x0 in (L.esc_bay_x, L.esc_x + ek.esc_thk + 0.3)]
     # elevator SG90 lies on its side behind the battery: two ribs locate the body,
     # stopping short of the mounting tabs
     sv = Kit().servo
@@ -159,10 +164,10 @@ def make_pod(p: Params, L: Layout, batt_x: float):
                 L.elev_servo_x + sx * (sv.length / 2 + 0.2) + (1.2 if sx > 0 else 0),
                 -(hw - w) - 0.1, L.elev_servo_base_y + sv.tab_z - 0.5, zf - 0.1, zf + 4)
             for sx in (-1, 1)]
-    pod = fuse(pod, *sleeves, *nose, *fc, *ribs)
+    pod = fuse(pod, *sleeves, *nose, *fc, *ribs, *esc_ribs)
 
     holes = [cyl_x(rh, L.tube_x0, Lp + 1, s * ty, 0) for s in (-1, 1)]
-    holes += [cyl_z(0.85, zf, zf + 4, FC_X + dx, dy) for dx in (-10, 10) for dy in (-10, 10)]
+    holes += [cyl_z(0.85, zf, zf + 4, L.fc_x + dx, dy) for dx in (-hp, hp) for dy in (-hp, hp)]
     holes.append(box(Lp - 3, Lp + 1, L.pushrod_y - 2, L.pushrod_y + 2,
                      L.pushrod_z - 2.5, 1))                    # pushrod over the rear wall
     if p.rudders:
@@ -192,7 +197,7 @@ def make_lid(p: Params, L: Layout):
     lips = [box(x0 + 2, x1 - 2, s * y_lip - (0.8 if s > 0 else 0), s * y_lip + (0.8 if s < 0 else 0),
                 z0 - 2.5, z0 + 0.1) for s in (-1, 1)]
     lid = fuse(plate, *lips)
-    return cut(lid, cyl_z(1.8, z0 - 3, z0 + 2, x0 + 8, -9))   # VTX antenna
+    return cut(lid, cyl_z(1.0, z0 - 3, z0 + 2, L.ant_x, L.ant_y))   # VTX antenna coax
 
 
 def make_wing_centre(p: Params, L: Layout, sec: Section):
@@ -393,10 +398,16 @@ def make_rudder(p: Params, L: Layout):
 # --------------------------------------------------------------------------
 # Bought parts in flight position (for the STEP, the viewer and the CG)
 
-FC_X = 33.0                     # flight controller centre
 ELEV_HORN_LEN = 13.5            # elevator servo horn trimmed to clear the wing centre
 RUDDER_HORN_LEN = 11.0          # rudder servo horn trimmed to clear the elevator servo
 BLACK, WHITE = (0.08, 0.08, 0.09), (0.93, 0.93, 0.92)
+GOLD, SILVER = (0.85, 0.68, 0.25), (0.66, 0.68, 0.72)
+
+
+def stand(shape):
+    """Turn a card modelled flat (x long, y wide, z thick) so it stands across
+    the pod: x -> y, y -> z, z -> x (a 120 degree turn about the (1, 1, 1) axis)."""
+    return shape.rotate(V(0, 0, 0), V(1, 1, 1), 120)
 
 
 class Ref:
@@ -430,30 +441,40 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
 
     # propulsion
     add("motor", {n: s.translate(V(0, 0, p.motor_z)) for n, s in parts_lib.motor_1404().items()},
-        {"": (0.62, 0.64, 0.68), "shaft": (0.25, 0.25, 0.28)}, k.motor, "electronics")
+        {"": (0.62, 0.64, 0.68), "base": (0.14, 0.14, 0.16), "coil": (0.72, 0.42, 0.18),
+         "shaft": (0.78, 0.79, 0.81), "nut": (0.18, 0.18, 0.20)}, k.motor, "electronics")
     add("prop", {n: s.translate(V(-14.8, 0, p.motor_z)) for n, s in parts_lib.prop_4x25().items()},
         {"": (0.10, 0.42, 0.85)}, k.prop, "electronics")
 
-    # pod contents
+    # pod contents. Cards that stand across the pod are modelled flat and turned
+    # with stand(): local x -> y, y -> z, thickness z -> x.
     add("camera", {n: s.translate(V(3.0, 0, -9.0)) for n, s in parts_lib.nano_camera().items()},
-        {"": (0.10, 0.10, 0.11), "lens": (0.20, 0.35, 0.55)}, k.cam_vtx * 0.55, "electronics")
-    vtx = box(15.6, 18.6, -10, 10, zf + 0.4, zf + 19.4)
-    out.append(Ref("vtx", vtx, (0.12, 0.40, 0.25), k.cam_vtx * 0.45, "electronics"))
-    ant_x, ant_y = p.sleeve_len + 0.3 + 8, -9
-    add("antenna", {n: s.translate(V(ant_x, ant_y, -4.0)) for n, s in parts_lib.whip_antenna(38).items()},
-        {"": BLACK}, k.antenna, "electronics")
-    add("fc", {n: s.translate(V(FC_X, 0, zf + 3)) for n, s in parts_lib.flight_controller().items()},
-        {"": (0.10, 0.12, 0.14), "chips": (0.55, 0.58, 0.62)}, k.fc, "electronics")
-    out.append(Ref("receiver", box(37, 47, 16.2, 19.2, zf + 4, zf + 14), (0.22, 0.22, 0.25),
-                   k.rx, "electronics"))
-    out.append(Ref("esc", box(22, 42, -18.8, -14.8, zf + 3, zf + 13), (0.45, 0.25, 0.65),
-                   k.esc, "electronics"))
+        {"": (0.10, 0.10, 0.11), "lens": (0.20, 0.35, 0.55), "pcb": (0.05, 0.28, 0.18), "pads": GOLD},
+        k.cam_vtx * 0.55, "electronics")
+    add("vtx", {n: stand(s).translate(V(L.vtx_x, 0, zf + 0.4 + 9.5)) for n, s in parts_lib.vtx_card().items()},
+        {"": (0.05, 0.30, 0.16), "chips": SILVER, "pads": GOLD, "conn": GOLD}, k.cam_vtx * 0.45, "electronics")
+    add("antenna", {n: s.translate(V(L.ant_x, L.ant_y, L.ant_z)) for n, s in parts_lib.whip_antenna(38).items()},
+        {"": BLACK, "conn": GOLD}, k.antenna, "electronics")
+    fc_at = V(L.fc_x, 0, zf + 3)
+    add("fc", {n: s.translate(fc_at) for n, s in parts_lib.flight_controller(k).items()},
+        {"": (0.08, 0.09, 0.11), "chips": (0.18, 0.19, 0.22), "metal": SILVER, "jst": WHITE, "pads": GOLD},
+        k.fc, "electronics")
+    out.append(Ref("fc_keepout", parts_lib.fc_keepout(k).translate(fc_at), BLACK, 0.0, "keepout"))
+    add("receiver", {n: s.rotate(V(0, 0, 0), V(1, 0, 0), 90).translate(V(42.0, 19.2, zf + 9.0))
+                     for n, s in parts_lib.receiver_nano().items()},
+        {"": (0.07, 0.10, 0.20), "chips": (0.18, 0.19, 0.22), "pads": GOLD}, k.rx, "electronics")
+    # motor tabs face the left wall, where the motor wires arrive; battery wires face right
+    add("esc", {n: stand(s.rotate(V(0, 0, 0), V(0, 0, 1), 180)).translate(V(L.esc_x, 0, zf + 0.2 + k.esc_wid / 2))
+                for n, s in parts_lib.esc_xrotor30(k).items()},
+        {"": (0.09, 0.09, 0.10), "chips": (0.18, 0.19, 0.22), "conn": (0.10, 0.14, 0.32), "pads": GOLD,
+         "wires": (0.75, 0.15, 0.12)}, k.esc, "electronics")
     add("battery", {n: s.translate(V(batt_x, 0, zf + k.batt_h / 2 + 0.1))
                     for n, s in parts_lib.battery_2s(k.batt_len, k.batt_w, k.batt_h).items()},
-        {"": (0.88, 0.74, 0.16), "leads": (0.75, 0.20, 0.15)}, k.battery, "electronics")
+        {"": (0.17, 0.28, 0.60), "leads": (0.75, 0.16, 0.12), "xt30": (0.96, 0.80, 0.10),
+         "jst": (0.92, 0.92, 0.90)}, k.battery, "electronics")
 
     # servos
-    servo_colours = {"": (0.16, 0.38, 0.85), "horn": WHITE}
+    servo_colours = {"": (0.16, 0.38, 0.85), "horn": WHITE, "wires": (0.55, 0.25, 0.10)}
     el_origin = (L.elev_servo_x, L.elev_servo_base_y, zf + sv.width / 2)
     trimmed = parts_lib.sg90(sv, -90, horn_len=ELEV_HORN_LEN)
     add("servo_elev", {n: shaft_along_y(s, el_origin) for n, s in trimmed.items()},
@@ -468,7 +489,7 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
         rs = rudder_servo(p, L, sec, k)
         servo = parts_lib.sg90(sv, rs["horn_deg"], horn_len=rs["horn_len"])
         add("servo_rud", {n: shaft_along_y(s, rs["origin"]).mirror("XZ") for n, s in servo.items()},
-            {"": (0.16, 0.38, 0.85), "horn": WHITE}, sv.mass, "electronics")
+            servo_colours, sv.mass, "electronics")
         lx, ly, lz = rs["link"]
         start = (lx, -ly, lz)
         crank_in = (L.bellcrank_x, L.rudder_pushrod_y, L.joiner_z)
@@ -652,7 +673,7 @@ def export_all(p, k, L, parts, refs, out: Path):
                             tolerance=0.03, angularTolerance=0.15)
 
     bodies = [(n, s, PRINT[n][3], "printed") for n, s in parts.items()]
-    bodies += [(r.name, r.shape, r.colour, r.group) for r in refs]
+    bodies += [(r.name, r.shape, r.colour, r.group) for r in refs if r.group != "keepout"]
     assy = cq.Assembly(name=f"kipina_{p.span:.0f}")
     groups = {g: cq.Assembly(name=g) for g in ("printed", "hardware", "electronics")}
     for name, shape, colour, group in bodies:
@@ -742,6 +763,24 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
     ]
     for name, g, x, _ in sorted(items, key=lambda i: i[2]):
         lines.append(f"| {name} | {g:.1f} | {x:.0f} |")
+    sv = k.servo
+    lines += ["", "## Bought electronics", "",
+              "Outer sizes are from datasheets or retailer listings; the detail inside them "
+              "(chips, connectors, wire lengths) is representative.", "",
+              "| part | model | size, mm | g |", "|---|---|---|---|",
+              f"| Servos, 4 | Tower Pro SG90 | {sv.length} x {sv.width} x {sv.height} body, "
+              f"{sv.tab_span} over the tabs | {4 * sv.mass:.0f} |",
+              f"| Motor | 1404, {k.motor_kv:.0f} KV | 18 dia x 12.2 long (bell) | {k.motor:.0f} |",
+              f"| Prop | {k.prop_d_in:.0f} x {k.prop_pitch_in} two-blade | 101.6 dia | {k.prop:.0f} |",
+              f"| ESC | {k.esc_name} (BLHeli_S, 2-4S, 30 A, no BEC) | "
+              f"{k.esc_len} x {k.esc_wid} x {k.esc_thk} | {k.esc:.1f} |",
+              f"| Flight controller | {k.fc_name} (INAV / ArduPilot, 2-6S, 12 outputs, 5 A servo BEC) | "
+              f"{k.fc_len:.0f} x {k.fc_wid:.0f} x {k.fc_hgt}, {k.fc_holes:.0f} mm hole pattern | {k.fc:.0f} |",
+              f"| Receiver | ELRS 2.4 GHz nano | 10 x 10 x 3 | {k.rx} |",
+              f"| Camera + VTX | 14 mm nano camera, 5.8 GHz AIO VTX | 14 x 14 x 12 ; 20 x 19 x 3 | {k.cam_vtx:.0f} |",
+              f"| Antenna | 5.8 GHz whip | 38 long | {k.antenna} |",
+              f"| Battery | 2S {k.batt_wh / 7.4 * 1000:.0f} mAh LiPo, XT30 | "
+              f"{k.batt_len:.0f} x {k.batt_w:.0f} x {k.batt_h:.0f} | {k.battery:.0f} |"]
     bed = " x ".join(f"{v:.0f}" for v in p.bed)
     lines += ["", "## Print list", "",
               f"Build volume checked: {bed} mm (Bambu Lab A1 mini).", "",
@@ -764,7 +803,7 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
     from dataclasses import replace
     from design import evaluate, smallest_span
     sweep = []
-    for b in range(300, 561, 20):
+    for b in sorted(set(range(300, 561, 20)) | {round(p.span)}):
         _, a, pf = evaluate(replace(p, span=float(b)), k)
         sweep.append({"span": b, "auw": round(a), "stall": round(pf["stall"], 2)})
     spec = {
@@ -783,7 +822,9 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
                                                   round(L.batt_max - k.batt_len / 2)],
         "tube": f"{p.tube_od:.0f}x{p.tube_id:.0f}", "tube_len": round(L.tube_len),
         "tube_spacing": p.tube_spacing, "b_h": L.b_h, "fin_h": L.fin_h,
-        "stall_limit": p.stall_limit, "min_span": smallest_span(p, k), "sweep": sweep,
+        "stall_limit": p.stall_limit, "min_span": smallest_span(p, k),
+        "no_rudder_span": smallest_span(replace(p, rudders=False), k), "sweep": sweep,
+        "fc": k.fc_name, "esc": k.esc_name,
         "bed": list(p.bed), "centre_w": p.centre_w,
         "parts": print_list,
         "mass": [{"name": n, "g": round(g, 1), "x": round(x)} for n, g, x, _ in items],
@@ -806,9 +847,9 @@ LINKS = {frozenset(pair) for pair in (
 
 def component(name):
     """servo_ail_R_horn -> servo_ail_R: sub-bodies of one bought part."""
-    for suffix in ("_horn", "_shaft", "_lens", "_chips", "_leads"):
-        if name.endswith(suffix) and not name.startswith("horn_"):
-            return name[: -len(suffix)]
+    head, _, tail = name.rpartition("_")
+    if head and tail in parts_lib.SUFFIXES and not name.startswith("horn_"):
+        return head
     return name
 
 

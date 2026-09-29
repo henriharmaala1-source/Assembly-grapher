@@ -1,6 +1,6 @@
-# Kipinä 450: twin-tube micro FPV plane
+# Kipinä 465: twin-tube micro FPV plane
 
-![Kipinä 450](preview/hero.png)
+![Kipinä 465](preview/hero.png)
 
 A 3D-printed fixed wing with a Molniya-style layout. Two plain round tubes are
 the whole fuselage structure: they run from the motor to the tail and carry the
@@ -10,21 +10,22 @@ battery and the FPV electronics.
 
 Four **SG90** servos give full three-axis control: one per aileron, one for the
 elevator and one for the twin rudders. The brief was "as small as possible",
-so the size comes from a sweep, not a guess. See [Why 450 mm](#why-450-mm).
+so the size comes from a sweep, not a guess. See [Why 465 mm](#why-465-mm).
 
 | | |
 |---|---|
-| Wingspan | 450 mm, chord 90 mm, NACA 4412 at 2° incidence |
-| Length | 431 mm (prop to elevator trailing edge) |
-| Main struts | 2 × carbon tube 6×5 mm, 390 mm long, 40 mm apart |
+| Wingspan | 465 mm, chord 93 mm, NACA 4412 at 2° incidence |
+| Length | 447 mm (prop to elevator trailing edge) |
+| Main struts | 2 × carbon tube 6×5 mm, 405 mm long, 40 mm apart |
 | Controls | ailerons, elevator, twin rudders: 4 × SG90 |
-| All-up weight | ~193 g (printed parts ~74 g) |
+| Flight controller, ESC | Matek F405-WMN (12 outputs, 2–6S), Hobbywing XRotor Micro 30A (2–4S) |
+| All-up weight | ~206 g (printed parts ~78 g) |
 | Wing loading | 48 g/dm² |
 | Stall / cruise | ~9.0 / ~13 m/s |
 | Top speed | ~19 m/s (68 km/h) level, estimated; prop pitch speed 86 km/h |
-| Endurance | ~12 min on 2S 450 mAh (rough estimate) |
-| CG | 130.9 mm behind the motor face = 25.2 mm behind the wing LE (28 % chord) |
-| Static margin | ~15 % (neutral point at ~43 % chord) |
+| Endurance | ~11 min on 2S 450 mAh (rough estimate) |
+| CG | 136.6 mm behind the motor face = 26.0 mm behind the wing LE (28 % chord) |
+| Static margin | ~14 % (neutral point at ~42 % chord) |
 | Printer | every part fits a Bambu Lab A1 mini (180 × 180 × 180 mm) |
 
 All numbers are first-order estimates from `design.py` and the CAD volumes.
@@ -39,6 +40,10 @@ regenerated on every build.
 | Rudder linkage, from below | Rounded nose |
 |---|---|
 | ![Tail](preview/tail.png) | ![Nose](preview/nose.png) |
+
+| Front bay: camera, VTX, F405-WMN, receiver | ESC cradle behind the battery |
+|---|---|
+| ![Bay](preview/bay.png) | ![ESC](preview/esc.png) |
 
 ### Rounded nose
 
@@ -70,24 +75,26 @@ Set `nose_r = 0` to get the old square front back.
 
   Each has its predecessors, tools, consumables and a time.
 - **Print times are real slicer output.** They come from PrusaSlicer 2.7 on an
-  A1-mini-like profile (`tools/a1mini.ini`): 7 h 22 min in total and
-  72 g of filament. The wing panels take about 1 h 26 min
+  A1-mini-like profile (`tools/a1mini.ini`): 7 h 45 min in total and
+  76 g of filament. The wing panels take about 1 h 27 min
   each, because LW-PLA prints slowly.
 - **Hand times are estimates.** They use Boothroyd–Dewhurst handling and
   insertion values plus shop times for gluing, soldering, taping and bending.
-  Hands-on time is 1 h 38 min, including 30 min of INAV setup.
+  Hands-on time is 1 h 47 min, including 30 min of INAV setup. Soldering is
+  the biggest single item: the F405-WMN's servo, ESC and power connections are
+  pads, so a full wiring pass is about 32 joints.
 - **Schedule.** One builder works while one printer runs. That gives a lead
-  time of **8 h 51 min**, and the critical path runs through the five
+  time of **9 h 15 min**, and the critical path runs through the five
   prints in series.
 
 | DFMA | |
 |---|---|
 | Parts and fasteners | 53 (theoretical minimum 26) |
-| Manual assembly time | 33 min (7 min handling and insertion) |
-| Design efficiency | 4% (19% counting handling and insertion only) |
-| With the redesign suggestions | 45 parts, 23 min, 6% |
+| Manual assembly time | 41 min (7 min handling and insertion) |
+| Design efficiency | 3% (20% counting handling and insertion only) |
+| With the redesign suggestions | 45 parts, 31 min, 4% |
 | Printability | no part needs support; the only wide overhang is a 16 mm bridge over the rudder servo pocket |
-| Cost | about 147 EUR per airframe; the whole printed airframe is only 72 g of filament (about 3 EUR), but a first build also buys an LW-PLA and a PETG spool (about 65 EUR), so about 210 EUR up front |
+| Cost | about 166 EUR per airframe; the whole printed airframe is only 76 g of filament (about 3 EUR), but a first build also buys an LW-PLA and a PETG spool (about 65 EUR), so about 231 EUR up front |
 
 Most of the assembly time goes into joints (solder, epoxy, CA, tape), not into
 handling parts. The suggestions that save the most are:
@@ -99,7 +106,7 @@ handling parts. The suggestions that save the most are:
 
 DFMA.md lists each one with its trade-off.
 
-## Why 450 mm
+## Why 465 mm
 
 A printed plane does not scale down evenly. The electronics weigh the same at
 any size, and a printed skin can't get thinner than one nozzle line. So as the
@@ -113,25 +120,34 @@ battery station) and estimates the weight. A span passes when:
 - an SG90's 32.3 mm mounting tabs fit between the two wing spars. That needs a
   chord of at least about 80 mm.
 
-| span | AUW (estimate) | stall |
+| span | AUW | stall |
 |---|---|---|
-| 300 mm | 156 g | 12.1 m/s |
-| 380 mm | 171 g | 10.0 m/s |
-| 420 mm | 179 g | 9.3 m/s |
-| **440 mm** | **185 g** | **9.0 m/s (first to pass)** |
-| **450 mm** | **193 g (CAD)** | **8.96 m/s (built)** |
-| 460 mm | 192 g | 8.7 m/s |
+| 300 mm | 165 g | 12.4 m/s |
+| 380 mm | 179 g | 10.2 m/s |
+| 420 mm | 188 g | 9.5 m/s |
+| 440 mm | 194 g | 9.2 m/s |
+| **460 mm** | **200 g** (estimate) | **8.9 m/s (first to pass the quick estimate)** |
+| 460 mm | 204 g (CAD) | 9.01 m/s (just over) |
+| **465 mm** | **206 g (CAD)** | **8.95 m/s (built)** |
 
-The quick estimate is a few grams light, so the build rounds up by 10 mm. The
-CAD weights confirm that 450 mm passes, and 440 mm fails at 9.08 m/s.
+The quick estimate is a few grams light. The CAD weights, which include the
+printed detail, the ESC cradle and the wiring, put 460 mm just over the limit,
+so the build takes the smallest 5 mm step that passes.
+
+The F405-WMN and the XRotor 30A weigh 6.5 g more than the 12 A ESC and small
+20 × 20 FC the design started with (10 + 6 g against 6 + 3.5 g), and their
+longer wire runs add about 1 g. Together with the bigger wing and pod they
+moved the answer from 450 mm to 465 mm. The four SG90s are the heaviest part of
+the kit after the battery; a 4 g servo such as the Emax ES9051 would bring the
+span back down, but it needs new pockets.
 
 Yaw control costs about 11 g: a fourth SG90, two printed rudders and the
-linkage. Without rudders (`Params.rudders = False`) the sweep lands at 420 mm.
+linkage. Without rudders (`Params.rudders = False`) the sweep lands at 440 mm.
 Change `Kit` and `Params` in `design.py` and rerun to try other parts.
 
 ## Yaw control
 
-Each fin carries a rudder aft of the elevator hinge line. The rudders are 14.6 mm
+Each fin carries a rudder aft of the elevator hinge line. The rudders are 15.6 mm
 chord by 39 mm tall, about a third of the fin area, and are hinged with tape on
 the outboard face.
 
@@ -154,21 +170,21 @@ the outboard face.
 
 | file | material | on the bed, mm | orientation |
 |---|---|---|---|
-| `pod.stl` | PLA/PETG | 168 × 49 × 40 | Upright, open top up. 2 walls, 15 % infill |
-| `lid.stl` | PLA/PETG | 90 × 43 × 3 | Flat, lips up |
-| `wing_centre.stl` | LW-PLA | 90 × 24 × 100 | On its side. 0.5 mm walls, 5 % infill |
-| `wing_R.stl`, `wing_L.stl` | LW-PLA | 90 × 12 × 175 | Standing on the root rib, brim. 1 wall, 0 % infill |
-| `aileron_R.stl`, `aileron_L.stl` | LW-PLA | 22 × 158 × 6 | Flat. 1 wall, 0 % infill |
-| `tail_mount.stl` | PLA/PETG | 27 × 49 × 9 | Plate face down |
-| `stab.stl` | LW-PLA | 26 × 174 × 2 | Flat. 2 top / 2 bottom layers, 15 % infill |
-| `elevator.stl` | LW-PLA | 14 × 163 × 8 | Top face down, horn up |
-| `fin_R.stl`, `fin_L.stl` | LW-PLA | 26 × 39 × 9 | Outer face down |
-| `rudder_R.stl`, `rudder_L.stl` | PLA/PETG | 15 × 44 × 6 | Outer face down, wire flange up |
+| `pod.stl` | PLA/PETG | 176 × 49 × 40 | Upright, open top up. 2 walls, 15 % infill |
+| `lid.stl` | PLA/PETG | 96 × 43 × 3 | Flat, lips up |
+| `wing_centre.stl` | LW-PLA | 93 × 24 × 115 | On its side. 0.5 mm walls, 5 % infill |
+| `wing_R.stl`, `wing_L.stl` | LW-PLA | 93 × 12 × 175 | Standing on the root rib, brim. 1 wall, 0 % infill |
+| `aileron_R.stl`, `aileron_L.stl` | LW-PLA | 23 × 158 × 6 | Flat. 1 wall, 0 % infill |
+| `tail_mount.stl` | PLA/PETG | 29 × 49 × 9 | Plate face down |
+| `stab.stl` | LW-PLA | 28 × 174 × 2 | Flat. 2 top / 2 bottom layers, 15 % infill |
+| `elevator.stl` | LW-PLA | 15 × 163 × 8 | Top face down, horn up |
+| `fin_R.stl`, `fin_L.stl` | LW-PLA | 28 × 39 × 9 | Outer face down |
+| `rudder_R.stl`, `rudder_L.stl` | PLA/PETG | 16 × 44 × 6 | Outer face down, wire flange up |
 | `bellcrank.stl` | PLA/PETG | 16 × 19 × 2 | Flat, solid |
 
 Every wing piece is a printed NACA 4412 section: a closed one-wall LW-PLA shell
 with the spar holes, servo pocket and hinge gap built in. The wing centre and both
-panels plus the ailerons come to 36 g of filament.
+panels plus the ailerons come to 42 g of filament.
 
 ![Wing sections cut from the STLs](preview/wing_sections.png)
 
@@ -204,7 +220,7 @@ Plates 1, 2 and 3 mix different wall and infill settings, so set them per
 object in Bambu Studio.
 
 - **Tall wing panels.** The A1 mini moves its bed front to back, which shakes
-  tall, thin parts. Turn each panel so its 90 mm chord runs front to back, add
+  tall, thin parts. Turn each panel so its 93 mm chord runs front to back, add
   an 8–10 mm brim, and print at reduced speed (Silent mode).
 - **LW-PLA** is not a Bambu filament, so make a custom filament profile. A
   starting point: about 240 °C with the flow at 55–60 %, little or no
@@ -222,35 +238,78 @@ dimensions, so check sizes before substituting parts.
 | part | spec | requirements | g |
 |---|---|---|---|
 | Servos | 4 × Tower Pro SG90: 4.8–6 V, ~1.8 kg·cm, 0.1 s/60° | 22.8 × 12.2 × 22.7 mm body, 32.3 mm across the tabs | 36 |
-| Motor | 1404 outrunner, 3000–3800 KV | Rated for 2S; ≥ 193 g static thrust on a 4" prop (1:1). 9×9, 12 or 16 mm mounting | 9 |
+| Motor | 1404 outrunner, 3000–3800 KV | Rated for 2S; ≥ 206 g static thrust on a 4" prop (1:1). 9×9, 12 or 16 mm mounting | 9 |
 | Prop | 4" two-blade, 2.4–2.5" pitch (Gemfan 4024 class) | Hub to match the motor shaft | 2 |
-| ESC | 12 A single, BLHeli_S or AM32, 2S | About 20 × 10 × 4 mm; full-throttle draw is about 7.5 A | 3.5 |
-| Flight controller | INAV-supported wing FC, 20×20 M2 mounting | Board ≤ 27 × 27 mm; ≥ 5 outputs (motor + 4 servos); analog OSD (AT7456E); 2S input; 5 V BEC ≥ 3 A for the servos (or add a separate UBEC); UART for the receiver | 6 |
+| ESC | **Hobbywing XRotor Micro 30A**: BLHeli_S, 2–4S, 30 A continuous / 40 A burst, no BEC | 23.8 × 14.5 × 5.8 mm, 20 AWG input wires, solder tabs for the motor. Full-throttle draw is about 8 A, so it runs at about a quarter of its rating | 6 |
+| Flight controller | **Matek F405-WMN**, INAV or ArduPilot | 31 × 26 mm on four 2 mm holes, 22 × 22 mm pattern; the vendor quotes 16.5 mm height, which the pod reserves. 2–6S input, 12 outputs, 5 A servo BEC (5 or 6 V), 1.5 A logic BEC, 132 A current sensor, analog OSD, 5 UARTs, barometer, USB-C. Battery, servo and ESC connections are pads on the underside | 10 |
 | Receiver | ExpressLRS 2.4 GHz nano | CRSF to an FC UART | 1.5 |
 | Camera | analog nano, 14 mm (Caddx Ant / RunCam Nano class) | 14 × 14 mm body, ≤ 12 mm deep | 3.3 |
-| VTX | 5.8 GHz analog, 25–200 mW | ≤ 20 × 20 mm, 2S or 5 V input; whip antenna through the lid | 4.2 |
+| VTX | 5.8 GHz analog, 25–200 mW | ≤ 20 × 19 × 3 mm, MMCX antenna socket; the F405-WMN has no 9 V supply, so it runs from the switched battery output (2S) or the 5 V BEC. Whip antenna coax through the lid | 4.2 |
 | Battery | 2S 450 mAh LiPo, ≥ 30C, XT30 | ≤ 58 × 31 × 13 mm | 27 |
 
 Some electrical numbers from the model (`design.py`), all first-order:
 
-- **Cruise:** about 1.9 A (14 W), which gives about 12 minutes on the 450 mAh
+- **Cruise:** about 2.0 A (15 W), which gives about 11 minutes on the 450 mAh
   pack with 20 % held in reserve.
-- **Full throttle:** about 7.5 A at 1:1 thrust. That is about 17C from the pack
-  and under two thirds of the ESC's rating.
+- **Full throttle:** about 8 A at 1:1 thrust. That is about 18C from the pack
+  and a quarter of the ESC's 30 A rating.
 - **Servo supply:** four SG90s can together draw well over an amp when they
-  stall or buzz. Size the 5 V supply for at least 3 A.
+  stall or buzz. The F405-WMN's 5 A servo supply covers that; leave it at 5 V.
 
 GPS is not included. An M10 module adds about 5 g, which raises the stall
 speed by about 0.1 m/s, just past the sizing limit. That is fine once you know
-the plane; otherwise build the wing at 460 mm.
+the plane; otherwise build the wing at 475 mm.
+
+### Electronics that carry over to a bigger wing
+
+The F405-WMN and the XRotor Micro 30A were picked so the same boards can move
+to a larger plane later:
+
+| | in this plane | in a bigger wing |
+|---|---|---|
+| Flight controller | motor + 4 servos, 2S | 12 outputs, 2–6S input, 5 A servo supply: room for 5 or 6 small servos, or 3 or 4 larger ones, plus GPS and a compass on the spare UARTs |
+| ESC | about 8 A on 2S | 30 A continuous on 2–4S: fine for a motor that draws up to about 25 A |
+| Limit | | The ESC stops at 4S. A 6S plane needs a bigger ESC, and the FC can stay |
+
+### How detailed the bought-part models are
+
+`components.py` builds every bought part as a recognisable solid, in its own
+colour group so the viewer and the STEP file can show and move them
+separately. The outer sizes come from datasheets or retailer listings. The
+detail inside those envelopes is representative, not a copy of a drawing.
+
+- **SG90:** case seams, a label recess, rounded mounting tabs with keyhole
+  slots, a lead grommet with three wires, and a horn with a rounded tip and a
+  centre screw.
+- **Motor 1404:** a black base with the 9 × 9 mm screw holes, a copper 12-tooth
+  stator visible in the gap, a chamfered bell with six vent slots and two
+  grooves, the shaft and a hex prop nut.
+- **Prop 4 × 2.5:** twisted, cambered blades lofted through ten stations. The
+  pitch angle follows the local radius and the roots are narrow, so the blades
+  clear the motor bell.
+- **Camera:** rounded housing, threaded lens barrel with a glass disc, and a
+  PCB with three pads.
+- **VTX:** a 20 × 19 mm card with a shield on each side, a row of pads and an
+  MMCX socket. The whip's gold plug clips on the socket and its coax passes
+  through a 2 mm hole in the lid.
+- **Matek F405-WMN:** the F405, IMU, barometer, OSD chip and flash, two BEC
+  inductors, two capacitors, a USB-C socket, the DFU button, a JST-SH port and
+  the pads on the underside. The vendor's 16.5 mm height is kept as a clearance
+  envelope for the interference check; the modelled parts are lower.
+- **XRotor Micro 30A:** MOSFETs on both sides, a low-profile capacitor lying
+  across the top, battery and motor pads and two short red and black input
+  wires. The card stands on edge between two printed ribs, with the motor tabs
+  facing the side where the motor wires arrive.
+- **Battery:** a label recess, red and black leads that fold over the top to a
+  keyed XT30 with pin holes, and a JST-XH balance plug.
 
 ### Also needed
 
 | item | spec | g |
 |---|---|---|
-| Main struts | 2 × carbon tube 6×5 mm, cut to 389 mm (6×0.5 aluminium also fits, +8 g) | 10.4 |
-| Wing spars | carbon rod 3 mm and 2 mm, 440 mm each | 6.9 |
-| Pushrods | 2 × 1 mm carbon rod (~245 mm) with wire Z-bend ends: elevator and rudder | 0.6 |
+| Main struts | 2 × carbon tube 6×5 mm, cut to 405 mm (6×0.5 aluminium also fits, +8 g) | 10.8 |
+| Wing spars | carbon rod 3 mm and 2 mm, 455 mm each | 7.2 |
+| Pushrods | 2 × 1 mm carbon rod (~250 mm) with wire Z-bend ends: elevator and rudder | 0.6 |
 | Wire | 0.8 mm steel: 2 aileron links, 2 rudder joiners (~90 mm each) | ~1 |
 | Small parts | 2 micro control horns, M2 screws (one for the bellcrank), hinge tape, 10 mm velcro strap | ~2 |
 
@@ -263,10 +322,17 @@ the plane; otherwise build the wing at 460 mm.
      take 9×9 mm, 12 mm and 16 mm patterns.
    - Glue the camera behind its window and stand the VTX board right behind it.
      The whip antenna goes up through the hole in the lid.
-   - Screw the FC to the four bosses, 33 mm behind the motor face. Stick the
-     ESC to the left wall and the receiver to the right wall, both about 3 mm
-     above the floor so they clear the belly chamfer. The motor wires go
-     through the slot beside the camera.
+   - Solder the FC's wires first: its battery, servo and ESC connections are
+     pads on the underside. Then screw it to the four posts (22 × 22 mm hole
+     pattern, M2 self-tapping screws), 34.5 mm behind the motor face with its
+     long edge along the pod. Stick the receiver to the right wall, about 3 mm
+     above the floor so it clears the belly chamfer.
+   - The VTX board's MMCX socket is on its left edge. Clip the whip's plug on
+     it and feed the coax up through the 2 mm hole in the lid.
+   - Drop the ESC into the two ribs behind the battery bay, on edge across the
+     pod, with its motor tabs to the left and its battery wires to the right.
+     The motor wires go through the slot beside the camera and along the left
+     wall (the motor wires must be at least 150 mm long, or extended).
 3. **Fit the elevator SG90.** Lay it on its side in the rear bay, between the
    two floor ribs, with its base towards the left wall and the shaft pointing
    right. The horn points straight up. Trim the horn to 13.5 mm so it clears
@@ -315,9 +381,9 @@ the plane; otherwise build the wing at 460 mm.
     - Adjust the wire lengths so both rudders sit straight with the servo
       centred.
 11. **Balance.** Strap the battery through the floor slots and slide it until
-    the plane balances 25 mm behind the wing LE (129.9 mm from the motor face).
-    The nominal battery centre is 90 mm from the motor face, and the travel is
-    78–101 mm. The XT30 folds back over the top of the pack.
+    the plane balances 26 mm behind the wing LE (136.6 mm from the motor face).
+    The nominal battery centre is 92 mm from the motor face, and the travel is
+    83–101 mm. The XT30 folds back over the top of the pack.
 
 The hatch lid rests on the tubes between the sleeves. Hold it with tape or two
 3 mm magnets.
@@ -354,7 +420,7 @@ The code is split into four files:
 - `design.py` holds every dimension (`Params`), the electronics (`Kit`) and the
   SG90 datasheet dimensions (`Servo`).
 - `build.py` makes the printed parts.
-- `components.py` models the bought parts.
+- `components.py` models the bought parts in detail (see above).
 - `geom.py` holds the shared solid helpers.
 
 Each build:
@@ -387,5 +453,9 @@ towards the right wing tip and z up, with z = 0 on the tube centre-line.
   coefficients for the pod front. At this size (Reynolds number around 40 000)
   they could be off by ±50 %; the comparison between options is more
   reliable than the absolute numbers.
-- The camera, FC, ESC and receiver sizes are generic. Check them against the
-  parts you buy.
+- The FC and ESC outer sizes come from retailer listings, because the
+  makers' drawings were not reachable. Check the FC's 22 × 22 mm hole pattern,
+  its height and the pad positions against your board before printing the
+  pod. The camera, VTX and receiver sizes are generic.
+- The pod is sized for the ESC standing behind the battery. Motor wires of at
+  least 150 mm are needed to reach it.

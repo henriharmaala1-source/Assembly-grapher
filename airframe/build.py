@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the twin-tube micro FPV plane in CadQuery and export everything.
+"""Build the twin-boom micro FPV pusher in CadQuery and export everything.
 
     pip install cadquery trimesh
     python3 airframe/build.py
@@ -27,7 +27,7 @@ import components as parts_lib  # noqa: E402
 from design import (LW_PLA, PLA, Kit, Layout, Params, camber,  # noqa: E402
                     naca4, neutral_point, performance, report, rod_mass,
                     solve_x_le, structure_estimate)
-from geom import (box, cut, cyl_x, cyl_y, cyl_z, fuse, prism_y, prism_z,  # noqa: E402
+from geom import (box, cut, cyl_x, cyl_y, cyl_z, fuse, prism_x, prism_y, prism_z,  # noqa: E402
                   rod, shaft_along_y)
 
 # --------------------------------------------------------------------------
@@ -122,118 +122,105 @@ def nose_cuts(p: Params, L: Layout, off: float, ch: float):
 
 
 def make_pod(p: Params, L: Layout, batt_x: float):
-    hw, zb, Lp = L.half_w, L.z_bottom, L.pod_len
-    ty, rh, rb = L.tube_y, L.r_hole, L.r_boss
-    w, fw, ch = p.wall, p.front_wall, 4.0
+    """Nacelle under the wing centre: camera in the nose, FC and battery ahead of
+    the wing, ESC at the back and the pusher motor on the back wall. The top is
+    open: the lid covers it up to the wing, the wing centre from there on."""
+    hw, zb, zt, Lp = L.half_w, L.z_bottom, L.z_top, L.pod_len
+    w, fw, rw, ch = p.wall, p.front_wall, p.rear_wall, 4.0
     zf = zb + w                                             # floor top
 
-    outer = (cq.Workplane().box(Lp, 2 * hw, -zb, centered=(False, True, False))
+    outer = (cq.Workplane().box(Lp, 2 * hw, zt - zb, centered=(False, True, False))
              .translate((0, 0, zb)).edges("|X and <Z").chamfer(ch)).val()
     ch_in = ch + w * math.sqrt(2) - 2 * w                   # keeps the wall even
-    inner = (cq.Workplane().box(Lp - fw - w, 2 * (hw - w), 20 - zf, centered=(False, True, False))
+    inner = (cq.Workplane().box(Lp - fw - rw, 2 * (hw - w), zt + 5 - zf, centered=(False, True, False))
              .translate((fw, 0, zf)).edges("|X and <Z").chamfer(ch_in)).val()
-    round_front = nose_cuts(p, L, 0.0, ch)
-    pod = cut(cut(outer, *round_front), cut(inner, *nose_cuts(p, L, w, ch)))
+    pod = cut(cut(outer, *nose_cuts(p, L, 0.0, ch)), cut(inner, *nose_cuts(p, L, w, ch)))
 
-    rounded = p.nose_r > 0
-
-    def sleeve(x0, y, nose=0.0):
-        s = cq.Workplane("YZ").circle(rb).extrude(p.sleeve_len)
-        return (s.faces("<X").edges().fillet(nose) if nose else s).val().translate(V(x0, y, 0))
-    sleeves = ([sleeve(0.0, s * ty, rb - 0.9 if rounded else 0.0) for s in (-1, 1)]  # domed noses
-               + [sleeve(Lp - p.sleeve_len, s * ty) for s in (-1, 1)])
-    strip = cq.Workplane().box(fw, 2 * ty, rb, centered=(False, True, False))  # between the sleeves
-    plate = (cq.Workplane("YZ").moveTo(-13, 0).lineTo(13, 0).lineTo(13, p.motor_z)
-             .threePointArc((0, p.motor_z + 13), (-13, p.motor_z)).close().extrude(3.2))  # motor plate
-    if rounded:
-        strip = strip.edges("|Y and >Z and <X").fillet(2.0)
-        plate = plate.faces("<X").edges("not <Z").fillet(1.5)
-    strip, plate = strip.val(), plate.val()
-    nose = [cut(strip, *round_front), plate,
-            cut(cyl_x(13, 0, 3.2, 0, p.motor_z), box(-1, 4, -14, 14, 0, 30))]   # motor boss
+    mz = p.motor_z
+    plate = cyl_x(13, Lp - rw, Lp, 0, mz)                   # motor boss; its top stands above the pod
     hp = Kit().fc_holes / 2
     fc = [cyl_z(2.0, zf - 0.1, zf + 3, L.fc_x + dx, dy) for dx in (-hp, hp) for dy in (-hp, hp)]
-    # ESC card stands crosswise between two ribs, behind the battery
-    ek = Kit()
+    ek = Kit()                                              # ESC card between two ribs
     esc_ribs = [box(x0, x0 + 1.0, -9.0, 9.0, zf - 0.1, zf + 6.0)
                 for x0 in (L.esc_bay_x, L.esc_x + ek.esc_thk + 0.3)]
-    # elevator SG90 lies on its side behind the battery: two ribs locate the body,
-    # stopping short of the mounting tabs
-    sv = Kit().servo
-    ribs = [box(L.elev_servo_x + sx * (sv.length / 2 + 0.2) - (1.2 if sx < 0 else 0),
-                L.elev_servo_x + sx * (sv.length / 2 + 0.2) + (1.2 if sx > 0 else 0),
-                -(hw - w) - 0.1, L.elev_servo_base_y + sv.tab_z - 0.5, zf - 0.1, zf + 4)
-            for sx in (-1, 1)]
-    pod = fuse(pod, *sleeves, *nose, *fc, *ribs, *esc_ribs)
+    ledges = []                                             # the lid sits flush on these
+    for s in (1, -1):
+        ya, yb = s * (hw - w - 1.2), s * (hw - w + 0.05)
+        ledges.append(box(fw, lid_end(L), min(ya, yb), max(ya, yb), zt - 2.0, zt - 0.8))
+    pod = fuse(pod, plate, *fc, *esc_ribs, *ledges)
 
-    holes = [cyl_x(rh, L.tube_x0, Lp + 1, s * ty, 0) for s in (-1, 1)]
-    holes += [cyl_z(0.85, zf, zf + 4, L.fc_x + dx, dy) for dx in (-hp, hp) for dy in (-hp, hp)]
-    holes.append(box(Lp - 3, Lp + 1, L.pushrod_y - 2, L.pushrod_y + 2,
-                     L.pushrod_z - 2.5, 1))                    # pushrod over the rear wall
-    if p.rudders:
-        holes.append(box(Lp - 3, Lp + 1, L.rudder_pushrod_y - 2, L.rudder_pushrod_y + 2,
-                         -4.5, 1))                             # rudder pushrod
-    holes.append(cyl_x(3.2, -1, 4, 0, p.motor_z))           # motor shaft / circlip
+    holes = [cyl_z(0.85, zf, zf + 4, L.fc_x + dx, dy) for dx in (-hp, hp) for dy in (-hp, hp)]
+    holes.append(cyl_x(3.2, Lp - rw - 1, Lp + 1, 0, mz))    # motor shaft / circlip
     for a in (45, 135, 225, 315):                           # 9x9, 12 mm and 16 mm patterns
         r = (5.9 + 8.6) / 2
-        slot = (cq.Workplane("YZ").center(r * math.cos(math.radians(a)),
-                                          p.motor_z + r * math.sin(math.radians(a)))
-                .slot2D(8.6 - 5.9 + 2.2, 2.2, a).extrude(6).translate((-1, 0, 0))).val()
+        slot = (cq.Workplane("YZ").center(r * math.cos(math.radians(a)), mz + r * math.sin(math.radians(a)))
+                .slot2D(8.6 - 5.9 + 2.2, 2.2, a).extrude(6).translate((Lp - rw - 2, 0, 0))).val()
         holes.append(slot)
+    holes.append(box(Lp - rw - 1, Lp + 1, -14.0, -9.0, mz - 13, mz - 9))   # motor wires
     zc = -9.0                                               # nano camera (14 mm) window
     holes.append(box(-1, fw + 1, -7.2, 7.2, zc - 7.2, zc + 7.2))
-    holes.append(box(-1, fw + 1, -14.0, -8.0, -2.0, 1.2))   # motor wires
     for s in (-1, 1):                                       # battery strap slots
         y = s * (Kit().batt_w / 2 + 1.5)
         holes.append(box(batt_x - 12, batt_x + 12, y - 1.0, y + 1.0, zb - 1, zf + 1))
     return cut(pod, *holes)
 
 
+def pod_split_x(L: Layout) -> float:
+    return round(L.batt_max + 10.0)
+
+
+def split_pod(p: Params, L: Layout, pod):
+    """Front and rear halves, each short enough for the bed. A U-shaped tongue on
+    the rear half slides 8 mm into the front half for a glued joint."""
+    xs, big = pod_split_x(L), 500.0
+    front = pod.intersect(box(-10, xs, -big, big, -big, big))
+    rear = pod.intersect(box(xs, L.pod_len + 50, -big, big, -big, big))
+    hw, w, zf, zt, g = L.half_w, p.wall, L.z_floor, L.z_top, 0.15
+    tongue = cut(box(xs - 8, xs + 1, -(hw - w - g), hw - w - g, zf + g, zt - 2.5),
+                 box(xs - 9, xs + 2, -(hw - w - g - 0.9), hw - w - g - 0.9, zf + g + 0.9, zt))
+    ch_in = 4.0 + w * math.sqrt(2) - 2 * w                  # stay clear of the belly chamfers inside
+    corners = [prism_x([(s * (hw - w + 1), zf - 1), (s * (hw - w - ch_in - 1.35), zf - 1),
+                        (s * (hw - w + 1), zf + ch_in + 1.35)], xs - 10, xs + 3) for s in (1, -1)]
+    return front, fuse(rear, cut(tongue, *corners))
+
+
+def lid_end(L: Layout) -> float:
+    """The lid's back edge tucks under the wing's leading edge, just ahead of
+    where the wing centre sits down on the pod."""
+    return L.x_le + 0.08 * L.chord - 0.5
+
+
 def make_lid(p: Params, L: Layout):
-    x0, x1 = p.sleeve_len + 0.3, L.x_le - 0.5
-    z0 = p.tube_od / 2                                      # rests on the tubes
-    plate = box(x0, x1, -L.tube_y - 1.5, L.tube_y + 1.5, z0, z0 + 0.8)
-    y_lip = L.tube_y - p.tube_od / 2 - 0.3
-    lips = [box(x0 + 2, x1 - 2, s * y_lip - (0.8 if s > 0 else 0), s * y_lip + (0.8 if s < 0 else 0),
-                z0 - 2.5, z0 + 0.1) for s in (-1, 1)]
-    lid = fuse(plate, *lips)
-    return cut(lid, cyl_z(1.0, z0 - 3, z0 + 2, L.ant_x, L.ant_y))   # VTX antenna coax
+    """Hatch over the pod ahead of the wing, flush with the pod top, on two
+    ledges. Hook the back edge under the wing, then press the front down."""
+    x0, x1 = p.front_wall + 0.5, lid_end(L)
+    zt, y = L.z_top, L.half_w - p.wall - 0.2
+    lid = box(x0, x1, -y, y, zt - 0.8, zt)
+    return cut(lid, cyl_z(1.0, zt - 3, zt + 2, L.ant_x, L.ant_y))   # VTX antenna coax
 
 
 def make_wing_centre(p: Params, L: Layout, sec: Section):
+    """Centre section: the pod is glued under it, the two tail booms plug into
+    sockets under it, and the elevator and rudder servos sit in it."""
     cw = p.centre_w
     body = sec.centre_solid(-cw / 2, cw / 2, L.z_top)
-    ty, rb = L.tube_y, L.r_boss
-    # caps that sit over the pod's rear tube sleeves
-    c0, c1 = max(L.x_le, L.pod_len - p.sleeve_len), min(L.x_te - 1.0, L.pod_len)
-    caps = [cut(box(c0, c1, s * ty - rb - 1.2, s * ty + rb + 1.2, 0, L.z_top + 0.4),
-                cyl_x(rb + 0.15, c0 - 1, c1 + 1, s * ty, 0)) for s in (-1, 1)]
-    body = fuse(body, *caps)
-    holes = []
-    x0, x1 = L.pod_len + 0.3, L.x_te - 1.5                  # saddle behind the pod
-    if x1 - x0 >= 10:
-        saddle = [cyl_x(rb, x0, x1, s * ty, 0) for s in (-1, 1)]
-        saddle.append(box(x0, x1, -ty, ty, 2.0, L.z_top + 0.4))
-        body = fuse(body, *saddle)
-        holes += [cyl_x(L.r_hole, x0 - 1, x1 + 1, s * ty, 0) for s in (-1, 1)]
+    ty, rb, zt = L.tube_y, L.r_boss, L.z_top
+    x0, x1 = L.socket_x0, L.socket_x1
+    socket = fuse(cq.Workplane("YZ").circle(rb).extrude(x1 - x0).faces("<X").edges().fillet(rb - 1.0).val()
+                  .translate(V(x0, ty, 0)), box(x0 + rb, x1, ty - 2.5, ty + 2.5, 0, zt + 0.5))
+    rails = [box(L.x_le + 10, L.x_te - 5, s * L.half_w + (0.2 if s > 0 else -1.4),
+                 s * L.half_w + (1.4 if s > 0 else -0.2), zt - 3.0, zt + 0.3) for s in (1, -1)]
+    body = fuse(body, socket, socket.mirror("XZ"), *rails)
+    holes = [cyl_x(L.r_hole, L.tube_x0, x1 + 1, s * ty, 0) for s in (-1, 1)]
     for pos, d in ((p.main_spar_pos, p.main_spar_d), (p.rear_spar_pos, p.rear_spar_d)):
         x, z = sec.camber_point(pos)
         holes.append(cyl_y(d / 2 + 0.1, -cw, cw, x, z))
     xw, zw = sec.camber_point(0.45)                          # servo leads into the pod
     holes.append(cyl_y(2.0, -cw, cw, xw, zw))
-    holes.append(cyl_z(3.0, L.z_top - 1, zw, xw, 0))
+    holes.append(cyl_z(3.0, zt - 1, zw, xw, 0))
+    holes += elevator_servo(p, L, sec, Kit())["pocket"]
     if p.rudders:
-        rs = rudder_servo(p, L, sec, Kit())
-        sv = Kit().servo
-        ya = -L.rudder_pushrod_y - sv.horn_z                 # as in rudder_servo, then mirrored
-        y0f, y1f = -(ya + sv.height + sv.boss_h + sv.spline_h + 3.5), -(ya - 2.5)
-        hump = (cq.Workplane().box(sv.tab_span + 8, y1f - y0f, rs["top"] + 1.6 - L.z_top,
-                                   centered=(True, False, False))
-                .translate((rs["xm"], y0f, L.z_top)).edges(">Z").fillet(2.0)).val()
-        body = fuse(body, hump)
-        holes += [h.mirror("XZ") for h in rs["pocket"]]
-        holes.append(box(x0 - 0.2, x1 + 1, L.rudder_pushrod_y - 1.3, L.rudder_pushrod_y + 1.3,
-                         -2, 3.8))                           # rudder pushrod through the saddle
+        holes += [h.mirror("XZ") for h in rudder_servo(p, L, sec, Kit())["pocket"]]
     return cut(body, *holes)
 
 
@@ -273,14 +260,18 @@ def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
     return side_servo(p, sec, k, p.centre_w / 2 + 3.0)
 
 
+def elevator_servo(p: Params, L: Layout, sec: Section, k: Kit):
+    """Elevator SG90 in the wing centre, right of the pod: shaft pointing right,
+    horn hanging below the wing on the line of the right boom's pushrod."""
+    s = side_servo(p, sec, k, L.pushrod_y - k.servo.horn_z)
+    return side_servo(p, sec, k, L.pushrod_y - k.servo.horn_z, hole=s["origin"][2] - L.pushrod_z)
+
+
 def rudder_servo(p: Params, L: Layout, sec: Section, k: Kit):
-    """Rudder SG90 in the wing centre, between the tubes. Built with the shaft
-    pointing +y and mirrored, so it ends up pointing left with its horn at
-    y = L.rudder_pushrod_y. It sits high, in a fairing on top of the centre
-    section, so its horn clears the elevator servo and pushrod in the pod."""
-    ya = -L.rudder_pushrod_y - k.servo.horn_z               # base, before mirroring
-    return side_servo(p, sec, k, ya, 90.0, RUDDER_HORN_LEN, p.rudder_servo_hole,
-                      z_base=L.z_top + 1.8)
+    """Rudder SG90, the mirror image on the left. Built with the shaft pointing +y
+    and mirrored, so its horn ends up on the left pushrod line."""
+    s = side_servo(p, sec, k, -L.rudder_pushrod_y - k.servo.horn_z)
+    return side_servo(p, sec, k, -L.rudder_pushrod_y - k.servo.horn_z, hole=s["origin"][2] - L.pushrod_z)
 
 
 def make_panel(p: Params, L: Layout, sec: Section):
@@ -312,29 +303,35 @@ def make_aileron(p: Params, L: Layout, sec: Section):
 
 
 def make_tail_mount(p: Params, L: Layout):
+    """Two collars on the boom ends with pads the stabiliser is glued to, a thin
+    strip under the stabiliser's leading edge that ties them together, the
+    elevator pushrod guide on the right and the bellcrank pivot on the left."""
     x0, x1 = L.x_stab + 0.5, L.x_stab + L.c_fix - 0.5
-    r_out = L.r_hole + 1.2
-    body = fuse(box(x0, x1, -L.tube_y - r_out, L.tube_y + r_out, L.tail_z - 1.4, L.tail_z),
-                *[cyl_x(r_out, x0, x1, s * L.tube_y, 0) for s in (-1, 1)],
-                box(x0 + 2.5, x0 + 10.5, L.pushrod_y - 1.5, L.pushrod_y + 1.5,
-                    L.pushrod_z - 2.5, L.tail_z - 1.2))
-    holes = [cyl_x(L.r_hole, x0 - 1, L.tube_x1 + 0.2, s * L.tube_y, 0) for s in (-1, 1)]
+    ty, r_out, zt = L.tube_y, L.r_hole + 1.2, L.tail_z
+    pad_in = L.pushrod_y - 3.0                               # right pad reaches the pushrod guide
+    body = [cyl_x(r_out, x0, x1, s * ty, 0) for s in (-1, 1)]
+    body += [box(x0, x1, pad_in, ty + 8, zt - 1.4, zt), box(x0, x1, -ty - 8, -ty + 8, zt - 1.4, zt),
+             box(x0, x0 + 6, -ty, ty, zt - 1.0, zt),
+             box(x0 + 2.5, x0 + 10.5, L.pushrod_y - 1.5, L.pushrod_y + 1.5, L.pushrod_z - 2.5, zt - 1.2)]
+    holes = [cyl_x(L.r_hole, x0 - 1, L.tube_x1 + 0.2, s * ty, 0) for s in (-1, 1)]
     holes.append(cyl_x(0.8, x0, x0 + 12, L.pushrod_y, L.pushrod_z))   # 1 mm pushrod guide
     if p.rudders:                                            # bellcrank pivot, M2 from below
-        body = fuse(body, cyl_z(2.8, L.joiner_z + 1.0, L.tail_z - 1.3, L.bellcrank_x, 0))
-        holes.append(cyl_z(0.8, L.joiner_z, L.joiner_z + 7, L.bellcrank_x, 0))
-    return cut(body, *holes)
+        bx, by = L.bellcrank_x, L.bellcrank_y
+        body += [box(bx - 3.5, x1, -ty, by + 3.5, zt - 1.4, zt),
+                 cyl_z(2.8, L.joiner_z + 1.0, zt - 1.3, bx, by)]
+        holes.append(cyl_z(0.8, L.joiner_z, L.joiner_z + 7, bx, by))
+    return cut(fuse(*body), *holes)
 
 
 def make_bellcrank(p: Params, L: Layout):
-    """90 degree bellcrank under the tail mount: the rudder pushrod pulls the
-    left arm, the forward arm drives the joiner wires to both rudders."""
-    bx, z0, z1 = L.bellcrank_x, L.joiner_z - 0.8, L.joiner_z + 0.8
+    """90 degree bellcrank under the tail mount, near the left boom: the rudder
+    pushrod pulls the outer arm, the rear arm drives the joiner wires to both rudders."""
+    bx, by, z0, z1 = L.bellcrank_x, L.bellcrank_y, L.joiner_z - 0.8, L.joiner_z + 0.8
     iy, ox = L.rudder_pushrod_y, L.x_hinge + p.rudder_horn
-    body = fuse(cyl_z(3.4, z0, z1, bx, 0), cyl_z(2.4, z0, z1, bx, iy), cyl_z(2.4, z0, z1, ox, 0),
-                box(bx - 2.2, bx + 2.2, iy, 0, z0, z1), box(bx, ox, -2.2, 2.2, z0, z1))
-    return cut(body, cyl_z(1.1, z0 - 1, z1 + 1, bx, 0),
-               cyl_z(0.55, z0 - 1, z1 + 1, bx, iy), cyl_z(0.55, z0 - 1, z1 + 1, ox, 0))
+    body = fuse(cyl_z(3.4, z0, z1, bx, by), cyl_z(2.4, z0, z1, bx, iy), cyl_z(2.4, z0, z1, ox, by),
+                box(bx - 2.2, bx + 2.2, min(iy, by), max(iy, by), z0, z1), box(bx, ox, by - 2.2, by + 2.2, z0, z1))
+    return cut(body, cyl_z(1.1, z0 - 1, z1 + 1, bx, by),
+               cyl_z(0.55, z0 - 1, z1 + 1, bx, iy), cyl_z(0.55, z0 - 1, z1 + 1, ox, by))
 
 
 def make_stab(p: Params, L: Layout):
@@ -398,8 +395,6 @@ def make_rudder(p: Params, L: Layout):
 # --------------------------------------------------------------------------
 # Bought parts in flight position (for the STEP, the viewer and the CG)
 
-ELEV_HORN_LEN = 13.5            # elevator servo horn trimmed to clear the wing centre
-RUDDER_HORN_LEN = 11.0          # rudder servo horn trimmed to clear the elevator servo
 BLACK, WHITE = (0.08, 0.08, 0.09), (0.93, 0.93, 0.92)
 GOLD, SILVER = (0.85, 0.68, 0.25), (0.66, 0.68, 0.72)
 
@@ -440,10 +435,13 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
                        rod_mass(d, p.span - 10), "hardware"))
 
     # propulsion
-    add("motor", {n: s.translate(V(0, 0, p.motor_z)) for n, s in parts_lib.motor_1404().items()},
+    # pusher: the motor is turned round on the pod's back wall; the prop is its mirror image
+    turn = lambda s: s.rotate(V(0, 0, 0), V(0, 0, 1), 180)
+    add("motor", {n: turn(s).translate(V(L.pod_len, 0, p.motor_z)) for n, s in parts_lib.motor_1404().items()},
         {"": (0.62, 0.64, 0.68), "base": (0.14, 0.14, 0.16), "coil": (0.72, 0.42, 0.18),
          "shaft": (0.78, 0.79, 0.81), "nut": (0.18, 0.18, 0.20)}, k.motor, "electronics")
-    add("prop", {n: s.translate(V(-14.8, 0, p.motor_z)) for n, s in parts_lib.prop_4x25().items()},
+    add("prop", {n: s.mirror("YZ").translate(V(L.pod_len + 14.8, 0, p.motor_z))
+                 for n, s in parts_lib.prop_4x25().items()},
         {"": (0.10, 0.42, 0.85)}, k.prop, "electronics")
 
     # pod contents. Cards that stand across the pod are modelled flat and turned
@@ -475,19 +473,17 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
 
     # servos
     servo_colours = {"": (0.16, 0.38, 0.85), "horn": WHITE, "wires": (0.55, 0.25, 0.10)}
-    el_origin = (L.elev_servo_x, L.elev_servo_base_y, zf + sv.width / 2)
-    trimmed = parts_lib.sg90(sv, -90, horn_len=ELEV_HORN_LEN)
-    add("servo_elev", {n: shaft_along_y(s, el_origin) for n, s in trimmed.items()},
+    es = elevator_servo(p, L, sec, k)
+    add("servo_elev", {n: shaft_along_y(s, es["origin"]) for n, s in parts_lib.sg90(sv, es["horn_deg"]).items()},
         servo_colours, sv.mass, "electronics")
-    hx, _, _ = parts_lib.horn_point(sv, -90)
-    el_link = (L.elev_servo_x + hx, L.elev_servo_base_y + sv.horn_z, zf + sv.width / 2 + sv.horn_hole)
+    el_link = es["link"]
     x_eh = L.x_stab + L.c_fix + 0.6 + 3.0                    # elevator horn hole
     out.append(Ref("pushrod_elev", rod(0.5, el_link, (x_eh - 1.5, L.pushrod_y, L.pushrod_z)), BLACK,
                    rod_mass(1.0, x_eh - el_link[0]), "hardware"))
 
     if p.rudders:
         rs = rudder_servo(p, L, sec, k)
-        servo = parts_lib.sg90(sv, rs["horn_deg"], horn_len=rs["horn_len"])
+        servo = parts_lib.sg90(sv, rs["horn_deg"])
         add("servo_rud", {n: shaft_along_y(s, rs["origin"]).mirror("XZ") for n, s in servo.items()},
             servo_colours, sv.mass, "electronics")
         lx, ly, lz = rs["link"]
@@ -495,7 +491,7 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
         crank_in = (L.bellcrank_x, L.rudder_pushrod_y, L.joiner_z)
         out.append(Ref("pushrod_rud", rod(0.5, start, crank_in), BLACK,
                        rod_mass(1.0, crank_in[0] - start[0]), "hardware"))
-        crank_out = (L.x_hinge + p.rudder_horn, 0, L.joiner_z)
+        crank_out = (L.x_hinge + p.rudder_horn, L.bellcrank_y, L.joiner_z)
         for side, sgn in (("R", 1), ("L", -1)):
             horn = (L.x_hinge + p.rudder_horn, sgn * (L.b_h / 2 - 2.0), L.joiner_z)
             out.append(Ref(f"joiner_{side}", rod(0.4, crank_out, horn), BLACK,
@@ -522,7 +518,8 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
 
 # name: (density g/cm^3, shell thickness mm, infill fraction, colour)
 PRINT = {
-    "pod":         (PLA, 0.8, 0.15, (0.20, 0.22, 0.25)),
+    "pod_front":   (PLA, 0.8, 0.15, (0.20, 0.22, 0.25)),
+    "pod_rear":    (PLA, 0.8, 0.15, (0.20, 0.22, 0.25)),
     "lid":         (PLA, 0.8, 0.15, (0.28, 0.30, 0.34)),
     "wing_centre": (LW_PLA, 0.5, 0.05, (0.86, 0.87, 0.84)),
     "wing_R":      (LW_PLA, 0.45, 0.0, (0.93, 0.93, 0.90)),
@@ -539,14 +536,15 @@ PRINT = {
     "bellcrank":   (PLA, 0.8, 0.5, (0.20, 0.22, 0.25)),
 }
 PRINT_NOTES = {
-    "pod": "Upright, open top up. 2 walls, 15 % infill.",
-    "lid": "Flat, lips up.",
+    "pod_front": "Upright, open top up. 2 walls, 15 % infill.",
+    "pod_rear": "Upright, open top up, tongue forward. 2 walls, 15 % infill.",
+    "lid": "Flat.",
     "wing_centre": "On its side, spar holes vertical. 0.5 mm walls, 5 % infill.",
     "wing_R": "Standing on the root rib, brim. 1 wall, 0 % infill.",
     "wing_L": "Standing on the root rib, brim. 1 wall, 0 % infill.",
     "aileron_R": "Flat on the lower surface. 1 wall, 0 % infill.",
     "aileron_L": "Flat on the lower surface. 1 wall, 0 % infill.",
-    "tail_mount": "Plate face down.",
+    "tail_mount": "Pads face down.",
     "stab": "Flat. 2 top / 2 bottom layers, 15 % infill.",
     "elevator": "Top face down, horn up.",
     "fin_R": "Outer face down, jaws up.",
@@ -627,7 +625,7 @@ def build_at(p: Params, k: Kit, x_le: float):
     parts["lid"] = make_lid(p, L)
 
     # CG with CAD masses: solve the battery station, then build the pod around it
-    parts["pod"] = make_pod(p, L, batt_nominal)
+    parts["pod_front"], parts["pod_rear"] = split_pod(p, L, make_pod(p, L, batt_nominal))
     refs = bought_parts(p, k, L, sec, batt_nominal)
 
     def mass_items():
@@ -647,7 +645,7 @@ def build_at(p: Params, k: Kit, x_le: float):
     target = L.x_le + p.cg_target * L.chord
     m = sum(i[1] for i in others)
     batt_x = round((target * (m + k.battery) - sum(i[1] * i[2] for i in others)) / k.battery, 1)
-    parts["pod"] = make_pod(p, L, batt_x)
+    parts["pod_front"], parts["pod_rear"] = split_pod(p, L, make_pod(p, L, batt_x))
     refs = bought_parts(p, k, L, sec, batt_x)
     return p, k, L, sec, parts, refs, mass_items(), batt_x
 
@@ -714,7 +712,7 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
     est = sum(g for _, g, _ in structure_estimate(p, L))
     printed = sum(i[1] for i in items if i[0] in PRINT)
     lines = [
-        "# Twin-tube micro FPV plane: build report",
+        "# Twin-boom micro FPV pusher: build report",
         "",
         "Generated by `build.py` from the CAD volumes. Do not edit by hand.",
         "",
@@ -725,8 +723,10 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         f"| Wingspan | {p.span:.0f} mm |",
         f"| Chord | {L.chord:.0f} mm (NACA {p.naca}, {p.incidence:.0f} deg incidence) |",
         f"| Wing area | {L.area / 1e4:.2f} dm^2 |",
-        f"| Length (prop to elevator TE) | {L.length:.0f} mm |",
-        f"| Tubes | 2 x {p.tube_od:.0f}x{p.tube_id:.0f} mm, {L.tube_len:.0f} mm long, {p.tube_spacing:.0f} mm apart |",
+        f"| Length (nose to elevator TE) | {L.length:.0f} mm |",
+        f"| Tail booms | 2 x {p.tube_od:.0f}x{p.tube_id:.0f} mm, {L.tube_len:.0f} mm long, {p.tube_spacing:.0f} mm apart |",
+        f"| Prop clearance | {L.tube_y - k.prop_d_in * 12.7 - p.tube_od / 2:.1f} mm to each boom, "
+        f"{L.pushrod_y - k.prop_d_in * 12.7 - 0.5:.1f} mm to each pushrod |",
         f"| Stabiliser | {L.b_h:.0f} x {L.c_h:.1f} mm (elevator {L.c_e:.1f} mm) |",
         f"| Fins | 2 x {L.c_h:.1f} x {L.fin_h:.0f} mm |",
         f"| All-up weight | **{auw:.0f} g** (printed parts {printed:.0f} g) |",
@@ -740,10 +740,10 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         f"| Thrust target | >= {auw:.0f} g static (1:1) |",
         f"| Tail volumes | Vh {L.vh_actual:.2f}, Vv {L.vv_actual:.3f} |",
         f"| CG target | {p.cg_target * 100:.0f} % chord = **{L.x_le + p.cg_target * L.chord:.1f} mm** "
-        f"from the motor face ({p.cg_target * L.chord:.1f} mm behind the wing LE) |",
+        f"from the nose ({p.cg_target * L.chord:.1f} mm behind the wing LE) |",
         f"| CG (computed) | x {cg:.1f} mm, z {cgz:.1f} mm |",
         f"| Neutral point | {np_ * 100:.0f} % chord -> static margin {(np_ - p.cg_target) * 100:.0f} % |",
-        f"| Battery centre | **{batt_x:.0f} mm** from the motor face "
+        f"| Battery centre | **{batt_x:.0f} mm** from the nose "
         f"(travel {L.batt_min + k.batt_len / 2:.0f}-{L.batt_max - k.batt_len / 2:.0f} mm) |",
         "",
         f"Sizing check with CAD weights: stall {perf['stall']:.2f} m/s against the "
@@ -822,6 +822,8 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
                                                   round(L.batt_max - k.batt_len / 2)],
         "tube": f"{p.tube_od:.0f}x{p.tube_id:.0f}", "tube_len": round(L.tube_len),
         "tube_spacing": p.tube_spacing, "b_h": L.b_h, "fin_h": L.fin_h,
+        "tube_x0": round(L.tube_x0, 1), "tube_x1": round(L.tube_x1, 1), "x_prop": round(L.pod_len + 14.8, 1),
+        "prop_r": k.prop_d_in * 12.7, "split_x": pod_split_x(L),
         "stall_limit": p.stall_limit, "min_span": smallest_span(p, k),
         "no_rudder_span": smallest_span(replace(p, rudders=False), k), "sweep": sweep,
         "fc": k.fc_name, "esc": k.esc_name,

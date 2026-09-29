@@ -1,31 +1,39 @@
-# Kipinä 465: twin-tube micro FPV plane
+# Kipinä 485: twin-boom micro FPV pusher
 
-![Kipinä 465](preview/hero.png)
+![Kipinä 485](preview/hero.png)
 
-A 3D-printed fixed wing with a Molniya-style layout. Two plain round tubes are
-the whole fuselage structure: they run from the motor to the tail and carry the
-pod, the straight rectangular wing and an H-tail. It is a hobby FPV airframe
-only. There is no payload bay or release mechanism, just a pod for the flight
-battery and the FPV electronics.
+A 3D-printed twin-boom pusher. A short pod carries the FPV camera in its nose,
+the flight controller, battery and ESC behind it, and the motor on its back
+wall. Two plain round carbon tubes, 140 mm apart, run from sockets under the
+wing centre back to an H-tail, and the 4" prop turns between them. The camera
+therefore has a clear view ahead, with no prop disc in front of it. It is a
+hobby FPV airframe only. There is no payload bay or release mechanism, just a
+pod for the flight battery and the FPV electronics.
+
+The plane started as a Molniya-style twin-tube tractor, with the two tubes
+40 mm apart under the pod and the motor on the nose. That put the camera
+behind the prop. The tubes are now spread into tail booms far enough apart for
+the prop to turn between them. See [Why a pusher](#why-a-pusher).
 
 Four **SG90** servos give full three-axis control: one per aileron, one for the
 elevator and one for the twin rudders. The brief was "as small as possible",
-so the size comes from a sweep, not a guess. See [Why 465 mm](#why-465-mm).
+so the size comes from a sweep, not a guess. See [Why 485 mm](#why-485-mm).
 
 | | |
 |---|---|
-| Wingspan | 465 mm, chord 93 mm, NACA 4412 at 2° incidence |
-| Length | 447 mm (prop to elevator trailing edge) |
-| Main struts | 2 × carbon tube 6×5 mm, 405 mm long, 40 mm apart |
+| Wingspan | 485 mm, chord 97 mm, NACA 4412 at 2° incidence |
+| Length | 504 mm (nose to elevator trailing edge) |
+| Tail booms | 2 × carbon tube 6×5 mm, 298 mm long, 140 mm apart |
+| Prop clearance | 16.2 mm from the blade tips to each boom, 10.7 mm to each pushrod |
 | Controls | ailerons, elevator, twin rudders: 4 × SG90 |
 | Flight controller, ESC | Matek F405-WMN (12 outputs, 2–6S), Hobbywing XRotor Micro 30A (2–4S) |
-| All-up weight | ~206 g (printed parts ~78 g) |
-| Wing loading | 48 g/dm² |
-| Stall / cruise | ~9.0 / ~13 m/s |
-| Top speed | ~19 m/s (68 km/h) level, estimated; prop pitch speed 86 km/h |
-| Endurance | ~11 min on 2S 450 mAh (rough estimate) |
-| CG | 136.6 mm behind the motor face = 26.0 mm behind the wing LE (28 % chord) |
-| Static margin | ~14 % (neutral point at ~42 % chord) |
+| All-up weight | ~223 g (printed parts ~98 g) |
+| Wing loading | 47 g/dm² |
+| Stall / cruise | ~8.9 / ~13 m/s |
+| Top speed | ~19 m/s (69 km/h) level, estimated; prop pitch speed 86 km/h |
+| Endurance | ~10 min on 2S 450 mAh (rough estimate) |
+| CG | 199.6 mm behind the nose = 27.2 mm behind the wing LE (28 % chord) |
+| Static margin | ~13 % (neutral point at ~41 % chord) |
 | Printer | every part fits a Bambu Lab A1 mini (180 × 180 × 180 mm) |
 
 All numbers are first-order estimates from `design.py` and the CAD volumes.
@@ -33,33 +41,54 @@ Nothing here has been flight-tested yet. [REPORT.md](REPORT.md) has the full
 mass breakdown, the print list, the sizing check and the interference check,
 regenerated on every build.
 
-| Pod, cut open | Aileron SG90 under the wing |
+| Prop between the booms | Pod, cut open |
 |---|---|
-| ![Pod](preview/pod.png) | ![Aileron servo](preview/servo.png) |
+| ![Prop](preview/prop.png) | ![Pod](preview/pod.png) |
 
-| Rudder linkage, from below | Rounded nose |
+| Rudder linkage, from below | Rounded nose with the camera |
 |---|---|
 | ![Tail](preview/tail.png) | ![Nose](preview/nose.png) |
 
-| Front bay: camera, VTX, F405-WMN, receiver | ESC cradle behind the battery |
+| Front bay: camera, VTX, F405-WMN, receiver | ESC by the back wall |
 |---|---|
 | ![Bay](preview/bay.png) | ![ESC](preview/esc.png) |
 
-### Rounded nose
+| Aileron SG90 under the wing | |
+|---|---|
+| ![Aileron servo](preview/servo.png) | |
 
-The flat, sharp-edged front of the pod was the largest single drag item, about
-35 % of the total. Its edges are now rounded (`Params.nose_r`, 8 mm):
+## Why a pusher
 
-- the two vertical front edges have an 8 mm radius;
-- the 45° belly chamfer blends into the front face with the same radius;
-- the tube sleeves have domed noses, and the motor plate has 1.5 mm edge
-  fillets.
+In the tractor layout the camera sat 18 mm from the prop axis, well inside
+the 101.6 mm prop disc, so a blade crossed the lens about 18 % of the time.
+Moving the prop behind the pod fixes that. The catch is that the prop has to
+turn somewhere: the old tubes were 40 mm apart, and a 4" prop is 101.6 mm
+across.
 
-This cuts the estimated drag area from 20.3 to 17.3 cm². That is worth about
-+2 km/h of top speed and roughly 10 % less power at cruise. No surface
-overhangs more than 45° with the pod printed upright, so it still needs no
-supports. The pod takes about 3 minutes longer to print and is 0.5 g lighter.
-Set `nose_r = 0` to get the old square front back.
+So the tubes became tail booms:
+
+- **Booms.** The booms start in two sockets under the wing centre and are
+  140 mm apart (±70 mm). The blade tips pass 16.2 mm inside each boom.
+- **Motor.** It is turned round and screwed to the pod's back wall, just
+  behind the wing's trailing edge. The prop turns 18 mm behind the wing,
+  on the boom centre-line.
+- **Pushrods.** They run along the inside of the booms, 62 mm from the
+  centre-line, 10.7 mm outside the blade tips. Tape them to the booms
+  so they cannot bow into the disc.
+- **Servos.** The elevator and rudder servos moved out of the pod into the
+  wing centre, one on each side of the pod, with their horns on the pushrod
+  lines.
+- **Pod.** The pod no longer carries the tubes. It hangs under the wing
+  centre, with the camera in its nose. The CG still has to sit at 28 % of the
+  chord, and the motor now sits behind the wing, so the pod needs about
+  170 mm of nose ahead of the wing. That makes it about 272 mm long,
+  which is too long for the 180 mm bed. It prints in two halves joined by an
+  8 mm tongue.
+
+The cost is weight and span. The pusher is about 17 g heavier than
+the tractor was (a longer pod, the boom sockets, a wider tail mount and longer
+booms), and to stay under the 9 m/s stall limit the wing grew from 465 mm to
+485 mm.
 
 ## Build process and DFMA
 
@@ -67,34 +96,34 @@ Set `nose_r = 0` to get the old square front back.
 **DFMA analysis** ([DFMA.md](DFMA.md)). The same data drives the viewer's
 **Assemble** button and the video [preview/assembly.mp4](preview/assembly.mp4).
 
-- **31 operations** in five groups:
+- **30 operations** in five groups:
   - 5 print jobs on the A1 mini;
-  - 8 prep steps (cut carbon, make linkages, finish prints);
+  - 7 prep steps (cut carbon, make linkages, finish prints);
   - 16 assembly steps;
   - 2 setup steps.
 
   Each has its predecessors, tools, consumables and a time.
 - **Print times are real slicer output.** They come from PrusaSlicer 2.7 on an
-  A1-mini-like profile (`tools/a1mini.ini`): 7 h 45 min in total and
-  76 g of filament. The wing panels take about 1 h 27 min
-  each, because LW-PLA prints slowly.
+  A1-mini-like profile (`tools/a1mini.ini`): 8 h 38 min in total and
+  97 g of filament. The wing centre takes 2 h 30 min and each wing panel
+  1 h 24 min, because LW-PLA prints slowly.
 - **Hand times are estimates.** They use Boothroyd–Dewhurst handling and
   insertion values plus shop times for gluing, soldering, taping and bending.
-  Hands-on time is 1 h 47 min, including 30 min of INAV setup. Soldering is
+  Hands-on time is 1 h 46 min, including 32 min of INAV setup. Soldering is
   the biggest single item: the F405-WMN's servo, ESC and power connections are
   pads, so a full wiring pass is about 32 joints.
 - **Schedule.** One builder works while one printer runs. That gives a lead
-  time of **9 h 15 min**, and the critical path runs through the five
+  time of **10 h 09 min**, and the critical path runs through the five
   prints in series.
 
 | DFMA | |
 |---|---|
-| Parts and fasteners | 53 (theoretical minimum 26) |
-| Manual assembly time | 41 min (7 min handling and insertion) |
-| Design efficiency | 3% (20% counting handling and insertion only) |
-| With the redesign suggestions | 45 parts, 31 min, 4% |
-| Printability | no part needs support; the only wide overhang is a 16 mm bridge over the rudder servo pocket |
-| Cost | about 166 EUR per airframe; the whole printed airframe is only 76 g of filament (about 3 EUR), but a first build also buys an LW-PLA and a PETG spool (about 65 EUR), so about 231 EUR up front |
+| Parts and fasteners | 54 (theoretical minimum 26) |
+| Manual assembly time | 42 min (7 min handling and insertion) |
+| Design efficiency | 3% (19% counting handling and insertion only) |
+| With the redesign suggestions | 46 parts, 32 min, 4% |
+| Printability | no part needs support |
+| Cost | about 170 EUR per airframe; the whole printed airframe is only 97 g of filament (about 4 EUR), but a first build also buys an LW-PLA and a PETG spool (about 65 EUR), so about 235 EUR up front |
 
 Most of the assembly time goes into joints (solder, epoxy, CA, tape), not into
 handling parts. The suggestions that save the most are:
@@ -106,7 +135,7 @@ handling parts. The suggestions that save the most are:
 
 DFMA.md lists each one with its trade-off.
 
-## Why 465 mm
+## Why 485 mm
 
 A printed plane does not scale down evenly. The electronics weigh the same at
 any size, and a printed skin can't get thinner than one nozzle line. So as the
@@ -122,47 +151,45 @@ battery station) and estimates the weight. A span passes when:
 
 | span | AUW | stall |
 |---|---|---|
-| 300 mm | 165 g | 12.4 m/s |
-| 380 mm | 179 g | 10.2 m/s |
-| 420 mm | 188 g | 9.5 m/s |
-| 440 mm | 194 g | 9.2 m/s |
-| **460 mm** | **200 g** (estimate) | **8.9 m/s (first to pass the quick estimate)** |
-| 460 mm | 204 g (CAD) | 9.01 m/s (just over) |
-| **465 mm** | **206 g (CAD)** | **8.95 m/s (built)** |
+| 300 mm | 172 g | 12.7 m/s |
+| 380 mm | 191 g | 10.6 m/s |
+| 440 mm | 207 g | 9.5 m/s |
+| 460 mm | 213 g | 9.2 m/s |
+| **480 mm** | **219 g** (estimate) | **8.95 m/s (first to pass the quick estimate)** |
+| 480 mm | 221 g (CAD) | 9.00 m/s (exactly on the limit) |
+| **485 mm** | **223 g (CAD)** | **8.94 m/s (built)** |
 
-The quick estimate is a few grams light. The CAD weights, which include the
-printed detail, the ESC cradle and the wiring, put 460 mm just over the limit,
-so the build takes the smallest 5 mm step that passes.
-
-The F405-WMN and the XRotor 30A weigh 6.5 g more than the 12 A ESC and small
-20 × 20 FC the design started with (10 + 6 g against 6 + 3.5 g), and their
-longer wire runs add about 1 g. Together with the bigger wing and pod they
-moved the answer from 450 mm to 465 mm. The four SG90s are the heaviest part of
-the kit after the battery; a 4 g servo such as the Emax ES9051 would bring the
-span back down, but it needs new pockets.
+The quick estimate is a couple of grams light. With the CAD weights, which
+include the printed detail and the wiring, 480 mm lands exactly on the limit,
+so the build takes the next 5 mm step, which keeps a little margin.
 
 Yaw control costs about 11 g: a fourth SG90, two printed rudders and the
-linkage. Without rudders (`Params.rudders = False`) the sweep lands at 440 mm.
-Change `Kit` and `Params` in `design.py` and rerun to try other parts.
+linkage. Without rudders (`Params.rudders = False`) the sweep lands at
+460 mm. The four SG90s are the heaviest part of the kit after the
+battery; a 4 g servo such as the Emax ES9051 would bring the span down, but it
+needs new pockets. Change `Kit` and `Params` in `design.py` and rerun to try
+other parts.
 
 ## Yaw control
 
-Each fin carries a rudder aft of the elevator hinge line. The rudders are 15.6 mm
-chord by 39 mm tall, about a third of the fin area, and are hinged with tape on
-the outboard face.
+Each fin carries a rudder aft of the elevator hinge line, about a third of
+the fin area, hinged with tape on the outboard face.
 
-- **Servo.** The rudder SG90 lies on its side in the wing centre section,
-  between the tubes. It sits in a small printed fairing on top of the wing so
-  that its horn, pointing down into the pod, clears the elevator servo and
-  pushrod underneath.
-- **Pushrod.** A 1 mm carbon rod, about 240 mm long, runs from the servo horn
-  (9 mm hole) 13 mm left of the centre-line. It goes through a slot in the pod's
-  rear wall and the wing saddle, back to the tail.
+- **Servo.** The rudder SG90 lies on its side in the wing centre, left of the
+  pod, with its shaft pointing left. Its horn hangs below the wing, 62 mm left
+  of the centre-line.
+- **Pushrod.** A 1 mm carbon rod runs from the servo horn back along the
+  inside of the left boom to the tail.
 - **Bellcrank.** A printed 90° bellcrank pivots on an M2 screw under the tail
-  mount. The pushrod drives its left arm, and its rear arm moves side to side.
-- **Joiners.** Two 0.8 mm steel wires, about 86 mm each, run from the
-  bellcrank's rear arm to a horn tab under each rudder. The wires run below
-  the fins and the tail mount, so both rudders always move together.
+  mount, 49 mm left of the centre-line. The pushrod drives its outer arm, and
+  its rear arm moves side to side.
+- **Joiners.** Two 0.8 mm steel wires run from the bellcrank's rear arm to a
+  horn tab under each rudder, below the fins and the tail mount, so both
+  rudders always move together.
+
+The elevator servo is the mirror image on the right. Its pushrod runs along
+the inside of the right boom, through a guide on the tail mount, to the
+printed elevator horn.
 
 ## Parts
 
@@ -170,49 +197,47 @@ the outboard face.
 
 | file | material | on the bed, mm | orientation |
 |---|---|---|---|
-| `pod.stl` | PLA/PETG | 176 × 49 × 40 | Upright, open top up. 2 walls, 15 % infill |
-| `lid.stl` | PLA/PETG | 96 × 43 × 3 | Flat, lips up |
-| `wing_centre.stl` | LW-PLA | 93 × 24 × 115 | On its side. 0.5 mm walls, 5 % infill |
-| `wing_R.stl`, `wing_L.stl` | LW-PLA | 93 × 12 × 175 | Standing on the root rib, brim. 1 wall, 0 % infill |
-| `aileron_R.stl`, `aileron_L.stl` | LW-PLA | 23 × 158 × 6 | Flat. 1 wall, 0 % infill |
-| `tail_mount.stl` | PLA/PETG | 29 × 49 × 9 | Plate face down |
-| `stab.stl` | LW-PLA | 28 × 174 × 2 | Flat. 2 top / 2 bottom layers, 15 % infill |
-| `elevator.stl` | LW-PLA | 15 × 163 × 8 | Top face down, horn up |
-| `fin_R.stl`, `fin_L.stl` | LW-PLA | 28 × 39 × 9 | Outer face down |
-| `rudder_R.stl`, `rudder_L.stl` | PLA/PETG | 16 × 44 × 6 | Outer face down, wire flange up |
+| `pod_front.stl` | PLA/PETG | 138 × 41 × 22 | Upright, open top up. 2 walls, 15 % infill |
+| `pod_rear.stl` | PLA/PETG | 142 × 41 × 31 | Upright, open top up, tongue forward. 2 walls, 15 % infill |
+| `lid.stl` | PLA/PETG | 177 × 39 × 1 | Flat |
+| `wing_centre.stl` | LW-PLA | 105 × 22 × 155 | On its side. 0.5 mm walls, 5 % infill |
+| `wing_R.stl`, `wing_L.stl` | LW-PLA | 97 × 12 × 165 | Standing on the root rib, brim. 1 wall, 0 % infill |
+| `aileron_R.stl`, `aileron_L.stl` | LW-PLA | 24 × 148 × 7 | Flat. 1 wall, 0 % infill |
+| `tail_mount.stl` | PLA/PETG | 31 × 156 × 9 | Pads face down |
+| `stab.stl` | LW-PLA | 31 × 174 × 2 | Flat. 2 top / 2 bottom layers, 15 % infill |
+| `elevator.stl` | LW-PLA | 17 × 163 × 10 | Top face down, horn up |
+| `fin_R.stl`, `fin_L.stl` | LW-PLA | 30 × 39 × 9 | Outer face down |
+| `rudder_R.stl`, `rudder_L.stl` | PLA/PETG | 17 × 44 × 6 | Outer face down, wire flange up |
 | `bellcrank.stl` | PLA/PETG | 16 × 19 × 2 | Flat, solid |
 
 Every wing piece is a printed NACA 4412 section: a closed one-wall LW-PLA shell
-with the spar holes, servo pocket and hinge gap built in. The wing centre and both
-panels plus the ailerons come to 42 g of filament.
+with the spar holes, servo pockets and hinge gap built in.
 
 ![Wing sections cut from the STLs](preview/wing_sections.png)
 
 The masses assume LW-PLA foamed to about 0.75 g/cm³. Plain PLA works, but it
-adds roughly 25 g to the wing and tail. The rudders and bellcrank are plain
-PLA or PETG because their horns take the linkage loads.
+adds roughly 25 g to the wing and tail. The pod, rudders and bellcrank are
+plain PLA or PETG because they take the motor and linkage loads.
 
 ### Printing on a Bambu Lab A1 mini
 
-Everything fits the A1 mini's 180 × 180 × 180 mm volume. The tallest parts are
-the wing panels at 175 mm. `Params.bed` holds the build volume, and the model
-adapts to it in two ways:
+Everything fits the A1 mini's 180 × 180 × 180 mm volume. `Params.bed` holds
+the build volume, and the model adapts to it:
 
-- the centre section widens so the panels fit under the build height, and
 - the stabiliser's span is capped at the bed width, with its chord widened to
-  keep the same area.
+  keep the same area;
+- the pod is split into two halves, each shorter than the bed.
 
 Every build checks each part against the volume (see the print list in
-REPORT.md). For a bigger printer, set `bed` to its volume and the centre
-section shrinks back to 56 mm.
+REPORT.md).
 
 Five plates cover the whole airframe:
 
 | plate | parts | material |
 |---|---|---|
-| 1 | pod, lid, tail mount, both rudders, bellcrank | PETG or PLA |
-| 2 | stabiliser, elevator, both ailerons | LW-PLA |
-| 3 | wing centre, both fins | LW-PLA |
+| 1 | both pod halves, lid, tail mount, both rudders, bellcrank | PETG or PLA |
+| 2 | wing centre, both fins | LW-PLA |
+| 3 | stabiliser, elevator, both ailerons | LW-PLA |
 | 4 | right wing panel | LW-PLA |
 | 5 | left wing panel | LW-PLA |
 
@@ -220,8 +245,8 @@ Plates 1, 2 and 3 mix different wall and infill settings, so set them per
 object in Bambu Studio.
 
 - **Tall wing panels.** The A1 mini moves its bed front to back, which shakes
-  tall, thin parts. Turn each panel so its 93 mm chord runs front to back, add
-  an 8–10 mm brim, and print at reduced speed (Silent mode).
+  tall, thin parts. Turn each panel so its chord runs front to back, add an
+  8–10 mm brim, and print at reduced speed (Silent mode).
 - **LW-PLA** is not a Bambu filament, so make a custom filament profile. A
   starting point: about 240 °C with the flow at 55–60 %, little or no
   retraction. Print a test cube, weigh it and adjust the flow until the density
@@ -238,8 +263,8 @@ dimensions, so check sizes before substituting parts.
 | part | spec | requirements | g |
 |---|---|---|---|
 | Servos | 4 × Tower Pro SG90: 4.8–6 V, ~1.8 kg·cm, 0.1 s/60° | 22.8 × 12.2 × 22.7 mm body, 32.3 mm across the tabs | 36 |
-| Motor | 1404 outrunner, 3000–3800 KV | Rated for 2S; ≥ 206 g static thrust on a 4" prop (1:1). 9×9, 12 or 16 mm mounting | 9 |
-| Prop | 4" two-blade, 2.4–2.5" pitch (Gemfan 4024 class) | Hub to match the motor shaft | 2 |
+| Motor | 1404 outrunner, 3000–3800 KV | Rated for 2S; ≥ 223 g static thrust on a 4" prop (1:1). 9×9, 12 or 16 mm mounting | 9 |
+| Prop | 4" two-blade, 2.4–2.5" pitch (Gemfan 4024 class) | Hub to match the motor shaft; see the pusher note below | 2 |
 | ESC | **Hobbywing XRotor Micro 30A**: BLHeli_S, 2–4S, 30 A continuous / 40 A burst, no BEC | 23.8 × 14.5 × 5.8 mm, 20 AWG input wires, solder tabs for the motor. Full-throttle draw is about 8 A, so it runs at about a quarter of its rating | 6 |
 | Flight controller | **Matek F405-WMN**, INAV or ArduPilot | 31 × 26 mm on four 2 mm holes, 22 × 22 mm pattern; the vendor quotes 16.5 mm height, which the pod reserves. 2–6S input, 12 outputs, 5 A servo BEC (5 or 6 V), 1.5 A logic BEC, 132 A current sensor, analog OSD, 5 UARTs, barometer, USB-C. Battery, servo and ESC connections are pads on the underside | 10 |
 | Receiver | ExpressLRS 2.4 GHz nano | CRSF to an FC UART | 1.5 |
@@ -247,10 +272,17 @@ dimensions, so check sizes before substituting parts.
 | VTX | 5.8 GHz analog, 25–200 mW | ≤ 20 × 19 × 3 mm, MMCX antenna socket; the F405-WMN has no 9 V supply, so it runs from the switched battery output (2S) or the 5 V BEC. Whip antenna coax through the lid | 4.2 |
 | Battery | 2S 450 mAh LiPo, ≥ 30C, XT30 | ≤ 58 × 31 × 13 mm | 27 |
 
+**Pusher prop.** The motor faces backwards, so the prop must still push air
+aft. Either mount a normal prop with its lettered face towards the nose and
+reverse the motor direction in the ESC (or swap two motor wires), or use the
+reverse-rotation version of the same prop. Check on the bench, without the
+prop first and then with it held down, that the air blows backwards. Use a
+nyloc prop nut: a reversed motor can loosen a self-tightening one.
+
 Some electrical numbers from the model (`design.py`), all first-order:
 
-- **Cruise:** about 2.0 A (15 W), which gives about 11 minutes on the 450 mAh
-  pack with 20 % held in reserve.
+- **Cruise:** about 2.1 A, which gives about 10 minutes on the
+  450 mAh pack with 20 % held in reserve.
 - **Full throttle:** about 8 A at 1:1 thrust. That is about 18C from the pack
   and a quarter of the ESC's 30 A rating.
 - **Servo supply:** four SG90s can together draw well over an amp when they
@@ -258,7 +290,7 @@ Some electrical numbers from the model (`design.py`), all first-order:
 
 GPS is not included. An M10 module adds about 5 g, which raises the stall
 speed by about 0.1 m/s, just past the sizing limit. That is fine once you know
-the plane; otherwise build the wing at 475 mm.
+the plane; otherwise build the wing 10 mm wider.
 
 ### Electronics that carry over to a bigger wing
 
@@ -286,7 +318,8 @@ detail inside those envelopes is representative, not a copy of a drawing.
   grooves, the shaft and a hex prop nut.
 - **Prop 4 × 2.5:** twisted, cambered blades lofted through ten stations. The
   pitch angle follows the local radius and the roots are narrow, so the blades
-  clear the motor bell.
+  clear the motor bell. In the pusher it is the mirror image of the tractor
+  prop.
 - **Camera:** rounded housing, threaded lens barrel with a glass disc, and a
   PCB with three pads.
 - **VTX:** a 20 × 19 mm card with a shield on each side, a row of pads and an
@@ -298,8 +331,7 @@ detail inside those envelopes is representative, not a copy of a drawing.
   envelope for the interference check; the modelled parts are lower.
 - **XRotor Micro 30A:** MOSFETs on both sides, a low-profile capacitor lying
   across the top, battery and motor pads and two short red and black input
-  wires. The card stands on edge between two printed ribs, with the motor tabs
-  facing the side where the motor wires arrive.
+  wires. The card stands on edge between two printed ribs.
 - **Battery:** a label recess, red and black leads that fold over the top to a
   keyed XT30 with pin holes, and a JST-XH balance plug.
 
@@ -307,48 +339,44 @@ detail inside those envelopes is representative, not a copy of a drawing.
 
 | item | spec | g |
 |---|---|---|
-| Main struts | 2 × carbon tube 6×5 mm, cut to 405 mm (6×0.5 aluminium also fits, +8 g) | 10.8 |
-| Wing spars | carbon rod 3 mm and 2 mm, 455 mm each | 7.2 |
-| Pushrods | 2 × 1 mm carbon rod (~250 mm) with wire Z-bend ends: elevator and rudder | 0.6 |
-| Wire | 0.8 mm steel: 2 aileron links, 2 rudder joiners (~90 mm each) | ~1 |
-| Small parts | 2 micro control horns, M2 screws (one for the bellcrank), hinge tape, 10 mm velcro strap | ~2 |
+| Tail booms | 2 × carbon tube 6×5 mm, cut to 298 mm (6×0.5 aluminium also fits, heavier) | 8.0 |
+| Wing spars | carbon rod 3 mm and 2 mm, 475 mm each | 7.5 |
+| Pushrods | 2 × 1 mm carbon rod (~265 mm) with wire Z-bend ends: elevator and rudder | 1 |
+| Wire | 0.8 mm steel: 2 aileron links, 2 rudder joiners | ~1 |
+| Small parts | 2 micro control horns, M2 screws (4 for the motor, 4 for the FC, one for the bellcrank), hinge tape, 10 mm velcro strap | ~2 |
 
 ## Assembly
 
-1. **Check the fits.** Tube holes are 6.2 mm and spar holes 3.2/2.2 mm for glued
-   joints. Ream any tight hole with a drill bit by hand.
-2. **Fit out the pod.**
-   - Screw the motor to the front plate with M2 screws from inside. The slots
-     take 9×9 mm, 12 mm and 16 mm patterns.
-   - Glue the camera behind its window and stand the VTX board right behind it.
-     The whip antenna goes up through the hole in the lid.
+1. **Check the fits.** Boom holes are 6.2 mm and spar holes 3.2/2.2 mm for
+   glued joints. Ream any tight hole with a drill bit by hand.
+2. **Glue the pod halves.** Slide the rear half's U-shaped tongue 8 mm into
+   the front half, check that the floor and top edges line up, and glue with
+   CA.
+3. **Fit out the pod.**
+   - Screw the motor to the back wall with M2 screws from inside the pod. The
+     slots take 9×9 mm, 12 mm and 16 mm patterns. The motor wires go straight
+     through the slot beside the shaft, so the stock wire length is enough.
+   - Glue the camera behind the window in the nose and stand the VTX board
+     right behind it. The whip antenna goes up through the hole in the lid.
    - Solder the FC's wires first: its battery, servo and ESC connections are
      pads on the underside. Then screw it to the four posts (22 × 22 mm hole
-     pattern, M2 self-tapping screws), 34.5 mm behind the motor face with its
-     long edge along the pod. Stick the receiver to the right wall, about 3 mm
-     above the floor so it clears the belly chamfer.
-   - The VTX board's MMCX socket is on its left edge. Clip the whip's plug on
-     it and feed the coax up through the 2 mm hole in the lid.
-   - Drop the ESC into the two ribs behind the battery bay, on edge across the
-     pod, with its motor tabs to the left and its battery wires to the right.
-     The motor wires go through the slot beside the camera and along the left
-     wall (the motor wires must be at least 150 mm long, or extended).
-3. **Fit the elevator SG90.** Lay it on its side in the rear bay, between the
-   two floor ribs, with its base towards the left wall and the shaft pointing
-   right. The horn points straight up. Trim the horn to 13.5 mm so it clears
-   the wing centre, and use the hole 11.5 mm from the shaft. Hot glue it, or
-   screw through the tabs into the ribs.
-4. **Fit the rudder SG90** before the wing centre goes on.
-   - Press it into the pocket under the centre section from below: shaft
-     pointing left, tabs between the spars. The top of the servo sits in the
-     fairing.
-   - Trim its horn to 11 mm, point it straight down and hook the rudder
-     pushrod into the 9 mm hole.
-5. **Join the tubes.** Thread the wing centre's saddle onto both tubes, feeding
-   the rudder pushrod through the slot in the saddle and the pod's rear wall.
-   Push the tubes into the pod from the rear until they bottom out in the front
-   sleeves. Then slide the wing centre forward until its caps sit over the
-   pod's rear sleeves, and glue everything with epoxy or thick CA.
+     pattern, M2 self-tapping screws) with its long edge along the pod. Stick
+     the receiver to the right wall, about 3 mm above the floor so it clears
+     the belly chamfer.
+   - Drop the ESC into the two ribs in front of the back wall, on edge across
+     the pod, with its motor tabs to the left and its battery wires to the
+     right.
+4. **Fit the elevator and rudder SG90s** in the wing centre before it goes on
+   the pod.
+   - Press each one into its pocket from below: tabs between the spars, shaft
+     pointing outboard, the elevator servo on the right and the rudder servo
+     on the left.
+   - Point each horn straight down, below the wing. The horns are used full
+     length; hook the pushrod into the hole about 8 mm from the shaft, which
+     keeps the pushrod level with the booms.
+5. **Join the frame.** Glue the pod under the wing centre between the two
+   locating rails. Push the booms into their sockets from behind until they
+   bottom out, and glue everything with epoxy or thick CA.
 6. **Build the wing.**
    - Slide the 3 mm and 2 mm rods through the centre section and glue both
      panels on.
@@ -367,36 +395,41 @@ detail inside those envelopes is representative, not a copy of a drawing.
    - Hinge the elevator with tape on top.
    - Hinge each rudder to the back of its fin with tape on the outboard face.
      The horn tab goes at the bottom.
-   - Push the tail mount onto the tube ends. Sight from behind to get it square
+   - Screw the bellcrank loosely under the tail mount with an M2 screw, so it
+     turns freely.
+   - Push the tail mount onto the boom ends. Sight from behind to get it square
      to the wing, then glue.
-9. **Fit the elevator pushrod.** It runs 13.5 mm right of the centre-line: from
-   the servo horn, over the pod's rear wall and through the tail mount guide,
-   to the printed elevator horn.
-10. **Fit the rudder linkage.**
-    - Screw the bellcrank loosely under the tail mount with an M2 screw, so it
-      turns freely.
-    - Hook the rudder pushrod into its left arm.
-    - Bend both joiner wires with an L at each end. Drop one end into the
-      bellcrank's rear arm and the other into the flange under each rudder.
-    - Adjust the wire lengths so both rudders sit straight with the servo
-      centred.
-11. **Balance.** Strap the battery through the floor slots and slide it until
-    the plane balances 26 mm behind the wing LE (136.6 mm from the motor face).
-    The nominal battery centre is 92 mm from the motor face, and the travel is
-    83–101 mm. The XT30 folds back over the top of the pack.
+9. **Fit the pushrods.**
+   - Elevator: from the right servo horn, along the inside of the right boom
+     and through the tail mount guide, to the printed elevator horn.
+   - Rudder: from the left servo horn, along the inside of the left boom, to
+     the bellcrank's outer arm.
+   - Tape each pushrod loosely to its boom in two places, as a guide. They
+     pass only 10.7 mm outside the prop disc and must not bow into it.
+   - Bend both joiner wires with an L at each end. Drop one end into the
+     bellcrank's rear arm and the other into the flange under each rudder, and
+     adjust them so both rudders sit straight with the servo centred.
+10. **Balance.** Strap the battery through the floor slots and slide it until
+    the plane balances 27.2 mm behind the wing LE (199.6 mm from the nose).
+    The nominal battery centre is 91 mm from the nose, and the travel is
+    83–99 mm. The XT30 folds back over the top of the pack.
 
-The hatch lid rests on the tubes between the sleeves. Hold it with tape or two
-3 mm magnets.
+The hatch lid sits flush on two ledges and runs from the nose to just under
+the wing's leading edge. Hook its back edge under the wing, press the front
+down, and hold it with tape or two 3 mm magnets.
 
 ## First flights
 
 - **Throws:** ailerons ±12°, elevator ±15°, rudders ±20° (set with the servo
   endpoints), 30 % expo.
 - **INAV setup:** use the Airplane mixer with a rudder output, and fly angle
-  mode for the first launch.
-- **Launch:** hand-launch with a firm, level throw at about 70 % throttle.
-- **Landing:** the prop hangs below the pod. Cut the throttle before touchdown
-  and land on grass, or use a prop saver.
+  mode for the first launch. Set the motor direction as described in the
+  pusher note above.
+- **Launch:** the prop is behind your hand. Hold the pod ahead of the wing
+  from below, keep your fingers well forward of the trailing edge, and throw
+  firmly and level at about 70 % throttle. A launch glove is a good idea.
+- **Landing:** the prop disc reaches about 33 mm below the pod's belly. Cut the
+  throttle before touchdown and land on grass, or use a prop saver.
 - **Rudder:** use it to coordinate turns and hold heading in crosswinds. Check
   the rudder direction on the bench, and reverse the servo in INAV if needed.
 
@@ -425,7 +458,7 @@ The code is split into four files:
 
 Each build:
 
-- moves the wing along the tubes until the battery balances the plane in the
+- moves the wing along the pod until the battery balances the plane in the
   middle of its travel, using the CAD masses,
 - checks the stall speed with the CAD weight,
 - checks every bought part against every other body for overlaps, and
@@ -437,8 +470,8 @@ Each build:
 - `viewer/index.html` is an interactive 3D viewer. Serve the `viewer/` folder
   over HTTP, for example with `npx http-server airframe/viewer`.
 
-The coordinates are millimetres. x runs aft from the motor mounting face, y
-towards the right wing tip and z up, with z = 0 on the tube centre-line.
+The coordinates are millimetres. x runs aft from the pod's nose, y towards the
+right wing tip and z up, with z = 0 on the boom centre-line.
 
 ## Known limitations
 
@@ -447,6 +480,9 @@ towards the right wing tip and z up, with z = 0 on the tube centre-line.
   `build.py` (`PRINT`) before trusting the CG.
 - The aerodynamics are first-order: Helmbold lift slope, a Gilruth-style pod
   term and CLmax 0.95. Expect to trim.
+- The prop works in the wake of the pod and the wing. That usually costs a
+  pusher a few percent of thrust and makes it a little louder. The model
+  ignores it.
 - The SG90 model uses datasheet dimensions. Clones vary by a few tenths of a
   millimetre, so test-fit a servo in the pocket before gluing.
 - The drag build-up (top speed, the nose's benefit) uses handbook drag
@@ -457,19 +493,6 @@ towards the right wing tip and z up, with z = 0 on the tube centre-line.
   makers' drawings were not reachable. Check the FC's 22 × 22 mm hole pattern,
   its height and the pad positions against your board before printing the
   pod. The camera, VTX and receiver sizes are generic.
-- **The camera looks through the prop disc.** It sits 18 mm from the prop axis,
-  inside the 101.6 mm disc, so a blade crosses the lens about 18 % of the time
-  (roughly 530 times a second at cruise; a rough estimate assuming a 2 mm lens
-  pupil). Expect some dimming and flicker, worst at low throttle and in bright
-  sun. Balance the prop, and check the picture on the bench at 30, 60 and 100 %
-  throttle before the first flight. A pusher does not fit this layout: the prop
-  is wider than the 40 mm tube spacing, and a tail-mounted one adds about 26 g.
-  The fallback is a nose pylon that raises the motor to about 48 mm above the
-  tubes so the disc clears the lens. It needs a stiff, faired fin at least
-  10 mm thick and 26 mm long (a 6 mm fin would resonate at about 250 Hz, inside
-  the prop's rotation range), costs about 1.3 cm² of drag area (roughly 1 km/h)
-  and about 2 g, and pitches the nose down with throttle: about 38 g of tail
-  download at full throttle, so mix some up elevator with throttle. It also
-  lifts the prop tips clear of the ground. Not built yet.
-- The pod is sized for the ESC standing behind the battery. Motor wires of at
-  least 150 mm are needed to reach it.
+- The booms are only held by their glued sockets under the wing centre and
+  the tail mount. That is enough for the loads of a 200 g plane, but a hard
+  cartwheel will load the sockets; check them after crashes.

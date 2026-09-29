@@ -6,10 +6,10 @@ One builder and one Bambu Lab A1 mini. Print times come from PrusaSlicer 2.7, A1
 
 | | |
 |---|---|
-| Printer time | 7 h 45 min over 5 plates, 76 g of filament |
-| Hands-on time | 1 h 47 min (prep, assembly, setup) |
+| Printer time | 8 h 38 min over 5 plates, 97 g of filament |
+| Hands-on time | 1 h 46 min (prep, assembly, setup) |
 | Epoxy cure waits | 45 min |
-| Lead time | **9 h 15 min** with the builder working while the printer runs |
+| Lead time | **10 h 09 min** with the builder working while the printer runs |
 | Critical path | P1 > P2 > P3 > P4 > P5 > Q5 > A8 > A13 > A14 > A15 > A16 > S1 > S2 |
 
 ## Precedence graph
@@ -25,13 +25,12 @@ flowchart TB
   P5["P5 Plate 5"]
   F1["F1 Cut carbon"]
   F2["F2 Make linkages"]
-  F3["F3 Trim horns"]
   Q1["Q1 Finish plate 1"]
   Q2["Q2 Finish plate 2"]
   Q3["Q3 Finish plate 3"]
   Q4["Q4 Finish plate 4"]
   Q5["Q5 Finish plate 5"]
-  A1["A1 Motor"]
+  A1["A1 Pod, motor"]
   A2["A2 Camera, VTX"]
   A3["A3 FC, ESC, RX"]
   A4["A4 Solder"]
@@ -58,12 +57,9 @@ flowchart TB
   A1 --> A2
   A2 --> A3
   A3 --> A4
-  A4 --> A5
-  F3 --> A5
-  Q2 --> A6
-  F2 --> A6
-  F3 --> A6
-  A5 --> A7
+  Q2 --> A5
+  A5 --> A6
+  A4 --> A7
   A6 --> A7
   F1 --> A7
   A7 --> A8
@@ -86,7 +82,6 @@ flowchart TB
   A14 --> A15
   A10 --> A15
   A9 --> A15
-  A6 --> A15
   A15 --> A16
   A16 --> S1
   S1 --> S2
@@ -102,50 +97,49 @@ flowchart TB
 
 | op | operation | station | resource | time | start | end | needs | tools / consumables |
 |---|---|---|---|---|---|---|---|---|
-| P1 | Print plate 1: pod, lid, tail mount, rudders, bellcrank | Print | printer | 1 h 27 min | 0 min | 1 h 27 min | - |  |
+| P1 | Print plate 1: pod halves, lid, tail mount, rudders, bellcrank | Print | printer | 1 h 38 min | 0 min | 1 h 38 min | - |  |
 | F1 | Cut the carbon tubes and spars | Prep | builder | 3 min | 0 min | 3 min | - | rotary tool or fine saw, ruler, file |
 | F2 | Make the pushrods, aileron links and rudder joiners | Prep | builder | 11 min | 3 min | 14 min | - | wire bender or pliers, cutter, heat gun, CA, heat-shrink |
-| F3 | Trim the elevator (13.5 mm) and rudder (11 mm) servo horns | Prep | builder | 1 min | 14 min | 15 min | - | side cutter |
-| P2 | Print plate 2: wing centre, fins | Print | printer | 2 h 06 min | 1 h 27 min | 3 h 37 min | - |  |
-| Q1 | Finish plate 1 parts, ream tube and pivot holes | Prep | builder | 3 min | 1 h 27 min | 1 h 30 min | P1 | 6.2 / 1.6 mm drill bits in a pin vice |
-| A1 | Screw the motor to the pod | Pod | builder | 1 min | 1 h 30 min | 1 h 31 min | Q1 | 1.5 mm hex driver |
-| A2 | Fit the camera and VTX | Pod | builder | 1 min | 1 h 31 min | 1 h 31 min | A1 | CA, foam tape |
-| A3 | Screw the FC on its posts, drop the ESC into its ribs, add the receiver | Pod | builder | 1 min | 1 h 31 min | 1 h 33 min | A2 | 1.5 mm hex driver, foam tape |
-| A4 | Solder the power, motor, video and receiver wiring | Pod | builder | 17 min | 1 h 33 min | 1 h 49 min | A3 | soldering iron, solder, heat-shrink, silicone wire |
-| A5 | Glue the elevator servo into the rear bay | Pod | builder | 1 min | 1 h 49 min | 1 h 50 min | A4, F3 | hot glue |
-| P3 | Print plate 3: stabiliser, elevator, ailerons | Print | printer | 1 h 15 min | 3 h 37 min | 4 h 53 min | - |  |
-| Q2 | Finish the wing centre and fins, ream holes | Prep | builder | 2 min | 3 h 37 min | 3 h 39 min | P2 | 6.2 / 3.2 / 2.2 mm drill bits |
-| A6 | Fit the rudder servo and its pushrod in the wing centre | Wing | builder | 1 min | 3 h 39 min | 3 h 40 min | Q2, F2, F3 | hot glue |
-| A7 | Join the tubes, pod and wing centre | Frame | builder | 3 min + 15 min cure | 3 h 40 min | 3 h 44 min | A5, A6, F1 | 5-minute epoxy |
-| P4 | Print plate 4: right wing panel | Print | printer | 1 h 29 min | 4 h 53 min | 6 h 22 min | - |  |
-| Q3 | Finish the tail surfaces and ailerons | Prep | builder | 1 min | 4 h 53 min | 4 h 54 min | P3 |  |
-| A11 | Glue the stabiliser to the tail mount and the fins to the tips | Tail | builder | 1 min | 4 h 54 min | 4 h 55 min | Q1, Q2, Q3 | CA |
-| A12 | Hinge the elevator and rudders, screw on the bellcrank | Tail | builder | 3 min | 4 h 55 min | 4 h 58 min | A11, Q1 | 1.5 mm hex driver, hinge tape |
-| P5 | Print plate 5: left wing panel | Print | printer | 1 h 29 min | 6 h 22 min | 7 h 50 min | - |  |
-| Q4 | Remove the brim from the right panel, ream spar holes | Prep | builder | 2 min | 6 h 22 min | 6 h 23 min | P4 |  |
-| Q5 | Remove the brim from the left panel, ream spar holes | Prep | builder | 2 min | 7 h 50 min | 7 h 52 min | P5 |  |
-| A8 | Slide in the spars and glue on both wing panels | Wing | builder | 2 min + 15 min cure | 7 h 52 min | 7 h 54 min | A7, Q4, Q5, F1 | 5-minute epoxy |
-| A9 | Fit the aileron servos and route their leads | Wing | builder | 2 min | 8 h 09 min | 8 h 11 min | A8 | hot glue |
-| A10 | Hinge the ailerons, glue the horns, fit the links | Wing | builder | 3 min | 8 h 11 min | 8 h 14 min | A9, Q3, F2 | hinge tape, CA |
-| A13 | Slide the tail onto the tubes, square it and glue | Frame | builder | 3 min + 15 min cure | 8 h 14 min | 8 h 17 min | A12, A8 | 5-minute epoxy |
-| A14 | Connect the elevator pushrod, rudder pushrod and joiners | Final | builder | 1 min | 8 h 32 min | 8 h 33 min | A13, F2 |  |
-| A15 | Plug in the servo leads and tidy the wiring | Final | builder | 1 min | 8 h 33 min | 8 h 34 min | A14, A10, A9, A6 |  |
-| A16 | Fit the prop, battery, antenna and lid | Final | builder | 1 min | 8 h 34 min | 8 h 35 min | A15 | prop wrench |
-| S1 | Bind the receiver and set up INAV | Setup | builder | 32 min | 8 h 35 min | 9 h 07 min | A16 | laptop with INAV Configurator |
-| S2 | Balance and run the pre-flight checks | Setup | builder | 8 min | 9 h 07 min | 9 h 15 min | S1 | CG balancer or fingertips |
+| P2 | Print plate 2: wing centre, fins | Print | printer | 2 h 51 min | 1 h 38 min | 4 h 34 min | - |  |
+| Q1 | Finish plate 1 parts, ream tube and pivot holes | Prep | builder | 3 min | 1 h 38 min | 1 h 41 min | P1 | 6.2 / 1.6 mm drill bits in a pin vice |
+| A1 | Glue the pod halves, screw the motor to the back wall | Pod | builder | 1 min | 1 h 41 min | 1 h 42 min | Q1 | 1.5 mm hex driver, CA |
+| A2 | Fit the camera and VTX | Pod | builder | 1 min | 1 h 42 min | 1 h 43 min | A1 | CA, foam tape |
+| A3 | Screw the FC on its posts, drop the ESC into its ribs, add the receiver | Pod | builder | 1 min | 1 h 43 min | 1 h 44 min | A2 | 1.5 mm hex driver, foam tape |
+| A4 | Solder the power, motor, video and receiver wiring | Pod | builder | 17 min | 1 h 44 min | 2 h 01 min | A3 | soldering iron, solder, heat-shrink, silicone wire |
+| P3 | Print plate 3: stabiliser, elevator, ailerons | Print | printer | 1 h 18 min | 4 h 34 min | 5 h 52 min | - |  |
+| Q2 | Finish the wing centre and fins, ream holes | Prep | builder | 2 min | 4 h 34 min | 4 h 36 min | P2 | 6.2 / 3.2 / 2.2 mm drill bits |
+| A5 | Glue the elevator servo into the wing centre, right of the pod | Wing | builder | 1 min | 4 h 36 min | 4 h 37 min | Q2 | hot glue |
+| A6 | Glue the rudder servo into the wing centre, left of the pod | Wing | builder | 1 min | 4 h 37 min | 4 h 38 min | A5 | hot glue |
+| A7 | Glue the pod under the wing centre, push the booms into their sockets | Frame | builder | 3 min + 15 min cure | 4 h 38 min | 4 h 41 min | A4, A6, F1 | 5-minute epoxy |
+| P4 | Print plate 4: right wing panel | Print | printer | 1 h 26 min | 5 h 52 min | 7 h 18 min | - |  |
+| Q3 | Finish the tail surfaces and ailerons | Prep | builder | 1 min | 5 h 52 min | 5 h 54 min | P3 |  |
+| A11 | Glue the stabiliser to the tail mount and the fins to the tips | Tail | builder | 1 min | 5 h 54 min | 5 h 55 min | Q1, Q2, Q3 | CA |
+| A12 | Hinge the elevator and rudders, screw on the bellcrank | Tail | builder | 3 min | 5 h 55 min | 5 h 58 min | A11, Q1 | 1.5 mm hex driver, hinge tape |
+| P5 | Print plate 5: left wing panel | Print | printer | 1 h 26 min | 7 h 18 min | 8 h 44 min | - |  |
+| Q4 | Remove the brim from the right panel, ream spar holes | Prep | builder | 2 min | 7 h 18 min | 7 h 20 min | P4 |  |
+| Q5 | Remove the brim from the left panel, ream spar holes | Prep | builder | 2 min | 8 h 44 min | 8 h 45 min | P5 |  |
+| A8 | Slide in the spars and glue on both wing panels | Wing | builder | 2 min + 15 min cure | 8 h 45 min | 8 h 48 min | A7, Q4, Q5, F1 | 5-minute epoxy |
+| A9 | Fit the aileron servos and route their leads | Wing | builder | 2 min | 9 h 03 min | 9 h 04 min | A8 | hot glue |
+| A10 | Hinge the ailerons, glue the horns, fit the links | Wing | builder | 3 min | 9 h 04 min | 9 h 07 min | A9, Q3, F2 | hinge tape, CA |
+| A13 | Slide the tail onto the tubes, square it and glue | Frame | builder | 3 min + 15 min cure | 9 h 07 min | 9 h 10 min | A12, A8 | 5-minute epoxy |
+| A14 | Run the pushrods along the booms, connect them and the joiners | Final | builder | 2 min | 9 h 25 min | 9 h 27 min | A13, F2 | tape (pushrod guides on the booms) |
+| A15 | Plug in the servo leads and tidy the wiring | Final | builder | 1 min | 9 h 27 min | 9 h 28 min | A14, A10, A9 |  |
+| A16 | Fit the prop, battery, antenna and lid | Final | builder | 1 min | 9 h 28 min | 9 h 29 min | A15 | prop wrench |
+| S1 | Bind the receiver and set up INAV | Setup | builder | 32 min | 9 h 29 min | 10 h 01 min | A16 | laptop with INAV Configurator |
+| S2 | Balance and run the pre-flight checks | Setup | builder | 8 min | 10 h 01 min | 10 h 09 min | S1 | CG balancer or fingertips |
 
 ## Parts per operation
 
-- **P1** pod, lid, tail_mount, rudder_R, rudder_L, bellcrank
+- **P1** pod_front, pod_rear, lid, tail_mount, rudder_R, rudder_L, bellcrank
 - **P2** wing_centre, fin_R, fin_L
 - **P3** stab, elevator, aileron_R, aileron_L
 - **P4** wing_R
 - **P5** wing_L
-- **A1** pod, motor, M2 screw (motor)
+- **A1** pod_front, pod_rear, motor, M2 screw (motor)
 - **A2** camera, vtx
 - **A3** fc, M2 screw (FC), esc, receiver
 - **A5** servo_elev, servo horn (elevator), horn screw
-- **A6** servo_rud, servo horn (rudder), horn screw, pushrod_rud
+- **A6** servo_rud, servo horn (rudder), horn screw
 - **A7** wing_centre, tube_L, tube_R
 - **A8** spar_main, spar_rear, wing_R, wing_L
 - **A9** servo_ail_R, servo_ail_L
@@ -153,5 +147,5 @@ flowchart TB
 - **A11** tail_mount, stab, fin_R, fin_L
 - **A12** elevator, rudder_R, rudder_L, bellcrank, M2 screw (bellcrank)
 - **A13** tail sub-assembly
-- **A14** pushrod_elev, joiner_R, joiner_L
+- **A14** pushrod_elev, pushrod_rud, joiner_R, joiner_L
 - **A16** prop, battery, antenna, lid

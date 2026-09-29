@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Twin-tube micro FPV plane: parameters, layout and first-order sizing.
+"""Twin-boom micro FPV pusher: parameters, layout and first-order sizing.
 
 Pure Python (no CAD dependency) so the numbers can be checked quickly:
 
@@ -8,8 +8,8 @@ Pure Python (no CAD dependency) so the numbers can be checked quickly:
 prints the span sweep that picks the smallest workable wing, and the layout
 of the chosen design. build.py turns the same parameters into printable parts.
 
-Coordinates are millimetres: x runs aft from the motor mounting face, y towards
-the right wing tip, z up. The tube centre-line is z = 0.
+Coordinates are millimetres: x runs aft from the pod's nose, y towards the right
+wing tip, z up. The boom centre-line is z = 0.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ CARBON = 1.55
 @dataclass(frozen=True)
 class Params:
     # Wing: straight, rectangular, like the Molniya's
-    span: float = 465.0
+    span: float = 485.0
     aspect_ratio: float = 5.0
     naca: str = "4412"             # Clark-Y-like, forgiving at Re 50-80k
     incidence: float = 2.0         # deg, wing chord vs tube line
@@ -56,28 +56,31 @@ class Params:
     fin_below: float = 6.0         # fin depth below the stabiliser
     rudders: bool = True           # rudder on each fin, hinged on the elevator hinge line
     rudder_horn: float = 8.0       # rudder horn hole behind the hinge (below the rudder)
-    rudder_servo_hole: float = 9.0 # inner hole on the rudder servo's trimmed horn
 
-    # The two main struts: plain round tubes
+    # The two main struts: plain round tubes, now tail booms from the wing centre.
+    # They sit far enough apart for the pusher prop to turn between them.
     tube_od: float = 6.0
     tube_id: float = 5.0
     tube_density: float = CARBON   # 6x0.5 aluminium tube: 2.7
-    tube_spacing: float = 40.0     # centre to centre = pod width
+    tube_spacing: float = 140.0    # centre to centre; the 4" prop needs > 108 + clearance
     clearance: float = 0.2         # hole oversize for glued fits
+    socket_from: float = 0.12      # boom sockets under the wing centre start here (chords)
+    socket_past_te: float = 8.0    # ... and run this far past the trailing edge
+    pushrod_offset: float = 8.0    # pushrods run this far inboard of each boom
 
-    # Pod (between the tubes, like the Molniya's payload position)
+    # Pod: a nacelle under the wing centre, camera in the nose, motor on the back
+    pod_width: float = 40.8
     wall: float = 0.8
     boss_wall: float = 1.3         # printed sleeve round each tube
-    sleeve_len: float = 14.0       # sleeves at the pod front and rear
-    front_wall: float = 2.4        # carries the motor
+    front_wall: float = 2.4        # camera window
+    rear_wall: float = 2.4         # carries the motor
     nose_r: float = 8.0            # radius on the pod's front edges (0 = sharp box)
-    pod_depth: float = 18.0        # tube centre-line to pod bottom
-    pod_overlap: float = 0.70      # pod runs this far under the wing (chords)
+    pod_depth: float = 18.0        # boom centre-line to pod bottom
+    prop_gap: float = 18.0         # prop plane behind the wing trailing edge
     front_bay: float = 53.5        # camera, VTX, FC; battery behind
-    esc_bay: float = 8.4           # ESC card in its two ribs, between the battery and the servo bay
+    esc_bay: float = 8.4           # ESC card in its two ribs, just in front of the motor wall
     batt_trim: float = 16.0        # battery travel for balancing
-    servo_bay: float = 36.0        # elevator servo lies behind the battery
-    motor_z: float = 9.0           # thrust line above the tube centre-line
+    motor_z: float = 0.0           # thrust line on the boom centre-line
 
     cg_target: float = 0.28        # fraction of chord, first flights
     bed: tuple = (180.0, 180.0, 180.0)   # printer build volume: Bambu Lab A1 mini
@@ -85,9 +88,10 @@ class Params:
 
     @property
     def centre_w(self) -> float:
-        """Centre section width: wide enough that a wing panel standing on its
-        root rib fits the printer's build height."""
-        return max(self.center_width, self.span - 2 * (self.bed[2] - self.bed_margin))
+        """Centre section width: wide enough to carry both boom sockets, and wide
+        enough that a wing panel standing on its root rib fits the build height."""
+        booms = self.tube_spacing + 2 * (self.tube_od / 2 + self.clearance / 2 + self.boss_wall + 3.0)
+        return max(self.center_width, booms, self.span - 2 * (self.bed[2] - self.bed_margin))
     stall_limit: float = 9.0       # m/s, "as small as possible" criterion
 
 
@@ -228,31 +232,30 @@ class Layout:
         self.tube_y = p.tube_spacing / 2
         self.r_hole = p.tube_od / 2 + p.clearance / 2
         self.r_boss = self.r_hole + p.boss_wall
-        self.z_top = self.r_boss                     # pod top = wing seat
-        self.half_w = self.tube_y + p.wall / 2       # side walls under the tubes
+        self.z_top = self.r_boss                     # pod top = wing seat = top of the boom sockets
+        self.half_w = p.pod_width / 2
         self.z_bottom = -p.pod_depth
-        self.pod_len = max(x_le + p.pod_overlap * c,
-                           p.front_bay + k.batt_len + p.batt_trim + p.esc_bay + p.servo_bay + p.wall)
+        self.z_floor = self.z_bottom + p.wall
+        # the pod ends just behind the trailing edge; the motor sits on its back wall
+        self.pod_len = self.x_te + 3.0
+        self.x_prop = self.x_te + p.prop_gap
         self.tail_z = self.r_hole + 1.2              # stab seat on the tail mount
-        self.tube_x0 = p.front_wall + 1.6
+        self.socket_x0 = x_le + p.socket_from * c
+        self.socket_x1 = self.x_te + p.socket_past_te
+        self.tube_x0 = self.socket_x0 + 3.0
         self.tube_x1 = self.x_stab + self.c_fix - 2.0
         self.tube_len = self.tube_x1 - self.tube_x0
-        self.z_floor = self.z_bottom + p.wall
-        # elevator servo lies on its side on the floor, base against the left
-        # wall, shaft pointing right, horn arm up
-        sv = k.servo
-        self.elev_servo_x = self.pod_len - p.wall - p.servo_bay / 2      # body centre
-        self.elev_servo_base_y = -(self.half_w - p.wall) + 3.9   # clear of the belly chamfer
-        self.pushrod_y = self.elev_servo_base_y + sv.horn_z
-        self.pushrod_z = self.z_floor + sv.width / 2 + sv.horn_hole
-        # yaw: rudder servo under the wing centre, bellcrank under the tail mount,
-        # joiner wires to both rudders below the fins
+        # elevator servo (right) and rudder servo (left) lie in the wing centre with
+        # their horns hanging below it; pushrods run aft along the inboard side of each boom
+        self.pushrod_y = self.tube_y - p.pushrod_offset
+        self.rudder_pushrod_y = -self.pushrod_y
+        self.pushrod_z = -1.0                        # elevator horn hole at the tail
         self.x_hinge = self.x_stab + self.c_fix
         self.joiner_z = -(self.r_hole + 1.2) - 1.2           # below the tail mount sleeves
         self.bellcrank_x = self.x_hinge - 2.0
-        self.rudder_pushrod_y = -13.0
+        self.bellcrank_y = self.rudder_pushrod_y + 13.0     # pivot; its input arm reaches the pushrod
         self.elevator_inset = 6.0 if p.rudders else 0.6      # room for the rudders to swing
-        # front bay, x from the motor face: camera 3..15, VTX card 15.6..18.6, then the FC
+        # front bay, x from the nose: camera 3..15, VTX card 15.6..18.6, then the FC
         self.vtx_x = 15.6
         self.fc_x = self.vtx_x + 3.0 + 0.4 + k.fc_len / 2                # FC centre
         if self.fc_x + k.fc_len / 2 + 3.0 > p.front_bay:
@@ -260,12 +263,14 @@ class Layout:
                              f"needs {self.fc_x + k.fc_len / 2 + 3.0:.1f} mm")
         # VTX antenna: MMCX socket on the card's -y edge, plug and whip above it
         self.ant_x, self.ant_y, self.ant_z = self.vtx_x + 1.5, -(10.0 + 3.6), -6.5
-        # ESC card stands crosswise between two ribs, behind the battery
-        self.esc_bay_x = self.pod_len - p.wall - p.servo_bay - p.esc_bay      # bay front
-        self.esc_x = self.esc_bay_x + 1.0 + 0.3                              # card front face
+        # ESC card stands crosswise between two ribs, just in front of the motor wall
+        self.esc_bay_x = self.pod_len - p.rear_wall - p.esc_bay            # bay front
+        self.esc_x = self.esc_bay_x + 1.0 + 0.3                           # card front face
+        # battery bay right behind the front bay: the motor is at the back, so the
+        # battery balances the plane from the front
         self.batt_min = p.front_bay + 0.5            # battery front limit
-        self.batt_max = self.esc_bay_x - 0.5
-        self.length = self.x_stab + self.c_h + 20.0  # prop to elevator TE
+        self.batt_max = min(self.esc_bay_x - 0.5, self.batt_min + k.batt_len + p.batt_trim)
+        self.length = self.x_stab + self.c_h         # nose to elevator trailing edge
 
     def servo_slack(self) -> float:
         """Room left between the spars for the aileron servo's tabs (mm)."""
@@ -302,16 +307,14 @@ def structure_estimate(p: Params, L: Layout):
     wing_area = (2.06 * c + math.pi * (p.main_spar_d + p.rear_spar_d + 4)) * panels
     tail_plan = L.b_h * L.c_h + 2 * L.fin_h * L.c_h
     plate_equiv = 2 * 0.4 + 0.15 * (p.plate - 0.8)     # 2+2 solid layers, 15 % infill
-    pod_vol = (L.pod_len * (2 * p.wall * (p.pod_depth - L.r_hole) + p.wall * 2 * L.half_w)
-               + 4 * math.pi * (L.r_boss ** 2 - L.r_hole ** 2) * p.sleeve_len
-               + p.front_wall * 2 * L.half_w * (p.pod_depth + L.z_top))
-    lid_len = L.x_le - p.sleeve_len
-    lid_vol = lid_len * (2 * L.tube_y * 0.8 + 2 * 0.8 * 3.0)
+    pod_vol = (L.pod_len * (2 * p.wall * (p.pod_depth + L.z_top) + p.wall * 2 * L.half_w)
+               + (p.front_wall + p.rear_wall) * 2 * L.half_w * (p.pod_depth + L.z_top) + 26 * 13 * p.rear_wall)
+    lid_len = L.x_le - p.front_wall
+    lid_vol = lid_len * (2 * L.half_w * 0.8 + 2 * 0.8 * 2.5)
     return [
         ("wing panels", LW_PLA * p.skin * wing_area / 1000, L.x_le + 0.42 * c),
-        # calibrated on the CAD: 0.5 mm walls, 5 % infill, saddle, caps, servo fairing
-        ("wing centre + saddle", 0.128 * p.centre_w * c / 90 - (0 if p.rudders else 1.0),
-         L.x_le + 0.6 * c),
+        # calibrated on the CAD: 0.5 mm walls, 5 % infill, plus the two boom sockets
+        ("wing centre + sockets", 0.128 * p.centre_w * c / 90 + 1.5, L.x_le + 0.6 * c),
         ("spar rods", rod_mass(p.main_spar_d, b - 10) + rod_mass(p.rear_spar_d, b - 10),
          L.x_le + 0.43 * c),
         ("tail plates", LW_PLA * plate_equiv * tail_plan / 1000, L.x_stab + 0.45 * L.c_h),
@@ -319,7 +322,7 @@ def structure_estimate(p: Params, L: Layout):
         ("tubes", 2 * rod_mass(p.tube_od, L.tube_len, p.tube_id, p.tube_density),
          (L.tube_x0 + L.tube_x1) / 2),
         ("pod", PLA * pod_vol / 1000, 0.45 * L.pod_len),
-        ("lid", PLA * lid_vol / 1000, (p.sleeve_len + L.x_le) / 2),
+        ("lid", PLA * lid_vol / 1000, (p.front_wall + L.x_le) / 2),
     ]
 
 
@@ -327,16 +330,16 @@ def components(p: Params, k: Kit, L: Layout):
     """(name, grams, x, z) for everything that isn't printed, battery excluded."""
     servo_x = L.x_le + (p.main_spar_pos + p.rear_spar_pos) / 2 * L.chord
     return [
-        ("motor", k.motor, -7.0, p.motor_z),
-        ("prop", k.prop, -15.0, p.motor_z),
         ("camera + VTX", k.cam_vtx, 11.0, -8.0),
         ("antenna", k.antenna, L.ant_x, 10.0),
         ("FC", k.fc, L.fc_x, -13.0),
         ("receiver", k.rx, 42.0, -8.0),
         ("ESC", k.esc, L.esc_x + k.esc_thk / 2, -10.0),
-        ("elevator servo", k.servo.mass, L.elev_servo_x, L.z_floor + 6.0),
+        ("motor", k.motor, L.pod_len + 7.0, p.motor_z),
+        ("prop", k.prop, L.pod_len + 14.8, p.motor_z),
+        ("elevator servo", k.servo.mass, servo_x, 4.0),
         ("aileron servos", 2 * k.servo.mass, servo_x, 4.0),
-        *([("rudder servo", k.servo.mass, servo_x, 8.0),
+        *([("rudder servo", k.servo.mass, servo_x, 4.0),
            ("rudder linkage", 2.0, L.x_stab + L.c_fix, -4.0)] if p.rudders else []),
         ("wiring", k.wiring, 0.5 * L.pod_len, -8.0),
         ("hardware (fwd)", k.hardware / 2, L.x_le, 0.0),
@@ -395,7 +398,6 @@ def drag_area(p: Params, L: Layout, k: Kit):
     tail = (L.b_h * L.c_h + 2 * L.fin_h * L.c_h) * mm2
     w, h = 2 * L.half_w, p.pod_depth + L.z_top
     pod_front = w * h * mm2
-    plate = 26 * 13 * mm2                                   # motor plate above the pod
     pod_wet = 2 * L.pod_len * (w + h) * mm2
     tubes_wet = 2 * math.pi * p.tube_od * L.tube_len * mm2
     # Front + base drag of the pod (Hoerner's forebody trend): a sharp-edged box
@@ -404,14 +406,13 @@ def drag_area(p: Params, L: Layout, k: Kit):
     d_h = 2 * w * h / (w + h)                               # hydraulic diameter, mm
     rounded = min(1.0, p.nose_r / (0.2 * d_h))
     cd_pod = 0.5 - 0.25 * rounded
-    cd_plate = 0.5 - 0.1 * rounded                          # small fillets only
     items = {
         "wing (Cd0 0.014, printed surface)": L.area * mm2 * 0.014,
         "tail plates (Cd 0.02, flat 2 mm)": tail * 0.02,
         f"pod front + base (Cd {cd_pod:.2f})": pod_front * cd_pod,
-        f"motor plate (Cd {cd_plate:.2f})": plate * cd_plate,
         "pod skin friction": pod_wet * 0.006,
-        "tubes skin friction": tubes_wet * 0.006,
+        "booms skin friction": tubes_wet * 0.006,
+        "boom sockets": 2 * 2 * L.r_boss * 2 * L.r_boss * mm2 * 0.3,
         "servo bumps, fairing, horns, antenna": 1.5e-4,
     }
     return {n: v * 1.15 for n, v in items.items()}     # +15 % interference

@@ -151,9 +151,9 @@
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Twin-tube micro FPV · 3D printed · parametric CadQuery</div>
-    <h1>Kipinä <span id="h1-span">465</span></h1>
-    <p class="lede" id="lede">A 465 mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail with twin rudders; every other part prints on a Bambu Lab A1 mini. Four SG90 servos give roll, pitch and yaw, and 465 mm is the smallest span that still hand-launches below 9 m/s with them and an analog FPV kit.</p>
+    <div class="eyebrow">Twin-boom micro FPV pusher · 3D printed · parametric CadQuery</div>
+    <h1>Kipinä <span id="h1-span">490</span></h1>
+    <p class="lede" id="lede">A 490 mm twin-boom pusher. The camera sits in the nose of a short pod, the motor on its back wall, and the prop turns between two plain 6 mm carbon booms that carry an H-tail with twin rudders. Every other part prints on a Bambu Lab A1 mini, and four SG90 servos give roll, pitch and yaw.</p>
   </header>
 
   <div class="top">
@@ -168,6 +168,7 @@
           <button id="v-under" data-view="under" aria-pressed="false">Under</button>
           <button id="v-pod" data-view="pod" aria-pressed="false">Pod</button>
           <button id="v-nose" data-view="nose" aria-pressed="false">Nose</button>
+          <button id="v-prop" data-view="prop" aria-pressed="false">Prop</button>
           <button id="v-bay" data-view="bay" aria-pressed="false">Bay</button>
           <button id="v-esc" data-view="esc" aria-pressed="false">ESC</button>
           <button id="v-servo" data-view="servo" aria-pressed="false">Servo</button>
@@ -212,7 +213,7 @@
     <div class="prose">
       <h2>Why <span id="why-span">430</span> mm</h2>
       <p>A printed plane does not shrink evenly. The electronics weigh the same at any size, and a printed skin cannot get thinner than one nozzle line, so the wing loading climbs as the span drops.</p>
-      <p>The sweep rebuilds the layout at each span, re-balances it and estimates the weight. <b id="min-span">440 mm</b> is the first span that stalls below the 9 m/s hand-launch limit and still fits an SG90's mounting tabs between the wing spars. The build then re-checks with the CAD weights, which include the printed detail and wiring, and takes the smallest 5 mm step that still passes: <b id="build-span">465 mm</b>.</p>
+      <p>The sweep rebuilds the layout at each span, re-balances it and estimates the weight. <b id="min-span">440 mm</b> is the first span that stalls below the 9 m/s hand-launch limit and still fits an SG90's mounting tabs between the wing spars. The build then re-checks with the CAD weights, which include the printed detail and wiring, and takes the smallest 5 mm step that still passes with a little margin: <b id="build-span">465 mm</b>.</p>
       <p>Yaw control costs about 11 g: a fourth SG90, two printed rudders and the linkage. Without rudders the same sweep lands at <span id="no-rud">440</span> mm.</p>
     </div>
     <div class="figure"><svg id="chart" viewBox="0 0 560 300" role="img" aria-label="Stall speed against wingspan"></svg></div>
@@ -220,7 +221,7 @@
 
   <section>
     <h2>Balance</h2>
-    <p class="prose" style="margin:0">Distances from the motor mounting face. The battery slides in the pod to set the CG; the strap slots allow the travel shown.</p>
+    <p class="prose" style="margin:0">Distances from the nose of the pod. The battery slides in the pod to set the CG; the strap slots allow the travel shown.</p>
     <div class="figure"><svg id="balance" viewBox="0 0 900 190" role="img" aria-label="Side layout with CG and battery position"></svg></div>
   </section>
 
@@ -272,11 +273,11 @@
         <li id="kit-tubes">2 × carbon tube 6×5 mm (6×0.5 aluminium also fits, +6 g)</li>
         <li id="kit-spars">Carbon rod 3 mm and 2 mm (wing spars)</li>
         <li>4 × SG90 servo (9 g), with their single-arm horns</li>
-        <li>1404 3800 KV motor, 4×2.5 two-blade prop</li>
+        <li>1404 3800 KV motor, 4×2.5 two-blade prop, run as a pusher: reverse the motor and fit the prop lettering-forward, or use the reverse-rotation prop</li>
         <li id="kit-esc">Hobbywing XRotor Micro 30A ESC (BLHeli_S, 2–4S, 23.8 × 14.5 × 5.8 mm)</li>
         <li id="kit-fc">Matek F405-WMN flight controller (INAV or ArduPilot, 31 × 26 mm on 22 mm holes), ELRS nano receiver</li>
         <li>Nano camera (14 mm) with 25–200 mW VTX</li>
-        <li>1 mm carbon rod and 0.8 mm wire for pushrods and rudder joiners, 2 micro control horns, M2 screw for the bellcrank</li>
+        <li>1 mm carbon rod (2 × ~265 mm pushrods, taped to the booms as guides) and 0.8 mm wire for the aileron links and rudder joiners, 2 micro control horns, M2 screws for the motor, FC and bellcrank</li>
         <li>2S 450 mAh LiPo, 10 mm velcro strap, hinge tape</li>
       </ul>
     </div>
@@ -302,9 +303,10 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 const LABEL = {
-  pod: "Pod", lid: "Hatch lid", wing_centre: "Wing centre", wing_R: "Wing panel R", wing_L: "Wing panel L",
+  pod_front: "Pod, front half", pod_rear: "Pod, rear half", lid: "Hatch lid", wing_centre: "Wing centre",
+  wing_R: "Wing panel R", wing_L: "Wing panel L",
   aileron_R: "Aileron R", aileron_L: "Aileron L", tail_mount: "Tail mount", stab: "Stabiliser",
-  elevator: "Elevator", fin_R: "Fin R", fin_L: "Fin L", tube_L: "Tube L, 6×5 carbon", tube_R: "Tube R, 6×5 carbon",
+  elevator: "Elevator", fin_R: "Fin R", fin_L: "Fin L", tube_L: "Boom L, 6×5 carbon", tube_R: "Boom R, 6×5 carbon",
   spar_main: "Main spar, 3 mm rod", spar_rear: "Rear spar, 2 mm rod", motor: "Motor, 1404", prop: "Prop, 4×2.5",
   battery: "Battery, 2S 450 mAh", camera: "Nano camera", vtx: "VTX", antenna: "VTX antenna", fc: "Flight controller, F405-WMN",
   receiver: "ELRS receiver", esc: "ESC, XRotor Micro 30A", servo_elev: "SG90, elevator", servo_ail_R: "SG90, aileron R",
@@ -338,9 +340,10 @@ const rows = [
   ["Stall / cruise", `${f1(spec.stall)} / ${f1(spec.cruise)} m/s`],
   ["Top speed", `≈ ${Math.round(spec.top * 3.6)} km/h level`],
   ["Endurance", `≈ ${spec.endurance} min`],
-  ["CG from motor face", `<b>${f1(spec.cg_x)}</b> mm`],
+  ["CG from nose", `<b>${f1(spec.cg_x)}</b> mm`],
   ["CG / neutral point", `${spec.cg_pct} % / ${spec.np_pct} % MAC`],
-  ["Main struts", `2 × ${spec.tube.replace("x", "×")} mm, ${spec.tube_len}`],
+  ["Tail booms", `2 × ${spec.tube.replace("x", "×")} mm, ${spec.tube_len} long, ${spec.tube_spacing} apart`],
+  ["Prop to boom", `${f1(spec.tube_spacing / 2 - spec.prop_r - 3)} mm clear`],
   ["Servos", "4 × SG90"],
   ["Flight controller", spec.fc],
   ["ESC", spec.esc],
@@ -353,9 +356,9 @@ $("build-span").textContent = `${spec.span} mm`;
 $("no-rud").textContent = spec.no_rudder_span;
 $("h1-span").textContent = spec.span;
 document.title = `Kipinä ${spec.span}`;
-$("lede").textContent = `A ${spec.span} mm fixed wing built around two plain 6 mm tubes. They carry the pod, the wing and an H-tail with twin rudders; every other part prints on a Bambu Lab A1 mini. Four SG90 servos give roll, pitch and yaw, and ${spec.span} mm is the smallest span that still hand-launches below ${spec.stall_limit} m/s with them and an analog FPV kit.`;
+$("lede").textContent = `A ${spec.span} mm twin-boom pusher. The camera sits in the nose of a short pod, the motor on its back wall, and the prop turns between two plain 6 mm carbon booms, ${spec.tube_spacing} mm apart, that carry an H-tail with twin rudders. Every other part prints on a Bambu Lab A1 mini, four SG90 servos give roll, pitch and yaw, and ${spec.span} mm is the smallest span that still hand-launches below ${spec.stall_limit} m/s.`;
 $("why-span").textContent = spec.span;
-$("kit-tubes").textContent = `2 × carbon tube ${spec.tube.replace("x", "×")} mm, ${spec.tube_len} mm long (6×0.5 aluminium also fits, +6 g)`;
+$("kit-tubes").textContent = `2 × carbon tube ${spec.tube.replace("x", "×")} mm, ${spec.tube_len} mm long, the tail booms (6×0.5 aluminium also fits, +6 g)`;
 $("kit-spars").textContent = `Carbon rod 3 mm and 2 mm, ${spec.span - 10} mm each (wing spars)`;
 const grams = Object.fromEntries(spec.mass.map((m) => [m.name, m.g]));
 $("bought").innerHTML = BOUGHT.filter((n) => n in grams).map((n) =>
@@ -413,15 +416,15 @@ function drawBalance() {
         carbon = css("--carbon"), panel = css("--panel");
   const end = spec.x_stab + spec.c_h;
   const L = 40, R = 870;
-  const x = (mm) => L + (mm + 20) / (end + 20) * (R - L);
+  const x = (mm) => L + (mm + 10) / (end + 10) * (R - L);
   const axisY = 150;
   for (let mm = 0; mm <= end; mm += 50) {
     g.append(svg("line", { x1: x(mm), x2: x(mm), y1: axisY, y2: axisY + 6, stroke: muted }));
     g.append(svg("text", { x: x(mm), y: axisY + 20, "text-anchor": "middle", "font-size": 11, fill: muted }, mm));
   }
-  g.append(svg("line", { x1: x(-20), x2: x(end), y1: axisY, y2: axisY, stroke: muted }));
-  // tubes, pod, wing, tail, battery
-  g.append(svg("rect", { x: x(4), y: 83, width: x(spec.x_stab + spec.c_h - 15) - x(4), height: 5, fill: carbon }));
+  g.append(svg("line", { x1: x(-10), x2: x(end), y1: axisY, y2: axisY, stroke: muted }));
+  // booms, pod, wing, tail, battery
+  g.append(svg("rect", { x: x(spec.tube_x0), y: 83, width: x(spec.tube_x1) - x(spec.tube_x0), height: 5, fill: carbon }));
   g.append(svg("rect", { x: x(0), y: 88, width: x(spec.pod_len) - x(0), height: 34, fill: "none", stroke: ink, "stroke-width": 1.5, rx: 3 }));
   g.append(svg("rect", { x: x(spec.x_le), y: 62, width: x(spec.x_te) - x(spec.x_le), height: 14, fill: rule, stroke: ink, "stroke-width": 1.2, rx: 7 }));
   g.append(svg("rect", { x: x(spec.x_stab), y: 78, width: x(spec.x_stab + spec.c_h) - x(spec.x_stab), height: 4, fill: ink }));
@@ -431,8 +434,8 @@ function drawBalance() {
   g.append(svg("text", { x: x(spec.battery_x - bl / 2) + 2, y: 139, "font-size": 11, fill: ink }, `battery ${Math.round(spec.battery_x)}`));
   const [b0, b1] = spec.batt_range;
   g.append(svg("line", { x1: x(b0), x2: x(b1), y1: 99, y2: 99, stroke: accent, "stroke-width": 2 }));
-  g.append(svg("rect", { x: x(-16), y: 70, width: 3, height: 40, fill: muted }));
-  g.append(svg("text", { x: x(-20), y: 64, "font-size": 11, fill: muted }, "prop"));
+  g.append(svg("rect", { x: x(spec.x_prop) - 1.5, y: 64, width: 3, height: 52, fill: muted }));
+  g.append(svg("text", { x: x(spec.x_prop) + 6, y: 112, "font-size": 11, fill: muted }, "pusher prop"));
   // CG and neutral point
   const cx = x(spec.cg_x);
   g.append(svg("line", { x1: cx, x2: cx, y1: 30, y2: axisY, stroke: ink, "stroke-width": 1.2, "stroke-dasharray": "3 3" }));
@@ -443,7 +446,8 @@ function drawBalance() {
   g.append(svg("line", { x1: nx, x2: nx, y1: 44, y2: 62, stroke: muted, "stroke-width": 1.5 }));
   g.append(svg("text", { x: nx + 6, y: 52, "font-size": 11, fill: muted }, `NP ${f1(spec.np_x)}`));
   g.append(svg("text", { x: x(spec.x_stab - 4), y: 38, "text-anchor": "end", "font-size": 11, fill: muted }, "H-tail"));
-  g.append(svg("text", { x: x(210), y: 78, "text-anchor": "middle", "font-size": 11, fill: muted }, "two 6 mm tubes"));
+  g.append(svg("text", { x: x((spec.x_prop + spec.x_stab) / 2 + 10), y: 78, "text-anchor": "middle", "font-size": 11, fill: muted },
+               `two 6 mm booms, ${spec.tube_spacing} mm apart`));
 }
 // ---------------------------------------------------------------- bill of process + DFMA
 const fmtMin = (sec) => {
@@ -635,10 +639,11 @@ const VIEWS = {
   side: { dir: [0, 0.02, 1] },
   front: { dir: [-1, 0.06, 0.001] },
   under: { dir: [-0.55, -0.75, 0.75] },
-  pod: { dir: [-0.8, 0.75, 0.95], fit: ["pod", "battery", "servo_elev", "wing_centre"] },
-  nose: { dir: [-0.85, -0.3, 0.75], fit: ["motor", "camera", "vtx"], pad: 2.4 },
+  pod: { dir: [-0.8, 0.75, 0.95], fit: ["pod_front", "pod_rear", "motor", "wing_centre"] },
+  nose: { dir: [-0.85, -0.3, 0.75], fit: ["camera", "vtx"], pad: 3.0 },
+  prop: { dir: [0.95, 0.35, 0.55], fit: ["prop", "motor", "servo_elev", "servo_rud"], pad: 1.25 },
   bay: { dir: [-0.3, 1, 0.5], fit: ["camera", "vtx", "fc", "receiver"], pad: 1.2, hide: ["lid"] },
-  esc: { dir: [0.9, 0.8, 0.35], fit: ["esc"], pad: 3.4, hide: ["lid", ...WING, "servo_elev", "pushrod_elev"] },
+  esc: { dir: [-0.45, 1, 0.55], fit: ["esc", "motor"], pad: 1.6, hide: ["lid", ...WING, "servo_elev", "pushrod_elev"] },
   servo: { dir: [-0.35, -0.8, -0.55], fit: ["servo_ail_R", "horn_ail_R", "pushrod_ail_R"], pad: 1.5 },
   tail: { dir: [0.75, -0.45, 0.6], fit: ["rudder_R", "rudder_L", "bellcrank", "tail_mount", "fin_R", "fin_L"], pad: 1.05 },
 };

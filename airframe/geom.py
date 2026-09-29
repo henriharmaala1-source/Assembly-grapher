@@ -44,6 +44,12 @@ def rod(r, p0, p1):
     return cq.Solid.makeCylinder(r, (b - a).Length, a, b - a)
 
 
+def prism_x(pts_yz, x0, x1):
+    """Extrude a closed polygon drawn in y-z along x."""
+    wire = cq.Wire.makePolygon([V(x0, y, z) for y, z in pts_yz], close=True)
+    return cq.Solid.extrudeLinear(cq.Face.makeFromWires(wire), V(x1 - x0, 0, 0))
+
+
 def prism_y(pts_xz, y0, y1):
     """Extrude a closed polygon drawn in x-z along y."""
     wire = cq.Wire.makePolygon([V(x, y0, z) for x, z in pts_xz], close=True)

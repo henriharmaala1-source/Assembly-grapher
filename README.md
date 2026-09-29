@@ -1,8 +1,9 @@
 # Assembly-grapher
 
 - `docs/`: build log for the AI companion computer on an analog FPV quad (GitHub Pages).
-- [`airframe/`](airframe/README.md): **Kipinä 465**, a 465 mm, 3D-printed twin-tube
-  FPV fixed wing with ailerons, elevator and twin rudders on four SG90 servos,
+- [`airframe/`](airframe/README.md): **Kipinä 485**, a 485 mm, 3D-printed twin-boom
+  FPV pusher (the prop turns between the booms, so the nose camera has a clear
+  view) with ailerons, elevator and twin rudders on four SG90 servos,
   a Matek F405-WMN flight controller and a Hobbywing XRotor Micro 30A ESC,
   generated from parametric CadQuery code (STLs, STEP assembly with detailed
   electronics, sizing report). Every part prints on a Bambu Lab A1 mini. It

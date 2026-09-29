@@ -1,24 +1,24 @@
 {
  "summary": {
-  "n_actual": 53,
+  "n_actual": 54,
   "n_min": 26,
-  "t_ma": 2482,
-  "t_handle_insert": 400,
+  "t_ma": 2525,
+  "t_handle_insert": 408,
   "e_ma": 0.031,
-  "e_hi": 0.195,
-  "n_after": 45,
-  "t_after": 1847,
-  "e_after": 0.042,
-  "t_print": 27918,
-  "t_hands": 6397,
+  "e_hi": 0.191,
+  "n_after": 46,
+  "t_after": 1890,
+  "e_after": 0.041,
+  "t_print": 31110,
+  "t_hands": 6340,
   "t_cure": 2700,
-  "lead": 33284,
-  "filament_g": 76.0,
-  "print_cost": 3.16,
+  "lead": 36519,
+  "filament_g": 97.0,
+  "print_cost": 3.85,
   "bought_cost": 166,
   "grams_by_material": {
-   "PLA/PETG": 28.8,
-   "LW-PLA": 47.2
+   "PLA/PETG": 42.0,
+   "LW-PLA": 55.0
   },
   "spool_cost": 65,
   "first_build_cost": 231,
@@ -42,14 +42,15 @@
  "ops": [
   {
    "id": "P1",
-   "title": "Print plate 1: pod, lid, tail mount, rudders, bellcrank",
+   "title": "Print plate 1: pod halves, lid, tail mount, rudders, bellcrank",
    "short": "Plate 1 PETG",
    "station": "Print",
    "resource": "printer",
    "critical": true,
    "needs": [],
    "parts": [
-    "pod",
+    "pod_front",
+    "pod_rear",
     "lid",
     "tail_mount",
     "rudder_R",
@@ -58,10 +59,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 5196,
+   "seconds": 5892,
    "cure": 0.0,
    "start": 0,
-   "finish": 5196,
+   "finish": 5892,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -86,10 +87,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 7548,
+   "seconds": 10260,
    "cure": 0.0,
-   "start": 5196,
-   "finish": 13044,
+   "start": 5892,
+   "finish": 16452,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -115,10 +116,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 4518,
+   "seconds": 4698,
    "cure": 0.0,
-   "start": 13044,
-   "finish": 17562,
+   "start": 16452,
+   "finish": 21150,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -141,10 +142,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 5328,
+   "seconds": 5130,
    "cure": 0.0,
-   "start": 17562,
-   "finish": 22890,
+   "start": 21150,
+   "finish": 26280,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -167,10 +168,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 5328,
+   "seconds": 5130,
    "cure": 0.0,
-   "start": 22890,
-   "finish": 28218,
+   "start": 26280,
+   "finish": 31410,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -240,32 +241,6 @@
    "view": null
   },
   {
-   "id": "F3",
-   "title": "Trim the elevator (13.5 mm) and rudder (11 mm) servo horns",
-   "short": "Trim horns",
-   "station": "Prep",
-   "resource": "builder",
-   "critical": false,
-   "needs": [],
-   "parts": [],
-   "tools": [
-    "side cutter"
-   ],
-   "consumables": [],
-   "seconds": 60,
-   "cure": 0,
-   "start": 840,
-   "finish": 900,
-   "anim": [],
-   "focus": null,
-   "focus_offset": [
-    0,
-    0,
-    0
-   ],
-   "view": null
-  },
-  {
    "id": "Q1",
    "title": "Finish plate 1 parts, ream tube and pivot holes",
    "short": "Finish plate 1",
@@ -280,10 +255,10 @@
     "6.2 / 1.6 mm drill bits in a pin vice"
    ],
    "consumables": [],
-   "seconds": 195,
+   "seconds": 155,
    "cure": 0,
-   "start": 5196,
-   "finish": 5391,
+   "start": 5892,
+   "finish": 6047,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -310,8 +285,8 @@
    "consumables": [],
    "seconds": 120,
    "cure": 0,
-   "start": 13044,
-   "finish": 13164,
+   "start": 16452,
+   "finish": 16572,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -336,8 +311,8 @@
    "consumables": [],
    "seconds": 80,
    "cure": 0,
-   "start": 17562,
-   "finish": 17642,
+   "start": 21150,
+   "finish": 21230,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -362,8 +337,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 22890,
-   "finish": 23000,
+   "start": 26280,
+   "finish": 26390,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -388,8 +363,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 28218,
-   "finish": 28328,
+   "start": 31410,
+   "finish": 31520,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -401,8 +376,8 @@
   },
   {
    "id": "A1",
-   "title": "Screw the motor to the pod",
-   "short": "Motor",
+   "title": "Glue the pod halves, screw the motor to the back wall",
+   "short": "Pod, motor",
    "station": "Pod",
    "resource": "builder",
    "critical": false,
@@ -410,22 +385,25 @@
     "Q1"
    ],
    "parts": [
-    "pod",
+    "pod_front",
+    "pod_rear",
     "motor",
     "M2 screw (motor)"
    ],
    "tools": [
     "1.5 mm hex driver"
    ],
-   "consumables": [],
-   "seconds": 44,
+   "consumables": [
+    "CA"
+   ],
+   "seconds": 67,
    "cure": 0,
-   "start": 5391,
-   "finish": 5435,
+   "start": 6047,
+   "finish": 6114,
    "anim": [
     {
      "parts": [
-      "pod"
+      "pod_front"
      ],
      "from": [
       0,
@@ -440,10 +418,25 @@
     },
     {
      "parts": [
+      "pod_rear"
+     ],
+     "from": [
+      40,
+      0,
+      -30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
       "motor"
      ],
      "from": [
-      -45,
+      45,
       0,
       0
      ],
@@ -455,7 +448,8 @@
     }
    ],
    "focus": [
-    "pod"
+    "pod_front",
+    "pod_rear"
    ],
    "focus_offset": [
     0,
@@ -489,8 +483,8 @@
    ],
    "seconds": 54,
    "cure": 0,
-   "start": 5435,
-   "finish": 5489,
+   "start": 6114,
+   "finish": 6168,
    "anim": [
     {
      "parts": [
@@ -524,7 +518,8 @@
     }
    ],
    "focus": [
-    "pod"
+    "pod_front",
+    "pod_rear"
    ],
    "focus_offset": [
     0,
@@ -561,8 +556,8 @@
    ],
    "seconds": 69,
    "cure": 0,
-   "start": 5489,
-   "finish": 5558,
+   "start": 6168,
+   "finish": 6237,
    "anim": [
     {
      "parts": [
@@ -597,7 +592,8 @@
     }
    ],
    "focus": [
-    "pod"
+    "pod_front",
+    "pod_rear"
    ],
    "focus_offset": [
     0,
@@ -631,8 +627,8 @@
    ],
    "seconds": 1010,
    "cure": 0,
-   "start": 5558,
-   "finish": 6568,
+   "start": 6237,
+   "finish": 7247,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -644,14 +640,13 @@
   },
   {
    "id": "A5",
-   "title": "Glue the elevator servo into the rear bay",
+   "title": "Glue the elevator servo into the wing centre, right of the pod",
    "short": "Elevator servo",
-   "station": "Pod",
+   "station": "Wing",
    "resource": "builder",
    "critical": false,
    "needs": [
-    "A4",
-    "F3"
+    "Q2"
    ],
    "parts": [
     "servo_elev",
@@ -664,65 +659,8 @@
    ],
    "seconds": 42,
    "cure": 0,
-   "start": 6568,
-   "finish": 6609,
-   "anim": [
-    {
-     "parts": [
-      "servo_elev"
-     ],
-     "from": [
-      0,
-      0,
-      45
-     ],
-     "to": [
-      0,
-      0,
-      0
-     ]
-    }
-   ],
-   "focus": [
-    "pod"
-   ],
-   "focus_offset": [
-    0,
-    0,
-    0
-   ],
-   "view": [
-    -0.8,
-    0.8,
-    0.9
-   ]
-  },
-  {
-   "id": "A6",
-   "title": "Fit the rudder servo and its pushrod in the wing centre",
-   "short": "Rudder servo",
-   "station": "Wing",
-   "resource": "builder",
-   "critical": false,
-   "needs": [
-    "Q2",
-    "F2",
-    "F3"
-   ],
-   "parts": [
-    "servo_rud",
-    "servo horn (rudder)",
-    "horn screw",
-    "pushrod_rud"
-   ],
-   "tools": [],
-   "consumables": [
-    "hot glue"
-   ],
-   "seconds": 64,
-   "cure": 0,
-   "start": 13164,
-   "finish": 13228,
+   "start": 16572,
+   "finish": 16614,
    "anim": [
     {
      "parts": [
@@ -741,6 +679,60 @@
     },
     {
      "parts": [
+      "servo_elev"
+     ],
+     "from": [
+      0,
+      0,
+      -40
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "wing_centre"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.45,
+    -0.8,
+    -0.6
+   ]
+  },
+  {
+   "id": "A6",
+   "title": "Glue the rudder servo into the wing centre, left of the pod",
+   "short": "Rudder servo",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A5"
+   ],
+   "parts": [
+    "servo_rud",
+    "servo horn (rudder)",
+    "horn screw"
+   ],
+   "tools": [],
+   "consumables": [
+    "hot glue"
+   ],
+   "seconds": 42,
+   "cure": 0,
+   "start": 16614,
+   "finish": 16655,
+   "anim": [
+    {
+     "parts": [
       "servo_rud"
      ],
      "from": [
@@ -753,25 +745,9 @@
       0,
       0
      ]
-    },
-    {
-     "parts": [
-      "pushrod_rud"
-     ],
-     "from": [
-      120,
-      0,
-      0
-     ],
-     "to": [
-      0,
-      0,
-      0
-     ]
     }
    ],
    "focus": [
-    "pod",
     "wing_centre"
    ],
    "focus_offset": [
@@ -780,20 +756,20 @@
     0
    ],
    "view": [
+    -0.45,
     -0.8,
-    0.8,
-    0.9
+    -0.6
    ]
   },
   {
    "id": "A7",
-   "title": "Join the tubes, pod and wing centre",
+   "title": "Glue the pod under the wing centre, push the booms into their sockets",
    "short": "Join frame",
    "station": "Frame",
    "resource": "builder",
    "critical": false,
    "needs": [
-    "A5",
+    "A4",
     "A6",
     "F1"
    ],
@@ -808,8 +784,8 @@
    ],
    "seconds": 201,
    "cure": 900,
-   "start": 13228,
-   "finish": 13429,
+   "start": 16655,
+   "finish": 16856,
    "anim": [
     {
      "parts": [
@@ -829,7 +805,7 @@
     }
    ],
    "focus": [
-    "pod",
+    "pod_front",
     "wing_centre",
     "tube_L"
    ],
@@ -869,8 +845,8 @@
    ],
    "seconds": 132,
    "cure": 900,
-   "start": 28328,
-   "finish": 28460,
+   "start": 31520,
+   "finish": 31652,
    "anim": [
     {
      "parts": [
@@ -922,7 +898,7 @@
    "focus": [
     "wing_R",
     "wing_L",
-    "pod"
+    "pod_front"
    ],
    "focus_offset": [
     0,
@@ -955,8 +931,8 @@
    ],
    "seconds": 116,
    "cure": 0,
-   "start": 29360,
-   "finish": 29476,
+   "start": 32552,
+   "finish": 32668,
    "anim": [
     {
      "parts": [
@@ -1017,8 +993,8 @@
    ],
    "seconds": 159,
    "cure": 0,
-   "start": 29476,
-   "finish": 29635,
+   "start": 32668,
+   "finish": 32827,
    "anim": [
     {
      "parts": [
@@ -1094,8 +1070,8 @@
    ],
    "seconds": 83,
    "cure": 0,
-   "start": 17642,
-   "finish": 17725,
+   "start": 21230,
+   "finish": 21313,
    "anim": [
     {
      "parts": [
@@ -1201,8 +1177,8 @@
    ],
    "seconds": 159,
    "cure": 0,
-   "start": 17725,
-   "finish": 17884,
+   "start": 21313,
+   "finish": 21472,
    "anim": [
     {
      "parts": [
@@ -1274,8 +1250,8 @@
    ],
    "seconds": 170,
    "cure": 900,
-   "start": 29635,
-   "finish": 29804,
+   "start": 32827,
+   "finish": 32996,
    "anim": [
     {
      "parts": [
@@ -1314,7 +1290,7 @@
   },
   {
    "id": "A14",
-   "title": "Connect the elevator pushrod, rudder pushrod and joiners",
+   "title": "Run the pushrods along the booms, connect them and the joiners",
    "short": "Linkages",
    "station": "Final",
    "resource": "builder",
@@ -1325,19 +1301,23 @@
    ],
    "parts": [
     "pushrod_elev",
+    "pushrod_rud",
     "joiner_R",
     "joiner_L"
    ],
    "tools": [],
-   "consumables": [],
-   "seconds": 74,
+   "consumables": [
+    "tape (pushrod guides on the booms)"
+   ],
+   "seconds": 116,
    "cure": 0,
-   "start": 30704,
-   "finish": 30778,
+   "start": 33896,
+   "finish": 34012,
    "anim": [
     {
      "parts": [
-      "pushrod_elev"
+      "pushrod_elev",
+      "pushrod_rud"
      ],
      "from": [
       140,
@@ -1412,16 +1392,15 @@
    "needs": [
     "A14",
     "A10",
-    "A9",
-    "A6"
+    "A9"
    ],
    "parts": [],
    "tools": [],
    "consumables": [],
    "seconds": 62,
    "cure": 0,
-   "start": 30778,
-   "finish": 30840,
+   "start": 34012,
+   "finish": 34074,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1453,8 +1432,8 @@
    "consumables": [],
    "seconds": 44,
    "cure": 0,
-   "start": 30840,
-   "finish": 30884,
+   "start": 34074,
+   "finish": 34119,
    "anim": [
     {
      "parts": [
@@ -1506,7 +1485,7 @@
       "prop"
      ],
      "from": [
-      -45,
+      45,
       0,
       0
      ],
@@ -1546,8 +1525,8 @@
    "consumables": [],
    "seconds": 1920,
    "cure": 0,
-   "start": 30884,
-   "finish": 32804,
+   "start": 34119,
+   "finish": 36039,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1574,8 +1553,8 @@
    "consumables": [],
    "seconds": 480,
    "cure": 0,
-   "start": 32804,
-   "finish": 33284,
+   "start": 36039,
+   "finish": 36519,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1589,7 +1568,7 @@
  "dfma": [
   {
    "op": "A1",
-   "item": "pod",
+   "item": "pod_front",
    "qty": 1,
    "handling": "H10",
    "insertion": "I00",
@@ -1597,6 +1576,17 @@
    "t_total": 3.0,
    "n_min": 1,
    "why": "base part"
+  },
+  {
+   "op": "A1",
+   "item": "pod_rear",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 0,
+   "why": "separate only for the 180 mm bed"
   },
   {
    "op": "A1",
@@ -1751,17 +1741,6 @@
    "t_total": 8.5,
    "n_min": 0,
    "why": "fastener"
-  },
-  {
-   "op": "A6",
-   "item": "pushrod_rud",
-   "qty": 1,
-   "handling": "Hf",
-   "insertion": "I03",
-   "t_each": 7.5,
-   "t_total": 7.5,
-   "n_min": 1,
-   "why": "moves"
   },
   {
    "op": "A7",
@@ -2051,6 +2030,17 @@
   },
   {
    "op": "A14",
+   "item": "pushrod_rud",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A14",
    "item": "joiner_R",
    "qty": 1,
    "handling": "Hf",
@@ -2120,164 +2110,166 @@
   {
    "name": "wing_centre",
    "material": "LW-PLA",
-   "bed": "93 x 24 x 115",
-   "minutes": 105.8,
-   "grams": 15.37,
-   "cost": 0.85,
-   "overhang_mm2": 1543,
-   "support": "bridge 16 mm",
-   "bed_contact_mm2": 802,
-   "slender": 4.7,
-   "notes": []
+   "bed": "105 x 22 x 155",
+   "minutes": 150.2,
+   "grams": 22.74,
+   "cost": 1.25,
+   "overhang_mm2": 3505,
+   "support": "none",
+   "bed_contact_mm2": 870,
+   "slender": 7.1,
+   "notes": [
+    "tall and thin (height/width 7); brim and slow Y moves on a bed-slinger"
+   ]
   },
   {
    "name": "wing_R",
    "material": "LW-PLA",
-   "bed": "93 x 12 x 175",
-   "minutes": 86.8,
-   "grams": 9.4,
-   "cost": 0.52,
-   "overhang_mm2": 383,
+   "bed": "97 x 12 x 165",
+   "minutes": 83.5,
+   "grams": 9.32,
+   "cost": 0.51,
+   "overhang_mm2": 408,
    "support": "none",
-   "bed_contact_mm2": 721,
-   "slender": 14.7,
+   "bed_contact_mm2": 786,
+   "slender": 13.4,
    "notes": [
-    "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
+    "tall and thin (height/width 13); brim and slow Y moves on a bed-slinger"
    ]
   },
   {
    "name": "wing_L",
    "material": "LW-PLA",
-   "bed": "93 x 12 x 175",
-   "minutes": 86.8,
-   "grams": 9.39,
-   "cost": 0.52,
-   "overhang_mm2": 383,
+   "bed": "97 x 12 x 165",
+   "minutes": 83.5,
+   "grams": 9.33,
+   "cost": 0.51,
+   "overhang_mm2": 408,
    "support": "none",
-   "bed_contact_mm2": 721,
-   "slender": 14.7,
+   "bed_contact_mm2": 786,
+   "slender": 13.4,
    "notes": [
-    "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
+    "tall and thin (height/width 13); brim and slow Y moves on a bed-slinger"
    ]
   },
   {
    "name": "aileron_R",
    "material": "LW-PLA",
-   "bed": "23 x 158 x 6",
-   "minutes": 16.9,
-   "grams": 2.56,
+   "bed": "24 x 148 x 7",
+   "minutes": 16.6,
+   "grams": 2.51,
    "cost": 0.14,
    "overhang_mm2": 12,
    "support": "none",
-   "bed_contact_mm2": 115,
+   "bed_contact_mm2": 125,
    "slender": 0.3,
    "notes": [
-    "small bed contact (115 mm^2); use a brim or glue stick"
+    "small bed contact (125 mm^2); use a brim or glue stick"
    ]
   },
   {
    "name": "aileron_L",
    "material": "LW-PLA",
-   "bed": "23 x 158 x 6",
-   "minutes": 16.9,
-   "grams": 2.56,
+   "bed": "24 x 148 x 7",
+   "minutes": 16.6,
+   "grams": 2.51,
    "cost": 0.14,
    "overhang_mm2": 12,
    "support": "none",
-   "bed_contact_mm2": 115,
+   "bed_contact_mm2": 125,
    "slender": 0.3,
    "notes": [
-    "small bed contact (115 mm^2); use a brim or glue stick"
+    "small bed contact (125 mm^2); use a brim or glue stick"
    ]
   },
   {
    "name": "tail_mount",
    "material": "PLA/PETG",
-   "bed": "29 x 49 x 9",
-   "minutes": 11.1,
-   "grams": 4.21,
-   "cost": 0.08,
-   "overhang_mm2": 254,
+   "bed": "31 x 156 x 9",
+   "minutes": 13.9,
+   "grams": 5.06,
+   "cost": 0.1,
+   "overhang_mm2": 277,
    "support": "none",
-   "bed_contact_mm2": 1324,
+   "bed_contact_mm2": 1849,
    "slender": 0.3,
    "notes": []
   },
   {
    "name": "stab",
    "material": "LW-PLA",
-   "bed": "28 x 174 x 2",
-   "minutes": 25.2,
-   "grams": 3.71,
-   "cost": 0.2,
+   "bed": "31 x 174 x 2",
+   "minutes": 27.4,
+   "grams": 4.03,
+   "cost": 0.22,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 4781,
+   "bed_contact_mm2": 5213,
    "slender": 0.1,
    "notes": []
   },
   {
    "name": "elevator",
    "material": "LW-PLA",
-   "bed": "15 x 163 x 8",
-   "minutes": 14.3,
-   "grams": 1.9,
-   "cost": 0.1,
+   "bed": "17 x 163 x 10",
+   "minutes": 15.7,
+   "grams": 2.08,
+   "cost": 0.11,
    "overhang_mm2": 1,
    "support": "none",
-   "bed_contact_mm2": 2492,
-   "slender": 0.5,
+   "bed_contact_mm2": 2719,
+   "slender": 0.6,
    "notes": []
   },
   {
    "name": "fin_R",
    "material": "LW-PLA",
-   "bed": "28 x 39 x 9",
-   "minutes": 9.0,
-   "grams": 1.14,
-   "cost": 0.06,
+   "bed": "30 x 39 x 9",
+   "minutes": 9.4,
+   "grams": 1.23,
+   "cost": 0.07,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 1060,
+   "bed_contact_mm2": 1157,
    "slender": 0.3,
    "notes": []
   },
   {
    "name": "fin_L",
    "material": "LW-PLA",
-   "bed": "28 x 39 x 9",
-   "minutes": 9.0,
-   "grams": 1.14,
-   "cost": 0.06,
+   "bed": "30 x 39 x 9",
+   "minutes": 9.4,
+   "grams": 1.23,
+   "cost": 0.07,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 1060,
+   "bed_contact_mm2": 1157,
    "slender": 0.3,
    "notes": []
   },
   {
    "name": "rudder_R",
    "material": "PLA/PETG",
-   "bed": "16 x 44 x 6",
-   "minutes": 3.6,
-   "grams": 1.08,
+   "bed": "17 x 44 x 6",
+   "minutes": 3.7,
+   "grams": 1.16,
    "cost": 0.02,
    "overhang_mm2": 3,
    "support": "none",
-   "bed_contact_mm2": 669,
+   "bed_contact_mm2": 724,
    "slender": 0.4,
    "notes": []
   },
   {
    "name": "rudder_L",
    "material": "PLA/PETG",
-   "bed": "16 x 44 x 6",
+   "bed": "17 x 44 x 6",
    "minutes": 3.7,
-   "grams": 1.1,
+   "grams": 1.15,
    "cost": 0.02,
    "overhang_mm2": 3,
    "support": "none",
-   "bed_contact_mm2": 669,
+   "bed_contact_mm2": 724,
    "slender": 0.4,
    "notes": []
   },
@@ -2299,26 +2291,39 @@
   {
    "name": "lid",
    "material": "PLA/PETG",
-   "bed": "96 x 43 x 3",
-   "minutes": 9.4,
-   "grams": 4.66,
-   "cost": 0.09,
+   "bed": "177 x 39 x 1",
+   "minutes": 13.6,
+   "grams": 7.04,
+   "cost": 0.14,
    "overhang_mm2": 0,
    "support": "none",
-   "bed_contact_mm2": 4116,
-   "slender": 0.1,
+   "bed_contact_mm2": 6855,
+   "slender": 0.0,
    "notes": []
   },
   {
-   "name": "pod",
+   "name": "pod_front",
    "material": "PLA/PETG",
-   "bed": "176 x 49 x 40",
-   "minutes": 55.6,
-   "grams": 17.48,
-   "cost": 0.35,
-   "overhang_mm2": 702,
+   "bed": "138 x 41 x 22",
+   "minutes": 23.6,
+   "grams": 12.71,
+   "cost": 0.25,
+   "overhang_mm2": 401,
    "support": "none",
-   "bed_contact_mm2": 5613,
+   "bed_contact_mm2": 4376,
+   "slender": 0.5,
+   "notes": []
+  },
+  {
+   "name": "pod_rear",
+   "material": "PLA/PETG",
+   "bed": "142 x 41 x 31",
+   "minutes": 36.5,
+   "grams": 14.6,
+   "cost": 0.29,
+   "overhang_mm2": 426,
+   "support": "none",
+   "bed_contact_mm2": 4408,
    "slender": 0.8,
    "notes": []
   }

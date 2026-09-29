@@ -457,5 +457,19 @@ towards the right wing tip and z up, with z = 0 on the tube centre-line.
   makers' drawings were not reachable. Check the FC's 22 × 22 mm hole pattern,
   its height and the pad positions against your board before printing the
   pod. The camera, VTX and receiver sizes are generic.
+- **The camera looks through the prop disc.** It sits 18 mm from the prop axis,
+  inside the 101.6 mm disc, so a blade crosses the lens about 18 % of the time
+  (roughly 530 times a second at cruise; a rough estimate assuming a 2 mm lens
+  pupil). Expect some dimming and flicker, worst at low throttle and in bright
+  sun. Balance the prop, and check the picture on the bench at 30, 60 and 100 %
+  throttle before the first flight. A pusher does not fit this layout: the prop
+  is wider than the 40 mm tube spacing, and a tail-mounted one adds about 26 g.
+  The fallback is a nose pylon that raises the motor to about 48 mm above the
+  tubes so the disc clears the lens. It needs a stiff, faired fin at least
+  10 mm thick and 26 mm long (a 6 mm fin would resonate at about 250 Hz, inside
+  the prop's rotation range), costs about 1.3 cm² of drag area (roughly 1 km/h)
+  and about 2 g, and pitches the nose down with throttle: about 38 g of tail
+  download at full throttle, so mix some up elevator with throttle. It also
+  lifts the prop tips clear of the ground. Not built yet.
 - The pod is sized for the ESC standing behind the battery. Motor wires of at
   least 150 mm are needed to reach it.

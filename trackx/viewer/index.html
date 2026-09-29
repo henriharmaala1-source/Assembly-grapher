@@ -1,0 +1,383 @@
+<title>Patria TRACKX</title>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one large 3D stage with a slim spec rail beside it; the notes sit below as plain reading. */
+  :root {
+    --bg: #eceee8;        /* neutral leaning olive */
+    --panel: #f6f7f2;
+    --stage: #dfe3d8;
+    --ink: #182015;
+    --muted: #566150;
+    --rule: #c9d0c0;
+    --accent: #a4601a;    /* rust amber: active states and dimension marks only */
+    --grid-major: #a7b09b;
+    --grid-minor: #c3cab8;
+    --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+    --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f130d; --panel: #161b13; --stage: #1c2218; --ink: #e5e9dd; --muted: #97a38d; --rule: #2b3326;
+      --accent: #e39a45; --grid-major: #3a4433; --grid-minor: #283022; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f130d; --panel: #161b13; --stage: #1c2218; --ink: #e5e9dd; --muted: #97a38d; --rule: #2b3326;
+    --accent: #e39a45; --grid-major: #3a4433; --grid-minor: #283022; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font: 400 16px/1.55 var(--body); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 28px; }
+  header { display: grid; gap: 10px; max-width: 46rem; }
+  .eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 0; font: 700 clamp(2.6rem, 8vw, 4.6rem)/.95 var(--display); letter-spacing: .01em; text-transform: uppercase; text-wrap: balance; }
+  h1 span { color: var(--accent); }
+  .lede { margin: 0; font-size: 1.08rem; color: var(--muted); text-wrap: pretty; }
+  h2 { margin: 0 0 10px; font: 600 1.35rem/1.1 var(--display); letter-spacing: .04em; text-transform: uppercase; }
+  .top { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 960px) { .top { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; } }
+  .stagebox { display: grid; gap: 10px; min-width: 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+  .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--panel); max-width: 100%; }
+  button { font: 500 12px/1 var(--mono); letter-spacing: .04em; color: var(--ink); background: transparent; border: 0; padding: 10px 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .toggles { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .toggle { border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); display: inline-flex; gap: 8px; align-items: center; }
+  .toggle::before { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted); }
+  .toggle[aria-pressed="true"] { background: var(--panel); color: var(--ink); border-color: var(--ink); }
+  .toggle[aria-pressed="true"]::before { background: var(--accent); border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .stage { position: relative; aspect-ratio: 16 / 10; min-height: 300px; max-height: 72vh; width: 100%; background: var(--stage); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .status { position: absolute; inset: 0; display: grid; place-items: center; font: 500 13px var(--mono); color: var(--muted); letter-spacing: .04em; }
+  .foot { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; justify-content: space-between; gap: 12px; font: 400 11.5px var(--mono); color: var(--muted); pointer-events: none; }
+  .foot b { color: var(--ink); font-weight: 500; }
+  aside { display: grid; gap: 18px; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; min-width: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  th, td { text-align: left; padding: 8px 6px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  tbody th { font: 500 .92rem var(--body); text-transform: none; letter-spacing: 0; color: var(--ink); width: 34%; }
+  td.num { font-family: var(--mono); font-size: .86rem; font-variant-numeric: tabular-nums; }
+  tr:last-child th, tr:last-child td { border-bottom: 0; }
+  .two { display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 860px) { .two { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+  li::marker { color: var(--accent); }
+  p { margin: 0 0 8px; }
+  code { font: 400 .86em var(--mono); background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
+  a { color: var(--ink); text-decoration-color: var(--accent); text-underline-offset: 3px; overflow-wrap: anywhere; }
+  .src li { font-size: .95rem; }
+  footer { font: 400 12px var(--mono); color: var(--muted); }
+  body.shot header, body.shot aside, body.shot .bar, body.shot .notes, body.shot footer { display: none; }
+  body.shot .wrap { padding: 0; max-width: none; }
+  body.shot .top { grid-template-columns: minmax(0, 1fr); }
+  body.shot .stage { max-height: none; aspect-ratio: auto; height: 100vh; border: 0; border-radius: 0; }
+  body.shot .foot { display: none; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Tracked carrier · exterior model · full scale</div>
+    <h1>Patria <span>TRACKX</span></h1>
+    <p class="lede">The light tracked armoured carrier Patria showed at DSEI in September 2025, built as an outside-only 3D model from its published dimensions and layout. Drag to orbit, scroll to zoom.</p>
+  </header>
+
+  <div class="top">
+    <div class="stagebox">
+      <div class="bar">
+        <div class="seg" role="group" aria-label="View">
+          <button data-view="quarter" aria-pressed="true">3/4</button>
+          <button data-view="side" aria-pressed="false">Side</button>
+          <button data-view="front" aria-pressed="false">Front</button>
+          <button data-view="rear" aria-pressed="false">Rear</button>
+          <button data-view="top" aria-pressed="false">Top</button>
+          <button data-view="under" aria-pressed="false">Under</button>
+        </div>
+        <div class="toggles">
+          <button class="toggle" id="t-gear" aria-pressed="true">Tracks and wheels</button>
+          <button class="toggle" id="t-grid" aria-pressed="true">Ground</button>
+        </div>
+      </div>
+      <div class="stage" id="stage">
+        <div class="status" id="status">Loading model…</div>
+        <div class="foot"><span id="picked">Hover a part to name it</span><span id="scale">1 grid square = 1 m</span></div>
+      </div>
+    </div>
+
+    <aside>
+      <section class="card">
+        <h2>Size</h2>
+        <table>
+          <thead><tr><th></th><th>Published</th><th>Model</th></tr></thead>
+          <tbody>
+            <tr><th>Length</th><td>just over 7 m</td><td class="num" id="m-len">7.20 m</td></tr>
+            <tr><th>Width</th><td>under 3 m</td><td class="num" id="m-wid">2.95 m</td></tr>
+            <tr><th>Height</th><td>2 m to the roof</td><td class="num" id="m-hgt">2.00 m</td></tr>
+            <tr><th>Track width</th><td>56 cm</td><td class="num">56 cm</td></tr>
+            <tr><th>Belly clearance</th><td>55 cm</td><td class="num">55 cm</td></tr>
+            <tr><th>Wheels a side</th><td>6 dual road wheels, 2 return rollers</td><td class="num">6 + 2</td></tr>
+            <tr><th>Combat weight</th><td>15.5 t</td><td class="num">n/a</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </aside>
+  </div>
+
+  <div class="two notes">
+    <section>
+      <h2>Taken from the sources</h2>
+      <ul>
+        <li>Driver and commander sit at the front behind a large armoured windscreen.</li>
+        <li>Two side doors for the crew and a rear door hinged on the left for the ten dismounts.</li>
+        <li>A forward-opening commander's roof hatch.</li>
+        <li>Drive sprocket at the front, idler at the rear, six dual rubber-tyred road wheels and two return rollers a side.</li>
+        <li>56 cm rubber tracks and an almost flat underside.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>My estimates</h2>
+      <ul>
+        <li>Windscreen rake and size, bonnet height and the angle of the front plate.</li>
+        <li>Door, window and hatch sizes and positions.</li>
+        <li>Wheel, sprocket and idler diameters, and the track cleat pattern.</li>
+        <li>Colour. The photos and the makers' pages could not be opened, so nothing here was traced from a picture.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Left off</h2>
+      <ul>
+        <li>The roof-mounted weapon station and the pintle gun.</li>
+        <li>The drone jammer, antennas and mirrors.</li>
+        <li>Interior, engine and transmission.</li>
+      </ul>
+      <p style="margin-top:14px">Files in the repository: <code>trackx/out/trackx.step</code> (21 named bodies), <code>trackx.glb</code>, and STL at full size and at 1:43, which fits the 180 mm bed of an A1 mini.</p>
+    </section>
+  </div>
+
+  <section class="notes">
+    <h2>Sources</h2>
+    <ul class="src">
+      <li><a href="https://www.patriagroup.com/products-and-services/protected-mobility/patria-trackx">Patria: TRACKX product page</a></li>
+      <li><a href="https://www.patriagroup.com/newsroom/news/2025/patria-trackx-the-ultimate-all-terrain-tracked-vehicle-launched-at-dsei-uk-in-london">Patria: TRACKX launched at DSEI UK</a></li>
+      <li><a href="https://www.janes.com/osint-insights/defence-news/land/dsei-2025-patria-unveils-trackx-tracked-all-terrain-vehicle">Janes: Patria unveils TRACKX</a></li>
+      <li><a href="https://www.defensenews.com/global/europe/2025/09/09/finlands-patria-launches-light-tracked-apc-as-successor-to-m113/">Defense News: Patria launches light tracked APC</a></li>
+      <li><a href="https://www.edrmagazine.eu/patria-unveils-the-famous-concept-vehicle">EDR Magazine: the FAMOUS concept vehicle it grew out of</a></li>
+    </ul>
+  </section>
+  <footer>Generated by trackx/build.py (CadQuery). Coordinates in millimetres: x forward, y left, z up.</footer>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+if (params.has("shot")) document.body.classList.add("shot");
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const stage = $("stage");
+
+const LABEL = {
+  hull: "Hull", glass: "Windscreen and door windows", fittings: "Hatches, handles and wipers", lights: "Headlights",
+  tow_eyes: "Tow eyes", track: "Track", track_guide: "Track guide ridge", tyres: "Road wheels and idler",
+  rims: "Wheel rims", hubs: "Hub caps and bolts", rollers: "Return rollers", sprocket: "Drive sprocket",
+  arms: "Suspension arms and axles",
+};
+const GEAR = /^(track|track_guide|tyres|rims|hubs|rollers|sprocket|arms)_[LR]$/;
+const label = (n) => {
+  const m = n.match(/^(.*)_([LR])$/);
+  return m ? `${LABEL[m[1]] ?? m[1]}, ${m[2] === "L" ? "left" : "right"}` : LABEL[n] ?? n;
+};
+
+// ---------------------------------------------------------------- scene
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.75;
+const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+controls.dampingFactor = 0.08;
+controls.minDistance = 2;
+controls.maxDistance = 40;
+
+const sun = new THREE.DirectionalLight(0xffffff, 2.6);
+sun.position.set(5, 9, -6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6, near: 1, far: 30 });
+sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target);
+const fill = new THREE.DirectionalLight(0xdfe8ff, 0.6);
+fill.position.set(-6, 4, 5);
+scene.add(fill);
+
+const catcher = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.3 }));
+catcher.rotation.x = -Math.PI / 2;
+catcher.position.y = -0.002;
+catcher.receiveShadow = true;
+scene.add(catcher);
+
+let grid = null;
+function buildGrid() {
+  if (grid) scene.remove(grid);
+  grid = new THREE.GridHelper(20, 20, new THREE.Color(css("--grid-major")), new THREE.Color(css("--grid-minor")));
+  grid.position.y = -0.001;
+  grid.visible = $("t-grid").getAttribute("aria-pressed") === "true" && view !== "under";
+  scene.add(grid);
+}
+
+// ---------------------------------------------------------------- model
+async function loadModel() {
+  const loader = new GLTFLoader();
+  try {
+    return await loader.loadAsync("trackx.glb");
+  } catch {
+    // Hosts that do not serve .glb get the same binary as base64 JSON
+    const { glb } = await fetch("trackx-glb.json").then((r) => r.json());
+    return loader.parseAsync(Uint8Array.from(atob(glb), (c) => c.charCodeAt(0)).buffer, "");
+  }
+}
+const gltf = await loadModel().catch((e) => {
+  $("status").textContent = "The 3D model did not load. Reload the page to try again.";
+  throw e;
+});
+const model = gltf.scene;
+const meshes = new Map();
+model.traverse((o) => {
+  if (o.isMesh) {
+    o.castShadow = true;
+    o.receiveShadow = true;
+    o.material.side = THREE.FrontSide;
+    meshes.set(o.name || o.parent?.name, o);
+  }
+});
+scene.add(model);
+const box = new THREE.Box3().setFromObject(model);
+const size = box.getSize(new THREE.Vector3());
+const centre = box.getCenter(new THREE.Vector3());
+$("m-len").textContent = `${size.x.toFixed(2)} m`;
+$("m-wid").textContent = `${size.z.toFixed(2)} m`;
+$("m-hgt").textContent = `2.00 m (hatches ${size.y.toFixed(2)})`;
+sun.target.position.copy(centre);
+$("status").hidden = true;
+
+// ---------------------------------------------------------------- views
+const VIEWS = {
+  quarter: [0.85, 0.42, -0.9], side: [0.0, 0.06, -1], front: [1, 0.1, 0.0001], rear: [-1, 0.12, 0.0001],
+  top: [0.0, 1, -0.02], under: [0.3, -1, -0.35],
+};
+let view = null;
+const corners = [];
+for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+function fitDistance(dir, pad) {
+  const d = dir.clone().normalize();
+  const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), d).normalize();
+  if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+  const up = new THREE.Vector3().crossVectors(d, right).normalize();
+  const tv = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), th = tv * camera.aspect;
+  let dist = 0;
+  for (const c of corners) {
+    const p = c.clone().sub(centre);
+    const u = Math.abs(p.dot(right)), v = Math.abs(p.dot(up)), w = p.dot(d);
+    dist = Math.max(dist, w + u / th, w + v / tv);
+  }
+  return dist * pad;
+}
+let tween = null;
+function setView(name, instant) {
+  view = name;
+  const dir = new THREE.Vector3(...VIEWS[name]).normalize();
+  const to = centre.clone().add(dir.multiplyScalar(fitDistance(dir, 1.08)));
+  document.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === name)));
+  catcher.visible = name !== "under";
+  if (grid) grid.visible = $("t-grid").getAttribute("aria-pressed") === "true" && name !== "under";
+  if (instant || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    camera.position.copy(to); controls.target.copy(centre); controls.update(); return;
+  }
+  tween = { from: camera.position.clone(), to, fromT: controls.target.clone(), t0: performance.now() };
+}
+document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+controls.addEventListener("start", () => { tween = null; });
+
+function toggle(btn, fn) {
+  btn.addEventListener("click", () => {
+    const on = btn.getAttribute("aria-pressed") !== "true";
+    btn.setAttribute("aria-pressed", String(on));
+    fn(on);
+  });
+}
+toggle($("t-gear"), (on) => meshes.forEach((m, n) => { if (GEAR.test(n)) m.visible = on; }));
+toggle($("t-grid"), (on) => { grid.visible = on && view !== "under"; });
+
+// ---------------------------------------------------------------- hover label
+const ray = new THREE.Raycaster(), pt = new THREE.Vector2();
+let hoverName = null;
+function pick(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  pt.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(pt, camera);
+  const hit = ray.intersectObjects([...meshes.values()].filter((m) => m.visible))[0];
+  const n = hit ? hit.object.name : null;
+  if (n !== hoverName) {
+    hoverName = n;
+    $("picked").innerHTML = n ? `<b>${label(n)}</b>` : "Hover a part to name it";
+  }
+}
+renderer.domElement.addEventListener("pointermove", pick);
+renderer.domElement.addEventListener("pointerdown", pick);
+
+// ---------------------------------------------------------------- loop
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  if (view && !tween) setView(view, true);
+}
+new ResizeObserver(resize).observe(stage);
+new MutationObserver(buildGrid).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", buildGrid);
+
+const ease = (t) => 1 - Math.pow(1 - t, 3);
+function frame(now) {
+  if (tween) {
+    const t = Math.min(1, (now - tween.t0) / 700), k = ease(t);
+    camera.position.lerpVectors(tween.from, tween.to, k);
+    controls.target.lerpVectors(tween.fromT, centre, k);
+    if (t >= 1) tween = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+buildGrid();
+resize();
+setView(params.get("view") in VIEWS ? params.get("view") : "quarter", true);
+if (params.get("gear") === "0") $("t-gear").click();
+requestAnimationFrame(frame);
+requestAnimationFrame(() => requestAnimationFrame(() => { window.__ready = true; }));
+</script>

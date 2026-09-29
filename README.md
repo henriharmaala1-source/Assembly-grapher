@@ -8,3 +8,4 @@
   electronics, sizing report). Every part prints on a Bambu Lab A1 mini. It
   also has a bill of process with its precedence graph, an assembly animation
   and a DFMA analysis.
+- [`trackx/`](trackx/README.md): an outside-only, full-scale 3D model of the Patria TRACKX tracked carrier (STEP, GLB, STL, interactive viewer), built from published dimensions.

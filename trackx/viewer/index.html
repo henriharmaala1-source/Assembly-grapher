@@ -117,7 +117,7 @@
         <table>
           <thead><tr><th></th><th>Published</th><th>Model</th></tr></thead>
           <tbody>
-            <tr><th>Length</th><td>just over 7 m</td><td class="num" id="m-len">7.16 m</td></tr>
+            <tr><th>Length</th><td>just over 7 m</td><td class="num" id="m-len">7.06 m</td></tr>
             <tr><th>Width</th><td>under 3 m</td><td class="num" id="m-wid">2.95 m</td></tr>
             <tr><th>Height</th><td>2 m to the roof</td><td class="num" id="m-hgt">2.00 m</td></tr>
             <tr><th>Track width</th><td>56 cm</td><td class="num">56 cm</td></tr>
@@ -142,10 +142,12 @@
     <section>
       <h2>Read off the photos</h2>
       <ul>
-        <li>A narrow bonnet and cab between the two tracks, and a much wider troop box behind, with sloped upper sides and chamfered corners.</li>
-        <li>A low, wide windscreen with three wipers, a louvred bonnet with a centre hatch, and mirrors on outrigger frames.</li>
-        <li>Black bumper with wing plates, headlights at the bonnet corners, tow shackles, dished green wheel rims, rows of armour bolts, rear lights and mud flaps.</li>
-        <li>Sizes are scaled from the pictures against the published width, so they are estimates.</li>
+        <li>The upper hull runs full width over the tracks from the rear to the bumper. The windscreen sits in its front face between two angled corners that carry the door windows.</li>
+        <li>Wide glacis with louvres and headlights at its outer corners, and a black bumper whose ends drop over the tracks.</li>
+        <li>Two rear corner blocks with sloped tops and light clusters, a recessed rear door hinged on the left, and curved rubber flaps behind the tracks.</li>
+        <li>Grey box guards along the track tops, a slotted rail and bolt pads on the sides.</li>
+        <li>Raised sprocket and idler, so the top run is level and the lower run climbs at each end.</li>
+        <li>Each was checked by rendering the model from the same angle as each photo and comparing them side by side. Sizes are still estimates.</li>
       </ul>
     </section>
     <section>
@@ -155,7 +157,7 @@
         <li>Antennas, camouflage and markings.</li>
         <li>Interior, engine and transmission.</li>
       </ul>
-      <p style="margin-top:14px">Files in the repository: <code>trackx/out/trackx.step</code> (25 named bodies), <code>trackx.glb</code>, and STL at full size and at 1:43, which fits the 180 mm bed of an A1 mini.</p>
+      <p style="margin-top:14px">Files in the repository: <code>trackx/out/trackx.step</code> (30 named bodies), <code>trackx.glb</code>, and STL at full size and at 1:43, which fits the 180 mm bed of an A1 mini.</p>
     </section>
   </div>
 
@@ -193,9 +195,10 @@ const stage = $("stage");
 
 const LABEL = {
   hull: "Hull", glass: "Windscreen and door windows", fittings: "Frames, hatches, handles and wipers", lights: "Headlights",
-  tow_eyes: "Tow shackles", bumper: "Bumper, wing plates, guards and mud flaps", mirrors: "Mirrors",
-  bolts: "Armour bolts", rear_lights: "Rear lights", track: "Track", track_guide: "Track guide ridge", tyres: "Road wheels and idler",
-  rims: "Dished wheel rims", hubs: "Hub caps", rollers: "Return rollers", sprocket: "Drive sprocket",
+  tow_eyes: "Tow shackles", bumper: "Bumper and bonnet latches", mirrors: "Mirrors", guards: "Track guards",
+  flaps: "Rear mud flaps", light_pods: "Headlight housings", rear_light_housings: "Rear light housings",
+  rear_lamps: "Rear lamps", bolts: "Armour bolt pads", rear_lights: "Rear lights", track: "Track", track_guide: "Track guide ridge", tyres: "Wheel tyres",
+  rims: "Dished wheel rims", hubs: "Hub caps", rollers: "Return rollers", sprocket: "Sprocket and idler",
   arms: "Suspension arms and axles",
 };
 const GEAR = /^(track|track_guide|tyres|rims|hubs|rollers|sprocket|arms)_[LR]$/;
@@ -280,7 +283,9 @@ const box = new THREE.Box3().setFromObject(model);
 const size = box.getSize(new THREE.Vector3());
 const centre = box.getCenter(new THREE.Vector3());
 $("m-len").textContent = `${size.x.toFixed(2)} m`;
-$("m-wid").textContent = `${size.z.toFixed(2)} m`;
+const body = new THREE.Box3();
+model.traverse((o) => { if (o.isMesh && o.name !== "mirrors") body.expandByObject(o); });
+$("m-wid").textContent = `${body.getSize(new THREE.Vector3()).z.toFixed(2)} m (mirrors ${size.z.toFixed(2)})`;
 $("m-hgt").textContent = `2.00 m (hatches ${size.y.toFixed(2)})`;
 sun.target.position.copy(centre);
 $("status").hidden = true;
@@ -311,14 +316,16 @@ let tween = null;
 function setView(name, instant) {
   view = name;
   const dir = new THREE.Vector3(...VIEWS[name]).normalize();
-  const to = centre.clone().add(dir.multiplyScalar(fitDistance(dir, 1.08)));
+  // ?zoom= moves the camera closer, ?tx= slides the aim point along the vehicle (metres); for photo matching
+  const zoom = Number(params.get("zoom")) || 1, aim = centre.clone().add(new THREE.Vector3(Number(params.get("tx")) || 0, 0, 0));
+  const to = aim.clone().add(dir.multiplyScalar(fitDistance(dir, 1.08) / zoom));
   document.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === name)));
   catcher.visible = name !== "under";
   if (grid) grid.visible = $("t-grid").getAttribute("aria-pressed") === "true" && name !== "under";
   if (instant || matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    camera.position.copy(to); controls.target.copy(centre); controls.update(); return;
+    camera.position.copy(to); controls.target.copy(aim); controls.update(); return;
   }
-  tween = { from: camera.position.clone(), to, fromT: controls.target.clone(), t0: performance.now() };
+  tween = { from: camera.position.clone(), to, fromT: controls.target.clone(), t0: performance.now(), aim };
 }
 document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
 controls.addEventListener("start", () => { tween = null; });
@@ -367,7 +374,7 @@ function frame(now) {
   if (tween) {
     const t = Math.min(1, (now - tween.t0) / 700), k = ease(t);
     camera.position.lerpVectors(tween.from, tween.to, k);
-    controls.target.lerpVectors(tween.fromT, centre, k);
+    controls.target.lerpVectors(tween.fromT, tween.aim, k);
     if (t >= 1) tween = null;
   }
   controls.update();
@@ -376,7 +383,11 @@ function frame(now) {
 }
 buildGrid();
 resize();
-setView(params.get("view") in VIEWS ? params.get("view") : "quarter", true);
+// ?dir=x,y,z (viewer frame: x forward, y up, z to the vehicle's right) aims the camera like a reference photo
+const dirParam = (params.get("dir") || "").split(",").map(Number);
+if (dirParam.length === 3 && dirParam.every(Number.isFinite)) VIEWS.custom = dirParam;
+if (params.has("fov")) { camera.fov = Number(params.get("fov")) || camera.fov; camera.updateProjectionMatrix(); }
+setView(VIEWS.custom ? "custom" : params.get("view") in VIEWS ? params.get("view") : "quarter", true);
 if (params.get("gear") === "0") $("t-gear").click();
 requestAnimationFrame(frame);
 requestAnimationFrame(() => requestAnimationFrame(() => { window.__ready = true; }));

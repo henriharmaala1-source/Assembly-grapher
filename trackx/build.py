@@ -33,34 +33,40 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 
 # ---------------------------------------------------------------- dimensions
-X_REAR = -3400.0                             # rear face of the troop box
-X_BOX_FRONT = 2200.0                         # front face of the troop box
-X_NOSE = 3450.0                              # lower front plate
-X_BUMPER = 3670.0
-BOX_HW = 1450.0                              # troop box half-width
-CAB_HW = 900.0                               # central hull half-width (between the tracks)
+# plan (x): bumper front 3650, lower front plate 3470, glacis front edge 3480,
+# windscreen base 2990, rear corner blocks -3380, recessed rear door -3080
+X_FRONT = 3480.0                             # front face of the upper hull, under the bumper
+X_BUMPER = 3650.0
+X_REAR = -3380.0                             # rear faces of the two corner blocks
+X_DOOR = -2900.0                             # recessed rear door between them
+HULL_HW = 1420.0                             # upper hull half-width (side walls)
+ROOF_HW = 1330.0                             # roof half-width after the upper sides lean in
+TUB_HW = 800.0                               # lower hull between the tracks
+DOOR_HW = 650.0                              # half-width of the rear recess
 Z_ROOF = 2000.0
-Z_CAB_ROOF = 1975.0
-Z_SPONSON = 1100.0                           # underside of the troop box and the track guards
+Z_SPONSON = 1080.0                           # underside of the upper hull, just above the tracks
 Z_BELLY = 550.0                              # ground clearance
+Z_RAIL = 1760.0                              # side rail; the side leans in above it
 TRACK_W, TRACK_T = 560.0, 45.0
-TRACK_Y0, TRACK_Y1 = 915.0, 1475.0           # outer track edge sets the 2.95 m width
+TRACK_Y0, TRACK_Y1 = 850.0, 1410.0           # tracks sit just inboard of the hull sides
 TRACK_YC = (TRACK_Y0 + TRACK_Y1) / 2
 
-WHEEL_R = 330.0
-WHEEL_X = [2150.0 - 850.0 * i for i in range(6)]
-END_R = 470.0                                # big front and rear wheels, so the top run is level
-IDLER = (-2950.0, TRACK_T + END_R, END_R)    # x, z, radius (inner path radius)
-SPROCKET = (2985.0, TRACK_T + END_R, END_R)
+TOP_IN = 985.0                               # inside of the level top run
+# the sprocket and idler are raised, so the lower run climbs to them at each end while the top run stays level
+SPROCKET = (3080.0, TOP_IN - 420.0, 420.0)   # x, z, radius (inner path radius)
+IDLER = (-2900.0, TOP_IN - 380.0, 380.0)
+WHEEL_R = 370.0
+WHEEL_X = [2250.0 - 874.0 * i for i in range(6)]
 ROLLER_R = 95.0
-ROLLER_X = [-800.0, 1100.0]
-CLEAT_PITCH = 190.0
+ROLLER_X = [-850.0, 1150.0]
+CLEAT_PITCH = 170.0
 
-# colours
-OLIVE, DARK_OLIVE = (0.17, 0.21, 0.13), (0.12, 0.15, 0.10)
+# colours (sRGB)
+OLIVE, DARK_OLIVE = (0.20, 0.235, 0.175), (0.13, 0.15, 0.115)
 RUBBER, STEEL, GLASS = (0.05, 0.05, 0.055), (0.42, 0.44, 0.44), (0.07, 0.11, 0.14)
 LIGHT, RED = (0.92, 0.92, 0.86), (0.75, 0.06, 0.05)
-BLACK, RIM_GREEN = (0.06, 0.06, 0.065), (0.20, 0.26, 0.16)
+BLACK, RIM_GREEN = (0.08, 0.085, 0.09), (0.30, 0.33, 0.24)
+GUARD, END_DARK = (0.25, 0.25, 0.24), (0.12, 0.13, 0.11)
 
 
 # ---------------------------------------------------------------- helpers
@@ -85,6 +91,12 @@ def prism_z(pts_xy, z0, z1):
 
 def spin_z(shape, deg):
     return shape.rotate(V(0, 0, 0), V(0, 0, 1), deg)
+
+
+def loft(sections):
+    """Ruled loft through closed polygons given as lists of (x, y, z) points."""
+    wires = [cq.Wire.makePolygon([V(*p) for p in sec], close=True) for sec in sections]
+    return cq.Solid.makeLoft(wires, True)
 
 
 def cyl_y(r, y0, y1, x, z):
@@ -267,7 +279,7 @@ def make_running_gear(side):
         arms.append(cyl_y(60, TRACK_Y0 - 120, TRACK_Y0 - 30, x + 430, z + 300))
     ix, iz, ir = IDLER
     t, rm, c = wheel(ix, iz, ir - 8, yc)
-    tyres += t; rims += rm; hubs += c
+    tyres += t; ends = rm + c                                # end wheels are dark, like in the photos
     arms.append(cyl_y(55, TRACK_Y0 - 70, yc - 205, ix, iz))
     arms.append(rod(50, (ix, TRACK_Y0 - 70, iz), (ix + 450, TRACK_Y0 - 70, iz + 420)))
     # return rollers under the top run
@@ -280,8 +292,8 @@ def make_running_gear(side):
     # sprocket: dual wheel, plus the toothed ring that runs in the track's centre gap
     sx, sz, sr = SPROCKET
     t, rm, c = wheel(sx, sz, sr - 8, yc)
-    tyres += t; rims += rm; hubs += c
-    sprocket = toothed_disc(sx, sz, yc - 34, yc + 34, teeth=24, r_tip=sr - 34, r_root=sr - 76)
+    tyres += t; ends += rm + c
+    sprocket = fuse(toothed_disc(sx, sz, yc - 34, yc + 34, teeth=24, r_tip=sr - 34, r_root=sr - 76), *ends)
     arms.append(cyl_y(60, TRACK_Y0 - 90, yc - 205, sx, sz))
     groups = {
         "tyres": fuse(*tyres), "rims": fuse(*rims), "hubs": fuse(*hubs),
@@ -293,15 +305,25 @@ def make_running_gear(side):
 
 
 # ---------------------------------------------------------------- hull
-WS_T, WS_B = (2870.0, 1960.0), (2960.0, 1650.0)             # windscreen plane, top and bottom, x-z
+WS_T, WS_B = (2860.0, 1900.0), (2990.0, 1530.0)             # windscreen top and base, x-z
 WS_DEG = math.degrees(math.atan2(WS_T[1] - WS_B[1], WS_B[0] - WS_T[0]))
 WS_LEN = math.dist(WS_T, WS_B)
-DECK_F, DECK_B = (X_NOSE, 1380.0), (WS_B[0], WS_B[1])       # bonnet deck, front and back edge
+WS_HW = 930.0                                                # front face half-width (glass 850)
+DECK_F, DECK_B = (X_FRONT, 1370.0), WS_B                     # glacis front and back edge
 DECK_LEN = math.dist(DECK_F, DECK_B)
-DECK_DEG = math.degrees(math.atan2(-(DECK_B[1] - DECK_F[1]), DECK_B[0] - DECK_F[0]))       # -151 deg
-CF = 320.0                                                   # forward chamfer of the troop box (plan)
-CR = 220.0                                                   # rear chamfer
-CF_LEN = math.hypot(CF, CF)
+DECK_DEG = math.degrees(math.atan2(-(DECK_B[1] - DECK_F[1]), DECK_B[0] - DECK_F[0]))
+CH_F = (WS_B[0], WS_HW)                                      # angled cab corner, front end
+CH_R = (2150.0, HULL_HW)                                     # ... and rear end, on the side wall
+CH_LEN = math.dist(CH_F, CH_R)
+CH_D = ((CH_R[0] - CH_F[0]) / CH_LEN, (CH_R[1] - CH_F[1]) / CH_LEN)   # along the face, backwards
+CH_N = (CH_D[1], -CH_D[0])                                   # outward normal (forward and out)
+CR = 200.0                                                   # plan chamfer on the rear corners
+
+
+def ws_point(u, y, n):
+    """World point on the windscreen plane: u down from the top edge, n out of the glass."""
+    dx, dz = (WS_B[0] - WS_T[0]) / WS_LEN, (WS_B[1] - WS_T[1]) / WS_LEN
+    return (WS_T[0] + u * dx - n * dz, y, WS_T[1] + u * dz + n * dx)
 
 
 def ws_box(u0, u1, y0, y1, n0, n1):
@@ -310,159 +332,180 @@ def ws_box(u0, u1, y0, y1, n0, n1):
 
 
 def deck_box(u0, u1, y0, y1, h0, h1):
-    """Box on the bonnet deck: u from the front edge backwards, h = height out of the deck."""
+    """Box on the glacis: u from the front edge backwards, h = height out of the surface."""
     return spin_y(box(u0, u1, y0, y1, -h1, -h0), DECK_DEG).translate(V(DECK_F[0], 0, DECK_F[1]))
 
 
-def cface_box(u0, u1, h0, h1, z0, z1):
-    """Box on the left forward chamfer of the troop box: u along the face, h out of it."""
-    return spin_z(box(u0, u1, -h1, -h0, z0, z1), 135).translate(V(X_BOX_FRONT, BOX_HW - CF, 0))
+def ch_box(u0, u1, h0, h1, z0, z1):
+    """Box on the left angled cab corner: u along the face from its front end, h out of it."""
+    ang = math.degrees(math.atan2(CH_D[1], CH_D[0]))
+    return spin_z(box(u0, u1, -h1, -h0, z0, z1), ang).translate(V(CH_F[0], CH_F[1], 0))
 
 
-def rface_box(u0, u1, h0, h1, z0, z1):
-    """Box on the left rear chamfer: u along the face, h out of it."""
-    return spin_z(box(u0, u1, h0, h1, z0, z1), 45).translate(V(X_REAR, BOX_HW - CR, 0))
+def ch_point(u, h, z):
+    return (CH_F[0] + u * CH_D[0] + h * CH_N[0], CH_F[1] + u * CH_D[1] + h * CH_N[1], z)
 
 
-def corner_cutter(x, y, sx, sy, leg):
-    """Triangle prism that removes a plan-view corner (sx, sy point into the hull)."""
-    p1, p2, c = (x + sx * leg, y), (x, y + sy * leg), (x, y)
-    def ext(a, b, t=0.25):
-        return (a[0] + (a[0] - b[0]) * t, a[1] + (a[1] - b[1]) * t)
-    out = (2 * c[0] - (p1[0] + p2[0]) / 2, 2 * c[1] - (p1[1] + p2[1]) / 2)
-    return prism_z([ext(p1, p2), ext(p2, p1), out], 1000, 2100)
+def both(shape):
+    return fuse(shape, mirror_y(shape))
 
 
 def make_hull():
-    # troop box: sloped upper sides, chamfered corners
-    box_hull = prism_x([(-BOX_HW, Z_SPONSON), (BOX_HW, Z_SPONSON), (BOX_HW, 1720.0), (1250.0, Z_ROOF),
-                        (-1250.0, Z_ROOF), (-BOX_HW, 1720.0)], X_REAR, X_BOX_FRONT)
-    cutters = []
-    for sy in (1, -1):
-        cutters.append(corner_cutter(X_REAR, sy * BOX_HW, 1, -sy, CR))
-        cutters.append(corner_cutter(X_BOX_FRONT, sy * BOX_HW, -1, -sy, CF))
-    box_hull = cut(box_hull, *cutters)
-
-    # central hull: tub, lower front plate, bonnet, cab
-    spine_pts = [(-3330.0, Z_BELLY), (3330.0, Z_BELLY), (X_NOSE, 700.0), (X_NOSE, DECK_F[1]), DECK_B,
-                 WS_T, (WS_T[0] - 60, Z_CAB_ROOF), (X_BOX_FRONT - 100, Z_CAB_ROOF), (X_BOX_FRONT - 100, Z_SPONSON),
-                 (-3330.0, Z_SPONSON)]
-    spine = prism_y(spine_pts, -CAB_HW, CAB_HW)
-    spine = chamfered(spine, cq.selectors.BoxSelector((-3400, -1000, 540), (3400, 1000, 560)), 45)
-    spine = chamfered(spine, cq.selectors.BoxSelector((2000, CAB_HW - 10, Z_CAB_ROOF - 10), (3000, CAB_HW + 10, Z_CAB_ROOF + 10)), 90)
-    spine = chamfered(spine, cq.selectors.BoxSelector((2000, -CAB_HW - 10, Z_CAB_ROOF - 10), (3000, -CAB_HW + 10, Z_CAB_ROOF + 10)), 90)
-    hull = fuse(box_hull, spine)
+    """Upper hull (full width over the tracks) and the lower tub between the tracks."""
+    side = [(X_REAR, Z_SPONSON), (X_FRONT, Z_SPONSON), DECK_F, WS_B, WS_T, (2800.0, Z_ROOF),
+            (-2650.0, Z_ROOF), (X_REAR, 1400.0)]
+    section = [(-HULL_HW, Z_SPONSON), (HULL_HW, Z_SPONSON), (HULL_HW, Z_RAIL), (ROOF_HW, Z_ROOF),
+               (-ROOF_HW, Z_ROOF), (-HULL_HW, Z_RAIL)]
+    upper = prism_y(side, -HULL_HW, HULL_HW).intersect(prism_x(section, X_REAR - 10, X_BUMPER))
+    # angled cab corners behind the shoulders; a 50 mm step is left over the tracks
+    ext = (CH_R[0] + CH_D[0] * 80, CH_R[1] + CH_D[1] * 80)
+    corner = prism_z([CH_F, ext, (ext[0], HULL_HW + 60), (CH_F[0], HULL_HW + 60)], Z_SPONSON + 50, Z_ROOF + 100)
+    # recessed rear door between the two corner blocks; chamfered outer rear corners
+    recess = box(X_REAR - 20, X_DOOR, -DOOR_HW, DOOR_HW, Z_SPONSON - 10, Z_ROOF + 50)
+    rc = prism_z([(X_REAR - 30, HULL_HW - CR - 30 * 1.0), (X_REAR + CR + 30, HULL_HW + 30), (X_REAR - 30, HULL_HW + 30)],
+                 Z_SPONSON - 10, Z_ROOF + 50)
+    fc = prism_z([(X_FRONT + 20, HULL_HW - 170), (X_FRONT + 20, HULL_HW + 30), (X_FRONT - 260, HULL_HW + 30)],
+                 Z_SPONSON - 10, Z_ROOF + 50)
+    upper = cut(upper, corner, mirror_y(corner), recess, rc, mirror_y(rc), fc, mirror_y(fc))
+    # lower tub, rounded at its front corners
+    tub = prism_y([(X_DOOR, 610.0), (X_DOOR + 60, Z_BELLY), (3330.0, Z_BELLY), (3470.0, 700.0), (3470.0, Z_SPONSON + 20),
+                   (X_DOOR, Z_SPONSON + 20)], -TUB_HW, TUB_HW)
+    tub = cut(tub, *[box(3300, 3500, s * (TUB_HW - 110), s * (TUB_HW + 10), 500, 1200) for s in (1, -1)])
+    corners = [cyl_z(110, 600, Z_SPONSON, 3360, s * (TUB_HW - 110)) for s in (1, -1)]
+    hull = fuse(upper, tub, *corners)
 
     cuts = []
-    # windscreen: one wide, low pane
-    cuts.append(ws_box(28, WS_LEN - 26, -745, 745, -26, 6))
-    # bonnet louvres: two panels of six slots
-    for yc in (420.0, -420.0):
-        for k in range(6):
-            u = 110 + 62 * k
-            cuts.append(deck_box(u, u + 30, yc - 250, yc + 250, -10, 4))
-    # crew doors on the forward chamfers (left; mirrored below): outline grooves and window recess
-    doors = []
-    u0, u1, z0, z1 = 22.0, CF_LEN - 22, 1160.0, 1940.0
-    for (a, b, c, d) in ((u0, u1, z0, z0 + 14), (u0, u1, z1 - 14, z1), (u0, u0 + 14, z0, z1), (u1 - 14, u1, z0, z1)):
-        doors.append(cface_box(a, b, -9, 2, c, d))
-    doors.append(cface_box(100, 350, -20, 2, 1500, 1860))
-    for dcut in doors:
-        cuts += [dcut, mirror_y(dcut)]
-    # rear door, hinged on the left: outline grooves
-    for (a, b, c, d) in ((-700, 700, 1160, 1174), (-700, 700, 1900, 1914), (-700, -686, 1160, 1914), (686, 700, 1160, 1914)):
-        cuts.append(box(X_REAR - 2, X_REAR + 9, a, b, c, d))
+    cuts.append(ws_box(40, WS_LEN - 36, -850, 850, -30, 6))                        # windscreen opening
+    # crew doors on the angled corners: outline grooves and the window opening
+    door = [ch_box(a, b, -9, 2, c, d) for a, b, c, d in
+            ((60, CH_LEN - 70, 1150, 1164), (60, CH_LEN - 70, 1946, 1960), (60, 74, 1150, 1960),
+             (CH_LEN - 84, CH_LEN - 70, 1150, 1960))]
+    door.append(ch_box(330, 730, -24, 2, 1560, 1860))
+    cuts += door + [mirror_y(d) for d in door]
+    # rear door on the recessed face, hinged on the left (+y)
+    for a, b, c, d in ((-590, 590, 640, 654), (-590, 590, 1730, 1744), (-590, -576, 640, 1744), (576, 590, 640, 1744)):
+        cuts.append(box(X_DOOR - 2, X_DOOR + 9, a, b, c, d))
     return cut(hull, *cuts)
 
 
 def make_glass():
-    panes = [ws_box(36, WS_LEN - 34, -738, 738, -19, -7)]
-    win = cface_box(100, 350, -16, -4, 1500, 1860)
-    panes += [win, mirror_y(win)]
-    return fuse(*panes)
+    panes = [ws_box(48, WS_LEN - 44, -842, 842, -22, -8)]
+    win = ch_box(338, 722, -18, -6, 1568, 1852)
+    return fuse(*panes, win, mirror_y(win))
 
 
 def make_fittings():
-    """Frames, hatches, handles, wipers, bolts and rails: the small olive and dark parts."""
+    """Windscreen frame, wipers, louvres, hatches, door frames and handles, rails, roof items."""
     parts = []
-    # windscreen frame and eyebrow, three wipers
-    frame = cut(ws_box(14, WS_LEN + 6, -830, 830, 0, 30), ws_box(30, WS_LEN - 30, -750, 750, -1, 32))
-    parts.append(frame)
-    for y in (-480.0, 20.0, 520.0):
-        parts.append(spin_y(ws_box(WS_LEN - 70, WS_LEN - 50, y, y + 12, 24, 34), 0)
-                     if False else ws_box(60, 300, y - 6, y + 6, 20, 30))
-    # bonnet: raised centre hatch with two handles, hinge lugs at the back
-    hatch = deck_box(140, 440, -430, 430, 0, 55)
-    parts.append(hatch)
-    parts += [deck_box(205, 240, y0, y0 + 90, 55, 85) for y0 in (-320, 230)]
-    # headlight housings at the bonnet corners
-    for s in (1, -1):
-        parts.append(box(3380, 3535, s * 800 - 100, s * 800 + 100, 1385, 1540))
-    # roof: three raised blocks at the front of the roof, a round rear hatch, lifting eyes
-    for y in (-560.0, 0.0, 560.0):
-        parts.append(box(2380, 2780, y - 190, y + 190, Z_CAB_ROOF - 5, Z_CAB_ROOF + 42))
-    ring = cut(cyl_z(390, Z_ROOF - 10, Z_ROOF + 50, -2500, 650), cyl_z(340, Z_ROOF + 15, Z_ROOF + 60, -2500, 650))
-    parts.append(fuse(ring, cyl_z(345, Z_ROOF + 30, Z_ROOF + 58, -2500, 650)))
-    for x, y in ((-2900, 1000), (-2900, -1000), (1300, 1000), (1300, -1000)):
-        parts.append(cyl_z(45, Z_ROOF, Z_ROOF + 22, x, y))
-    # door handles on the chamfers (mirrored)
-    hd = cface_box(CF_LEN - 90, CF_LEN - 40, 0, 20, 1470, 1600)
-    parts += [hd, mirror_y(hd)]
+    # windscreen frame and three wipers parked diagonally from pivots at the top
+    parts.append(cut(ws_box(10, WS_LEN + 4, -WS_HW + 2, WS_HW - 2, 0, 26), ws_box(34, WS_LEN - 30, -860, 860, -1, 28)))
+    for y in (-570.0, 0.0, 570.0):
+        top, tip = ws_point(52, y + 60, 18), ws_point(300, y - 110, 18)
+        parts.append(rod(8, top, tip))
+        parts.append(cyl_x(16, top[0] - 4, top[0] + 30, top[1], top[2]))            # pivot cap
+    # glacis louvres: two panels of raised slats
+    for yc in (400.0, -400.0):
+        for k in range(6):
+            u = 120 + 50 * k
+            parts.append(deck_box(u, u + 24, yc - 230, yc + 230, 0, 16))
+    # door window frames and handles on the angled corners, grab rails beside them
+    frame = cut(ch_box(300, 760, 0, 30, 1530, 1890), ch_box(335, 725, -2, 34, 1565, 1855))
+    handle = ch_box(CH_LEN - 150, CH_LEN - 110, 0, 22, 1420, 1540)
+    a, b = ch_point(40, 60, 1230), ch_point(40, 60, 1700)
+    rail = fuse(rod(15, a, b), rod(12, ch_point(40, 0, 1260), ch_point(40, 60, 1260)),
+                rod(12, ch_point(40, 0, 1670), ch_point(40, 60, 1670)))
+    parts += [both(frame), both(handle), both(rail)]
     # rear door handle and hinges (hinged on the left)
-    parts.append(box(X_REAR - 22, X_REAR - 2, 500, 620, 1520, 1560))
-    for z in (1230, 1850):
-        parts.append(box(X_REAR - 16, X_REAR - 2, 640, 700, z - 25, z + 25))
-    # side rails where the sloped armour starts
-    for s in (1, -1):
-        parts.append(box(-3200, 1750, s * (BOX_HW + 2), s * (BOX_HW + 48), 1690, 1750))
+    parts.append(box(X_DOOR - 22, X_DOOR - 2, -470, -350, 1180, 1220))
+    for z in (760, 1180, 1600):
+        parts.append(box(X_DOOR - 18, X_DOOR - 2, 540, 600, z - 30, z + 30))
+    # side rails where the sides start to slope in, with rectangular slots
+    rail = box(-3150.0, 2080.0, HULL_HW - 5, HULL_HW + 45, Z_RAIL - 40, Z_RAIL + 20)
+    slots = [box(float(x) - 70, float(x) + 70, HULL_HW + 22, HULL_HW + 50, Z_RAIL - 28, Z_RAIL + 8)
+             for x in np.arange(-3000.0, 2000.0, 250.0)]
+    parts.append(both(cut(rail, *slots)))
+    # roof: commander's hatch, rear round hatch, camera and lamps at the front edge, lifting eyes
+    ring = cut(box(1950, 2450, -900, -350, Z_ROOF - 10, Z_ROOF + 55), box(2000, 2400, -850, -400, Z_ROOF + 10, Z_ROOF + 60))
+    parts.append(fuse(ring, box(1995, 2405, -855, -395, Z_ROOF + 30, Z_ROOF + 62)))
+    ring2 = cut(cyl_z(360, Z_ROOF - 10, Z_ROOF + 50, -2300, 600), cyl_z(310, Z_ROOF + 15, Z_ROOF + 60, -2300, 600))
+    parts.append(fuse(ring2, cyl_z(315, Z_ROOF + 30, Z_ROOF + 58, -2300, 600)))
+    parts.append(fuse(box(2640, 2760, -60, 60, Z_ROOF, Z_ROOF + 90), cyl_x(28, 2760, 2785, 0, Z_ROOF + 50),
+                      cyl_z(18, Z_ROOF + 90, Z_ROOF + 150, 2700, 0)))
+    parts.append(both(box(2680, 2780, 640, 760, Z_ROOF, Z_ROOF + 55)))
+    for x, y in ((-2750, 1050), (-2750, -1050), (1500, 1050), (1500, -1050)):
+        parts.append(cyl_z(45, Z_ROOF, Z_ROOF + 22, x, y))
     return fuse(*parts)
 
 
 def make_bolts():
-    """Rows of armour bolt heads on the vertical side walls of the troop box."""
-    bolts = []
-    for x in np.arange(-2900.0, 1600.0, 400.0):
-        for z in (1250.0, 1500.0):
-            bolts.append(cyl_y(17, BOX_HW - 1, BOX_HW + 11, float(x), z))
-    left = fuse(*bolts)
-    return fuse(left, mirror_y(left))
+    """Armour bolt pads in vertical pairs along the side walls."""
+    pads = [box(float(x) - 22, float(x) + 22, HULL_HW - 2, HULL_HW + 12, z - 22, z + 22)
+            for x in np.arange(-2900.0, 2000.0, 380.0) for z in (1330.0, 1450.0)]
+    return both(fuse(*pads))
 
 
 def make_bumper():
-    """Black front bumper beam, wing plates over the tracks, and the rear mud flaps."""
-    beam = prism_z([(X_NOSE - 10, -1000.0), (X_NOSE - 10, 1000.0), (X_BUMPER, 900.0), (X_BUMPER, -900.0)], Z_SPONSON, 1400.0)
-    wing = prism_z([(1900.0, TRACK_Y0), (X_NOSE, TRACK_Y0), (3580.0, 1100.0), (3580.0, TRACK_Y1), (1900.0, TRACK_Y1)],
-                   Z_SPONSON, Z_SPONSON + 45)
-    wings = fuse(wing, mirror_y(wing))
-    flap = box(X_REAR - 60, X_REAR - 36, 960, 1440, 800, Z_SPONSON)
-    guard = box(-3300.0, 1900.0, BOX_HW, TRACK_Y1, Z_SPONSON - 30, Z_SPONSON)         # guard along the track top
-    return fuse(beam, wings, flap, mirror_y(flap), guard, mirror_y(guard))
+    """Black front bumper: a straight centre beam and end pieces that drop and sweep back over
+    the tracks; plus the two rubber bonnet latches."""
+    prof = [(X_FRONT - 20, 1090.0), (X_BUMPER, 1090.0), (X_BUMPER, 1290.0), (X_BUMPER - 45, 1345.0), (X_FRONT - 20, 1345.0)]
+    centre = prism_y(prof, -650, 650)
+    end = loft([[(x, 650.0, z) for x, z in prof],
+                [(X_FRONT - 60, 1450.0, 980.0), (3590.0, 1450.0, 980.0), (3590.0, 1450.0, 1160.0),
+                 (3550.0, 1450.0, 1210.0), (X_FRONT - 60, 1450.0, 1210.0)]])
+    latch = both(box(X_FRONT - 60, X_FRONT + 8, 380, 460, 1340, 1405))
+    return fuse(centre, end, mirror_y(end), latch)
+
+
+def make_guards():
+    """Box-section guards along the track tops, from the rear blocks to the cab corners."""
+    guard = box(X_REAR + 20, CH_F[0] - 60, HULL_HW - 40, HULL_HW + 75, 1060.0, 1300.0)
+    guard = chamfered(guard, cq.selectors.BoxSelector((X_REAR, HULL_HW + 65, 1290), (3400, HULL_HW + 85, 1310)), 18)
+    nose = prism_z([(CH_F[0] - 61, HULL_HW - 40), (CH_F[0] + 150, HULL_HW - 40), (CH_F[0] - 61, HULL_HW + 75)], 1060.0, 1300.0)
+    return both(fuse(guard, nose))
+
+
+def make_flaps():
+    """Curved rubber flaps hanging from the rear corner blocks, behind the tracks."""
+    cx, cy, r = X_REAR + 290, TRACK_YC + 40, 310.0          # vertical shell, curved in plan
+    arc = [(cx + rr * math.cos(math.radians(t)), cy + rr * math.sin(math.radians(t)))
+           for rr, ts in ((r, range(122, 239, 6)), (r - 24, range(236, 121, -6))) for t in ts]
+    return both(prism_z(arc, 690.0, Z_SPONSON + 5))
 
 
 def make_mirrors():
-    """Outrigger mirror frames: two arms, an upright and the mirror plate, each side."""
-    x, y0, y1 = 2650.0, CAB_HW - 10, 1400.0
-    arms = [rod(15, (x, y0, 1900.0), (x, y1, 1900.0)), rod(15, (x, y0, 1560.0), (x, y1, 1560.0)),
-            rod(15, (x, y1, 1540.0), (x, y1, 1920.0)), box(x - 90, x + 90, y1 - 12, y1 + 22, 1590, 1880)]
-    left = fuse(*arms)
-    return fuse(left, mirror_y(left))
+    """Mirrors on tubular outrigger frames from the windscreen corners."""
+    y0, y1 = WS_HW + 10, 1560.0
+    zt, zb = 1860.0, 1580.0
+    xt, xb = ws_point((WS_T[1] - zt) / (WS_T[1] - WS_B[1]) * WS_LEN, 0, 0)[0] - 30, \
+        ws_point((WS_T[1] - zb) / (WS_T[1] - WS_B[1]) * WS_LEN, 0, 0)[0] - 30
+    frame = fuse(rod(16, (xt, y0, zt), (xt + 60, y1, zt)), rod(16, (xb, y0, zb), (xb + 60 - (xb - xt), y1, zb)),
+                 rod(16, (xt + 60, y1, zt), (xt + 60, y1, zb)))
+    head = box(xt + 35, xt + 85, y1 - 60, y1 + 90, 1400, 1640)
+    return both(fuse(frame, head))
+
+
+def shackle(x_face, y, z_pin, sgn):
+    """Lug with a pin and a U-shackle hanging from it; sgn = +1 on the front face, -1 on the rear."""
+    xc = x_face + sgn * 45
+    xa, xb = sorted((x_face, x_face + sgn * 75))
+    lug = cut(box(xa, xb, y - 15, y + 15, z_pin - 35, z_pin + 45), cyl_y(13, y - 20, y + 20, xc, z_pin))
+    pin = cyl_y(11, y - 58, y + 58, xc, z_pin)
+    legs = [cyl_z(11, z_pin - 70, z_pin, xc, y + s * 42) for s in (1, -1)]
+    bow = cut(cq.Solid.makeTorus(42, 11, V(xc, y, z_pin - 70), V(1, 0, 0)), box(xc - 20, xc + 20, y - 60, y + 60, z_pin - 70, z_pin + 10))
+    return fuse(lug, pin, *legs, bow)
 
 
 def make_lights():
-    """Headlamp lenses, tow shackles front and rear, rear light clusters."""
-    lenses = []
-    for s in (1, -1):
-        lenses.append(cyl_x(62, 3535, 3552, s * 800, 1462))
-    shackles = []
-    for x0, sgn, ys in ((X_NOSE, 1, (570.0, -570.0)), (X_REAR, -1, (450.0, -450.0))):
-        for y in ys:
-            xa, xb = sorted((x0, x0 + sgn * 38))
-            shackles.append(cut(cyl_x(75, xa, xb, y, 830), cyl_x(42, xa - 5, xb + 5, y, 830)))
-            xl, xm = sorted((x0, x0 + sgn * 38))
-            shackles.append(box(xl, xm, y - 42, y + 42, 890, 960))
-    lamp = fuse(rface_box(50, 105, 0, 16, 1180, 1300), rface_box(115, 170, 0, 16, 1180, 1300))
-    lamps = fuse(lamp, mirror_y(lamp))
-    return fuse(*lenses), fuse(*shackles), lamps
+    """Headlamp lenses, headlamp pods, tow shackles, rear light clusters."""
+    lens = both(cyl_x(72, 3555, 3570, 1110, 1350))
+    pod = both(chamfered(box(3350, 3555, 975, 1250, 1255, 1445), cq.selectors.BoxSelector((3540, 960, 1435), (3570, 1260, 1455)), 45))
+    shackles = fuse(*[shackle(3470.0, s * 450, 900, 1) for s in (1, -1)],
+                    *[shackle(X_DOOR, s * 470, 820, -1) for s in (1, -1)])
+    housing = box(X_REAR - 18, X_REAR + 2, 880, 1140, 1290, 1385)
+    # seen from behind, both clusters have the red lamp on the left (+y) end, as in the DSEI photo
+    red = fuse(*[cyl_x(34, X_REAR - 26, X_REAR - 16, y, 1338) for y in (1095, -925)])
+    white = fuse(*[cyl_x(22, X_REAR - 26, X_REAR - 16, y, 1338) for y in (910, 960, 1010, -1110, -1060, -1010)])
+    return lens, pod, shackles, both(housing), red, white
 
 
 def build():
@@ -470,13 +513,18 @@ def build():
     parts.append(("hull", make_hull(), OLIVE))
     parts.append(("glass", make_glass(), GLASS))
     parts.append(("fittings", make_fittings(), DARK_OLIVE))
-    parts.append(("bolts", make_bolts(), (0.22, 0.26, 0.17)))
+    parts.append(("bolts", make_bolts(), (0.25, 0.30, 0.20)))
     parts.append(("bumper", make_bumper(), BLACK))
+    parts.append(("guards", make_guards(), GUARD))
+    parts.append(("flaps", make_flaps(), BLACK))
     parts.append(("mirrors", make_mirrors(), BLACK))
-    lenses, shackles, lamps = make_lights()
-    parts.append(("lights", lenses, LIGHT))
+    lens, pod, shackles, housing, red, white = make_lights()
+    parts.append(("lights", lens, LIGHT))
+    parts.append(("light_pods", pod, DARK_OLIVE))
     parts.append(("tow_eyes", shackles, STEEL))
-    parts.append(("rear_lights", lamps, RED))
+    parts.append(("rear_light_housings", housing, BLACK))
+    parts.append(("rear_lights", red, RED))
+    parts.append(("rear_lamps", white, LIGHT))
     for side, tag in ((1, "L"), (-1, "R")):
         track, ridge = make_track(side)
         parts.append((f"track_{tag}", track, RUBBER))
@@ -486,7 +534,7 @@ def build():
         parts.append((f"rims_{tag}", g["rims"], RIM_GREEN))
         parts.append((f"hubs_{tag}", g["hubs"], STEEL))
         parts.append((f"rollers_{tag}", g["rollers"], (0.12, 0.12, 0.13)))
-        parts.append((f"sprocket_{tag}", g["sprocket"], (0.36, 0.37, 0.35)))
+        parts.append((f"sprocket_{tag}", g["sprocket"], END_DARK))
         parts.append((f"arms_{tag}", g["arms"], (0.16, 0.17, 0.15)))
     return parts
 
@@ -541,7 +589,7 @@ def main():
     if bad:
         print("WARNING: invalid solids:", bad)
     x0, x1 = min(s.BoundingBox().xmin for _, s, _ in parts), max(s.BoundingBox().xmax for _, s, _ in parts)
-    y1 = max(s.BoundingBox().ymax for _, s, _ in parts)
+    y1 = max(s.BoundingBox().ymax for n, s, _ in parts if n != "mirrors")
     z1 = max(s.BoundingBox().zmax for _, s, _ in parts)
     print(f"length {x1 - x0:.0f} mm, width {2 * y1:.0f} mm, height {z1:.0f} mm, {len(parts)} bodies")
     export(parts, scale)

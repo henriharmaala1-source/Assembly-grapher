@@ -55,6 +55,10 @@ const shots = [
   ["top", "view=top", 1600, 800],
   ["under", "view=under", 1600, 800],
   ["hull", "view=quarter&gear=0", 1600, 900],
+  // same angles as the three reference photos, for side-by-side checks
+  ["match-snow", "dir=0.88,-0.02,-0.48&fov=52", 1400, 710],
+  ["match-dsei", "dir=-0.72,0.05,0.69&fov=60&zoom=1.9&tx=-1.6", 1200, 800],
+  ["match-forest", "dir=1,0.0,0.16&fov=44", 1400, 910],
 ];
 await mkdir(out, { recursive: true });
 for (const [name, q, w, h] of shots) {

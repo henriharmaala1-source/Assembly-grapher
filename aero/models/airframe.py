@@ -24,6 +24,11 @@ from model import Param, Result  # noqa: E402
 NAME = "airframe"
 TITLE = "Kipinä twin-boom pusher"
 AREA_UNIT = ("cm²", 1e4)
+OBJECTIVE = "Drag"
+MAXIMIZE = False
+BASE_LABEL = "as built"
+DEFAULT_FIX = ["span"]         # the brief: the smallest plane that passes (free it with --free span)
+ITEMS_NOTE = "Parasite drag at the speed; the induced drag is on top of this."
 BASE, KIT = D.Params(), D.Kit()
 
 _, _auw_quick, _perf0 = D.evaluate(BASE, KIT)
@@ -55,8 +60,9 @@ ANTENNA_D, ANTENNA_UP = 2.6, 27.0   # VTX whip above the lid
 
 def params() -> list[Param]:
     p = BASE
-    return [
+    out = [
         Param("span", p.span, 460, 600, 5, "mm", "wingspan",
+              "held by the brief (the smallest plane that passes) unless --free span; "
               f"stall at most {p.stall_limit - STALL_MARGIN:.2f} m/s with the CAD weight "
               f"({p.stall_limit} m/s less the build's margin)"),
         Param("aspect_ratio", p.aspect_ratio, 4.0, 7.0, 0.1, "", "aspect ratio (span / chord)",
@@ -67,18 +73,21 @@ def params() -> list[Param]:
         Param("nose_r", p.nose_r, 0.0, 12.0, 0.5, "mm", "radius on the pod's front side and belly edges",
               "the 14 mm camera window needs a flat face at least 16 mm wide"),
         Param("nose_top_r", 0.0, 0.0, 10.0, 0.5, "mm", "radius on the pod's top front edge (front of the lid)",
-              "a rounded nose block on the lid; the lid itself is only 0.8 mm", in_cad=False),
+              "a rounded nose block on the lid; the lid itself is only 0.8 mm", kind="what-if, not in the CAD"),
         Param("boattail", 0.0, 0.0, 30.0, 2.0, "mm",
               f"{BOATTAIL_DEG:.0f}° taper on the pod's rear sides and belly, down to the motor mount",
-              "the motor mount needs 28 mm of width; the ESC moves 30 mm forward", in_cad=False),
+              "the motor mount needs 28 mm of width; the ESC moves 30 mm forward", kind="what-if, not in the CAD"),
         Param("antenna_lean", 0.0, 0.0, 60.0, 5.0, "°", "VTX whip laid back from vertical",
-              "60° still clears the wing", in_cad=False),
+              "60° still clears the wing", kind="what-if, not in the CAD"),
         Param("fairings", 0.0, 0.0, 1.0, 1.0, "", "printed fairings over the four servo horns and "
-              "the aileron servo bumps", "about 1 g", in_cad=False, labels={0: "none", 1: "fitted"}),
+              "the aileron servo bumps", "about 1 g", kind="what-if, not in the CAD", labels={0: "none", 1: "fitted"}),
         Param("joiners_hidden", 0.0, 0.0, 1.0, 1.0, "", "rudder joiner wires in a groove under the "
-              "stabiliser instead of across the open flow", "", in_cad=False,
+              "stabiliser instead of across the open flow", "", kind="what-if, not in the CAD",
               labels={0: "in the open", 1: "in a groove"}),
     ]
+    for q in out:
+        q.kind = q.kind or "CAD parameter"
+    return out
 
 
 def _segment(r: float, h: float) -> float:
@@ -98,7 +107,7 @@ def evaluate(x: dict, v: float) -> Result:
     try:
         L, auw, _ = D.evaluate(p, KIT)
     except ValueError as e:
-        return Result([], math.inf, violations=[str(e)])
+        return Result(math.inf, violations=[str(e)])
     auw *= MASS_FACTOR
     w, s = auw / 1000 * D.G, L.area * 1e-6
     stall = math.sqrt(2 * w / (K.RHO * s * p.cl_max))
@@ -196,16 +205,21 @@ def evaluate(x: dict, v: float) -> Result:
         else:
             hi = m
     p_elec = drag * v / ETA_PROP + AVIONICS_W
-    metrics = [("Weight", f"{auw:.0f} g"), ("Stall", f"{stall:.2f} m/s"),
+    metrics = [("Induced drag", force_text(d_ind)),
+               ("Weight", f"{auw:.0f} g"), ("Stall", f"{stall:.2f} m/s"),
                ("Chord / pod length", f"{L.chord:.0f} / {L.pod_len:.0f} mm"),
                ("Top speed (level)", f"{lo * 3.6:.0f} km/h"),
                ("Power at this speed", f"{p_elec:.1f} W"),
                ("Endurance at this speed", f"{0.8 * KIT.batt_wh / p_elec * 60:.1f} min")]
-    return Result(items, drag, [("Induced drag", d_ind)], metrics, bad)
+    return Result(drag, items, metrics, bad)
 
 
 def speed_text(v: float) -> str:
     return f"{v:.1f} m/s ({v * 3.6:.0f} km/h)"
+
+
+def value_text(n: float) -> str:
+    return force_text(n)
 
 
 def force_text(n: float) -> str:

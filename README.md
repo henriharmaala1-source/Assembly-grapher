@@ -9,6 +9,8 @@
   electronics, sizing report). Every part prints on a Bambu Lab A1 mini. It
   also has a bill of process with its precedence graph, an assembly animation
   and a DFMA analysis.
-- [`aero/`](aero/README.md): a simple air-resistance optimizer for the airframe:
-  a handbook drag build-up, a ranking of single design changes and a search for
-  the lowest drag within the design's limits.
+- [`aero/`](aero/README.md): a simple design optimizer with two models: the
+  airframe's drag, and the flight time of a typical 5-inch FPV quad (held to
+  ordinary freestyle thrust-to-weight, with no speed or payload objective). It
+  ranks single design changes and searches for the best mix within each
+  design's limits.

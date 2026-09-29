@@ -9,14 +9,14 @@ from dragkit import Item
 @dataclass
 class Param:
     name: str
-    value: float                # the design as built
+    value: float                # the design as it is
     lo: float
     hi: float
     step: float
     unit: str
     what: str                   # what the number changes
     limit: str = ""             # what sets the bounds
-    in_cad: bool = True         # False: a what-if that the CAD does not build yet
+    kind: str = ""              # e.g. "CAD parameter", "what-if", "part choice"
     labels: dict | None = None  # names for discrete values
 
     def show(self, v: float) -> str:
@@ -32,9 +32,8 @@ class Param:
 
 @dataclass
 class Result:
-    items: list[Item]                       # parasite drag build-up
-    drag: float                             # N at the speed: parasite plus anything below
-    other: list[tuple[str, float]] = field(default_factory=list)      # other drag, N (induced)
+    value: float                            # the objective (the model says whether up or down is better)
+    items: list[Item] = field(default_factory=list)                   # drag build-up, if any
     metrics: list[tuple[str, str]] = field(default_factory=list)      # numbers to show
     violations: list[str] = field(default_factory=list)
 

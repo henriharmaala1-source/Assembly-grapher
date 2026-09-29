@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""A simple air-resistance optimizer for the Kipinä airframe.
+"""A simple design optimizer: drag for the Kipinä airframe, flight time for a
+typical 5-inch FPV quad.
 
-    python3 aero/optimize.py airframe            # at its cruise speed
-    python3 aero/optimize.py airframe --kmh 65   # at 65 km/h
+    python3 aero/optimize.py airframe            # airframe drag at its cruise speed
     python3 aero/optimize.py airframe --fix span,aspect_ratio
+    python3 aero/optimize.py quad                # quad flight time at 40 km/h
+    python3 aero/optimize.py quad --kmh 30 --only prop_pitch,blades
 
-A model in aero/models/ turns a set of design parameters into a drag
-build-up (aero/dragkit.py) and a list of broken limits. The optimizer then:
+A model in aero/models/ turns a set of design parameters into one objective
+(drag to lower, or flight time to raise), a drag build-up (aero/dragkit.py) and
+a list of broken limits. The optimizer then:
 
   1. ranks the single changes: each parameter alone, moved to its best allowed
-     value, with everything else as built;
-  2. searches all free parameters together (coordinate search on each
-     parameter's grid, with shrinking steps) for the lowest drag at the speed.
+     value, with everything else as it is;
+  2. searches all free parameters together: coordinate moves on each
+     parameter's grid with shrinking steps, and moves of two parameters at once
+     so the search can slide along a limit.
 
 It writes aero/REPORT_<model>.md and prints a summary.
 """
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import itertools
 import sys
 from pathlib import Path
 
@@ -28,26 +33,29 @@ sys.path.insert(0, str(HERE))
 from dragkit import total  # noqa: E402
 from model import Param, Result  # noqa: E402
 
-
-# a move must save at least this fraction of the drag; smaller gains are within
-# the model's noise and would only clutter the result
+# a move must improve the objective by at least this fraction; smaller gains are
+# within the models' noise and would only clutter the result
 MIN_GAIN = 3e-4
 
 
-def better(r: Result, best: Result) -> bool:
-    return r.ok and r.drag < best.drag * (1 - MIN_GAIN)
-
-
-class Counter:
+class Evaluator:
     def __init__(self, model, v):
         self.model, self.v, self.n = model, v, 0
+        self.sign = -1.0 if model.MAXIMIZE else 1.0
 
     def __call__(self, x: dict) -> Result:
         self.n += 1
         return self.model.evaluate(x, self.v)
 
+    def better(self, r: Result, best: Result) -> bool:
+        """Is r allowed and better than best by more than MIN_GAIN?"""
+        return r.ok and self.sign * (best.value - r.value) > abs(best.value) * MIN_GAIN
 
-def single_changes(ev, params: list[Param], x0: dict, free: list[str], base: Result):
+    def key(self, r: Result) -> float:
+        return self.sign * r.value
+
+
+def single_changes(ev: Evaluator, params: list[Param], x0: dict, free: list[str], base: Result):
     """Each free parameter alone over its whole grid; the best allowed value."""
     rows = []
     for p in params:
@@ -59,86 +67,104 @@ def single_changes(ev, params: list[Param], x0: dict, free: list[str], base: Res
         for i in range(0, n + 1, stride):
             v = p.snap(p.lo + i * p.step)
             r = ev({**x0, p.name: v})
-            if better(r, best):
+            if ev.better(r, best):
                 best_v, best = v, r
         rows.append((p, best_v, best))
-    rows.sort(key=lambda row: row[2].drag)
+    rows.sort(key=lambda row: ev.key(row[2]))
     return rows
 
 
-def search(ev, params: list[Param], x0: dict, free: list[str], base: Result):
-    """Coordinate search: try one grid move up and down on each parameter, keep
-    any move that lowers the drag without breaking a limit; repeat until nothing
-    helps, then halve the move and go again."""
+def search(ev: Evaluator, params: list[Param], x0: dict, free: list[str], base: Result):
+    """Try one grid move up and down on each parameter and keep any move that
+    improves the objective without breaking a limit. When no single move helps,
+    try moving two parameters at once. Repeat, then halve the move."""
     by_name = {p.name: p for p in params}
     x, best = dict(x0), base
+
+    def moved(names_signs, mult):
+        y = dict(x)
+        for name, sgn in names_signs:
+            p = by_name[name]
+            y[name] = p.snap(x[name] + sgn * mult * p.step)
+        return None if y == x else y
+
     for mult in (16, 8, 4, 2, 1):
-        improved = True
-        while improved:
+        while True:
             improved = False
             for name in free:
-                p = by_name[name]
                 for sgn in (1, -1):
-                    v = p.snap(x[name] + sgn * mult * p.step)
-                    if v == x[name]:
-                        continue
-                    r = ev({**x, name: v})
-                    if better(r, best):
-                        x, best, improved = {**x, name: v}, r, True
+                    y = moved([(name, sgn)], mult)
+                    if y is not None:
+                        r = ev(y)
+                        if ev.better(r, best):
+                            x, best, improved = y, r, True
+            if improved:
+                continue
+            for a, b in itertools.combinations(free, 2):
+                for sa, sb in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
+                    y = moved([(a, sa), (b, sb)], mult)
+                    if y is not None:
+                        r = ev(y)
+                        if ev.better(r, best):
+                            x, best, improved = y, r, True
+            if not improved:
+                break
     return x, best
 
 
 def pct(a: float, b: float) -> str:
-    return f"{(b - a) / a * 100:+.1f} %"
+    return f"{(b - a) / a * 100:+.1f} %" if a else ""
 
 
 def write_report(model, params, free, v, x0, base, x1, best, singles, n_eval, out: Path):
-    unit, scale = model.AREA_UNIT
-    fmt = model.force_text
-    L = [f"# Drag optimizer: {model.TITLE}", "",
+    fmt, label = model.value_text, model.OBJECTIVE
+    L = [f"# Optimizer: {model.TITLE}", "",
          f"Generated by `aero/optimize.py {model.NAME}`. Do not edit by hand.", "",
-         f"Speed: **{model.speed_text(v)}**. {len(free)} of {len(params)} parameters free, "
-         f"{n_eval} drag evaluations. {model.NOTE}", "",
+         f"Objective: **{label.lower()}**, {'higher' if model.MAXIMIZE else 'lower'} is better, at "
+         f"**{model.speed_text(v)}**. {len(free)} of {len(params)} parameters free, {n_eval} evaluations. "
+         f"{model.NOTE}", "",
          "## Result", "",
-         "| | as built | optimised | change |", "|---|---|---|---|",
-         f"| Drag | {fmt(base.drag)} | **{fmt(best.drag)}** | {pct(base.drag, best.drag)} |",
-         f"| Parasite drag area CdA | {total(base.items) * scale:.2f} {unit} | "
-         f"{total(best.items) * scale:.2f} {unit} | {pct(total(base.items), total(best.items))} |"]
-    for (label, a), (_, b) in zip(base.other, best.other):
-        L.append(f"| {label} | {fmt(a)} | {fmt(b)} | {pct(a, b) if a else ''} |")
-    for (label, a), (_, b) in zip(base.metrics, best.metrics):
-        L.append(f"| {label} | {a} | {b} | |")
+         f"| | {model.BASE_LABEL} | optimised | change |", "|---|---|---|---|",
+         f"| {label} | {fmt(base.value)} | **{fmt(best.value)}** | {pct(base.value, best.value)} |"]
+    if base.items:
+        unit, scale = model.AREA_UNIT
+        t0, t1 = total(base.items), total(best.items)
+        L.append(f"| Drag area CdA | {t0 * scale:.2f} {unit} | {t1 * scale:.2f} {unit} | {pct(t0, t1)} |")
+    for (name, a), (_, b) in zip(base.metrics, best.metrics):
+        L.append(f"| {name} | {a} | {b} | |")
     L += ["", "## Changes in the optimum", "",
-          "| parameter | as built | optimised | what it is | in the CAD model? |", "|---|---|---|---|---|"]
-    for p in params:
-        if p.name in free and x1[p.name] != x0[p.name]:
-            L.append(f"| `{p.name}` | {p.show(x0[p.name])} | **{p.show(x1[p.name])}** | {p.what} | "
-                     f"{'yes' if p.in_cad else 'no, a what-if'} |")
-    if all(x1[p.name] == x0[p.name] for p in params):
-        L.append("| (none) | | | the design as built is already the optimum | |")
+          f"| parameter | {model.BASE_LABEL} | optimised | what it is | kind |", "|---|---|---|---|---|"]
+    changed = [p for p in params if p.name in free and x1[p.name] != x0[p.name]]
+    for p in changed:
+        L.append(f"| `{p.name}` | {p.show(x0[p.name])} | **{p.show(x1[p.name])}** | {p.what} | {p.kind} |")
+    if not changed:
+        L.append(f"| (none) | | | the design {model.BASE_LABEL} is already the optimum | |")
     L += ["", "## One change at a time", "",
-          "Each parameter alone, moved to its best allowed value, everything else as built. "
-          "The savings do not simply add up: the combined optimum is above.", "",
-          "| change | from | to | drag | saved |", "|---|---|---|---|---|"]
+          f"Each parameter alone, moved to its best allowed value, everything else {model.BASE_LABEL}. "
+          "The gains do not simply add up: the combined optimum is above.", "",
+          f"| change | from | to | {label.lower()} | change |", "|---|---|---|---|---|"]
     for p, bv, r in singles:
-        if bv == x0[p.name]:
-            continue
-        L.append(f"| {p.what} | {p.show(x0[p.name])} | {p.show(bv)} | {fmt(r.drag)} | "
-                 f"{pct(base.drag, r.drag)} |")
+        if bv != x0[p.name]:
+            L.append(f"| {p.what} | {p.show(x0[p.name])} | {p.show(bv)} | {fmt(r.value)} | "
+                     f"{pct(base.value, r.value)} |")
     kept = [p for p, bv, _ in singles if bv == x0[p.name]]
     if kept:
-        L += ["", f"No single move of these saves {MIN_GAIN * 100:.2f} % or more: " +
-              ", ".join(f"`{p.name}` ({p.show(x0[p.name])})" for p in kept) + "."]
-    L += ["", "## Drag build-up", "",
-          f"| item | as built, {unit} | share | optimised, {unit} | note |", "|---|---|---|---|---|"]
-    t0 = total(base.items)
-    after = {i.name: i.cda for i in best.items}
-    for i in base.items:
-        L.append(f"| {i.name} | {i.cda * scale:.2f} | {i.cda / t0 * 100:.0f} % | "
-                 f"{after.get(i.name, 0) * scale:.2f} | {i.note} |")
-    for i in best.items:
-        if i.name not in {b.name for b in base.items}:
-            L.append(f"| {i.name} | - | - | {i.cda * scale:.2f} | {i.note} |")
+        L += ["", f"No single move of these improves the result by {MIN_GAIN * 100:.2f} % or more "
+              "without breaking a limit: " + ", ".join(f"`{p.name}` ({p.show(x0[p.name])})" for p in kept) + "."]
+    if base.items:
+        unit, scale = model.AREA_UNIT
+        t0 = total(base.items)
+        after = {i.name: i for i in best.items}
+        L += ["", "## Drag build-up", "", model.ITEMS_NOTE, "",
+              f"| item | {model.BASE_LABEL}, {unit} | share | optimised, {unit} | note |", "|---|---|---|---|---|"]
+        for i in base.items:
+            j = after.get(i.name)
+            note = i.note if j is None or j.note == i.note else f"{i.note} → {j.note}"
+            L.append(f"| {i.name} | {i.cda * scale:.2f} | {i.cda / t0 * 100:.0f} % | "
+                     f"{(j.cda if j else 0) * scale:.2f} | {note} |")
+        for i in best.items:
+            if i.name not in {b.name for b in base.items}:
+                L.append(f"| {i.name} | - | - | {i.cda * scale:.2f} | {i.note} |")
     L += ["", "## Parameters and limits", "",
           "| parameter | range | step | limit | free |", "|---|---|---|---|---|"]
     for p in params:
@@ -150,10 +176,11 @@ def write_report(model, params, free, v, x0, base, x1, best, singles, n_eval, ou
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("model", help="a model in aero/models/, e.g. airframe")
+    ap.add_argument("model", help="a model in aero/models/: airframe or quad")
     ap.add_argument("--speed", type=float, help="speed in m/s (default: the model's own)")
     ap.add_argument("--kmh", type=float, help="speed in km/h")
-    ap.add_argument("--fix", default="", help="comma-separated parameters to keep as built")
+    ap.add_argument("--fix", default="", help="comma-separated parameters to keep as they are")
+    ap.add_argument("--free", default="", help="comma-separated parameters the model fixes by default, to free")
     ap.add_argument("--only", default="", help="comma-separated parameters to free (all others fixed)")
     ap.add_argument("--out", help="report path (default aero/REPORT_<model>.md)")
     a = ap.parse_args(argv)
@@ -167,33 +194,35 @@ def main(argv=None):
     names = [p.name for p in params]
     fix = {s for s in a.fix.split(",") if s}
     only = {s for s in a.only.split(",") if s}
-    for s in fix | only:
+    unfix = {s for s in a.free.split(",") if s}
+    fix |= set(getattr(model, "DEFAULT_FIX", ())) - unfix
+    for s in fix | only | unfix:
         if s not in names:
             ap.error(f"unknown parameter {s!r}; {a.model} has {', '.join(names)}")
     free = [n for n in names if n not in fix and (not only or n in only)]
 
-    ev = Counter(model, v)
+    ev = Evaluator(model, v)
     x0 = {p.name: p.value for p in params}
     base = ev(x0)
     if not base.ok:
-        sys.exit(f"the design as built breaks a limit: {'; '.join(base.violations)}")
+        sys.exit(f"the design {model.BASE_LABEL} breaks a limit: {'; '.join(base.violations)}")
     singles = single_changes(ev, params, x0, free, base)
     x1, best = search(ev, params, x0, free, base)
     # the search is local; if a single change beat it, start again from there
     for p, bv, r in singles:
-        if better(r, best):
+        if ev.better(r, best):
             x1, best = search(ev, params, {**x0, p.name: bv}, free, r)
 
     out = Path(a.out) if a.out else HERE / f"REPORT_{a.model}.md"
     write_report(model, params, free, v, x0, base, x1, best, singles, ev.n, out)
 
-    fmt = model.force_text
-    print(f"{model.TITLE} at {model.speed_text(v)}: drag {fmt(base.drag)} -> {fmt(best.drag)} "
-          f"({pct(base.drag, best.drag)}), {ev.n} evaluations")
+    fmt = model.value_text
+    print(f"{model.TITLE} at {model.speed_text(v)}: {model.OBJECTIVE.lower()} {fmt(base.value)} -> "
+          f"{fmt(best.value)} ({pct(base.value, best.value)}), {ev.n} evaluations")
     by_name = {p.name: p for p in params}
     for n in free:
         if x1[n] != x0[n]:
-            print(f"  {n:16s} {by_name[n].show(x0[n]):>12s} -> {by_name[n].show(x1[n])}")
+            print(f"  {n:16s} {by_name[n].show(x0[n]):>16s} -> {by_name[n].show(x1[n])}")
     try:
         shown = out.relative_to(Path.cwd())
     except ValueError:

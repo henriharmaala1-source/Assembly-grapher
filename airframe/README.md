@@ -476,11 +476,12 @@ right wing tip and z up, with z = 0 on the boom centre-line.
 ## Drag
 
 [`aero/`](../aero/README.md) has a simple air-resistance optimizer that runs on
-this design (`python3 aero/optimize.py airframe`). It finds the sizing already
-at its optimum and about 20 % less drag from small changes to the details: a
-rounded top front edge on the pod, the rudder joiners in a groove, horn
-fairings, a tapered pod rear and a laid-back antenna. See
-[aero/REPORT_airframe.md](../aero/REPORT_airframe.md).
+this design (`python3 aero/optimize.py airframe`). With the span held at the
+brief's smallest passing size, the rest of the sizing is pinned by the stall
+limit, the SG90 tabs and the bed. It finds about 20 % less drag from small
+changes to the details: a rounded top front edge on the pod, the rudder
+joiners in a groove, horn fairings, a tapered pod rear and a laid-back
+antenna. See [aero/REPORT_airframe.md](../aero/REPORT_airframe.md).
 
 ## Known limitations
 

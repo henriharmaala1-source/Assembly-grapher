@@ -177,7 +177,7 @@ def write_report(model, params, free, v, x0, base, x1, best, singles, n_eval, ou
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("model", help="a model in aero/models/: airframe or quad")
+    ap.add_argument("model", help="a model in aero/models/: airframe, quad or quad7")
     ap.add_argument("--speed", type=float, help="speed in m/s (default: the model's own)")
     ap.add_argument("--kmh", type=float, help="speed in km/h")
     ap.add_argument("--fix", default="", help="comma-separated parameters to keep as they are")
@@ -189,7 +189,8 @@ def main(argv=None):
     available = sorted(f.stem for f in (HERE / "models").glob("*.py") if not f.stem.startswith("_"))
     if a.model not in available:
         ap.error(f"no model {a.model!r}; available: {', '.join(available)}")
-    model = importlib.import_module(f"models.{a.model}")
+    module = importlib.import_module(f"models.{a.model}")
+    model = getattr(module, "MODEL", module)      # a module, or an object the module builds
     v = a.speed or (a.kmh / 3.6 if a.kmh else model.SPEED)
     params = model.params()
     names = [p.name for p in params]

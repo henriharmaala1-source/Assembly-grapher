@@ -10,7 +10,8 @@
   also has a bill of process with its precedence graph, an assembly animation
   and a DFMA analysis.
 - [`aero/`](aero/README.md): a simple aerodynamic optimizer with two models: the
-  airframe's drag, and the airframe aerodynamics of a typical 5-inch FPV quad
-  (stock propulsion, scored on cruise power, with no speed objective). It ranks
+  airframe's drag, and the airframe aerodynamics of typical 5-inch and 7-inch
+  FPV quads (stock propulsion, scored on cruise power, with no speed
+  objective). It ranks
   single design changes and searches for the best mix within each design's
   limits.

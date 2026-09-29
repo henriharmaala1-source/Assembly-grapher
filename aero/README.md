@@ -1,12 +1,12 @@
-# Air-resistance and efficiency optimizer
+# Air-resistance optimizer
 
 A small, dependency-free tool with two models:
 
 - **`airframe`**: the Kipinä twin-boom pusher. It looks for the lowest drag at
   cruise.
-- **`quad`**: a typical 5-inch FPV quad. It looks for the longest flight time
-  at a relaxed cruise, while staying an ordinary FPV quad (see
-  [What the quad model will not do](#what-the-quad-model-will-not-do)).
+- **`quad`**: a typical 5-inch FPV quad. It keeps the stock motors, props and
+  battery, and looks for the airframe aerodynamics that need the least power
+  at cruise (see [What the quad model will not do](#what-the-quad-model-will-not-do)).
 
 It uses handbook formulas, not CFD or thrust-stand data. That makes it good for
 ranking design changes and seeing what matters, but not for exact numbers.
@@ -15,9 +15,9 @@ ranking design changes and seeing what matters, but not for exact numbers.
 python3 aero/optimize.py airframe                 # Kipinä drag at its 13 m/s cruise
 python3 aero/optimize.py airframe --free span     # let the span grow too (the brief fixes it)
 python3 aero/optimize.py airframe --only fairings,boattail
-python3 aero/optimize.py quad                     # quad flight time at 40 km/h
-python3 aero/optimize.py quad --kmh 60            # ... at 60 km/h
-python3 aero/optimize.py quad --fix motor         # keep the stock motors
+python3 aero/optimize.py quad                     # quad aerodynamics at 60 km/h
+python3 aero/optimize.py quad --kmh 40            # ... at 40 km/h
+python3 aero/optimize.py quad --fix motor_tilt    # keep the motors straight
 ```
 
 Each run prints a summary and writes `aero/REPORT_<model>.md`, which has:
@@ -31,69 +31,69 @@ Each run prints a summary and writes `aero/REPORT_<model>.md`, which has:
 
 ## Results
 
-### Typical 5-inch FPV quad, at 40 km/h ([REPORT_quad.md](REPORT_quad.md))
+### Typical 5-inch FPV quad, at 60 km/h ([REPORT_quad.md](REPORT_quad.md))
 
-The starting point is an ordinary 6S freestyle build:
+The quad is an ordinary 6S freestyle build: 2306 1750 KV motors, 5.1 × 4.3
+tri-blades, a 6S 1100 mAh LiPo and 504 g all-up. Its propulsion stays stock.
+The optimizer changes only the airframe's aerodynamics and scores each version
+by the power it needs for a steady 60 km/h cruise. That power includes:
 
-- 2306 1750 KV motors;
-- 5.1 × 4.3 tri-blade props;
-- a 6S 1100 mAh LiPo;
-- analog video;
-- 504 g all-up, thrust-to-weight 7.8 at mid-pack.
+- the body's drag;
+- the prop wash pushing down on the arms;
+- the weight of any printed part.
 
-The model gives it 10.0 min at a steady 40 km/h and 9.6 min in a hover.
-
-The optimum keeps the frame, the 6S battery and the analog kit. It changes
-the props, motors and battery, and roughly doubles the flight time to
-**19.7 min** (17.4 min in a hover):
+At 60 km/h the stock quad pitches 18° nose down, and at that angle the top of
+the battery, the body plates and the flat faces of the arms all catch the
+air. The drag area comes to about 96 cm²: the arms 29 %, the motor bells 22 %,
+the body's tilted top face 14 %, the stack and the battery front 10 % each.
 
 | | typical build | optimised |
 |---|---|---|
-| Props | 5.1 × 4.3 × 3 | 5.1 × 3.0 × 2 |
-| Motors | 2306 1750 KV | 1804 2027 KV (2004s give 19.0 min with a little more thrust) |
-| Battery | 6S 1100 mAh LiPo, 186 g | 6S ~2300 mAh LiPo, 383 g |
-| All-up weight | 504 g | 637 g |
-| Thrust-to-weight | 7.8 | 5.0, the lower limit |
+| Drag area | 96 cm² | 51 cm² |
+| Body drag at 60 km/h | 1.63 N | 0.87 N |
+| Power at 60 km/h | 146 W | 128 W (−12 %) |
+| Flight time at 60 km/h | 8.0 min | 9.1 min |
+| All-up weight | 504 g | 517 g |
 
-That is what a long-range 5-inch cruiser looks like. The optimizer spends
-the thrust margin on flight time until it reaches the lower limit.
+The optimum:
 
-On their own, the changes rank like this:
+- **Motors tilted forward 10°** on printed wedges, so the body flies level at
+  this speed instead of 18° nose down. This is the big one: −10 % of the power
+  on its own. The camera's uptilt has to drop by the same 10°, and the quad
+  hovers 10° nose up.
+- **Streamlined printed sleeves on the arms** (+12 g): −3.7 % on their own.
+  They cut the arms' drag and the prop wash on them.
+- **Arms 13 mm wide instead of 14**, still within 80 % of the stock stiffness:
+  −1.2 %.
+- **A stubby VTX antenna** instead of an upright lollipop: −1.2 %. Laying the
+  lollipop back 45° does nearly as well.
 
-| change | flight time on its own |
-|---|---|
-| A bigger pack (6S ~2300 mAh) | +37 % |
-| Smaller, lighter motors (1804) | +14 % |
-| Two-blade props | +10 % |
-| Lower pitch (3.0 inch) | +9 % |
+What else it found:
 
-- **Keeping the stock 2306 motors** (`--fix motor`) still reaches 16.3 min.
-  The props and the battery do most of the work.
-- **Li-ion does not fit.** A 21700 pack can't supply the current for
-  thrust-to-weight 5 within its rating on a quad under 700 g. Li-ion builds
-  run lower thrust-to-weight on bigger frames.
-- **Drag matters little at these speeds.** At 40 km/h the body's drag takes
-  about 6 W of the 116 W. At 60 km/h it is about 26 W of 148 W, and the
-  optimum is the same build (7.9 → 17.0 min). A printed canopy never earns
-  its 10 g.
+- **Fairings only pay without the motor tilt.** A full fairing over the stack
+  and battery (+35 g) saves 3.7 % on a quad that flies nose-down, and with
+  the motors held straight (`--fix motor_tilt`) the optimum takes it (−7.4 %
+  in all). Once the body flies level, the fairing's weight costs more than
+  its drag saves. A canopy over just the stack never earns its 10 g.
+- **Battery on top or underneath makes no measurable difference.**
+- **At 40 km/h the air hardly matters.** The quad pitches only 6°, the body
+  drag is about 0.56 N, and the best the aerodynamics can do is −1.3 %.
+  Aerodynamic work on a 5-inch quad pays at brisk cruising speeds, not at a
+  gentle pace.
 
 ### What the quad model will not do
 
 The brief was to make a typical FPV drone better without it turning into an
-interceptor. So the quad model rewards flight time at a relaxed cruise and
-nothing else:
+interceptor:
 
-- It has no speed, acceleration or payload objective, and it doesn't estimate
-  top speed.
-- Thrust-to-weight must stay between **5 and 12**, the band ordinary freestyle
-  quads fly with. That is enough to fly and recover normally, but not a
-  racer's or an interceptor's punch.
-- All-up weight stays at or under 700 g, what a 5-inch frame and props are
-  built for.
+- **Propulsion stays stock.** The motors, props and battery are untouched, so
+  thrust-to-weight stays at the stock 7.8, and it must stay between 5 and 12.
+- **Only cruise power is scored.** There is no speed or acceleration objective,
+  and the model does not estimate top speed. Less drag raises the top speed a
+  little as a side effect, but nothing here rewards it.
 
-In practice the optimum sits on the *lower* thrust-to-weight limit.
-Efficiency pulls the design away from the high-power, high-speed end, not
-towards it.
+An earlier version of this model searched the props, motors and battery for
+flight time instead. It is in the git history (commit `dbd5d35`).
 
 ### Kipinä, at its 13 m/s cruise ([REPORT_airframe.md](REPORT_airframe.md))
 
@@ -140,24 +140,27 @@ fifth (32 → 26 gf, endurance 13.6 → 16.4 min at this speed):
   - keep the stall at or under 8.95 m/s with the CAD weight;
   - leave room for the SG90 tabs in the wing;
   - fit the lid and the rear pod half on the bed.
-- **`models/quad.py`** builds the quad from its parts:
-  - weight from each part;
-  - body drag at the cruise tilt that the drag itself sets;
-  - rotor power in forward flight: momentum theory with Glauert's inflow,
-    plus the props' profile power;
-  - motor losses (winding loss from the motor constant, iron loss with rpm),
-    ESC and battery losses;
-  - full-throttle thrust and currents, from the motor model and the pack
-    sagging under load.
+- **`models/quad.py`** takes the stock quad and varies its aerodynamics:
+  - the body: an open frame, a canopy, or a full fairing;
+  - the battery on top or underneath;
+  - the arm size, and sleeves over the arms;
+  - forward-tilted motors;
+  - the antenna.
 
-  The prop coefficients are fitted to typical 5-inch FPV props, so flight
-  times are good to perhaps ±15 %.
+  For each version it works out:
+  - the body drag, with the pitch the drag itself sets;
+  - the prop wash on the arms;
+  - the added weight;
+  - the stock props' rotor power in forward flight (momentum theory with
+    Glauert's inflow and profile power);
+  - the motor, ESC and battery losses.
 - **`optimize.py`** first moves each parameter alone over its whole range.
   Then it searches all free parameters together: one grid step up and down on
   each, then pairs of parameters moved at once, so it can slide along a limit
-  (for example, less pitch with more KV at the same thrust-to-weight). It
-  keeps any move that helps without breaking a limit, and halves the step
-  when nothing does.
+  (for example, a longer tail arm with a different aspect ratio at the same
+  stall speed). It keeps any move that helps by more than the model's
+  resolution (0.03 % for the airframe, 0.2 % for the quad) without breaking a
+  limit, and halves the step when nothing does.
 
 In the reports, the **kind** column says whether a change is a parameter of
 the CAD, a what-if the CAD doesn't build yet, or a part you choose.
@@ -171,6 +174,7 @@ A model is a module in `aero/models/` with:
 - if it has a drag build-up, `AREA_UNIT` (a label and a scale from m²) and
   `ITEMS_NOTE`;
 - optionally `DEFAULT_FIX`: parameters held unless `--free` names them;
+- optionally `MIN_GAIN`: the smallest improvement worth a move (default 0.03 %);
 - `params()`, which returns a list of `model.Param`: the starting value, the
   range, the step, the unit, what limits it, and its kind;
 - `evaluate(x, v)`, which returns a `model.Result`: the objective, the drag
@@ -180,11 +184,9 @@ A model is a module in `aero/models/` with:
 ## Limits
 
 - The coefficients come from handbooks and typical-prop fits, not
-  measurements. Expect about ±30 % on the airframe's drag totals (its
-  Reynolds numbers are low: 50 000 to 300 000) and ±15 % on the quad's flight
-  times. The ranking and the differences between versions are more reliable.
-  Check a real prop, motor and battery combination on a thrust stand or in
-  eCalc before buying.
+  measurements. Expect about ±30 % on the drag of each part (the airframe's
+  Reynolds numbers are low: 50 000 to 300 000). The ranking and the differences
+  between versions are more reliable than the totals.
 - The optimizer finds a local optimum on each parameter's grid. The paired
   moves, and a restart from the best single change, cover the cases here.
 - It only knows the limits written into each model. A change can look good

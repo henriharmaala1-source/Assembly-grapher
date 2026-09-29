@@ -1,22 +1,22 @@
-"""A typical 5-inch FPV quad: flight-time model for aero/optimize.py.
+"""A typical 5-inch FPV quad: aerodynamic model for aero/optimize.py.
 
-The starting point is an ordinary 6S freestyle build: a 5-inch frame,
-2306 1750 KV motors, 5.1 x 4.3 tri-blades, a 55 A 4-in-1 ESC, analog video and
-a 6S 1100 mAh LiPo. The model works out, for any mix of props, motors and
-battery:
+The quad is an ordinary 6S freestyle build, and its propulsion stays stock:
+2306 1750 KV motors, 5.1 x 4.3 tri-blades, a 55 A 4-in-1 ESC and a 6S 1100 mAh
+LiPo. What the optimizer changes is the airframe's aerodynamics:
 
-  * the weight, from the parts;
-  * the body drag at the cruise attitude (battery, stack, arms, motors,
-    antennas), with the nose-down tilt that drag itself sets;
-  * the rotor power in forward flight (momentum theory with Glauert's inflow,
-    plus the props' profile power), then the motor, ESC and battery losses;
-  * full-throttle thrust and currents, from a motor model (KV, winding
-    resistance, iron loss) and battery sag.
+  * the body: open frame, a canopy over the stack and camera, or a full fairing
+    over the stack and battery;
+  * where the battery sits, on top or underneath;
+  * the arms' width and thickness, held to the stock arms' stiffness, and
+    printed streamlined sleeves over them;
+  * forward-tilted motor mounts, so the body flies level at cruise;
+  * the VTX antenna.
 
-What it rewards is flight time at a relaxed cruise and nothing else. There is
-no speed, acceleration or payload objective and no top-speed estimate, and
-thrust-to-weight is held inside the band ordinary freestyle quads fly with
-(5 to 12), so the optimum stays a normal FPV quad.
+Every one of these shows up in the power needed for a steady cruise, which is
+the objective: the body's drag at the attitude that drag sets, the prop wash
+pushing down on the arms, and the weight of any printed fairing. The model
+has no speed or acceleration objective and no top-speed estimate, and the
+propulsion is not touched, so the quad stays an ordinary FPV quad.
 """
 from __future__ import annotations
 
@@ -26,273 +26,239 @@ import dragkit as K
 from model import Param, Result
 
 NAME = "quad"
-TITLE = "Typical 5-inch FPV quad"
-OBJECTIVE = "Flight time"
-MAXIMIZE = True
+TITLE = "Typical 5-inch FPV quad, aerodynamics"
+OBJECTIVE = "Power at cruise"
+MAXIMIZE = False
 BASE_LABEL = "typical build"
 AREA_UNIT = ("cm²", 1e4)
-SPEED = 40 / 3.6
-NOTE = ("Flight time is at a steady cruise, from a full pack down to the usable limit "
-        "(80 % for LiPo, 85 % for Li-ion); real freestyle flying, with bursts of full "
-        "throttle, gets less.")
+SPEED = 60 / 3.6
+NOTE = ("Every aerodynamic change ends up in this power: the body's drag, the prop wash "
+        "on the arms and the weight of any printed fairing. The motors, props and "
+        "battery stay stock. 60 km/h is a brisk but ordinary cruise; the model does not "
+        "look at top speed.")
 ITEMS_NOTE = ("Drag of the body, arms, motors and antennas at the cruise attitude. The props' "
               "own drag is part of the rotor power.")
+MIN_GAIN = 0.002               # changes worth less than 0.2 % are below this model's resolution
 
 G = 9.81
 TW_MIN, TW_MAX = 5.0, 12.0     # the band ordinary freestyle quads fly with
-AUW_MAX = 700.0                # g; a 5-inch frame and props are built for about this much
-ESC_A = 55.0                   # per motor, 4-in-1 rating
-W_PER_G = 28.0                 # peak motor power per gram of motor
+AUW_MAX = 700.0                # g; what a 5-inch frame and props are built for
 AVIONICS_W = 7.0               # FC, receiver, camera, 400 mW analog VTX
 ETA_ESC = 0.95
 KAPPA = 1.15                   # induced power over ideal
-DOWNWASH = 1.05                # extra thrust to make up for the arms and body under the props
-WIRING_OHM = 0.004             # XT60, leads, ESC pads
 
-FRAME_G = 115.0                # 5-inch freestyle frame with 5 mm arms and hardware
-FIXED_G = {"FC and 4-in-1 ESC": 20.0, "VTX and antenna": 10.0, "camera": 6.0,
-           "receiver": 1.5, "wires, straps, TPU parts": 20.0}
-FAIRING_G = 10.0
+# stock propulsion: 2306 1750 KV, 5.1 x 4.3 x 3, 6S 1100 mAh LiPo
+PROP_D_IN, PROP_PITCH_IN, BLADES = 5.1, 4.3, 3
+KV, KM, IRON_10K = 1750.0, 0.0193, 4.0        # motor constant N m / sqrt W; iron loss W at 10 000 rpm
+CELLS, V_CELL, PACK_AH, PACK_R = 6, 3.7, 1.1, 0.0285
+USABLE = 0.80
 
-# name, g, stator volume mm^3 (d^2 x h), motor constant Km (N m / sqrt W), bell diameter, height mm
-MOTORS = [
-    ("1804", 17.0, 18 * 18 * 4, 0.0098, 23.0, 15.0),
-    ("2004", 21.0, 20 * 20 * 4, 0.0113, 25.0, 16.0),
-    ("2207", 33.0, 22 * 22 * 7, 0.0200, 27.5, 19.0),
-    ("2306", 32.0, 23 * 23 * 6, 0.0193, 28.0, 18.0),
-    ("2506", 37.0, 25 * 25 * 6, 0.0220, 30.0, 18.0),
-]
-IRON_2306 = 4.0                # W at 10 000 rpm, from ~1 A no-load at 10 V for a 1750 KV 2306
+# weights, g
+BASE_G = 504.0                 # the typical build as a whole
+ARM_LEN, ARM_EXPOSED, ARM_SPAN = 100.0, 75.0, 53.0   # mm: arm, beyond the body, across the flow (X at 45 deg)
+CARBON = 1.6e-3                # g/mm^3
+EXTRA_G = {"body": (0.0, 10.0, 35.0), "arm_sleeves": 12.0, "motor_tilt": 4.0}
 
-# name, pack Wh/kg, fixed g, cell V, usable fraction, cell mOhm x Ah, burst C, pack Wh/cm^3,
-# and the length : width : height of the pack (scaled to its volume)
-CHEMS = [
-    ("LiPo", 140.0, 12.0, 3.7, 0.80, 4.5, 150.0, 0.30, (75.0, 35.0, 31.0)),
-    ("Li-ion 21700", 230.0, 20.0, 3.6, 0.85, 67.0, 12.0, 0.42, (72.0, 63.0, 42.0)),
-]
+# body, mm
+STACK_W, STACK_H = 30.0, 30.0
+PLATE = 40.0 * 90.0            # body plates, plan area
+CANOPY = 40.0 * 40.0           # plan area a canopy covers
+BATT = (75.0, 35.0, 31.0)      # 6S 1100 mAh, length, width, height
+BELL, BELL_H = 28.0, 18.0
+FAIRING = (110.0, 42.0, STACK_H + BATT[2] + 4.0)  # full fairing: length, width, height
+DOWNLOAD_K = 0.545             # prop wash on the arms: 4.5 % of thrust for 14 mm flat arms in a hover
+STOCK_ARM = (14.0, 5.0)        # width, thickness mm
 
 
 def params() -> list[Param]:
-    part = "part choice"
     return [
-        Param("prop_d", 5.1, 4.5, 5.1, 0.1, "in", "prop diameter",
-              "a 5-inch frame takes props up to 5.1 inch", part),
-        Param("prop_pitch", 4.3, 3.0, 5.0, 0.1, "in", "prop pitch",
-              "5-inch FPV props are sold from about 3 to 5 inch pitch", part),
-        Param("blades", 3, 2, 3, 1, "", "blades per prop", "", part, {2: "two", 3: "three"}),
-        Param("motor", 3, 0, len(MOTORS) - 1, 1, "", "motor size",
-              f"peak power {W_PER_G:.0f} W per gram of motor", part, {i: m[0] for i, m in enumerate(MOTORS)}),
-        Param("rpm0", 1750 * 6 * 3.7, 20000, 45000, 500, "rpm", "motor KV x nominal pack voltage",
-              "sets the KV for the cell count", part),
-        Param("cells", 6, 4, 6, 1, "S", "cells in series", "", part),
-        Param("battery_wh", 6 * 3.7 * 1.1, 10, 100, 1, "Wh", "battery energy",
-              f"full-throttle current within the pack's C rating; all-up weight at most {AUW_MAX:.0f} g", part),
-        Param("chemistry", 0, 0, 1, 1, "", "battery chemistry", "", part,
-              {i: c[0] for i, c in enumerate(CHEMS)}),
-        Param("fairing", 0, 0, 1, 1, "", "printed canopy over the stack and camera", f"+{FAIRING_G:.0f} g",
-              "printed part", {0: "none", 1: "fitted"}),
+        Param("body", 0, 0, 2, 1, "", "body",
+              "canopy +10 g; full fairing +35 g, and it has to open for battery changes", "printed part",
+              {0: "open frame", 1: "canopy over stack and camera", 2: "full fairing over stack and battery"}),
+        Param("battery_mount", 0, 0, 1, 1, "", "battery position", "", "build choice",
+              {0: "on top", 1: "underneath"}),
+        Param("arm_width", STOCK_ARM[0], 10, 18, 1, "mm", "arm width",
+              "arm stiffness up and down and sideways at least 80 % of the stock 14 x 5 mm arms", "frame choice"),
+        Param("arm_thickness", STOCK_ARM[1], 4, 6, 0.5, "mm", "arm thickness", "as for the width", "frame choice"),
+        Param("arm_sleeves", 0, 0, 1, 1, "", "streamlined printed sleeves on the arms", "+12 g", "printed part",
+              {0: "none", 1: "fitted"}),
+        Param("motor_tilt", 0, 0, 15, 1, "°", "motors tilted forward on printed wedges",
+              "the camera's uptilt drops by the same angle; the quad hovers nose-up by it", "printed part"),
+        Param("antenna", 0, 0, 2, 1, "", "VTX antenna", "", "part choice",
+              {0: "upright lollipop", 1: "lollipop laid back 45°", 2: "stubby"}),
     ]
 
 
-def prop_coeffs(d_in: float, pitch_in: float, blades: int):
-    """Figure of merit and static thrust / power coefficients (T = CT rho n^2 D^4,
-    P = CP rho n^3 D^5, n in rev/s), fitted to typical 5-inch FPV props: lower
-    pitch and fewer blades hover more efficiently; more pitch and blades give
-    more thrust per rpm. CP follows from FM = CT^1.5 / (CP sqrt(pi / 2))."""
-    ratio = pitch_in / d_in
-    fm = 0.45 - 0.04 * (blades - 2) - 0.15 * (ratio - 0.6)
-    ct = 0.105 * (ratio / 0.8) ** 0.8 * (blades / 2) ** 0.75
-    cp = ct ** 1.5 / (math.sqrt(math.pi / 2) * fm)
-    return fm, ct, cp
+def prop_coeffs():
+    """Figure of merit and static coefficients of the stock 5.1 x 4.3 tri-blade
+    (T = CT rho n^2 D^4, P = CP rho n^3 D^5, n in rev/s)."""
+    ratio = PROP_PITCH_IN / PROP_D_IN
+    fm = 0.45 - 0.04 * (BLADES - 2) - 0.15 * (ratio - 0.6)
+    ct = 0.105 * (ratio / 0.8) ** 0.8 * (BLADES / 2) ** 0.75
+    return fm, ct, ct ** 1.5 / (math.sqrt(math.pi / 2) * fm)
 
 
-def battery(x: dict):
-    chem = CHEMS[round(x["chemistry"])]
-    _, wh_kg, fixed, v_cell, usable, mohm_ah, c_max, wh_cm3, shape = chem
-    cells = round(x["cells"])
-    wh = x["battery_wh"]
-    ah = wh / (cells * v_cell)
-    return {"name": chem[0], "cells": cells, "ah": ah, "wh": wh, "v_oc": cells * v_cell,
-            "r": cells * mohm_ah / 1000 / ah + WIRING_OHM, "g": wh / wh_kg * 1000 + fixed,
-            "usable": usable, "i_max": c_max * ah, "c_max": c_max,
-            "dims": _scaled(shape, wh / wh_cm3 * 1000)}
-
-
-def _scaled(shape, volume_mm3: float):
-    """Pack dimensions with the given proportions and volume."""
-    k = (volume_mm3 / (shape[0] * shape[1] * shape[2])) ** (1 / 3)
-    return tuple(k * a for a in shape)
-
-
-def body_items(x: dict, bat: dict, motor, alpha: float) -> list[K.Item]:
-    """Body drag areas (m^2) with the quad pitched nose-down by alpha."""
-    ca, sa = math.cos(alpha), math.sin(alpha)
-    l, w, h = bat["dims"]
-    mm2 = 1e-6
-    cd_front = 0.55 if x["fairing"] else 1.1
-    _, _, _, _, bell, mh = motor
-    items = [
-        K.Item("battery", 0.9 * (w * h * ca + l * w * sa) * mm2, "body", f"{l:.0f} x {w:.0f} x {h:.0f} mm on top"),
-        K.Item("stack, camera, body plates", (cd_front * 30 * 30 * ca + 1.1 * max(40 * 90 - l * w, 0) * sa) * mm2,
-               "body", "canopy fitted" if x["fairing"] else "open stack"),
-        K.Item("arms", 1.2 * (4 * 53 * 5 * ca + 4 * 75 * 14 * sa) * mm2, "body", "5 mm carbon, X layout"),
-        K.Item("motors", 0.8 * 4 * (bell * mh * ca + math.pi * (bell / 2) ** 2 * sa) * mm2, "body",
-               f"{bell:.0f} mm bells"),
-        K.Item("antennas", 1.1 * (5 * 60 + 2 * 1.5 * 50) * mm2, "protuberances", "VTX and receiver"),
-    ]
+def body_items(x: dict, theta: float) -> list[K.Item]:
+    """Drag areas (m^2) with the body pitched nose-down by theta (negative: nose-up)."""
+    c, s = math.cos(theta), abs(math.sin(theta))
+    nose_down = theta >= 0
+    body, under = round(x["body"]), round(x["battery_mount"]) == 1
+    sleeves = round(x["arm_sleeves"]) == 1
+    l, w, h = BATT
+    items = []
+    if body == 2:
+        fl, fw, fh = FAIRING
+        items.append(K.Item("body fairing (stack and battery)", (0.25 * fw * fh * c + 0.3 * fl * fw * s) * 1e-6,
+                            "body", f"rounded pod {fl:.0f} x {fw:.0f} x {fh:.0f} mm"))
+    else:
+        canopy = body == 1
+        items.append(K.Item("stack and camera, front", (0.5 if canopy else 1.1) * STACK_W * STACK_H * c * 1e-6,
+                            "body", "under a canopy" if canopy else "open standoffs and camera cage"))
+        items.append(K.Item("battery, front", 0.9 * w * h * c * 1e-6, "body",
+                            f"{w:.0f} x {h:.0f} mm, {'underneath' if under else 'on top'}"))
+        # the face the flow reaches from above (nose-down) or below (nose-up)
+        cover = CANOPY if canopy else 0.0
+        if nose_down == (not under):             # battery on the windward side
+            windward = 0.9 * l * w + 1.1 * max(PLATE - l * w - cover, 0.0) + 0.4 * cover
+        else:                                    # battery on the lee side, the plate faces the flow
+            windward = 1.1 * max(PLATE - cover, 0.0) + 0.4 * cover
+        items.append(K.Item("body, top or bottom face", (windward + 0.2 * PLATE) * s * 1e-6, "body",
+                            "flow reaches it because the body is tilted"))
+    aw, at = x["arm_width"], x["arm_thickness"]
+    items.append(K.Item("arms", ((0.6 if sleeves else 1.2) * 4 * ARM_SPAN * at * c
+                                 + (0.9 if sleeves else 1.2) * 4 * ARM_EXPOSED * aw * s) * 1e-6, "body",
+                        f"{aw:.0f} x {at:.1f} mm" + (", sleeved" if sleeves else "")))
+    items.append(K.Item("motors", 0.8 * 4 * (BELL * BELL_H * c + math.pi * (BELL / 2) ** 2 * s) * 1e-6, "body",
+                        f"{BELL:.0f} mm bells"))
+    ant = [1.1 * 5 * 60 + 0.5 * 254, 1.1 * 5 * 60 * math.cos(math.radians(45)) ** 3 + 0.5 * 254,
+           1.1 * 8 * 25][round(x["antenna"])]
+    items.append(K.Item("antennas", (ant + 1.1 * 2 * 1.5 * 50) * 1e-6, "protuberances",
+                        ["upright lollipop", "lollipop laid back 45°", "stubby"][round(x["antenna"])] + " and receiver"))
     items.append(K.Item("junctions (10 %)", 0.10 * K.total(items), "interference", ""))
     return items
 
 
-def rotor_power(t: float, v: float, alpha: float, area: float, fm: float, tip: float) -> float:
-    """Shaft power (W) for total thrust t at speed v with the rotor discs tilted
-    by alpha: induced (Glauert), the work against drag, and profile power grown
-    with the advance ratio."""
-    vh = math.sqrt(t / (2 * K.RHO * area))
-    vi = vh
-    for _ in range(60):
-        new = t / (2 * K.RHO * area * math.hypot(v * math.cos(alpha), v * math.sin(alpha) + vi))
-        vi = 0.5 * vi + 0.5 * new
-    profile0 = t * vh * max(1 / fm - KAPPA, 0.0)
-    mu = v * math.cos(alpha) / tip
-    return KAPPA * t * vi + t * v * math.sin(alpha) + profile0 * (1 + 4.65 * mu * mu)
-
-
 def evaluate(x: dict, v: float) -> Result:
-    motor = MOTORS[round(x["motor"])]
-    m_name, m_g, vol, km, _, _ = motor
-    blades = round(x["blades"])
-    d = x["prop_d"] * 0.0254
-    fm, ct, cp = prop_coeffs(x["prop_d"], x["prop_pitch"], blades)
-    bat = battery(x)
-    prop_g = 4.3 * (blades / 3) ** 0.65 * (x["prop_d"] / 5.1) ** 2.5
-    mass_g = (FRAME_G + sum(FIXED_G.values()) + 4 * m_g + 4 * prop_g + bat["g"]
-              + (FAIRING_G if x["fairing"] else 0))
+    aw, at = x["arm_width"], x["arm_thickness"]
+    sleeves = round(x["arm_sleeves"]) == 1
+    arm_g = 4 * ARM_LEN * CARBON
+    mass_g = (BASE_G + arm_g * (aw * at - STOCK_ARM[0] * STOCK_ARM[1])
+              + EXTRA_G["body"][round(x["body"])] + (EXTRA_G["arm_sleeves"] if sleeves else 0)
+              + (EXTRA_G["motor_tilt"] if x["motor_tilt"] else 0))
     weight = mass_g / 1000 * G
+    bad = []
+    sw, st = STOCK_ARM
+    if aw * at ** 3 < 0.8 * sw * st ** 3 or at * aw ** 3 < 0.8 * st * sw ** 3:
+        bad.append(f"{aw:.0f} x {at:.1f} mm arms are under 80 % of the stock stiffness")
+    if mass_g > AUW_MAX:
+        bad.append(f"{mass_g:.0f} g is over {AUW_MAX:.0f} g")
+
+    fm, ct, cp = prop_coeffs()
+    d = PROP_D_IN * 0.0254
     area = 4 * math.pi * (d / 2) ** 2
-    iron10k = IRON_2306 * (vol / (23 * 23 * 6)) ** 0.9
-    kv = x["rpm0"] / bat["v_oc"]
-    kt = 60 / (2 * math.pi * kv)                  # N m / A
-    rm = kt * kt / (km * km)                      # winding resistance, ohm
+    beta = math.radians(x["motor_tilt"])
+    cd_v = 0.8 if sleeves else 1.2
+    arm_under = 4 * aw * (d / 2 * 1000)                  # mm^2 of arm under the discs
+    dl_hover = DOWNLOAD_K * cd_v * arm_under / (area * 1e6)
 
-    def motors_power(thrust_total: float, v_air: float, alpha: float) -> float:
-        """Electrical power (W) into the four motors for a total prop thrust."""
-        t_m = thrust_total / 4
-        n = math.sqrt(t_m / (ct * K.RHO * d ** 4))        # rev/s
-        tip = math.pi * d * n
-        p_shaft = rotor_power(thrust_total, v_air, alpha, area, fm, tip) / 4
-        q = p_shaft / (2 * math.pi * n)
-        return 4 * (p_shaft + (q / km) ** 2 + iron10k * (n * 60 / 10000) ** 1.6)
-
-    def battery_draw(p_bus: float):
-        """Current and chemical power for a bus power, with the pack's sag."""
-        disc = bat["v_oc"] ** 2 - 4 * bat["r"] * p_bus
-        if disc <= 0:
-            return math.inf, math.inf
-        i = (bat["v_oc"] - math.sqrt(disc)) / (2 * bat["r"])
-        return i, bat["v_oc"] * i
-
-    # cruise: the tilt balances drag against weight
-    alpha, items = 0.0, []
-    for _ in range(8):
-        items = body_items(x, bat, motor, alpha)
+    # cruise: the rotor discs tilt by alpha so thrust balances weight and drag;
+    # the body sits at alpha - beta
+    alpha, items, dl, vi = 0.0, [], dl_hover, 0.0
+    for _ in range(12):
+        items = body_items(x, alpha - beta)
         drag = K.q(v) * K.total(items)
         alpha = math.atan2(drag, weight)
-    thrust = math.hypot(weight, drag) * DOWNWASH
-    p_cruise = motors_power(thrust, v, alpha) / ETA_ESC + AVIONICS_W
-    _, p_chem = battery_draw(p_cruise)
-    minutes = bat["wh"] * bat["usable"] / p_chem * 60
-    p_hover = motors_power(weight * DOWNWASH, 0.0, 0.0) / ETA_ESC + AVIONICS_W
-    hover_min = bat["wh"] * bat["usable"] / battery_draw(p_hover)[1] * 60
+        t = math.hypot(weight, drag) * (1 + dl)
+        vh = math.sqrt(t / (2 * K.RHO * area))
+        vi = vh
+        for _ in range(60):
+            vi = 0.5 * vi + 0.5 * t / (2 * K.RHO * area * math.hypot(v * math.cos(alpha), v * math.sin(alpha) + vi))
+        skew = math.atan2(v * math.cos(alpha), vi + v * math.sin(alpha))   # 0 in a hover
+        dl = dl_hover * math.cos(skew)                   # a swept-back wake misses most of the arms
+    t = math.hypot(weight, drag) * (1 + dl)
 
-    # full throttle: motor rpm limited by back-EMF and winding drop, pack sag
-    v_b = bat["v_oc"]
-    i_m = i_b = 0.0
-    n = 0.0
+    def power(t_total: float, v_air: float, a: float, v_i: float) -> float:
+        """Electrical power at the battery for total prop thrust t_total."""
+        n = math.sqrt(t_total / 4 / (ct * K.RHO * d ** 4))
+        vh = math.sqrt(t_total / (2 * K.RHO * area))
+        mu = v_air * math.cos(a) / (math.pi * d * n)
+        p_rotor = (KAPPA * t_total * v_i + t_total * v_air * math.sin(a)
+                   + t_total * vh * max(1 / fm - KAPPA, 0.0) * (1 + 4.65 * mu * mu))
+        q = p_rotor / 4 / (2 * math.pi * n)
+        p_motors = p_rotor + 4 * ((q / KM) ** 2 + IRON_10K * (n * 60 / 10000) ** 1.6)
+        p_bus = p_motors / ETA_ESC + AVIONICS_W
+        v_oc = CELLS * V_CELL
+        i = (v_oc - math.sqrt(v_oc ** 2 - 4 * PACK_R * p_bus)) / (2 * PACK_R)
+        return v_oc * i
+
+    p_cruise = power(t, v, alpha, vi)
+    t_hover = weight * (1 + dl_hover)
+    p_hover = power(t_hover, 0.0, 0.0, math.sqrt(t_hover / (2 * K.RHO * area)))
+    wh = CELLS * V_CELL * PACK_AH * USABLE
+
+    # full-throttle thrust of the stock motors on the sagging pack (unchanged by the aero)
+    v_b, i_b, n = CELLS * V_CELL, 0.0, 0.0
+    kt = 60 / (2 * math.pi * KV)
+    rm = kt * kt / (KM * KM)
     for _ in range(40):
         v_m = 0.97 * v_b
-        lo, hi = 0.0, kv * v_m / 60                   # rev/s
+        lo, hi = 0.0, KV * v_m / 60
         for _ in range(50):
             n = (lo + hi) / 2
-            q = cp * K.RHO * n * n * d ** 5 / (2 * math.pi)
-            i_m = q / kt + iron10k * (n * 60 / 10000) ** 1.6 / max(v_m, 1e-6)
-            if n * 60 / kv + i_m * rm < v_m:
-                lo = n
-            else:
-                hi = n
-        i_b_new = 4 * v_m * i_m / ETA_ESC / v_b
-        i_b = 0.5 * i_b + 0.5 * i_b_new
-        v_b = max(bat["v_oc"] - i_b * bat["r"], 0.3 * bat["v_oc"])
-    thrust_max = 4 * ct * K.RHO * n * n * d ** 4 / DOWNWASH
-    tw = thrust_max / weight
-    p_motor_max = v_m * i_m
-
-    bad = []
-    if mass_g > AUW_MAX:
-        bad.append(f"{mass_g:.0f} g is over the {AUW_MAX:.0f} g a 5-inch frame is built for")
-    if tw < TW_MIN:
-        bad.append(f"thrust-to-weight {tw:.1f} is under {TW_MIN:.0f}")
-    if tw > TW_MAX:
-        bad.append(f"thrust-to-weight {tw:.1f} is over {TW_MAX:.0f}, past ordinary freestyle quads")
-    if i_m > ESC_A:
-        bad.append(f"{i_m:.0f} A per motor is over the ESC's {ESC_A:.0f} A")
-    if i_b > bat["i_max"]:
-        bad.append(f"{i_b:.0f} A is over the pack's {bat['i_max']:.0f} A ({bat['c_max']:.0f}C)")
-    if p_motor_max > W_PER_G * m_g:
-        bad.append(f"{p_motor_max:.0f} W per motor is over the {m_name}'s {W_PER_G * m_g:.0f} W")
+            i_m = cp * K.RHO * n * n * d ** 5 / (2 * math.pi) / kt + IRON_10K * (n * 60 / 10000) ** 1.6 / v_m
+            lo, hi = (n, hi) if n * 60 / KV + i_m * rm < v_m else (lo, n)
+        i_b = 0.5 * i_b + 0.5 * 4 * v_m * i_m / ETA_ESC / v_b
+        v_b = CELLS * V_CELL - i_b * PACK_R
+    tw = 4 * ct * K.RHO * n * n * d ** 4 / (1 + dl_hover) / weight
+    if not TW_MIN <= tw <= TW_MAX:
+        bad.append(f"thrust-to-weight {tw:.1f} is outside {TW_MIN:.0f} to {TW_MAX:.0f}")
 
     metrics = [
+        ("Body drag at cruise", f"{drag:.2f} N"),
+        ("Flight time at cruise", f"{wh / p_cruise * 60:.1f} min"),
+        ("Cruise attitude", f"discs {math.degrees(alpha):.0f}° nose down, body {math.degrees(alpha - beta):+.0f}°"),
+        ("Prop wash on the arms", f"{dl_hover * 100:.1f} % of thrust in a hover, {dl * 100:.1f} % at cruise"),
         ("All-up weight", f"{mass_g:.0f} g"),
+        ("Hover power / flight time", f"{p_hover:.0f} W / {wh / p_hover * 60:.1f} min"),
         ("Thrust-to-weight", f"{tw:.1f}"),
-        ("Battery", f"{bat['cells']}S {bat['ah'] * 1000:.0f} mAh {bat['name']}, {bat['g']:.0f} g"),
-        ("Motors", f"{m_name} {kv:.0f} KV"),
-        ("Props", f"{x['prop_d']:.1f} x {x['prop_pitch']:.1f} x {blades}"),
-        ("Power in cruise", f"{p_cruise:.0f} W ({mass_g / p_cruise:.1f} g/W)"),
-        ("Cruise attitude", f"{math.degrees(alpha):.0f}° nose down"),
-        ("Body drag in cruise", f"{drag:.2f} N"),
-        ("Hover flight time", f"{hover_min:.1f} min"),
-        ("Full-throttle current", f"{i_b:.0f} A ({i_b / bat['ah']:.0f}C), {i_m:.0f} A per motor"),
     ]
-    return Result(minutes, items, metrics, bad)
+    return Result(p_cruise, items, metrics, bad)
 
 
 def speed_text(v: float) -> str:
     return f"{v * 3.6:.0f} km/h cruise"
 
 
-def value_text(minutes: float) -> str:
-    return f"{minutes:.1f} min"
+def value_text(w: float) -> str:
+    return f"{w:.1f} W"
 
 
 METHOD = f"""
-* **Scope.** A typical 5-inch FPV quad, optimised for flight time at a relaxed
-  cruise. The model has no speed, acceleration or payload objective and does
-  not estimate top speed. Thrust-to-weight must stay between {TW_MIN:.0f} and
-  {TW_MAX:.0f}, the band ordinary freestyle quads fly with: enough to fly and
-  recover normally, not a racer's or an interceptor's. The all-up weight stays
-  at or under {AUW_MAX:.0f} g, what a 5-inch frame and props are built for;
-  heavier long-range builds belong on 6- or 7-inch frames. Thrust-to-weight
-  here is at mid-pack voltage with the pack sagging, which reads about a
-  quarter under thrust-stand figures.
-* **Weight** is summed from the parts: frame {FRAME_G:.0f} g, electronics and
-  hardware {sum(FIXED_G.values()):.0f} g, four motors, four props and the
-  battery (LiPo at 140 Wh/kg, Li-ion 21700 packs at 230 Wh/kg, plus leads).
-* **Props**: a figure of merit and thrust and power coefficients fitted to
-  typical 5-inch FPV props. Lower pitch and two blades hover more efficiently;
-  more pitch and three blades give more thrust per rpm.
-* **Cruise**: body drag from the parts' frontal and plan areas at the tilt the
-  drag itself sets; rotor power from momentum theory with Glauert's inflow,
-  the work against drag, and profile power that grows with the advance ratio.
-  {DOWNWASH - 1:.0%} extra thrust covers the arms and body under the props.
-* **Motors**: winding loss from the motor constant Km (the same torque costs
-  the same copper loss at any KV), iron loss rising with rpm (about
-  {IRON_2306:.0f} W at 10 000 rpm for a 2306), a {ETA_ESC:.0%} ESC and
-  {AVIONICS_W:.0f} W for the FC, receiver, camera and VTX.
-* **Full throttle**: rpm where back-EMF plus the winding drop meets the ESC's
-  output voltage, with the pack sagging under the current. The limits: {ESC_A:.0f} A
-  per motor, the pack's burst C rating (LiPo 150C, Li-ion 12C) and about
-  {W_PER_G:.0f} W per gram of motor.
-* These are first-pass fits, not measurements. Expect ±15 % on flight times;
-  the ranking of changes is more reliable. Check a real combination on a
-  thrust stand or in eCalc before buying.
+* **Scope.** The airframe's aerodynamics only. The motors, props and battery stay
+  stock (2306 1750 KV, 5.1 x 4.3 x 3, 6S 1100 mAh), so the quad keeps its
+  ordinary thrust-to-weight, which must stay between {TW_MIN:.0f} and {TW_MAX:.0f}.
+  The objective is the power at a steady cruise. There is no speed or
+  acceleration objective and no top-speed estimate.
+* **Body drag**: each part's frontal area (times the cosine of the body's
+  pitch) and its top or bottom face (times the sine), with handbook drag
+  coefficients: open stack and camera cage 1.1, canopy 0.5, battery 0.9,
+  flat arms 1.2 (0.6 edge-on with sleeves), motor bells 0.8, a rounded full
+  fairing 0.25, antennas as rods. The nose-down pitch comes from the drag
+  itself: the rotor discs tilt until thrust balances weight and drag, and
+  forward-tilted motors take that much off the body's pitch. 10 % more for
+  the junctions.
+* **Prop wash on the arms**: the part of each arm under the prop pushes down
+  against the wash, about {DOWNLOAD_K * 1.2 * 4 * 14 * 64.8 / (4 * math.pi * 64.8 ** 2) * 100:.1f} % of the thrust for
+  14 mm flat arms in a hover, less with sleeves. In forward flight the wake
+  sweeps back and misses most of it.
+* **Power**: the stock props' rotor power in forward flight (momentum theory
+  with Glauert's inflow, the work against drag, profile power growing with the
+  advance ratio), motor winding and iron losses, a {ETA_ESC:.0%} ESC,
+  {AVIONICS_W:.0f} W of avionics and the pack's sag.
+* **Arms** must keep at least 80 % of the stock 14 x 5 mm arms' stiffness
+  both up and down (width x thickness³) and sideways (thickness x width³).
+  Printed parts add their weight: canopy 10 g, full fairing 35 g, arm sleeves
+  12 g, motor wedges 4 g.
+* These are handbook numbers, not a wind-tunnel test: perhaps ±30 % on the
+  drag of each part. The ranking of changes is more reliable than the totals.
 """

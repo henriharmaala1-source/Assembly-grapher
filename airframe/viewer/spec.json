@@ -177,7 +177,7 @@
    "grams": 4.9,
    "bed": "31 x 156 x 9",
    "fits": true,
-   "note": "Plate face down."
+   "note": "Pads face down."
   },
   {
    "name": "stab",
@@ -241,7 +241,7 @@
    "grams": 6.8,
    "bed": "177 x 39 x 1",
    "fits": true,
-   "note": "Flat, lips up."
+   "note": "Flat."
   },
   {
    "name": "pod_front",

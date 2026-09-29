@@ -108,7 +108,7 @@ Build volume checked: 180 x 180 x 180 mm (Bambu Lab A1 mini).
 | stl/wing_L.stl | LW-PLA | 10.8 | 97 x 12 x 165 | yes | Standing on the root rib, brim. 1 wall, 0 % infill. |
 | stl/aileron_R.stl | LW-PLA | 2.8 | 24 x 148 x 7 | yes | Flat on the lower surface. 1 wall, 0 % infill. |
 | stl/aileron_L.stl | LW-PLA | 2.8 | 24 x 148 x 7 | yes | Flat on the lower surface. 1 wall, 0 % infill. |
-| stl/tail_mount.stl | PLA/PETG | 4.9 | 31 x 156 x 9 | yes | Plate face down. |
+| stl/tail_mount.stl | PLA/PETG | 4.9 | 31 x 156 x 9 | yes | Pads face down. |
 | stl/stab.stl | LW-PLA | 4.1 | 31 x 174 x 2 | yes | Flat. 2 top / 2 bottom layers, 15 % infill. |
 | stl/elevator.stl | LW-PLA | 2.0 | 17 x 163 x 10 | yes | Top face down, horn up. |
 | stl/fin_R.stl | LW-PLA | 1.2 | 30 x 39 x 9 | yes | Outer face down, jaws up. |
@@ -116,7 +116,7 @@ Build volume checked: 180 x 180 x 180 mm (Bambu Lab A1 mini).
 | stl/rudder_R.stl | PLA/PETG | 0.9 | 17 x 44 x 6 | yes | Outer face down, wire flange up. 2 top / 2 bottom layers, 15 % infill. |
 | stl/rudder_L.stl | PLA/PETG | 0.9 | 17 x 44 x 6 | yes | Outer face down, wire flange up. 2 top / 2 bottom layers, 15 % infill. |
 | stl/bellcrank.stl | PLA/PETG | 0.2 | 16 x 19 x 2 | yes | Flat. Solid. |
-| stl/lid.stl | PLA/PETG | 6.8 | 177 x 39 x 1 | yes | Flat, lips up. |
+| stl/lid.stl | PLA/PETG | 6.8 | 177 x 39 x 1 | yes | Flat. |
 | stl/pod_front.stl | PLA/PETG | 12.6 | 138 x 41 x 22 | yes | Upright, open top up. 2 walls, 15 % infill. |
 | stl/pod_rear.stl | PLA/PETG | 14.3 | 142 x 41 x 31 | yes | Upright, open top up, tongue forward. 2 walls, 15 % infill. |
 

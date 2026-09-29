@@ -9,7 +9,6 @@
   electronics, sizing report). Every part prints on a Bambu Lab A1 mini. It
   also has a bill of process with its precedence graph, an assembly animation
   and a DFMA analysis.
-- [`aero/`](aero/README.md): a simple air-resistance optimizer for both
-  projects: a handbook drag build-up, a ranking of single design changes and a
-  search for the lowest drag within each design's limits.
-- [`trackx/`](trackx/README.md): an outside-only, full-scale 3D model of the Patria TRACKX tracked carrier (STEP, GLB, STL, interactive viewer), built from published dimensions.
+- [`aero/`](aero/README.md): a simple air-resistance optimizer for the airframe:
+  a handbook drag build-up, a ranking of single design changes and a search for
+  the lowest drag within the design's limits.

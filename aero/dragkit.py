@@ -8,8 +8,7 @@ usual first-pass ones:
     turbulent, Schlichting's mixed-flow correction) times a form factor
     (Raymer, Aircraft Design: A Conceptual Approach, ch. 12);
   * blunt fronts: forebody pressure drag against the edge radius, fitted to
-    Hoerner (Fluid-Dynamic Drag, ch. 3, flat-faced bodies with rounded edges)
-    and Hucho (Aerodynamics of Road Vehicles, boxes and buses near the ground);
+    Hoerner (Fluid-Dynamic Drag, ch. 3, flat-faced bodies with rounded edges);
   * blunt bases, cylinders and plates across the flow: Hoerner.
 
 Expect +-30 % on the absolute numbers. The difference between two versions of
@@ -23,7 +22,7 @@ from dataclasses import dataclass
 RHO = 1.225          # kg/m^3, sea level, 15 C
 NU = 1.46e-5         # m^2/s
 
-CD_BASE = 0.20       # square-cut base, on the base area (Hoerner, Hucho: 0.15-0.25)
+CD_BASE = 0.20       # square-cut base, on the base area (Hoerner: 0.15-0.25)
 CD_CYLINDER = 1.1    # round wire or rod across the flow, Re 10^2..10^5
 CD_PLATE = 1.2       # thin flat strip edge-on across the flow (a servo horn, a lug)
 CD_BUMP = 0.5        # small bump with a sloped front on a surface
@@ -77,18 +76,16 @@ def cd_forebody(r_over_d: float, sharp: float, scale: float, rounded: float = 0.
 
     `sharp` is the value with square edges; rounding the edges to a radius r
     lets the flow turn the corner instead of separating, and the drag falls
-    roughly exponentially with r/d towards `rounded`. Two calibrations are used:
-
-      * a free body (Hoerner, flat-faced cylinders): sharp 0.75, d = hydraulic
-        diameter of the face, most of the drag gone by r/d ~ 0.1 (scale 0.04);
-      * a box near the ground (Hucho, bus and box tests): sharp 0.5, d = sqrt of
-        the frontal area, most of the drag gone by r/d ~ 0.045 (scale 0.015).
+    roughly exponentially with r/d towards `rounded`. For a free body
+    (Hoerner's flat-faced cylinders) use sharp 0.75 and scale 0.04 with d the
+    hydraulic diameter of the face: most of the drag is gone by r/d ~ 0.1.
     """
     return rounded + (sharp - rounded) * math.exp(-max(r_over_d, 0.0) / scale)
 
 
 def chamfer_radius(c: float) -> float:
-    """A 45 deg chamfer of size c works about like an edge radius of 0.7 c."""
+    """A 45 deg chamfer of size c works about like an edge radius of 0.7 c
+    (an assumption; chamfers do nearly as well as radii of the same size)."""
     return 0.7 * c
 
 

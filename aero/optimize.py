@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""A simple air-resistance optimizer for the projects in this repository.
+"""A simple air-resistance optimizer for the Kipinä airframe.
 
-    python3 aero/optimize.py airframe            # Kipinä, at its cruise speed
-    python3 aero/optimize.py trackx --kmh 80     # TRACKX, at 80 km/h
+    python3 aero/optimize.py airframe            # at its cruise speed
+    python3 aero/optimize.py airframe --kmh 65   # at 65 km/h
     python3 aero/optimize.py airframe --fix span,aspect_ratio
 
-Each project has a model in aero/models/ that turns a set of design parameters
-into a drag build-up (aero/dragkit.py) and a list of broken limits. The
-optimizer then:
+A model in aero/models/ turns a set of design parameters into a drag
+build-up (aero/dragkit.py) and a list of broken limits. The optimizer then:
 
   1. ranks the single changes: each parameter alone, moved to its best allowed
      value, with everything else as built;
@@ -151,7 +150,7 @@ def write_report(model, params, free, v, x0, base, x1, best, singles, n_eval, ou
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("model", help="airframe or trackx")
+    ap.add_argument("model", help="a model in aero/models/, e.g. airframe")
     ap.add_argument("--speed", type=float, help="speed in m/s (default: the model's own)")
     ap.add_argument("--kmh", type=float, help="speed in km/h")
     ap.add_argument("--fix", default="", help="comma-separated parameters to keep as built")
@@ -159,6 +158,9 @@ def main(argv=None):
     ap.add_argument("--out", help="report path (default aero/REPORT_<model>.md)")
     a = ap.parse_args(argv)
 
+    available = sorted(f.stem for f in (HERE / "models").glob("*.py") if not f.stem.startswith("_"))
+    if a.model not in available:
+        ap.error(f"no model {a.model!r}; available: {', '.join(available)}")
     model = importlib.import_module(f"models.{a.model}")
     v = a.speed or (a.kmh / 3.6 if a.kmh else model.SPEED)
     params = model.params()

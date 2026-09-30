@@ -12,6 +12,7 @@
 - [`aero/`](aero/README.md): drag and efficiency tools. An efficiency study
   optimizes the Kipinä wing's airfoil with NeuralFoil (an XFOIL-trained model)
   within what the printed wing needs, then compares the whole plane before and
-  after, with charts. A handbook optimizer ranks design changes for the
+  after, with charts. Cross-checks rerun it through XFOIL, 2D CFD (OpenFOAM) and
+  AeroSandbox. A handbook optimizer ranks design changes for the
   airframe and for typical 5-inch and 7-inch FPV quads (stock propulsion,
   scored on cruise power, with no speed objective).

@@ -67,7 +67,9 @@
   .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 880px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
   figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
-  figure.wide, .grid3.wide { grid-column: 1 / -1; }
+  figure.wide, .xc-pol.wide { grid-column: 1 / -1; }
+  .xc-pol { display: grid; gap: 10px; min-width: 0; }
+  .xc-pol .fhead p { font-size: 14px; color: var(--ink-2); margin-top: 2px; }
   .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 980px) { .grid3 { grid-template-columns: minmax(0, 1fr); } }
   .fhead { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
@@ -163,10 +165,15 @@
     <div class="tools" id="xc-tools"></div>
     <div class="grid2">
       <figure class="wide" id="f-xc-drag"></figure>
-      <div class="grid3 wide" id="xc-polars" hidden>
-        <figure id="f-xc-pol-0"></figure>
-        <figure id="f-xc-pol-1"></figure>
-        <figure id="f-xc-pol-2"></figure>
+      <div class="xc-pol wide" id="xc-polars" hidden>
+        <div class="fhead"><div><h3>The CFD runs against the polars</h3>
+          <p>Drag against lift at each point's Reynolds number: every CFD run is a diamond, its bars how far lift and drag swing in the last 1000 iterations</p></div></div>
+        <div class="legend" id="xc-pol-legend"></div>
+        <div class="grid3">
+          <figure id="f-xc-pol-0"></figure>
+          <figure id="f-xc-pol-1"></figure>
+          <figure id="f-xc-pol-2"></figure>
+        </div>
       </div>
       <figure id="f-xc-stall"></figure>
       <figure id="f-xc-ncrit"></figure>
@@ -188,6 +195,8 @@
     <pre>pip install -r aero/requirements.txt
 python3 aero/efficiency.py            # rerun the study (about a minute)
 python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
+python3 aero/crosscheck.py            # the cross-checks: XFOIL and AeroSandbox (under a minute)
+python3 aero/crosscheck.py --cfd --work runs/cfd   # and OpenFOAM 2D CFD (about 3 hours on 4 cores)
 # then serve aero/study/ and open index.html; the airfoil is in aero/study/kipina-opt.dat</pre>
   </section>
 
@@ -490,12 +499,6 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     const hide = () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
     hit.addEventListener("pointermove", (e) => { const r = svg.getBoundingClientRect(); show(Math.round(((e.clientX - r.left) / r.width * W - m.l) / sc) - 1); });
     hit.addEventListener("pointerleave", hide);
-    for (const dt of o.dots || []) {
-      svg.appendChild(dt._g);                                   // above the hit area
-      const on = () => { hide(); const r = svg.getBoundingClientRect(), sc = r.width / W; tipRows(tip, dt.title, dt.rows, dt._cx * sc, dt._cy * sc, { width: r.width, height: r.height }); };
-      dt._g.addEventListener("pointerenter", on); dt._g.addEventListener("focus", on);
-      dt._g.addEventListener("pointerleave", () => { tip.hidden = true; }); dt._g.addEventListener("blur", () => { tip.hidden = true; });
-    }
     svg.addEventListener("focus", () => show(idx)); svg.addEventListener("blur", hide);
     svg.addEventListener("keydown", (e) => { if (e.key === "ArrowRight") { show(idx + 1); e.preventDefault(); } if (e.key === "ArrowLeft") { show(idx - 1); e.preventDefault(); } });
   }
@@ -736,12 +739,24 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
       fmt: (v) => v.toFixed(3), valFmt: (v) => v.toFixed(4), tipFmt: (v) => v.toFixed(4), label: "cd", after: "optimized", ml: 250, mr: 118, names: ["NACA 4412", "Optimized"],
       legend: [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }],
       table: [["point · tool", "NACA 4412", "optimized", "change"], ...rows.map((r) => [r.label, r.a.toFixed(4), r.b.toFixed(4), pct(r.a, r.b)])],
-      caption: of ? "The tools differ on the absolute drag by a few per cent, the CFD most (RANS transition models read low-Reynolds laminar runs differently from XFOIL), but they agree on the direction and roughly the size of the saving at every point." :
+      caption: of ? "NeuralFoil and XFOIL agree within a few per cent on the absolute drag. The CFD reads more drag for both sections and compares them at the lift both of its runs reached (in brackets), but it finds the same direction and a similar size of saving at every point." :
         "XFOIL and both NeuralFoil networks agree within a few per cent on the absolute drag and on the saving at every point.",
     });
 
     // the CFD runs against the polars, one panel per point
     $("xc-polars").hidden = !of;
+    if (of) {
+      const lg = $("xc-pol-legend");
+      lg.replaceChildren();
+      for (const it of [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }, { key: "--ink", label: "NeuralFoil" },
+                        { key: "--ink", dash: TOOL.xfoil.dash, label: "XFOIL" }]) {
+        const sp = h("span", {}, lg); sample(sp, it.key, it.dash); sp.appendChild(document.createTextNode(it.label));
+      }
+      const sp = h("span", {}, lg);
+      const sv = el("svg", { width: 26, height: 12, "aria-hidden": "true" }, sp);
+      el("rect", { x: 9, y: 2, width: 8, height: 8, fill: css("--ink"), rx: 1.5, transform: "rotate(45 13 6)" }, sv);
+      sp.appendChild(document.createTextNode("OpenFOAM CFD run"));
+    }
     if (of) P.forEach((p, i) => {
       const pol = (sec) => sec.polars[i].cl.map((c, j) => [c, sec.polars[i].cd[j]]).filter((q) => q[1] < 0.06).sort((a, b) => a[0] - b[0]);
       const upto = (pts) => { const out = []; for (const q of pts) { if (out.length && q[0] <= out[out.length - 1][0]) continue; out.push(q); } return out; };
@@ -767,9 +782,8 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
       const b = of.sections.baseline.points[i], o = of.sections.optimized.points[i];
       const grid = []; for (let v = x0; v <= x1 + 1e-9; v += 0.02) grid.push(+v.toFixed(2));
       lineChart($(`f-xc-pol-${i}`), {
-        title: `${cap(p.name)}, ${p.v} m/s`, sub: `Reynolds number ${(p.re / 1e3).toFixed(0)}k, design lift ${p.cl.toFixed(2)}`,
+        title: `${cap(p.name)}, ${p.v} m/s`, sub: `Re ${(p.re / 1e3).toFixed(0)}k, design cl ${p.cl.toFixed(2)}`,
         aria: `Drag against lift at the ${p.name} point: NeuralFoil and XFOIL polars and the CFD runs for both sections`,
-        legend: i === 0 ? [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }, { key: "--ink", label: "NeuralFoil" }, { key: "--ink", dash: TOOL.xfoil.dash, label: "XFOIL" }] : null,
         x: { domain: [x0, x1], label: "lift coefficient cl", fmt: (v) => v.toFixed(1), tipFmt: (v) => `cl ${v.toFixed(2)}`, ticks: niceTicks(x0, x1, 4) },
         y: { domain: [y0, y1], label: "drag coefficient cd", fmt: (v) => v.toFixed(3), tipFmt: (v) => v.toFixed(4), ticks: niceTicks(y0, y1, 4) },
         series: lines, dots, xs: grid, mr: 16, height: 280,
@@ -841,8 +855,10 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
         series: ser.map((s) => ({ ...s, points: s.points.filter((p) => p[0] >= 0.005 && p[0] <= 0.995) })), xs: xGrid, mr: 24,
         table: [["x/c", ...ser.map((s) => s.label)], ...[0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((xv) => [xv.toFixed(2), ...ser.map((s) => interp(s.points, xv).toFixed(2))])],
         caption: key === "baseline"
-          ? "The upper curve is the suction side. Where the pressure flattens into a plateau and then drops back, a laminar separation bubble sits on the surface; the tools place it at about the same point."
-          : "The optimized section's longer, gently falling suction on the upper surface keeps the flow attached and laminar further back. Its bubble is shorter and later, the source of most of the saving.",
+          ? "The upper curve is the suction side. Where the pressure flattens into a plateau and then drops back, a laminar separation bubble sits on the surface: NeuralFoil and XFOIL put it near x/c 0.8." +
+            (of ? " The CFD, at a little less lift, has the flow leaving the surface from about mid-chord, with the wiggles of an unsteady separated layer." : "")
+          : "The optimized section's longer, gently falling suction on the upper surface keeps the flow attached and laminar further back, and its bubble is shorter." +
+            (of ? " In the CFD the flow is back on the surface before the trailing edge, where on the NACA 4412 it is not: most of the saving." : " That is where most of the saving comes from."),
       });
     }
 
@@ -896,12 +912,14 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     if (of && of.verify && of.verify.cfd && of.verify.xfoil && of.verify.cfd.cd) {
       const v = of.verify, c = v.cfd, x = v.xfoil;
       const d = (a, b) => `${((a - b) / b * 100).toFixed(0).replace("-", "−")} %`;
-      h("p", {}, notesEl, `First a check of the CFD set-up where XFOIL and RANS are both dependable: the NACA 4412 at a Reynolds number of ${(v.re / 1e6).toFixed(0)} million and ${v.alpha}°. The CFD gives lift ${c.cl.toFixed(3)} and drag ${c.cd.toFixed(4)}, XFOIL ${x.cl.toFixed(3)} and ${x.cd.toFixed(4)} (${d(c.cl, x.cl)} and ${d(c.cd, x.cd)}), with the transition in the same place. So the mesh, the far field and the force integration are sound, and what differs at the plane's own Reynolds numbers is the transition physics.`);
+      h("p", {}, notesEl, `Before trusting the CFD at the plane's Reynolds numbers, its set-up was checked where XFOIL and RANS are both dependable: the NACA 4412 at a Reynolds number of ${(v.re / 1e6).toFixed(0)} million and ${v.alpha}°. The CFD gives lift ${c.cl.toFixed(3)} and drag ${c.cd.toFixed(4)}, XFOIL ${x.cl.toFixed(3)} and ${x.cd.toFixed(4)} (${d(c.cl, x.cl)} and ${d(c.cd, x.cd)}), with the transition in the same place. So the mesh, the far field and the force integration are sound, and what differs at the plane's own Reynolds numbers is the transition physics.`);
     }
     if (of) {
-      const o = sm.openfoam, g = of.grid;
-      const gtxt = g && g.fine_cd ? ` A grid with ${(g.cells / 1000).toFixed(0)}k cells gives a drag ${Math.abs((g.cd - g.fine_cd) / g.fine_cd * 100).toFixed(1)} % ${g.cd > g.fine_cd ? "higher" : "lower"} than the ${(g.fine_cells / 1000).toFixed(0)}k-cell one.` : "";
-      h("p", {}, notesEl, `The CFD is the independent one: a different transition model on a real mesh. It gives the NACA 4412 a cruise drag of ${o.baseline[1]?.toFixed(4) ?? "–"} and the optimized section ${o.optimized[1]?.toFixed(4) ?? "–"} (${o.change[1] != null ? (o.change[1] > 0 ? "+" : "−") + Math.abs(o.change[1]).toFixed(0) + " %" : "–"}), at a free-stream turbulence of ${of.turbulence.tu_percent} % to match n_crit ${X.n_crit}.${gtxt} RANS transition models are calibrated on higher Reynolds numbers than these, so its absolute drag is the least certain of the four; the direction of the change is the point.`);
+      const o = sm.openfoam, g = of.grid, xs2 = sm.xfoil;
+      const ratios = ["baseline", "optimized"].flatMap((k) => o[k].map((c, i) => (c != null && xs2[k][i] ? c / xs2[k][i] - 1 : null))).filter((v) => v != null);
+      const ch = o.change.filter((v) => v != null).map(Math.abs);
+      const gtxt = g && g.fine_cd ? ` A coarser grid (${(g.cells / 1000).toFixed(0)}k cells against ${(g.fine_cells / 1000).toFixed(0)}k) reads ${Math.abs((g.cd - g.fine_cd) / g.fine_cd * 100).toFixed(0)} % ${g.cd > g.fine_cd ? "more" : "less"} drag on the NACA 4412 at cruise: the separated flow is sensitive to resolution, so the CFD's absolute numbers are uncertain by tens of per cent.` : "";
+      h("p", {}, notesEl, `The CFD is the independent one: a different transition model on a real mesh, with a free-stream turbulence of ${of.turbulence.tu_percent.toFixed(2)} % to match n_crit ${X.n_crit}. At these Reynolds numbers it leaves the NACA 4412's upper surface separated from about mid-chord to the trailing edge, where XFOIL closes a short bubble. So it reads less lift at a given angle, ${Math.round(Math.min(...ratios) * 100 / 10) * 10}–${Math.round(Math.max(...ratios) * 100 / 10) * 10} % more drag than XFOIL near the same lift, and a solution that keeps swinging (the whiskers in the panels). On the optimized section the bubble closes before the trailing edge at loiter and cruise. Compared at the same lift, inside the range both of its runs reached, the CFD puts the optimized section ${Math.min(...ch).toFixed(0)}–${Math.max(...ch).toFixed(0)} % ahead at every point (${Math.abs(o.weighted_change).toFixed(0)} % weighted).${gtxt} The ranking is the point, and it agrees with the other three tools.`);
     }
     h("p", {}, notesEl, `For the whole plane, the part both methods model the same way (the wing) agrees within ${Math.abs((cb.buildup_parts.wing - cb.handbook_parts.wing) / cb.handbook_parts.wing * 100).toFixed(0)} %. The study's extra drag is the blunt pod nose, the horns, wires and antenna, and the junctions, which AeroBuildup leaves out, so its total is a floor, not a better estimate. The vortex lattice says the study's induced drag is about ${((1 - pl.vlm.assumed / pl.vlm.e) * 100).toFixed(0)} % high. Taken together the study's whole-plane numbers look, if anything, pessimistic; a glide test is still the real check.`);
     $("crosscheck").hidden = false;

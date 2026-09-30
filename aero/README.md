@@ -1,12 +1,16 @@
 # Drag and efficiency tools
 
-Two tools for this repository's aircraft:
+Three tools for this repository's aircraft:
 
 - **The efficiency study** (`efficiency.py`) is the one with real
   aerodynamics. It optimizes the Kipinä wing's airfoil with NeuralFoil, an
   XFOIL-trained model, within what the printed wing and the plane need. It
   then compares the whole plane before and after, with charts
   ([study/index.html](study/index.html)).
+- **The cross-checks** (`crosscheck.py`) run the study's two wing sections and
+  the whole plane through independent tools: XFOIL, 2D CFD in OpenFOAM, and
+  AeroSandbox's drag build-up and vortex lattice
+  ([Cross-checks](#cross-checks-do-other-tools-agree)).
 - **The handbook optimizer** (`optimize.py`) searches design choices with a
   drag build-up of handbook formulas. It covers the Kipinä airframe
   (`airframe`), and a typical 5-inch (`quad`) and 7-inch (`quad7`) FPV quad.
@@ -100,13 +104,114 @@ It writes these files:
 ![Drag by part](study/figures/breakdown.png)
 
 **Limits of the study:**
-- **NeuralFoil:** its results match XFOIL. At these Reynolds numbers XFOIL is
-  good for ranking sections, but optimistic about laminar flow on a printed
-  skin.
+- **NeuralFoil:** its results match XFOIL (checked below). At these Reynolds
+  numbers XFOIL is good for ranking sections, but optimistic about laminar
+  flow on a printed skin.
 - **Whole-plane numbers:** they carry the drag build-up's ±30 %.
 - **Detail changes:** they are not in the CAD yet.
 - **Check before trusting the minutes:** print one wing panel of each section
   and compare glides.
+
+## Cross-checks: do other tools agree?
+
+```sh
+sudo apt install xfoil openfoam            # Ubuntu; OpenFOAM only for --cfd
+python3 aero/crosscheck.py                 # NeuralFoil, XFOIL, AeroSandbox: under a minute
+python3 aero/crosscheck.py --cfd --work runs/cfd            # and 2D CFD: about 3 hours on 4 cores
+python3 aero/crosscheck.py --cfd --work runs/cfd --resume   # carry on after a stop
+```
+
+It runs the same two wing sections and the same plane through independent
+tools. It writes `study/crosscheck.json` and `study/CROSSCHECK.md` (the numbers
+as tables), and the study page gets a cross-check section.
+
+| Tool | What it checks | How |
+|---|---|---|
+| NeuralFoil, xxxlarge | the network's own fit | its biggest network, on the same points |
+| XFOIL 6.99 | NeuralFoil against the code it imitates | the exact shapes at the design lift, a stall sweep, n_crit 5 to 9 (`xfoil.py`) |
+| OpenFOAM v1912 | different physics | 2D RANS, k-ω SST with Langtry–Menter transition, a 67k-cell C-grid with y+ under 1, a point-vortex far field (`cfd.py`) |
+| AeroSandbox AeroBuildup | the whole-plane drag build-up | its own component drag models |
+| Vortex lattice (AeroSandbox) | the induced drag | span efficiency in the Trefftz plane |
+
+![Section drag by tool](study/figures/xc-drag.png)
+
+**Wing section.** Drag change from the NACA 4412 to the optimized section:
+
+| | Loiter | Cruise | Fast | Weighted |
+|---|---|---|---|---|
+| NeuralFoil (the study) | −18 % | −20 % | −25 % | −20 % |
+| NeuralFoil, xxxlarge | −16 % | −18 % | −22 % | −18 % |
+| XFOIL | −17 % | −18 % | −24 % | −19 % |
+| OpenFOAM CFD, at equal lift | −31 % | −18 % | −19 % | −24 % |
+
+- **XFOIL** matches NeuralFoil within 2–3 %:
+  - cruise drag 0.0177 and 0.0145, against 0.0178 and 0.0143;
+  - maximum lift 1.40 and 1.42, against 1.38 and 1.41;
+  - the angles those peaks come at.
+
+  The optimizer did not exploit a gap in the network.
+- **Surface quality:** XFOIL also finds that the new section's cruise drag
+  barely moves between n_crit 5 and 9 (0.0145–0.0152). The NACA 4412's runs
+  0.0156–0.0216.
+- **CFD set-up check:** at a Reynolds number of 1 million, where XFOIL and RANS
+  are both dependable, the CFD gives the NACA 4412:
+  - lift 0.905 (XFOIL 0.925);
+  - drag 0.0072 (XFOIL 0.0074);
+  - transition in the same place.
+
+  The mesh, the far field and the force integration are sound.
+- **CFD at the plane's Reynolds numbers:**
+  - **The NACA 4412:** the upper surface stays separated from about mid-chord
+    to the trailing edge, where XFOIL closes a short bubble. So the CFD reads
+    20–90 % more drag than XFOIL for both sections, and a solution that keeps
+    swinging.
+  - **The optimized section:** the flow is back on the surface before the
+    trailing edge at loiter and cruise.
+  - **At the same lift:** the optimized section has 18–31 % less drag.
+  - **Grid sensitivity:** a coarser grid reads 25 % more drag on the NACA 4412
+    at cruise, so the CFD's absolute numbers are uncertain by tens of per
+    cent.
+
+  Its ranking agrees with the other tools.
+
+![CFD runs against the polars](study/figures/xc-polars.png)
+
+**Whole plane.** At 13 m/s, as built:
+
+| Part | Study's build-up | AeroBuildup |
+|---|---|---|
+| Wing profile | 8.5 gf | 8.8 gf |
+| Tail | 2.2 gf | 1.8 gf |
+| Pod | 6.0 gf | 3.5 gf |
+| Booms, sockets, tail mount | 1.3 gf | 0.7 gf |
+| Horns, wires, antenna | 5.2 gf | not modelled |
+| Junctions | 1.8 gf | not modelled |
+| Induced | 8.0 gf | 7.9 gf |
+| **Total** | **33.0 gf** | **22.7 gf** |
+
+- **AeroBuildup:**
+  - **The wing**, the one part both model the same way, agrees within 4 %.
+  - **The rest of the gap** is in parts it has no model for: the blunt pod
+    nose, the horns, wires and antenna, and the junctions. So its total is a
+    floor, not a better estimate.
+  - **The optimized airfoil:** both give it the same saving (1.7 against
+    1.8 gf).
+- **Vortex lattice:** the span efficiency is 0.93, against the study's 0.8, so
+  the study's induced drag is about 14 % high. Cruise drag would be 31.9 gf
+  instead of 33.0.
+
+![Whole-plane drag by method](study/figures/xc-plane.png)
+
+**What this means:**
+- **The airfoil saving:** it holds up in every tool.
+- **The whole-plane numbers:** they look, if anything, pessimistic.
+- **A glide test:** still the real check.
+
+**Two notes on running the cross-checks:**
+- **Ubuntu's XFOIL** crashes on a floating-point trap. `xfoil.py` builds a
+  one-line shim that turns the trap off.
+- **Ubuntu's OpenFOAM** crashes on any in-run function object. `cfd.py` works
+  out the forces, pressure and friction from the written fields instead.
 
 ## Handbook optimizer
 

@@ -47,6 +47,7 @@ for (const theme of themes) {
   const ids = ["summary", "f-shape", "f-points", "f-polar", "f-stall", "f-cp", "f-power", "f-breakdown"];
   if (await page.locator("#crosscheck").isVisible())                 // when crosscheck.json is there
     ids.push("xc-tools", "f-xc-drag", "f-xc-stall", "f-xc-ncrit", "f-xc-cp-base", "f-xc-cp-opt", "f-xc-plane");
+  if (await page.locator("#xc-polars").isVisible()) ids.push("xc-polars");   // when the CFD ran
   for (const id of ids) {
     await page.locator(`#${id}`).screenshot({ path: path.join(out, `${id.replace(/^f-/, "")}${suffix}.png`) });
   }

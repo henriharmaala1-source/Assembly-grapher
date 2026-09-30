@@ -67,7 +67,9 @@
   .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 880px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
   figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
-  figure.wide { grid-column: 1 / -1; }
+  figure.wide, .grid3.wide { grid-column: 1 / -1; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 980px) { .grid3 { grid-template-columns: minmax(0, 1fr); } }
   .fhead { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
   .fhead p { font-size: 14px; color: var(--ink-2); margin-top: 2px; }
   .tbtn { font: 500 12px var(--body); color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
@@ -161,6 +163,11 @@
     <div class="tools" id="xc-tools"></div>
     <div class="grid2">
       <figure class="wide" id="f-xc-drag"></figure>
+      <div class="grid3 wide" id="xc-polars" hidden>
+        <figure id="f-xc-pol-0"></figure>
+        <figure id="f-xc-pol-1"></figure>
+        <figure id="f-xc-pol-2"></figure>
+      </div>
       <figure id="f-xc-stall"></figure>
       <figure id="f-xc-ncrit"></figure>
       <figure id="f-xc-cp-base"></figure>
@@ -308,6 +315,15 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
       el("circle", { cx: x(mk.x), cy: y(mk.y), r: 4.5, fill: css(COL[mk.key]), stroke: css("--panel"), "stroke-width": 2 }, svg);
       if (mk.label) el("text", { x: x(mk.x) + (mk.dx ?? 8), y: y(mk.y) + (mk.dy ?? -8), class: mk.strong ? "lab-strong" : "lab", "text-anchor": mk.anchor || "start" }, svg, mk.label);
     }
+    for (const dt of o.dots || []) {
+      const g = el("g", { tabindex: "0", "aria-label": dt.aria || dt.label }, svg);
+      const col = css(COL[dt.key] || dt.key), cx = x(dt.x), cy = y(dt.y);
+      if (dt.ey) el("line", { x1: cx, x2: cx, y1: y(dt.y - dt.ey), y2: y(dt.y + dt.ey), stroke: col, "stroke-width": 1.5 }, g);
+      if (dt.ex) el("line", { x1: x(dt.x - dt.ex), x2: x(dt.x + dt.ex), y1: cy, y2: cy, stroke: col, "stroke-width": 1.5 }, g);
+      el("rect", { x: cx - 5, y: cy - 5, width: 10, height: 10, fill: dt.hollow ? css("--panel") : col, stroke: col, "stroke-width": 2, rx: 1.5,
+                   transform: `rotate(45 ${cx} ${cy})` }, g);
+      dt._g = g; dt._cx = cx; dt._cy = cy;
+    }
     for (const lb of o.endLabels || []) {
       const g = el("g", {}, svg);
       el("line", { x1: W - m.r + 8, x2: W - m.r + 20, y1: y(lb.y), y2: y(lb.y), stroke: css(COL[lb.key]), "stroke-width": 2 }, g);
@@ -341,6 +357,12 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
       show(best);
     });
     hit.addEventListener("pointerleave", hide);
+    for (const dt of o.dots || []) {
+      svg.appendChild(dt._g);                                   // above the hit area
+      const on = () => { hide(); const r = svg.getBoundingClientRect(), sc = r.width / W; tipRows(tip, dt.title, dt.rows, dt._cx * sc, dt._cy * sc, { width: r.width, height: r.height }); };
+      dt._g.addEventListener("pointerenter", on); dt._g.addEventListener("focus", on);
+      dt._g.addEventListener("pointerleave", () => { tip.hidden = true; }); dt._g.addEventListener("blur", () => { tip.hidden = true; });
+    }
     svg.addEventListener("focus", () => show(idx));
     svg.addEventListener("blur", hide);
     svg.addEventListener("keydown", (e) => {
@@ -468,6 +490,12 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     const hide = () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
     hit.addEventListener("pointermove", (e) => { const r = svg.getBoundingClientRect(); show(Math.round(((e.clientX - r.left) / r.width * W - m.l) / sc) - 1); });
     hit.addEventListener("pointerleave", hide);
+    for (const dt of o.dots || []) {
+      svg.appendChild(dt._g);                                   // above the hit area
+      const on = () => { hide(); const r = svg.getBoundingClientRect(), sc = r.width / W; tipRows(tip, dt.title, dt.rows, dt._cx * sc, dt._cy * sc, { width: r.width, height: r.height }); };
+      dt._g.addEventListener("pointerenter", on); dt._g.addEventListener("focus", on);
+      dt._g.addEventListener("pointerleave", () => { tip.hidden = true; }); dt._g.addEventListener("blur", () => { tip.hidden = true; });
+    }
     svg.addEventListener("focus", () => show(idx)); svg.addEventListener("blur", hide);
     svg.addEventListener("keydown", (e) => { if (e.key === "ArrowRight") { show(idx + 1); e.preventDefault(); } if (e.key === "ArrowLeft") { show(idx - 1); e.preventDefault(); } });
   }
@@ -671,6 +699,7 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     const pct = (a, b) => `${((b - a) / a * 100).toFixed(0).replace("-", "−")} %`;
     const gf = (n) => n / 9.81 * 1000;
     const of = T.openfoam;
+    const nfS = T.neuralfoil.sections, xfS = T.xfoil.sections;
 
     // what each tool is
     const tools = $("xc-tools");
@@ -697,21 +726,61 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     const rows = [];
     P.forEach((p, i) => order.forEach((k, j) => {
       const b = sm[k].baseline[i], o = sm[k].optimized[i];
-      if (b != null && o != null) rows.push({ label: `${cap(p.name)} · ${TOOL[k].short}`, a: b, b: o, sep: j === 0 });
+      const at = sm[k].cl && sm[k].cl[i] != null && Math.abs(sm[k].cl[i] - p.cl) > 0.005 ? ` (cl ${sm[k].cl[i].toFixed(2)})` : "";
+      if (b != null && o != null) rows.push({ label: `${cap(p.name)} · ${TOOL[k].short}${at}`, a: b, b: o, sep: j === 0 });
     }));
     const lo = Math.floor(Math.min(...rows.map((r) => Math.min(r.a, r.b))) * 500) / 500, hi = Math.ceil(Math.max(...rows.map((r) => Math.max(r.a, r.b))) * 500) / 500;
     dumbbell($("f-xc-drag"), {
       title: "Section drag at the design points, by tool", sub: "Drag coefficient at each point's lift coefficient and Reynolds number, NACA 4412 to optimized",
       aria: "Section drag coefficient of both sections at three points from each tool", rows, domain: [lo, hi],
-      fmt: (v) => v.toFixed(3), valFmt: (v) => v.toFixed(4), tipFmt: (v) => v.toFixed(4), label: "cd", after: "optimized", ml: 200, mr: 118, names: ["NACA 4412", "Optimized"],
+      fmt: (v) => v.toFixed(3), valFmt: (v) => v.toFixed(4), tipFmt: (v) => v.toFixed(4), label: "cd", after: "optimized", ml: 250, mr: 118, names: ["NACA 4412", "Optimized"],
       legend: [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }],
       table: [["point · tool", "NACA 4412", "optimized", "change"], ...rows.map((r) => [r.label, r.a.toFixed(4), r.b.toFixed(4), pct(r.a, r.b)])],
       caption: of ? "The tools differ on the absolute drag by a few per cent, the CFD most (RANS transition models read low-Reynolds laminar runs differently from XFOIL), but they agree on the direction and roughly the size of the saving at every point." :
         "XFOIL and both NeuralFoil networks agree within a few per cent on the absolute drag and on the saving at every point.",
     });
 
+    // the CFD runs against the polars, one panel per point
+    $("xc-polars").hidden = !of;
+    if (of) P.forEach((p, i) => {
+      const pol = (sec) => sec.polars[i].cl.map((c, j) => [c, sec.polars[i].cd[j]]).filter((q) => q[1] < 0.06).sort((a, b) => a[0] - b[0]);
+      const upto = (pts) => { const out = []; for (const q of pts) { if (out.length && q[0] <= out[out.length - 1][0]) continue; out.push(q); } return out; };
+      const lines = [];
+      for (const key of ["baseline", "optimized"]) {
+        lines.push({ key, label: `${key === "baseline" ? "NACA 4412" : "Optimized"}, NeuralFoil`, points: upto(pol(nfS[key])) });
+        lines.push({ key, label: `${key === "baseline" ? "NACA 4412" : "Optimized"}, XFOIL`, points: upto(pol(xfS[key])), dash: TOOL.xfoil.dash });
+      }
+      const dots = [];
+      for (const key of ["baseline", "optimized"]) {
+        const sec = of.sections[key].points[i];
+        if (!sec || !sec.runs) continue;
+        sec.runs.forEach((run) => dots.push({ key, x: run.cl, y: run.cd, ey: run.cd_swing / 2, ex: run.cl_swing / 2,
+          label: `${key} CFD at ${run.alpha.toFixed(2)}°`, title: `${key === "baseline" ? "NACA 4412" : "Optimized"}, CFD at ${run.alpha.toFixed(2)}°`,
+          rows: [{ key, value: run.cl.toFixed(3), label: `lift (swing ${run.cl_swing.toFixed(2)})` }, { key, value: run.cd.toFixed(4), label: `drag (swing ${run.cd_swing.toFixed(4)})` }] }));
+      }
+      const allX = lines.flatMap((l) => l.points.map((q) => q[0])).concat(dots.map((d) => d.x));
+      const x0 = Math.floor((Math.min(p.cl, ...dots.map((d) => d.x - d.ex)) - 0.15) * 10) / 10, x1 = Math.ceil((Math.max(p.cl, ...dots.map((d) => d.x + d.ex)) + 0.15) * 10) / 10;
+      const inX = (q) => q[0] >= x0 && q[0] <= x1;
+      lines.forEach((l) => { l.points = l.points.filter(inX); });
+      const ys = lines.flatMap((l) => l.points.map((q) => q[1])).concat(dots.flatMap((d) => [d.y - d.ey, d.y + d.ey]));
+      const y0 = Math.max(0, Math.floor(Math.min(...ys) * 200) / 200), y1 = Math.ceil(Math.max(...ys) * 200) / 200;
+      const b = of.sections.baseline.points[i], o = of.sections.optimized.points[i];
+      const grid = []; for (let v = x0; v <= x1 + 1e-9; v += 0.02) grid.push(+v.toFixed(2));
+      lineChart($(`f-xc-pol-${i}`), {
+        title: `${cap(p.name)}, ${p.v} m/s`, sub: `Reynolds number ${(p.re / 1e3).toFixed(0)}k, design lift ${p.cl.toFixed(2)}`,
+        aria: `Drag against lift at the ${p.name} point: NeuralFoil and XFOIL polars and the CFD runs for both sections`,
+        legend: i === 0 ? [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }, { key: "--ink", label: "NeuralFoil" }, { key: "--ink", dash: TOOL.xfoil.dash, label: "XFOIL" }] : null,
+        x: { domain: [x0, x1], label: "lift coefficient cl", fmt: (v) => v.toFixed(1), tipFmt: (v) => `cl ${v.toFixed(2)}`, ticks: niceTicks(x0, x1, 4) },
+        y: { domain: [y0, y1], label: "drag coefficient cd", fmt: (v) => v.toFixed(3), tipFmt: (v) => v.toFixed(4), ticks: niceTicks(y0, y1, 4) },
+        series: lines, dots, xs: grid, mr: 16, height: 280,
+        guides: [{ x: p.cl, label: "design" }],
+        table: [["run", "angle", "cl", "cd", "cd swing"], ...["baseline", "optimized"].flatMap((key) => (of.sections[key].points[i]?.runs || []).map((run) =>
+          [`${key === "baseline" ? "NACA 4412" : "Optimized"} CFD`, `${run.alpha.toFixed(2)}°`, run.cl.toFixed(3), run.cd.toFixed(4), run.cd_swing.toFixed(4)]))],
+        caption: b && o && b.cd && o.cd ? `CFD at cl ${b.cl.toFixed(2)}: NACA 4412 ${b.cd.toFixed(4)}, optimized ${o.cd.toFixed(4)} (${pct(b.cd, o.cd)}).` : "",
+      });
+    });
+
     // stall: NeuralFoil against XFOIL
-    const nfS = T.neuralfoil.sections, xfS = T.xfoil.sections;
     const st = (sec) => sec.stall.alpha.map((a, i) => [a, sec.stall.cl[i]]).filter((p) => p[0] <= 16 && p[1] != null);
     const aGrid = []; for (let v = 0; v <= 16.001; v += 0.5) aGrid.push(+v.toFixed(1));
     const peak = (pts) => pts.reduce((a, b) => (b[1] > a[1] ? b : a));
@@ -755,15 +824,15 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
       out.push({ key, label: "NeuralFoil lower", points: nf.x.map((x, i) => [x, nf.lower[i]]) });
       const xf = xfS[key].points[1]?.surface;
       if (xf) for (const side of ["upper", "lower"]) out.push({ key, label: `XFOIL ${side}`, dash: TOOL.xfoil.dash, points: xf[side].x.map((x, i) => [x, xf[side].cp[i]]) });
-      const cfd = of?.sections[key].points[1]?.surface;
-      if (cfd) for (const side of ["upper", "lower"]) out.push({ key, label: `CFD ${side}`, dash: TOOL.openfoam.dash, points: cfd[side].x.map((x, i) => [x, cfd[side].cp[i]]) });
+      const cp1 = of?.sections[key].points[1], cfd = cp1?.surface;
+      if (cfd) for (const side of ["upper", "lower"]) out.push({ key, label: `CFD ${side} (cl ${cp1.surface_cl.toFixed(2)})`, dash: TOOL.openfoam.dash, points: cfd[side].x.map((x, i) => [x, cfd[side].cp[i]]) });
       return out;
     };
     const xGrid = []; for (let v = 0.02; v <= 0.98001; v += 0.02) xGrid.push(+v.toFixed(2));
     for (const [key, id, name] of [["baseline", "f-xc-cp-base", "NACA 4412"], ["optimized", "f-xc-cp-opt", "Optimized"]]) {
       const ser = cpSeries(key);
       const legend = [{ key, label: "NeuralFoil" }, { key, dash: TOOL.xfoil.dash, label: "XFOIL" }];
-      if (of) legend.push({ key, dash: TOOL.openfoam.dash, label: "OpenFOAM" });
+      if (of && of.sections[key].points[1]?.surface) legend.push({ key, dash: TOOL.openfoam.dash, label: `OpenFOAM (its run nearest the lift, cl ${of.sections[key].points[1].surface_cl.toFixed(2)})` });
       lineChart($(id), {
         title: `Pressure at cruise: ${name}`, sub: `cl ${P[1].cl.toFixed(2)}, Reynolds number ${(P[1].re / 1e3).toFixed(0)}k; suction up`,
         aria: `Pressure coefficient along the chord of the ${name} section from each tool`, legend,

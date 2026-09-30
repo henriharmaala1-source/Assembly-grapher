@@ -55,6 +55,7 @@ from models import airframe as AF  # noqa: E402
 OUT = HERE / "study"
 KEYS = ("baseline", "optimized")
 STALL_ALPHAS = np.arange(0.0, 18.01, 0.25)
+POLAR_ALPHAS = np.arange(-4.0, 8.01, 0.5)          # drag polars at each point's Reynolds number
 VERIFY = {"re": 1.0e6, "alpha": 4.0, "n_crit": 9.0}   # where XFOIL and RANS are both dependable
 G = 9.81
 
@@ -87,7 +88,12 @@ def neuralfoil(kulfan: dict, points, re_stall: float, n_crit: float, size: str) 
                         "cm": r(np.squeeze(a["CM"]), 4), "xtr_top": r(np.squeeze(a["Top_Xtr"]), 3),
                         "xtr_bot": r(np.squeeze(a["Bot_Xtr"]), 3)})
         st = A.aero(kulfan, STALL_ALPHAS, re_stall, n_crit)
-        return {"points": out, "stall": {"alpha": STALL_ALPHAS.tolist(), "cl": np.round(st["CL"], 4).tolist()}}
+        polars = []
+        for p in points:
+            a = A.aero(kulfan, POLAR_ALPHAS, p.re, n_crit)
+            polars.append({"alpha": POLAR_ALPHAS.tolist(), "cl": np.round(a["CL"], 4).tolist(), "cd": np.round(a["CD"], 5).tolist()})
+        return {"points": out, "stall": {"alpha": STALL_ALPHAS.tolist(), "cl": np.round(st["CL"], 4).tolist()},
+                "polars": polars}
     finally:
         A.MODEL = keep
 
@@ -111,6 +117,10 @@ def xfoil(dat: Path, points, alphas, re_stall: float, n_crit: float) -> dict:
                               "lower": {"x": np.round(xs[le:], 4).tolist(), "cp": np.round(cps[le:], 4).tolist()}}
         out.append(row)
     sw = X.sweep(dat, re_stall, n_crit, STALL_ALPHAS)
+    polars = []
+    for p in points:
+        pol = X.sweep(dat, p.re, n_crit, POLAR_ALPHAS)
+        polars.append({"alpha": [q["alpha"] for q in pol], "cl": [r(q["cl"], 4) for q in pol], "cd": [r(q["cd"]) for q in pol]})
     cruise = points[1]
     rough = {}
     for n in (5.0, 9.0):
@@ -119,6 +129,7 @@ def xfoil(dat: Path, points, alphas, re_stall: float, n_crit: float) -> dict:
     rough["7"] = out[1]["cd"] if out[1] else None
     return {"points": out, "stall": {"alpha": [p["alpha"] for p in sw], "cl": [r(p["cl"], 4) for p in sw],
                                      "cd": [r(p["cd"]) for p in sw]},
+            "polars": polars,
             "n_crit_cruise": dict(sorted(rough.items(), key=lambda kv: float(kv[0])))}
 
 
@@ -219,21 +230,20 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         out["grid"] = grid.result()
         out["verify"] = verify.result()
         log(f"  CFD check at Re {VERIFY['re']:.0e}: cl {out['verify'].get('cl', 0):.3f}, cd {out['verify'].get('cd', 0):.5f}")
-    # the lift slope each pair of angles shows; where the flow's own swing hides it,
-    # the section's slope from its other points stands in
-    slopes = {k: [] for k in kulfans}
-    for (key, i), res in pairs.items():
-        if isinstance(res, tuple):
-            a = lift_slope(*res)
-            if SLOPE_OK[0] <= a <= SLOPE_OK[1]:
-                slopes[key].append(a)
-    for (key, i), res in sorted(pairs.items()):
-        if isinstance(res, tuple):
-            prior = float(np.median(slopes[key])) if slopes[key] else 0.095
-            res = interpolate(*res, points[i].cl, prior)
-        out["points"][key][i] = res
-        log(f"  CFD {key} {points[i].name}: " + (res.get("error") or f"cd {res['cd']:.5f} at cl {res['cl']:.3f} ({res['method']})"))
-    fine = out["points"]["baseline"][1]["runs"][0] if "runs" in out["points"]["baseline"][1] else None
+    # compare the two sections at the same lift, inside the range both reached
+    for i, pt in enumerate(points):
+        pb, po = pairs.get(("baseline", i)), pairs.get(("optimized", i))
+        if not (isinstance(pb, tuple) and isinstance(po, tuple)):
+            for key, res in (("baseline", pb), ("optimized", po)):
+                out["points"][key][i] = res if not isinstance(res, tuple) else summarize(res, pt.cl, pt.cl)
+            continue
+        cl = common_lift(pb, po, pt.cl)
+        for key, res in (("baseline", pb), ("optimized", po)):
+            out["points"][key][i] = summarize(res, cl, pt.cl)
+        b, o = out["points"]["baseline"][i], out["points"]["optimized"][i]
+        log(f"  CFD {pt.name} at cl {cl:.3f}: NACA 4412 cd {b['cd']:.5f}, optimized {o['cd']:.5f} "
+            f"({(o['cd'] - b['cd']) / b['cd'] * 100:+.0f} %)")
+    fine = out["points"]["baseline"][1]["runs"][0] if "runs" in (out["points"]["baseline"][1] or {}) else None
     if fine and "cd" in out["grid"]:
         out["grid"]["fine_cells"] = meshes["baseline"]["cells"]
         out["grid"]["fine_cd"] = fine["cd"]
@@ -241,51 +251,40 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
     return out
 
 
-SLOPE_OK = (0.06, 0.15)         # per degree: a lift slope the two angles resolve
+RUN_KEYS = ("alpha", "cl", "cd", "cd_pressure", "cd_friction", "cm")
 
 
-def lift_slope(r1: dict, r2: dict) -> float:
-    return (r2["cl"] - r1["cl"]) / (r2["alpha"] - r1["alpha"])
+def along(runs: tuple, cl: float) -> dict:
+    """A section's values at lift `cl` on the line through its two runs. When the
+    runs' lift is within the flow's own swing of each other (0.03), their mean."""
+    r1, r2 = sorted(runs, key=lambda x: x["cl"])
+    d = r2["cl"] - r1["cl"]
+    t = 0.5 if d < 0.03 else (cl - r1["cl"]) / d
+    return {k: r1[k] + t * (r2[k] - r1[k]) for k in RUN_KEYS if k != "cl"}
 
 
-def interpolate(r1: dict, r2: dict, cl: float, prior: float = 0.095) -> dict:
-    """Values at the design lift coefficient from the two angles: linear in cl when
-    the pair resolves the lift slope; otherwise (the flow's own swing is as big as
-    the step between the angles) the angle from `prior`, and the drag, moment and
-    surface values as the pair's mean, since the drag barely changes over the step."""
-    a = lift_slope(r1, r2)
-    if SLOPE_OK[0] <= a <= SLOPE_OK[1]:
-        t = (cl - r1["cl"]) / (r2["cl"] - r1["cl"])
-        alpha = r1["alpha"] + t * (r2["alpha"] - r1["alpha"])
-        method = "interpolated"
-        tv = t
-    else:
-        abar = (r1["alpha"] + r2["alpha"]) / 2
-        c0 = np.mean([x["cl"] - prior * (x["alpha"] - abar) for x in (r1, r2)])
-        alpha = abar + (cl - c0) / prior
-        t = (alpha - r1["alpha"]) / (r2["alpha"] - r1["alpha"])
-        method = "pair mean (swing hides the lift slope)"
-        tv = 0.5
-    mix = lambda u, v: u + tv * (v - u)  # noqa: E731
-    out = {"alpha": r(alpha, 3), "cl": r(cl, 4), "t": r(t, 3), "method": method, "lift_slope": r(a, 4)}
-    for k in ("cd", "cd_pressure", "cd_friction", "cm"):
-        out[k] = r(mix(r1[k], r2[k]), 6 if k.startswith("cd") else 4)
-    t = tv
-    out["converged_runs"] = [bool(x["converged"]) for x in (r1, r2)]
-    out["swing_cd"] = r(max(r1["cd_swing"], r2["cd_swing"]), 6)
-    out["swing_cl"] = r(max(r1["cl_swing"], r2["cl_swing"]), 4)
-    out["iterations"] = [r1["iterations"], r2["iterations"]]
-    out["yplus_max"] = r(max(r1["yplus_max"], r2["yplus_max"]), 2)
-    s1, s2 = r1.get("surface"), r2.get("surface")
-    if s1 and s2:
-        out["surface"] = {side: {"x": s1[side]["x"],
-                                 "cp": np.round(np.array(s1[side]["cp"]) + t * (np.array(s2[side]["cp"]) - np.array(s1[side]["cp"])), 4).tolist(),
-                                 "cf": np.round(np.array(s1[side]["cf"]) + t * (np.array(s2[side]["cf"]) - np.array(s1[side]["cf"])), 6).tolist()}
-                          for side in ("upper", "lower")}
-    bub = [x.get("bubble_upper") for x in (r1, r2)]
-    out["bubble_upper"] = bub[0] if abs(t) < 0.5 else bub[1]
-    out["runs"] = [{k: x[k] for k in ("alpha", "cl", "cd", "cd_pressure", "cd_friction", "cm", "iterations", "converged",
-                                      "cd_swing", "cl_swing", "snapshots", "history")} for x in (r1, r2)]
+def common_lift(pb: tuple, po: tuple, design: float) -> float:
+    """The lift to compare the sections at: the design lift if both runs' ranges
+    reach it, else the nearest lift inside the range both cover (or, if they do not
+    overlap, halfway between their nearest ends). Keeps the comparison an interpolation."""
+    lo = max(min(x["cl"] for x in pb), min(x["cl"] for x in po))
+    hi = min(max(x["cl"] for x in pb), max(x["cl"] for x in po))
+    return min(max(design, lo), hi) if lo <= hi else (lo + hi) / 2
+
+
+def summarize(runs: tuple, cl: float, design: float) -> dict:
+    v = along(runs, cl)
+    near = min(runs, key=lambda x: abs(x["cl"] - cl))
+    out = {"cl": r(cl, 4), "design_cl": r(design, 4), **{k: r(val, 6 if k.startswith("cd") else 4) for k, val in v.items()},
+           "swing_cd": r(max(x["cd_swing"] for x in runs), 6), "swing_cl": r(max(x["cl_swing"] for x in runs), 4),
+           "iterations": [x["iterations"] for x in runs], "converged_runs": [bool(x["converged"]) for x in runs],
+           "yplus_max": r(max(x["yplus_max"] for x in runs), 2), "surface_cl": r(near["cl"], 4),
+           "bubble_upper": near.get("bubble_upper")}
+    if near.get("surface"):
+        out["surface"] = near["surface"]
+    out["runs"] = [{**{k: r(x[k], 6 if k.startswith("cd") else 4) for k in RUN_KEYS},
+                    "cd_swing": r(x["cd_swing"], 6), "cl_swing": r(x["cl_swing"], 4), "iterations": x["iterations"],
+                    "snapshots": x.get("snapshots"), "history": x.get("history")} for x in runs]
     return out
 
 
@@ -534,7 +533,8 @@ def summary(out: dict) -> dict:
         weights = [p["weight"] for p in out["points"]]
         ok = all(c is not None for c in cds["baseline"] + cds["optimized"])
         wsum = (lambda k: sum(w * c for w, c in zip(weights, cds[k]))) if ok else None
-        rows[tool] = {"label": data["label"], "baseline": cds["baseline"], "optimized": cds["optimized"],
+        cls = [p.get("cl") if p else None for p in secs["baseline"]["points"]]
+        rows[tool] = {"label": data["label"], "baseline": cds["baseline"], "optimized": cds["optimized"], "cl": cls,
                       "change": change, "weighted_change": round((wsum("optimized") - wsum("baseline")) / wsum("baseline") * 100, 1) if ok else None}
     return rows
 
@@ -553,6 +553,8 @@ def report(out: dict, study: dict) -> str:
             L.append(f"| {s['label'] if k == 'baseline' else ''} | {'NACA 4412' if k == 'baseline' else 'optimized'} | {cells} | "
                      + (("" if s["weighted_change"] is None else f"{s['weighted_change']:+.1f} %") if k == "optimized" else "") + " |")
         L.append("| | change | " + " | ".join("-" if c is None else f"{c:+.0f} %" for c in s["change"]) + " | |")
+        if tool == "openfoam":
+            L.append("| | compared at cl | " + " | ".join("-" if c is None else f"{c:.2f}" for c in s["cl"]) + " | |")
     xf = out["tools"]["xfoil"]["sections"]
     nf = out["tools"]["neuralfoil"]["sections"]
     L += ["", "## Maximum lift at 9 m/s (Re " + f"{out['re_stall'] / 1e3:.0f}k)", "", "| tool | NACA 4412 | optimized |", "|---|---|---|"]
@@ -569,16 +571,20 @@ def report(out: dict, study: dict) -> str:
     of = out["tools"].get("openfoam")
     if of:
         L += ["", "## The CFD runs", "", f"{of['label']}, free-stream turbulence {of['turbulence']['tu_percent']} % "
-              f"(n_crit {out['n_crit']:g} by Mack's relation), {of['meshes']['baseline']['cells']} cells, y+ under 1.", "",
-              "| section | point | angle, ° | cd | pressure | friction | cm | upper-surface bubble, x/c |", "|---|---|---|---|---|---|---|---|"]
-        for k in KEYS:
-            for p, x in zip(pts, of["sections"][k]["points"]):
-                if not x or "cd" not in x:
-                    L.append(f"| {k} | {p['name']} | failed | | | | | |")
-                    continue
-                b = x.get("bubble_upper")
-                L.append(f"| {'NACA 4412' if k == 'baseline' else 'optimized'} | {p['name']} | {x['alpha']:.2f} | {x['cd']:.4f} | "
-                         f"{x['cd_pressure']:.4f} | {x['cd_friction']:.4f} | {x['cm']:.3f} | {'-' if not b else f'{b[0]:.2f}-{b[1]:.2f}'} |")
+              f"(n_crit {out['n_crit']:g} by Mack's relation), {of['meshes']['baseline']['cells']} cells, y+ under 1, "
+              "a point-vortex far field. Two angles per point and section; the sections are compared at the same lift, "
+              "inside the range both runs reached.", "",
+              "| point | compared at cl | NACA 4412 cd | optimized cd | change | runs (angle: cl, cd ± half the swing) |",
+              "|---|---|---|---|---|---|"]
+        for i, p in enumerate(pts):
+            b, o = of["sections"]["baseline"]["points"][i], of["sections"]["optimized"]["points"][i]
+            if not (b and o and "cd" in b and "cd" in o):
+                L.append(f"| {p['name']} | failed | | | | |")
+                continue
+            runs = "; ".join(f"{'4412' if k == 'baseline' else 'opt'} {x['alpha']:.2f}°: {x['cl']:.3f}, {x['cd']:.4f} ± {x['cd_swing'] / 2:.4f}"
+                             for k, sec in (("baseline", b), ("optimized", o)) for x in sec["runs"])
+            L.append(f"| {p['name']} (design {p['cl']:.2f}) | {b['cl']:.3f} | {b['cd']:.4f} | {o['cd']:.4f} | "
+                     f"{(o['cd'] - b['cd']) / b['cd'] * 100:+.0f} % | {runs} |")
         v = of.get("verify", {})
         if v.get("cfd") and v.get("xfoil") and "cd" in v["cfd"]:
             c, x = v["cfd"], v["xfoil"]

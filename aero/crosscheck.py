@@ -180,7 +180,7 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         r2 = solved(d2, max_iter=4000, min_iter=1000)
         if "error" in r2:
             return key, i, {"runs": [r1, r2], "error": r2["error"]}
-        return key, i, interpolate(r1, r2, p.cl)
+        return key, i, (r1, r2)
 
     def grid_task():
         key, i = "baseline", 1
@@ -212,13 +212,27 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         verify = ex.submit(verify_task)
         futs = [ex.submit(task, k, i) for k in kulfans for i in range(len(points))]
         grid = ex.submit(grid_task)
+        pairs = {}
         for f in cf.as_completed(futs):
             key, i, res = f.result()
-            out["points"][key][i] = res
-            log(f"  CFD {key} {points[i].name}: " + (res.get("error") or f"cd {res['cd']:.5f} at cl {res['cl']:.3f}"))
+            pairs[(key, i)] = res
         out["grid"] = grid.result()
         out["verify"] = verify.result()
         log(f"  CFD check at Re {VERIFY['re']:.0e}: cl {out['verify'].get('cl', 0):.3f}, cd {out['verify'].get('cd', 0):.5f}")
+    # the lift slope each pair of angles shows; where the flow's own swing hides it,
+    # the section's slope from its other points stands in
+    slopes = {k: [] for k in kulfans}
+    for (key, i), res in pairs.items():
+        if isinstance(res, tuple):
+            a = lift_slope(*res)
+            if SLOPE_OK[0] <= a <= SLOPE_OK[1]:
+                slopes[key].append(a)
+    for (key, i), res in sorted(pairs.items()):
+        if isinstance(res, tuple):
+            prior = float(np.median(slopes[key])) if slopes[key] else 0.095
+            res = interpolate(*res, points[i].cl, prior)
+        out["points"][key][i] = res
+        log(f"  CFD {key} {points[i].name}: " + (res.get("error") or f"cd {res['cd']:.5f} at cl {res['cl']:.3f} ({res['method']})"))
     fine = out["points"]["baseline"][1]["runs"][0] if "runs" in out["points"]["baseline"][1] else None
     if fine and "cd" in out["grid"]:
         out["grid"]["fine_cells"] = meshes["baseline"]["cells"]
@@ -227,13 +241,36 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
     return out
 
 
-def interpolate(r1: dict, r2: dict, cl: float) -> dict:
-    """Values at the design lift coefficient from the two angles (linear in cl)."""
-    t = (cl - r1["cl"]) / (r2["cl"] - r1["cl"])
-    mix = lambda a, b: a + t * (b - a)  # noqa: E731
-    out = {"alpha": r(mix(r1["alpha"], r2["alpha"]), 3), "cl": r(cl, 4), "t": r(t, 3)}
+SLOPE_OK = (0.06, 0.15)         # per degree: a lift slope the two angles resolve
+
+
+def lift_slope(r1: dict, r2: dict) -> float:
+    return (r2["cl"] - r1["cl"]) / (r2["alpha"] - r1["alpha"])
+
+
+def interpolate(r1: dict, r2: dict, cl: float, prior: float = 0.095) -> dict:
+    """Values at the design lift coefficient from the two angles: linear in cl when
+    the pair resolves the lift slope; otherwise (the flow's own swing is as big as
+    the step between the angles) the angle from `prior`, and the drag, moment and
+    surface values as the pair's mean, since the drag barely changes over the step."""
+    a = lift_slope(r1, r2)
+    if SLOPE_OK[0] <= a <= SLOPE_OK[1]:
+        t = (cl - r1["cl"]) / (r2["cl"] - r1["cl"])
+        alpha = r1["alpha"] + t * (r2["alpha"] - r1["alpha"])
+        method = "interpolated"
+        tv = t
+    else:
+        abar = (r1["alpha"] + r2["alpha"]) / 2
+        c0 = np.mean([x["cl"] - prior * (x["alpha"] - abar) for x in (r1, r2)])
+        alpha = abar + (cl - c0) / prior
+        t = (alpha - r1["alpha"]) / (r2["alpha"] - r1["alpha"])
+        method = "pair mean (swing hides the lift slope)"
+        tv = 0.5
+    mix = lambda u, v: u + tv * (v - u)  # noqa: E731
+    out = {"alpha": r(alpha, 3), "cl": r(cl, 4), "t": r(t, 3), "method": method, "lift_slope": r(a, 4)}
     for k in ("cd", "cd_pressure", "cd_friction", "cm"):
         out[k] = r(mix(r1[k], r2[k]), 6 if k.startswith("cd") else 4)
+    t = tv
     out["converged_runs"] = [bool(x["converged"]) for x in (r1, r2)]
     out["swing_cd"] = r(max(r1["cd_swing"], r2["cd_swing"]), 6)
     out["swing_cl"] = r(max(r1["cl_swing"], r2["cl_swing"]), 4)

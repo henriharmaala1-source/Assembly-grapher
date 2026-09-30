@@ -189,7 +189,7 @@
     <div class="prose">
       <h2>How it was worked out</h2>
       <p>The airfoil is a Kulfan (CST) shape: eight weights on each surface, a leading-edge weight and the 0.8 mm trailing edge the printer needs. NeuralFoil, a neural network trained on tens of millions of XFOIL analyses, gives its lift, drag, pitching moment, transition points and boundary layer in about a millisecond. SLSQP minimizes the weighted profile drag at the three operating points while holding every limit in the table under the shape chart, and it only accepts shapes NeuralFoil is confident about.</p>
-      <p>For the whole plane, the wing's profile drag comes from NeuralFoil at each speed, the induced drag from the lift and the aspect ratio (span efficiency 0.8), and every other part from the drag build-up in <code>aero/models/airframe.py</code>. The detail changes are the ones the drag optimizer picks: they are not in the CAD yet.</p>
+      <p>For the whole plane, the wing's profile drag comes from NeuralFoil at each speed, the induced drag from the lift and the aspect ratio (span efficiency 0.8), and every other part from the drag build-up in <code>aero/models/airframe.py</code>. The detail changes are the ones the drag optimizer picks. All three versions fly at the as-built weight here; the optimized CAD build, with the airfoil and every detail drawn in, weighs 2.6 g more, and <code>airframe/variants/index.html</code> shows what that costs.</p>
       <p id="caveat"></p>
     </div>
     <pre>pip install -r aero/requirements.txt
@@ -632,7 +632,7 @@ python3 aero/crosscheck.py --cfd --work runs/cfd   # and OpenFOAM 2D CFD (about 
 
     // ---------------- whole plane
     const V = S.variants;
-    $("plane-intro").textContent = `The same airframe in three versions: ${Lb.baseline.toLowerCase()}, with the ${Lb.airfoil.toLowerCase().replace("optimized ", "optimized ")}, and with the airfoil plus the detail changes the drag optimizer picks (a rounded pod nose edge, a tapered pod tail, horn fairings, rudder joiners in a groove and a laid-back antenna). Same weight, same wing, same stall speed of ${B.stall.toFixed(1)} m/s.`;
+    $("plane-intro").textContent = `The same airframe in three versions: ${Lb.baseline.toLowerCase()}, with the ${Lb.airfoil.toLowerCase().replace("optimized ", "optimized ")}, and with the airfoil plus the detail changes the drag optimizer picks (a rounded pod nose edge, a tapered pod tail, horn fairings, sleeves on the rudder joiners and a laid-back antenna). Same weight, same wing, same stall speed of ${B.stall.toFixed(1)} m/s.`;
     const pw = (k) => V[k].rows.filter((r) => r.v <= 20).map((r) => [r.v, r.power]);
     const vGrid = V.baseline.rows.filter((r) => r.v <= 20).map((r) => r.v);
     const last = (k) => pw(k)[pw(k).length - 1][1];

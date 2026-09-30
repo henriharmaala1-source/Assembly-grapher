@@ -45,11 +45,11 @@ Cruise cd against transition sensitivity (n_crit 5 rough, 9 smooth): baseline: 5
 
 | | As built | Optimized airfoil | Optimized airfoil + details |
 |---|---|---|---|
-| Drag at cruise, N | 0.324 | 0.306 | 0.244 |
-| Power at cruise, W | 12.0 | 11.4 | 9.4 |
+| Drag at cruise, N | 0.324 | 0.306 | 0.245 |
+| Power at cruise, W | 12.0 | 11.4 | 9.5 |
 | Flight time at cruise, min | 13.3 | 14.0 | 16.9 |
 | Best L/D | 7.4 | 7.7 | 9.2 |
-| ... at, m/s | 10.2 | 10.8 | 11.5 |
+| ... at, m/s | 10.2 | 10.8 | 11.8 |
 | Least power, W | 8.4 | 8.3 | 7.6 |
 | ... at, m/s | 9.0 | 9.0 | 9.0 |
 | Longest flight time, min | 18.9 | 19.3 | 20.9 |

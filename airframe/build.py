@@ -24,24 +24,31 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import components as parts_lib  # noqa: E402
-from design import (LW_PLA, PLA, Kit, Layout, Params, camber,  # noqa: E402
-                    naca4, neutral_point, performance, report, rod_mass,
+from design import (LW_PLA, PLA, Kit, Layout, Params, airfoil_file,  # noqa: E402
+                    boattail_taper, camber, naca4, neutral_point, performance, report, rod_mass,
                     solve_x_le, structure_estimate)
-from geom import (box, cut, cyl_x, cyl_y, cyl_z, fuse, prism_x, prism_y, prism_z,  # noqa: E402
+from geom import (ball, box, cut, cyl_x, cyl_y, cyl_z, fuse, prism_x, prism_y, prism_z,  # noqa: E402
                   rod, shaft_along_y)
 
 # --------------------------------------------------------------------------
 # Wing section
 
 
+def airfoil_label(p: Params) -> str:
+    return Path(p.airfoil).stem if p.airfoil else f"NACA {p.naca}"
+
+
 class Section:
-    """NACA section at the wing's incidence, placed on the pod top."""
+    """Wing section (NACA 4-digit, or a .dat file) at the wing's incidence,
+    placed on the pod top."""
 
     def __init__(self, p: Params, L: Layout):
         self.p, self.L = p, L
         c = L.chord
         self.th = math.radians(p.incidence)
-        up, lo = naca4(p.naca, 70, p.te_min / c)
+        up, lo = airfoil_file(p.airfoil) if p.airfoil else naca4(p.naca, 70, p.te_min / c)
+        self._cu = sorted(up)
+        self._cl = sorted(lo)
         up = [self._rot(*q) for q in up]
         lo = [self._rot(*q) for q in lo]
         self.dz = L.z_top + p.wing_gap - min(z for _, z in lo)
@@ -54,8 +61,17 @@ class Section:
         return (self.L.x_qc + dx * math.cos(self.th) + dz * math.sin(self.th),
                 -dx * math.sin(self.th) + dz * math.cos(self.th))
 
+    def camber(self, xf):
+        """Mean line at xf (chord fraction): the NACA formula, or from a .dat
+        section's own surfaces."""
+        if not self.p.airfoil:
+            return camber(self.p.naca, xf)[0]
+        u = np.interp(xf, [q[0] for q in self._cu], [q[1] for q in self._cu])
+        lo = np.interp(xf, [q[0] for q in self._cl], [q[1] for q in self._cl])
+        return float((u + lo) / 2)
+
     def camber_point(self, xf):
-        x, z = self._rot(xf, camber(self.p.naca, xf)[0])
+        x, z = self._rot(xf, self.camber(xf))
         return x, z + self.dz
 
     def x_at(self, xf):
@@ -118,6 +134,27 @@ def nose_cuts(p: Params, L: Layout, off: float, ch: float):
         wp = wp.moveTo(-5, zl - off).lineTo(off, zl - off)
     tools.append(wp.lineTo(zl - zb + 5, zb - 5).lineTo(-5, zb - 5).close()
                  .extrude(hw + 10, both=True).val())
+    rt = p.nose_top_r                                       # top front edge: a short hood over the camera
+    if rt > 0 and rt - off > 0:
+        zt = L.z_top
+        corner = box(-1, rt, -(hw + 1), hw + 1, zt - rt, zt + 6)   # up past the open top for the cavity
+        tools.append(cut(corner, cyl_y(rt - off, -(hw + 2), hw + 2, rt, zt - rt)))
+    return tools
+
+
+def taper_cuts(p: Params, L: Layout, off: float):
+    """Tools for the boattail: the sides step in by boattail_deg over the last
+    `boattail` mm, the belly as far as the motor boss allows; `off` as in nose_cuts."""
+    side, belly = boattail_taper(p, L)
+    if side <= 0:
+        return []
+    hw, zb, zt, Lp = L.half_w, L.z_bottom, L.z_top, L.pod_len
+    x0, x1 = Lp - p.boattail, Lp + 5
+    tools = [prism_z([(x0, s * (hw - off)), (x1, s * (hw - off - (x1 - x0) * side / p.boattail)),
+                      (x1, s * (hw + 10)), (x0, s * (hw + 10))], zb - 10, zt + 10) for s in (1, -1)]
+    if belly > 0:
+        tools.append(prism_y([(x0, zb + off), (x1, zb + off + (x1 - x0) * belly / p.boattail),
+                              (x1, zb - 10), (x0, zb - 10)], -hw - 10, hw + 10))
     return tools
 
 
@@ -134,7 +171,8 @@ def make_pod(p: Params, L: Layout, batt_x: float):
     ch_in = ch + w * math.sqrt(2) - 2 * w                   # keeps the wall even
     inner = (cq.Workplane().box(Lp - fw - rw, 2 * (hw - w), zt + 5 - zf, centered=(False, True, False))
              .translate((fw, 0, zf)).edges("|X and <Z").chamfer(ch_in)).val()
-    pod = cut(cut(outer, *nose_cuts(p, L, 0.0, ch)), cut(inner, *nose_cuts(p, L, w, ch)))
+    pod = cut(cut(outer, *nose_cuts(p, L, 0.0, ch), *taper_cuts(p, L, 0.0)),
+              cut(inner, *nose_cuts(p, L, w, ch), *taper_cuts(p, L, w)))
 
     mz = p.motor_z
     plate = cyl_x(13, Lp - rw, Lp, 0, mz)                   # motor boss; its top stands above the pod
@@ -146,7 +184,7 @@ def make_pod(p: Params, L: Layout, batt_x: float):
     ledges = []                                             # the lid sits flush on these
     for s in (1, -1):
         ya, yb = s * (hw - w - 1.2), s * (hw - w + 0.05)
-        ledges.append(box(fw, lid_end(L), min(ya, yb), max(ya, yb), zt - 2.0, zt - 0.8))
+        ledges.append(box(lid_start(p) - 0.5, lid_end(L), min(ya, yb), max(ya, yb), zt - 2.0, zt - 0.8))
     pod = fuse(pod, plate, *fc, *esc_ribs, *ledges)
 
     holes = [cyl_z(0.85, zf, zf + 4, L.fc_x + dx, dy) for dx in (-hp, hp) for dy in (-hp, hp)]
@@ -156,7 +194,10 @@ def make_pod(p: Params, L: Layout, batt_x: float):
         slot = (cq.Workplane("YZ").center(r * math.cos(math.radians(a)), mz + r * math.sin(math.radians(a)))
                 .slot2D(8.6 - 5.9 + 2.2, 2.2, a).extrude(6).translate((Lp - rw - 2, 0, 0))).val()
         holes.append(slot)
-    holes.append(box(Lp - rw - 1, Lp + 1, -14.0, -9.0, mz - 13, mz - 9))   # motor wires
+    if p.boattail > 0:                                      # motor wires, inside the narrower back wall
+        holes.append(box(Lp - rw - 1, Lp + 1, -12.5, -7.5, mz - 12, mz - 8))
+    else:
+        holes.append(box(Lp - rw - 1, Lp + 1, -14.0, -9.0, mz - 13, mz - 9))
     zc = -9.0                                               # nano camera (14 mm) window
     holes.append(box(-1, fw + 1, -7.2, 7.2, zc - 7.2, zc + 7.2))
     for s in (-1, 1):                                       # battery strap slots
@@ -184,6 +225,11 @@ def split_pod(p: Params, L: Layout, pod):
     return front, fuse(rear, cut(tongue, *corners))
 
 
+def lid_start(p: Params) -> float:
+    """The lid's front edge: behind the front wall, or behind the nose hood."""
+    return p.nose_top_r + 0.3 if p.nose_top_r > 0 else p.front_wall + 0.5
+
+
 def lid_end(L: Layout) -> float:
     """The lid's back edge tucks under the wing's leading edge, just ahead of
     where the wing centre sits down on the pod."""
@@ -193,7 +239,7 @@ def lid_end(L: Layout) -> float:
 def make_lid(p: Params, L: Layout):
     """Hatch over the pod ahead of the wing, flush with the pod top, on two
     ledges. Hook the back edge under the wing, then press the front down."""
-    x0, x1 = p.front_wall + 0.5, lid_end(L)
+    x0, x1 = lid_start(p), lid_end(L)
     zt, y = L.z_top, L.half_w - p.wall - 0.2
     lid = box(x0, x1, -y, y, zt - 0.8, zt)
     return cut(lid, cyl_z(1.0, zt - 3, zt + 2, L.ant_x, L.ant_y))   # VTX antenna coax
@@ -208,7 +254,8 @@ def make_wing_centre(p: Params, L: Layout, sec: Section):
     x0, x1 = L.socket_x0, L.socket_x1
     socket = fuse(cq.Workplane("YZ").circle(rb).extrude(x1 - x0).faces("<X").edges().fillet(rb - 1.0).val()
                   .translate(V(x0, ty, 0)), box(x0 + rb, x1, ty - 2.5, ty + 2.5, 0, zt + 0.5))
-    rails = [box(L.x_le + 10, L.x_te - 5, s * L.half_w + (0.2 if s > 0 else -1.4),
+    rail_end = min(L.x_te - 5, L.pod_len - p.boattail - 1) if p.boattail > 0 else L.x_te - 5
+    rails = [box(L.x_le + 10, rail_end, s * L.half_w + (0.2 if s > 0 else -1.4),
                  s * L.half_w + (1.4 if s > 0 else -0.2), zt - 3.0, zt + 0.3) for s in (1, -1)]
     body = fuse(body, socket, socket.mirror("XZ"), *rails)
     holes = [cyl_x(L.r_hole, L.tube_x0, x1 + 1, s * ty, 0) for s in (-1, 1)]
@@ -393,6 +440,143 @@ def make_rudder(p: Params, L: Layout):
 
 
 # --------------------------------------------------------------------------
+# Drag details (the optimized variant): fairings and joiner sleeves
+
+
+def streamline(t: float) -> float:
+    """Streamlined thickness along a body, nose (0) to tail (1), 1 at its thickest
+    (NACA 00xx distribution, closed off a little at both ends)."""
+    t = min(max(t, 0.0), 1.0)
+    return max(0.08, (0.2969 * math.sqrt(t) - 0.126 * t - 0.3516 * t * t + 0.2843 * t ** 3
+                      - 0.1036 * t ** 4) / 0.1002)
+
+
+def blister(x0, x1, yc, half_w, depth, surface, grow=0.0, n=4.0, seam=0.0, body=None):
+    """Blister under a surface: squircle sections (exponent n) of half-width half_w
+    and half-depth `depth`, each centred on the surface z = surface(x) it hangs
+    from, lofted from nose to tail. With body=(xa, xb) it is full size from xa to
+    xb (what it covers), with an elliptic nose ahead and a tail that tapers to x1
+    (cut off blunt if there is no room to close it); otherwise it follows a
+    streamlined thickness. `seam` turns the start of each section's spline, to
+    keep two blisters' seams apart where they are fused."""
+    if body:
+        xa, xb = body
+        blunt = x1 - xb < 18
+        xs = [xa - (xa - x0) * math.cos(math.pi / 2 * i / 8) for i in range(9)]
+        n_mid = max(1, math.ceil((xb - xa) / 4))
+        xs += [xa + (xb - xa) * i / n_mid for i in range(1, n_mid + 1)]
+        xs += [xb + (x1 - xb) * i / 6 for i in range(1, 7)] if x1 > xb + 0.5 else []
+
+        def f(x):
+            if x <= xa:
+                return max(0.12, math.sqrt(max(0.0, 1 - ((xa - x) / (xa - x0)) ** 2)))
+            if x <= xb:
+                return 1.0
+            end = 0.35 if blunt else 0.08
+            return end + (1 - end) * 0.5 * (1 + math.cos(math.pi * (x - xb) / (x1 - xb)))
+    else:
+        xs = [x0 + (x1 - x0) * 0.5 * (1 - math.cos(math.pi * i / 16)) for i in range(17)]
+
+        def f(x):
+            return streamline((x - x0) / (x1 - x0))
+    wires = []
+    for x in xs:
+        a, b, zc = max(half_w * f(x) + grow, 0.2), max(depth * f(x) + grow, 0.2), surface(x)
+        pts = []
+        for k in range(48):
+            th = seam + 2 * math.pi * k / 48
+            c, sn = math.cos(th), math.sin(th)
+            pts.append(V(x, yc + a * math.copysign(abs(c) ** (2 / n), c), zc + b * math.copysign(abs(sn) ** (2 / n), sn)))
+        wires.append(cq.Wire.assembleEdges([cq.Edge.makeSpline(pts, periodic=True)]))
+    return cq.Solid.makeLoft(wires, True)                  # ruled: no overshoot between the sections
+
+
+FAIRING_WALL = 0.45
+
+
+def horn_trim(s: dict) -> float:
+    """With fairings, the horn arm is cut off 2.5 mm past its pushrod hole."""
+    return s["origin"][2] - s["link"][2] + 2.5
+
+
+def servo_fairing(p: Params, L: Layout, s: dict, k: Kit, surface, above, x_limit, rod_to, clear=()):
+    """A single-wall fairing under a side-mounted SG90: a shallow blister over the
+    case and its tabs where they stand out below the wing, and a narrow deep one
+    round the (trimmed) horn and its +-30 deg swing. It ends before x_limit (the
+    aileron hinge, or the centre section's trailing edge) and leaves a hole where
+    the pushrod runs out. `above` is everything it is glued under; `clear` are
+    solids it must stay off (the boom sockets)."""
+    sv, w = k.servo, FAIRING_WALL
+    xm, ya, zc = s["origin"]
+    xs, yh = xm + sv.shaft_x, ya + sv.horn_z
+    reach = horn_trim(s) + 0.8                              # horn tip below the shaft axis
+    outer, inner = [], []
+    z_case = min(s["top"] - sv.width, zc - sv.boss_d / 2)     # lowest point of the case and boss
+    xa, xb = xm - sv.tab_span / 2 - 0.8, xm + sv.tab_span / 2 + 0.8
+    bump = max(surface(x) for x in (xa, xm, xb)) - z_case
+    if bump > 0.3:
+        y0, y1 = ya - 1.0, ya + sv.height + sv.boss_h + sv.spline_h + 0.8
+        bx0, bx1 = xa - 12, min(xb + 22, x_limit)
+        a, b = 1.12 * (y1 - y0) / 2 + w, 1.35 * (bump + 1.0) + w
+        outer.append(blister(bx0, bx1, (y0 + y1) / 2, a, b, surface, body=(xa, xb)))
+        inner.append(blister(bx0, bx1, (y0 + y1) / 2, a, b, surface, grow=-w, body=(xa, xb)))
+    swing = reach * math.sin(math.radians(30))
+    ha, hb = xs - swing - 1.0, xs + swing + 1.0
+    depth = max(surface(x) for x in (ha, xs, hb)) - (zc - reach) + 1.0
+    hx0, hx1 = ha - 7, min(hb + 20, x_limit)
+    outer.append(blister(hx0, hx1, yh, 3.3 + w, 1.2 * depth + w, surface, n=2.6, seam=0.37, body=(ha, hb)))
+    inner.append(blister(hx0, hx1, yh, 3.3, 1.2 * depth, surface, n=2.6, seam=0.37, body=(ha, hb)))
+    lx, ly, lz = s["link"]
+    d = V(*rod_to) - V(lx, ly, lz)
+    exit_hole = rod(1.5, (lx, ly, lz), tuple(V(lx, ly, lz) + d.normalized() * 70))
+    return cut(fuse(*outer), *inner, above, exit_hole, *clear)
+
+
+def fairings(p: Params, L: Layout, sec: Section, k: Kit) -> dict:
+    """Fairings for the two aileron servos and the elevator and rudder servos."""
+    out = {}
+    ail = aileron_servo(p, L, sec, k)
+    xh = sec.x_at(p.hinge_pos) + 0.3
+    y0, y1 = p.centre_w / 2, p.span / 2
+    lower = sorted(sec.lo)                                  # everything above the panel's lower surface
+    above = prism_y([(lower[0][0] - 60, lower[0][1]), *lower, (lower[-1][0] + 60, lower[-1][1]),
+                     (lower[-1][0] + 60, 80), (lower[0][0] - 60, 80)], y0 - 5, y1)
+    out["fairing_ail_R"] = servo_fairing(
+        p, L, ail, k, lambda x: sec.lower_z(x) + 0.2, above, sec.x_at(p.hinge_pos) - 1.5,
+        (xh + 2.1, ail["link"][1], sec.lower_z(xh + 1.8) - 7.8))
+    out["fairing_ail_L"] = out["fairing_ail_R"].mirror("XZ")
+    flat = lambda x: L.z_top + 0.2  # noqa: E731  the centre section's flat underside
+    lid = box(L.x_le - 20, L.x_te + 30, -p.centre_w, p.centre_w, L.z_top, L.z_top + 60)
+    es = elevator_servo(p, L, sec, k)
+    x_eh = L.x_stab + L.c_fix + 0.6 + 3.0
+    booms = [cyl_x(L.r_boss + 0.4, L.x_le - 20, L.x_te + 40, L.tube_y, 0)]
+    out["fairing_elev"] = servo_fairing(p, L, es, k, flat, lid, L.x_te - 1.0, (x_eh - 1.5, L.pushrod_y, L.pushrod_z),
+                                        booms)
+    if p.rudders:
+        rs = rudder_servo(p, L, sec, k)
+        out["fairing_rud"] = servo_fairing(p, L, rs, k, flat, lid, L.x_te - 1.0,
+                                           (L.bellcrank_x, -L.rudder_pushrod_y, L.joiner_z), booms).mirror("XZ")
+    return out
+
+
+def make_joiner_sleeves(p: Params, L: Layout) -> dict:
+    """Streamlined sleeves glued on the two rudder joiner wires: a teardrop
+    5.5 mm long and 2 mm thick round each wire. They slide with the wire, so
+    each end stays 5 mm clear of the bellcrank arm and the rudder's flange."""
+    xo, zj, by = L.x_hinge + p.rudder_horn, L.joiner_z, L.bellcrank_y
+    prof = []
+    for k in range(25):                                     # upper then lower surface, nose at xo - 1.5
+        t = k / 24
+        prof.append((xo - 1.5 + 5.5 * t, zj + 1.0 * streamline(t)))
+    prof += [(x, 2 * zj - z) for x, z in reversed(prof[1:-1])]
+    y_tip = L.b_h / 2 - 4.0 - 5.0
+    out = {}
+    for name, ya, yb in (("sleeve_R", by + 6.0, y_tip), ("sleeve_L", -y_tip, by - 6.0)):
+        out[name] = cut(prism_y(prof, ya, yb), cyl_y(0.55, ya - 1, yb + 1, xo, zj))
+    return out
+
+
+# --------------------------------------------------------------------------
 # Bought parts in flight position (for the STEP, the viewer and the CG)
 
 BLACK, WHITE = (0.08, 0.08, 0.09), (0.93, 0.93, 0.92)
@@ -451,8 +635,14 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
         k.cam_vtx * 0.55, "electronics")
     add("vtx", {n: stand(s).translate(V(L.vtx_x, 0, zf + 0.4 + 9.5)) for n, s in parts_lib.vtx_card().items()},
         {"": (0.05, 0.30, 0.16), "chips": SILVER, "pads": GOLD, "conn": GOLD}, k.cam_vtx * 0.45, "electronics")
-    add("antenna", {n: s.translate(V(L.ant_x, L.ant_y, L.ant_z)) for n, s in parts_lib.whip_antenna(38).items()},
-        {"": BLACK, "conn": GOLD}, k.antenna, "electronics")
+    ant = {n: s.translate(V(L.ant_x, L.ant_y, L.ant_z)) for n, s in parts_lib.whip_antenna(38).items()}
+    if p.antenna_lean:                                      # bent back where it leaves the lid
+        piv = V(L.ant_x, L.ant_y, L.z_top + 1.5)
+        whip = ant[""]
+        low = whip.intersect(box(piv.x - 5, piv.x + 5, piv.y - 5, piv.y + 5, piv.z - 60, piv.z))
+        high = whip.intersect(box(piv.x - 5, piv.x + 5, piv.y - 5, piv.y + 5, piv.z, piv.z + 60))
+        ant[""] = fuse(low, high.rotate(piv, piv + V(0, 1, 0), p.antenna_lean), ball(1.3, piv.x, piv.y, piv.z))
+    add("antenna", ant, {"": BLACK, "conn": GOLD}, k.antenna, "electronics")
     fc_at = V(L.fc_x, 0, zf + 3)
     add("fc", {n: s.translate(fc_at) for n, s in parts_lib.flight_controller(k).items()},
         {"": (0.08, 0.09, 0.11), "chips": (0.18, 0.19, 0.22), "metal": SILVER, "jst": WHITE, "pads": GOLD},
@@ -474,7 +664,8 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
     # servos
     servo_colours = {"": (0.16, 0.38, 0.85), "horn": WHITE, "wires": (0.55, 0.25, 0.10)}
     es = elevator_servo(p, L, sec, k)
-    add("servo_elev", {n: shaft_along_y(s, es["origin"]) for n, s in parts_lib.sg90(sv, es["horn_deg"]).items()},
+    trim = (lambda s: horn_trim(s)) if p.fairings else (lambda s: None)   # faired horns are cut short
+    add("servo_elev", {n: shaft_along_y(s, es["origin"]) for n, s in parts_lib.sg90(sv, es["horn_deg"], trim(es)).items()},
         servo_colours, sv.mass, "electronics")
     el_link = es["link"]
     x_eh = L.x_stab + L.c_fix + 0.6 + 3.0                    # elevator horn hole
@@ -483,7 +674,7 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
 
     if p.rudders:
         rs = rudder_servo(p, L, sec, k)
-        servo = parts_lib.sg90(sv, rs["horn_deg"])
+        servo = parts_lib.sg90(sv, rs["horn_deg"], trim(rs))
         add("servo_rud", {n: shaft_along_y(s, rs["origin"]).mirror("XZ") for n, s in servo.items()},
             servo_colours, sv.mass, "electronics")
         lx, ly, lz = rs["link"]
@@ -498,7 +689,7 @@ def bought_parts(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
                            rod_mass(0.8, L.b_h / 2, rho=7.8), "hardware"))
 
     ail = aileron_servo(p, L, sec, k)
-    servo = {n: shaft_along_y(s, ail["origin"]) for n, s in parts_lib.sg90(sv, ail["horn_deg"]).items()}
+    servo = {n: shaft_along_y(s, ail["origin"]) for n, s in parts_lib.sg90(sv, ail["horn_deg"], trim(ail)).items()}
     xh = sec.x_at(p.hinge_pos) + 0.3
     zl = sec.lower_z(xh + 1.8)
     ly = ail["link"][1]
@@ -534,6 +725,12 @@ PRINT = {
     "rudder_R":    (PLA, 0.4, 0.15, (0.96, 0.45, 0.10)),
     "rudder_L":    (PLA, 0.4, 0.15, (0.96, 0.45, 0.10)),
     "bellcrank":   (PLA, 0.8, 0.5, (0.20, 0.22, 0.25)),
+    "fairing_ail_R": (LW_PLA, FAIRING_WALL, 0.0, (0.93, 0.93, 0.90)),
+    "fairing_ail_L": (LW_PLA, FAIRING_WALL, 0.0, (0.93, 0.93, 0.90)),
+    "fairing_elev":  (LW_PLA, FAIRING_WALL, 0.0, (0.86, 0.87, 0.84)),
+    "fairing_rud":   (LW_PLA, FAIRING_WALL, 0.0, (0.86, 0.87, 0.84)),
+    "sleeve_R":    (PLA, 0.4, 0.3, (0.20, 0.22, 0.25)),
+    "sleeve_L":    (PLA, 0.4, 0.3, (0.20, 0.22, 0.25)),
 }
 PRINT_NOTES = {
     "pod_front": "Upright, open top up. 2 walls, 15 % infill.",
@@ -552,6 +749,12 @@ PRINT_NOTES = {
     "rudder_R": "Outer face down, wire flange up. 2 top / 2 bottom layers, 15 % infill.",
     "rudder_L": "Outer face down, wire flange up. 2 top / 2 bottom layers, 15 % infill.",
     "bellcrank": "Flat. Solid.",
+    "fairing_ail_R": "Rim down on the bed, brim. 1 wall, 0 % infill. Glue under the wing over the servo.",
+    "fairing_ail_L": "Rim down on the bed, brim. 1 wall, 0 % infill. Glue under the wing over the servo.",
+    "fairing_elev": "Rim down on the bed. 1 wall, 0 % infill. Glue under the wing centre.",
+    "fairing_rud": "Rim down on the bed. 1 wall, 0 % infill. Glue under the wing centre.",
+    "sleeve_R": "Flat. Slide on the joiner wire before the Z-bends and glue.",
+    "sleeve_L": "Flat. Slide on the joiner wire before the Z-bends and glue.",
 }
 def print_mass(name, shape):
     rho, shell, infill, _ = PRINT[name]
@@ -566,7 +769,7 @@ def print_mass(name, shape):
 
 def to_bed(shape, name):
     s = shape
-    if name == "lid" or name == "tail_mount" or name == "elevator":
+    if name == "lid" or name == "tail_mount" or name == "elevator" or name.startswith("fairing"):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), 180)
     elif name in ("wing_centre", "wing_R", "fin_L", "rudder_L"):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), 90)
@@ -623,6 +826,10 @@ def build_at(p: Params, k: Kit, x_le: float):
         parts["rudder_L"] = parts["rudder_R"].mirror("XZ")
         parts["bellcrank"] = make_bellcrank(p, L)
     parts["lid"] = make_lid(p, L)
+    if p.fairings:
+        parts.update(fairings(p, L, sec, k))
+    if p.joiner_sleeves and p.rudders:
+        parts.update(make_joiner_sleeves(p, L))
 
     # CG with CAD masses: solve the battery station, then build the pod around it
     parts["pod_front"], parts["pod_rear"] = split_pod(p, L, make_pod(p, L, batt_nominal))
@@ -663,9 +870,8 @@ def srgb_to_linear(rgb):
     return [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
 
 
-def export_all(p, k, L, parts, refs, out: Path):
+def export_all(p, k, L, parts, refs, out: Path, step: bool = True):
     (out / "stl").mkdir(parents=True, exist_ok=True)
-    (out / "cad").mkdir(parents=True, exist_ok=True)
     for name, shape in parts.items():
         cq.exporters.export(to_bed(shape, name), str(out / "stl" / f"{name}.stl"),
                             tolerance=0.03, angularTolerance=0.15)
@@ -678,7 +884,9 @@ def export_all(p, k, L, parts, refs, out: Path):
         groups[group].add(shape, name=name, color=cq.Color(*colour))
     for g in groups.values():
         assy.add(g)
-    assy.export(str(out / "cad" / "airframe.step"))
+    if step:
+        (out / "cad").mkdir(parents=True, exist_ok=True)
+        assy.export(str(out / "cad" / "airframe.step"))
 
     import trimesh
     from trimesh.visual.material import PBRMaterial
@@ -703,7 +911,7 @@ def fits_bed(p: Params, shape, name) -> bool:
     return flat and bb.zlen <= bz
 
 
-def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
+def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="baseline"):
     auw = sum(i[1] for i in items)
     cg = sum(i[1] * i[2] for i in items) / auw
     cgz = sum(i[1] * i[3] for i in items) / auw
@@ -712,16 +920,17 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
     est = sum(g for _, g, _ in structure_estimate(p, L))
     printed = sum(i[1] for i in items if i[0] in PRINT)
     lines = [
-        "# Twin-boom micro FPV pusher: build report",
+        "# Twin-boom micro FPV pusher: build report" + ("" if variant == "baseline" else f" ({variant} variant)"),
         "",
-        "Generated by `build.py` from the CAD volumes. Do not edit by hand.",
+        "Generated by `build.py" + ("" if variant == "baseline" else f" --variant {variant}") +
+        "` from the CAD volumes. Do not edit by hand.",
         "",
         "## Key numbers",
         "",
         "| | |",
         "|---|---|",
         f"| Wingspan | {p.span:.0f} mm |",
-        f"| Chord | {L.chord:.0f} mm (NACA {p.naca}, {p.incidence:.0f} deg incidence) |",
+        f"| Chord | {L.chord:.0f} mm ({airfoil_label(p)}, {p.incidence:.0f} deg incidence) |",
         f"| Wing area | {L.area / 1e4:.2f} dm^2 |",
         f"| Length (nose to elevator TE) | {L.length:.0f} mm |",
         f"| Tail booms | 2 x {p.tube_od:.0f}x{p.tube_id:.0f} mm, {L.tube_len:.0f} mm long, {p.tube_spacing:.0f} mm apart |",
@@ -808,8 +1017,11 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         sweep.append({"span": b, "auw": round(a), "stall": round(pf["stall"], 2)})
     spec = {
         "span": p.span, "chord": L.chord, "area_dm2": round(L.area / 1e4, 2),
-        "length": round(L.length), "naca": p.naca, "incidence": p.incidence,
-        "auw": round(auw), "printed": round(printed), "loading": round(perf["loading"], 1),
+        "length": round(L.length), "naca": p.naca, "airfoil": airfoil_label(p), "incidence": p.incidence,
+        "details": {"nose_top_r": p.nose_top_r, "boattail": p.boattail, "antenna_lean": p.antenna_lean,
+                    "fairings": p.fairings, "joiner_sleeves": p.joiner_sleeves},
+        "auw": round(auw), "auw_g": round(auw, 2), "printed": round(printed), "printed_g": round(printed, 2),
+        "loading": round(perf["loading"], 1),
         "stall": round(perf["stall"], 1), "cruise": round(perf["cruise"], 1),
         "top": round(perf["top"], 1), "pitch_speed": round(perf["pitch_speed"], 1),
         "endurance": round(perf["endurance_min"]), "vh": round(L.vh_actual, 2),
@@ -826,7 +1038,7 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=()):
         "prop_r": k.prop_d_in * 12.7, "split_x": pod_split_x(L),
         "stall_limit": p.stall_limit, "min_span": smallest_span(p, k),
         "no_rudder_span": smallest_span(replace(p, rudders=False), k), "sweep": sweep,
-        "fc": k.fc_name, "esc": k.esc_name,
+        "fc": k.fc_name, "esc": k.esc_name, "variant": variant,
         "bed": list(p.bed), "centre_w": p.centre_w,
         "parts": print_list,
         "mass": [{"name": n, "g": round(g, 1), "x": round(x)} for n, g, x, _ in items],
@@ -876,9 +1088,40 @@ def interference(parts, refs, tol=0.05):
     return hits
 
 
-def main():
-    out = HERE
-    p, k, L, sec, parts, refs, items, batt_x = build()
+VARIANTS = ("baseline", "optimized")
+
+
+def variant_params(name: str) -> Params:
+    """The as-built design, or the one the efficiency study recommends: its
+    optimized airfoil and the detail changes the drag optimizer picked
+    (aero/study/study.json)."""
+    from dataclasses import replace
+    p = Params()
+    if name == "baseline":
+        return p
+    import json
+    study = json.loads((HERE.parent / "aero" / "study" / "study.json").read_text())
+    d = study["details"]
+    return replace(p, airfoil="aero/study/kipina-opt.dat", nose_top_r=float(d.get("nose_top_r", 0)),
+                   boattail=float(d.get("boattail", 0)), antenna_lean=float(d.get("antenna_lean", 0)),
+                   fairings=bool(d.get("fairings")), joiner_sleeves=bool(d.get("joiners_hidden")))
+
+
+def variant_dir(name: str) -> Path:
+    return HERE if name == "baseline" else HERE / "variants" / name
+
+
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--variant", choices=VARIANTS, default="baseline",
+                    help="baseline: as built (writes here); optimized: the efficiency study's airfoil "
+                         "and detail changes (writes variants/optimized/)")
+    ap.add_argument("--step", action="store_true", help="also write the STEP for a variant (always for the baseline)")
+    args = ap.parse_args(argv)
+    out = variant_dir(args.variant)
+    out.mkdir(parents=True, exist_ok=True)
+    p, k, L, sec, parts, refs, items, batt_x = build(variant_params(args.variant))
     for name, s in parts.items():
         assert s.isValid(), f"{name} is not a valid solid"
     for name, shape in parts.items():
@@ -887,8 +1130,8 @@ def main():
     hits = interference(parts, refs)
     for a, b, v in hits:
         print(f"WARNING: {a} overlaps {b} by {v} mm^3")
-    auw, cg = write_report(p, k, L, parts, items, batt_x, out, hits)
-    export_all(p, k, L, parts, refs, out)
+    auw, cg = write_report(p, k, L, parts, items, batt_x, out, hits, args.variant)
+    export_all(p, k, L, parts, refs, out, step=args.variant == "baseline" or args.step)
     print(f"AUW {auw:.1f} g, CG {cg:.1f} mm, battery centre {batt_x:.1f} mm, x_le {L.x_le:.1f}")
 
 

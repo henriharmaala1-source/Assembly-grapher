@@ -1,0 +1,953 @@
+<title>Kipinä As Built vs Optimized</title>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* The two CAD builds side by side, then where the grams went and what they do in the air.
+     As built in gray, optimized in orange (as "airfoil + details" on the efficiency study page). */
+  :root {
+    --ground: #EEF1F2;
+    --panel: #F8FAFA;
+    --stage: #E3E8EA;
+    --ink: #1B2226;
+    --ink-2: #4E5B61;
+    --muted: #6E7B80;
+    --rule: #C9D1D4;
+    --grid: #E1E6E8;
+    --s-base: #898781;
+    --s-opt: #eb6834;
+    --good: #006300;
+    --tip: #FFFFFF;
+    --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #111517; --panel: #182125; --stage: #1D282C; --ink: #E6ECEE; --ink-2: #B8C4C9; --muted: #94A3A9;
+      --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-opt: #d95926; --good: #0ca30c; --tip: #212C31;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #111517; --panel: #182125; --stage: #1D282C; --ink: #E6ECEE; --ink-2: #B8C4C9; --muted: #94A3A9;
+    --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-opt: #d95926; --good: #0ca30c; --tip: #212C31;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--ground); color: var(--ink); font: 16px/1.55 var(--body); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: grid; gap: 44px; }
+  header { display: grid; gap: 8px; max-width: 72ch; }
+  .eyebrow { font: 500 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { font: 700 clamp(40px, 6vw, 64px)/0.95 var(--display); margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  h2 { font: 600 30px/1.1 var(--display); margin: 0; text-wrap: balance; }
+  h3 { font: 600 20px/1.2 var(--display); margin: 0; letter-spacing: .01em; }
+  p { margin: 0; }
+  .lede { color: var(--ink-2); font-size: 17px; }
+  .prose { max-width: 70ch; display: grid; gap: 10px; color: var(--ink-2); }
+  code { font: 13px var(--mono); }
+  section { display: grid; gap: 18px; }
+
+  /* 3D */
+  .stage { position: relative; background: var(--stage); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden;
+           aspect-ratio: 2.1 / 1; min-height: 320px; max-width: 100%; }
+  .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  .stage canvas:active { cursor: grabbing; }
+  .vlabel { position: absolute; top: 12px; display: grid; gap: 1px; pointer-events: none; }
+  .vlabel b { font: 600 22px/1.05 var(--display); letter-spacing: .01em; }
+  .vlabel span { font: 500 12.5px var(--mono); color: var(--ink-2); }
+  .vlabel i { width: 22px; border-top: 3px solid; display: block; margin-bottom: 4px; }
+  #lab-a { left: 14px; } #lab-b { left: calc(50% + 14px); }
+  .divider { position: absolute; top: 0; bottom: 0; left: 50%; border-left: 1px solid var(--rule); pointer-events: none; }
+  .hint { position: absolute; right: 12px; bottom: 10px; font: 500 12px var(--body); color: var(--muted); pointer-events: none; }
+  @media (max-width: 720px) {
+    .stage { aspect-ratio: 0.8 / 1; }
+    #lab-b { left: 14px; top: calc(50% + 12px); }
+    .divider { left: 0; right: 0; top: 50%; bottom: auto; border-left: 0; border-top: 1px solid var(--rule); }
+  }
+  .viewbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; }
+  .seg button, .tbtn { font: 500 13px var(--body); color: var(--ink); background: var(--panel); border: 0; padding: 7px 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"], .tbtn[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .tbtn { border: 1px solid var(--rule); border-radius: 5px; font-size: 12.5px; padding: 6px 11px; white-space: nowrap; }
+  .tbtn:focus-visible, .seg button:focus-visible, svg:focus-visible, .change:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .changes { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  .change { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 11px 14px; display: grid; gap: 3px;
+            text-align: left; font: inherit; color: inherit; cursor: pointer; align-content: start; }
+  .change[aria-pressed="true"] { border-color: var(--s-opt); box-shadow: inset 0 0 0 1px var(--s-opt); }
+  .change b { font: 600 18px/1.15 var(--display); letter-spacing: .01em; }
+  .change .what { font-size: 13.5px; color: var(--ink-2); }
+  .change .g { font: 500 12.5px var(--mono); color: var(--ink); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 2px; align-content: start; }
+  .tile .k { font: 500 12px/1.3 var(--body); color: var(--muted); letter-spacing: .02em; }
+  .tile .v { font: 600 32px/1.05 var(--display); }
+  .tile .v small { font: 500 15px var(--body); color: var(--ink-2); margin-left: 4px; }
+  .tile .was { font-size: 13px; color: var(--ink-2); }
+  .tile .d { font: 600 13px var(--body); }
+
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 880px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+  figure.wide { grid-column: 1 / -1; }
+  .fhead { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+  .fhead p { font-size: 14px; color: var(--ink-2); margin-top: 2px; }
+  .plot { position: relative; }
+  .plot svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  svg text { font-family: var(--body); font-size: 12px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  svg .lab { fill: var(--ink-2); font-size: 12.5px; }
+  svg .lab-strong { fill: var(--ink); font-weight: 600; font-size: 12.5px; }
+  figcaption { font-size: 13.5px; color: var(--ink-2); max-width: 90ch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend svg { display: block; }
+  .tip { position: absolute; pointer-events: none; background: var(--tip); border: 1px solid var(--rule); border-radius: 5px; padding: 7px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.12); display: grid; gap: 3px; min-width: 150px; z-index: 2; }
+  .tip .t { color: var(--muted); font-size: 12px; }
+  .tip .r { display: grid; grid-template-columns: 14px auto 1fr; gap: 6px; align-items: center; }
+  .tip .r i { width: 14px; border-top: 2px solid; }
+  .tip .r b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .tip .r span { color: var(--ink-2); }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { font: 500 12px var(--body); color: var(--muted); letter-spacing: .03em; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 6px; }
+  pre { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font: 13px/1.6 var(--mono); }
+  .status { padding: 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+  footer { font-size: 13px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Kipinä 485 · two CAD builds</div>
+    <h1>As built against optimized</h1>
+    <p class="lede" id="lede">The Kipinä as it is drawn today, and the version the efficiency study recommends, both built in CAD and weighed part by part, then flown through the same performance model.</p>
+  </header>
+
+  <div class="status" id="status">Loading the comparison…</div>
+
+  <section id="models" hidden>
+    <div class="stage" id="stage">
+      <div class="vlabel" id="lab-a"><i style="border-color: var(--s-base)"></i><b>As built</b><span id="lab-a-s"></span></div>
+      <div class="vlabel" id="lab-b"><i style="border-color: var(--s-opt)"></i><b>Optimized</b><span id="lab-b-s"></span></div>
+      <div class="divider"></div>
+      <div class="hint" id="hint">Drag to turn both · scroll or pinch to zoom</div>
+    </div>
+    <div class="viewbar">
+      <div class="seg" role="group" aria-label="Camera">
+        <button type="button" data-view="quarter" aria-pressed="true">Three-quarter</button>
+        <button type="button" data-view="side" aria-pressed="false">Side</button>
+        <button type="button" data-view="top" aria-pressed="false">Top</button>
+        <button type="button" data-view="under" aria-pressed="false">Underside</button>
+      </div>
+      <button type="button" class="tbtn" id="t-hl" aria-pressed="false">Colour what changed</button>
+    </div>
+    <div class="prose"><h3>What changed</h3><p>Pick one to see it on both planes, with what it did to the weight.</p></div>
+    <div class="changes" id="changes"></div>
+  </section>
+
+  <section id="summary" hidden>
+    <div class="prose"><h2>What it adds up to</h2><p id="summary-intro"></p></div>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section id="weight" hidden>
+    <div class="prose"><h2 id="weight-title">Where the weight went</h2><p id="weight-intro"></p></div>
+    <div class="grid2">
+      <figure id="f-mass"></figure>
+      <figure id="f-cg"></figure>
+    </div>
+  </section>
+
+  <section id="flight" hidden>
+    <div class="prose"><h2>How the weight changes the flight</h2><p id="flight-intro"></p></div>
+    <div class="grid2">
+      <figure class="wide" id="f-split"></figure>
+      <figure class="wide" id="f-power"></figure>
+      <figure id="f-sw-time"></figure>
+      <figure id="f-sw-stall"></figure>
+      <figure id="f-sw-climb"></figure>
+      <figure id="f-sw-long"></figure>
+    </div>
+    <div class="card scroll"><table id="t-flight"></table></div>
+  </section>
+
+  <section id="method" hidden>
+    <div class="prose">
+      <h2>How it was worked out</h2>
+      <p>Both planes are built by <code>airframe/build.py</code>. The optimized one uses the airfoil from the efficiency study and the detail changes its drag optimizer picked, each drawn as a printable part. The build weighs every printed part from its volume (shell and infill for its material) and adds the bought parts. It then moves the wing until the battery balances the plane at 28 % chord, in the middle of its travel.</p>
+      <p>Each plane flies at its own CAD weight with its own aerodynamics. The wing's profile drag comes from NeuralFoil with its airfoil, at the lift coefficient the weight needs. Every other part comes from the drag build-up with its details, and the induced drag follows the lift. The maximum lift scales with each airfoil's section maximum. Both have the same motor and prop, so the thrust is the same: 1:1 static for the as-built plane, falling to zero at the prop's pitch speed. Power is drag × speed ÷ 40 % propulsion efficiency, plus the avionics; flight time uses 80 % of the 450 mAh pack.</p>
+      <p id="method-caveat"></p>
+    </div>
+    <pre>python3 airframe/build.py                       # the as-built CAD
+python3 airframe/build.py --variant optimized   # the optimized CAD (airframe/variants/optimized/)
+python3 aero/variants.py                        # weights and flight: airframe/variants/compare.json and COMPARE.md</pre>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+(() => {
+  const NS = "http://www.w3.org/2000/svg";
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const COL = { baseline: "--s-base", optimized: "--s-opt", same: "--s-opt" };
+  function el(tag, attrs, parent, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function h(tag, attrs, parent, text) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  const lin = (d0, d1, r0, r1) => (v) => r0 + (v - d0) / (d1 - d0) * (r1 - r0);
+  function niceTicks(lo, hi, n) {
+    const span = hi - lo, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n) || 10 * mag;
+    const out = [];
+    for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+    return out;
+  }
+  function interp(pts, x) {
+    if (x <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (x <= pts[i][0]) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0); }
+    }
+    return pts[pts.length - 1][1];
+  }
+
+  // ------------------------------------------------------------ figure shell: title, table toggle, caption
+  function sample(parent, key, dash, mark) {
+    if (mark) {                                         // a dot or ring, as the markers on a dot plot
+      const s = el("svg", { width: 14, height: 14, "aria-hidden": "true" }, parent), c = css(COL[key] || key);
+      el("circle", { cx: 7, cy: 7, r: 5, fill: mark === "ring" ? css("--panel") : c, stroke: c, "stroke-width": 2 }, s);
+      return s;
+    }
+    const s = el("svg", { width: 26, height: 8, "aria-hidden": "true" }, parent);
+    el("line", { x1: 1, x2: 25, y1: 4, y2: 4, stroke: css(COL[key] || key), "stroke-width": 2, "stroke-linecap": "round",
+                 "stroke-dasharray": dashOf(dash) }, s);
+    return s;
+  }
+  const dashOf = (d) => (d ? (typeof d === "string" ? d : "2 4") : "none");
+  function shell(fig, title, sub, caption, tableRows, legend) {
+    fig.replaceChildren();
+    const head = h("div", { class: "fhead" }, fig);
+    const t = h("div", {}, head);
+    h("h3", {}, t, title);
+    if (sub) h("p", {}, t, sub);
+    const btn = h("button", { class: "tbtn", type: "button", "aria-pressed": "false" }, head, "Table");
+    if (legend) {
+      const lg = h("div", { class: "legend" }, fig);
+      for (const it of legend) { const sp = h("span", {}, lg); sample(sp, it.key, it.dash, it.mark); sp.appendChild(document.createTextNode(it.label)); }
+    }
+    const plot = h("div", { class: "plot" }, fig);
+    const tw = h("div", { class: "scroll" }, fig);
+    tw.hidden = true;
+    const table = h("table", {}, tw);
+    const [cols, ...rows] = tableRows;
+    const trh = h("tr", {}, h("thead", {}, table));
+    cols.forEach((c, i) => h("th", { class: i ? "n" : "" }, trh, c));
+    const tb = h("tbody", {}, table);
+    rows.forEach((r) => { const tr = h("tr", {}, tb); r.forEach((c, i) => h("td", { class: i ? "n" : "" }, tr, c)); });
+    btn.addEventListener("click", () => { const on = tw.hidden; tw.hidden = !on; btn.setAttribute("aria-pressed", String(on)); btn.textContent = on ? "Hide table" : "Table"; });
+    if (caption) h("figcaption", {}, fig, caption);
+    const tip = h("div", { class: "tip" }, plot);
+    tip.hidden = true;
+    return { plot, tip };
+  }
+  function tipRows(tip, title, rows, px, py, box) {
+    tip.replaceChildren();
+    h("div", { class: "t" }, tip, title);
+    for (const r of rows) {
+      const row = h("div", { class: "r" }, tip);
+      const k = h("i", {}, row); k.style.borderTopColor = css(COL[r.key] || r.key);
+      if (r.dash) k.style.borderTopStyle = dashOf(r.dash).split(" ")[0] > 3 ? "dashed" : "dotted";
+      h("b", {}, row, r.value); h("span", {}, row, r.label);
+    }
+    tip.hidden = false;
+    const w = tip.offsetWidth, hgt = tip.offsetHeight;
+    let left = px + 14, top = py - hgt / 2;
+    if (left + w > box.width) left = px - w - 14;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = Math.max(0, Math.min(top, box.height - hgt)) + "px";
+  }
+
+  // ------------------------------------------------------------ generic line chart with a crosshair
+  function lineChart(fig, o) {
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table, o.legend);
+    const W = Math.max(300, Math.round(plot.clientWidth)), H = o.height || 300, m = { l: 66, r: o.mr || 96, t: 16, b: 44 };
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria, tabindex: "0" }, plot);
+    const x = lin(o.x.domain[0], o.x.domain[1], m.l, W - m.r);
+    const y = o.y.invert ? lin(o.y.domain[0], o.y.domain[1], m.t, H - m.b) : lin(o.y.domain[0], o.y.domain[1], H - m.b, m.t);
+    const grid = css("--grid"), rule = css("--rule");
+    for (const v of o.y.ticks || niceTicks(o.y.domain[0], o.y.domain[1], 5)) {
+      el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: grid, "stroke-width": 1 }, svg);
+      el("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, svg, o.y.fmt(v));
+    }
+    for (const v of o.x.ticks || niceTicks(o.x.domain[0], o.x.domain[1], 6)) {
+      el("line", { x1: x(v), x2: x(v), y1: H - m.b, y2: H - m.b + 4, stroke: rule }, svg);
+      el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg, o.x.fmt(v));
+    }
+    el("line", { x1: m.l, x2: W - m.r, y1: o.y.invert ? y(o.y.base ?? 0) : H - m.b, y2: o.y.invert ? y(o.y.base ?? 0) : H - m.b, stroke: rule }, svg);
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 6, "text-anchor": "middle" }, svg, o.x.label);
+    el("text", { x: 12, y: (m.t + H - m.b) / 2, "text-anchor": "middle", transform: `rotate(-90 12 ${(m.t + H - m.b) / 2})` }, svg, o.y.label);
+    for (const g of o.guides || []) {
+      el("line", { x1: x(g.x), x2: x(g.x), y1: m.t, y2: H - m.b, stroke: rule, "stroke-width": 1 }, svg);
+      el("text", { x: x(g.x) + 4, y: m.t + 11, class: "lab" }, svg, g.label);
+    }
+    for (const s of o.series) {
+      const d = s.points.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+      el("path", { d, fill: "none", stroke: css(COL[s.key]), "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round",
+                   "stroke-dasharray": dashOf(s.dash) }, svg);
+      if (s.dots) for (const p of s.points) el("circle", { cx: x(p[0]), cy: y(p[1]), r: 4, fill: css(COL[s.key]), stroke: css("--panel"), "stroke-width": 2 }, svg);
+    }
+    for (const mk of o.markers || []) {
+      el("circle", { cx: x(mk.x), cy: y(mk.y), r: 4.5, fill: css(COL[mk.key]), stroke: css("--panel"), "stroke-width": 2 }, svg);
+      if (mk.label) el("text", { x: x(mk.x) + (mk.dx ?? 8), y: y(mk.y) + (mk.dy ?? -8), class: mk.strong ? "lab-strong" : "lab", "text-anchor": mk.anchor || "start" }, svg, mk.label);
+    }
+    for (const dt of o.dots || []) {
+      const g = el("g", { tabindex: "0", "aria-label": dt.aria || dt.label }, svg);
+      const col = css(COL[dt.key] || dt.key), cx = x(dt.x), cy = y(dt.y);
+      if (dt.ey) el("line", { x1: cx, x2: cx, y1: y(dt.y - dt.ey), y2: y(dt.y + dt.ey), stroke: col, "stroke-width": 1.5 }, g);
+      if (dt.ex) el("line", { x1: x(dt.x - dt.ex), x2: x(dt.x + dt.ex), y1: cy, y2: cy, stroke: col, "stroke-width": 1.5 }, g);
+      el("rect", { x: cx - 5, y: cy - 5, width: 10, height: 10, fill: dt.hollow ? css("--panel") : col, stroke: col, "stroke-width": 2, rx: 1.5,
+                   transform: `rotate(45 ${cx} ${cy})` }, g);
+      dt._g = g; dt._cx = cx; dt._cy = cy;
+    }
+    for (const lb of o.endLabels || []) {
+      const g = el("g", {}, svg);
+      el("line", { x1: W - m.r + 8, x2: W - m.r + 20, y1: y(lb.y), y2: y(lb.y), stroke: css(COL[lb.key]), "stroke-width": 2 }, g);
+      el("text", { x: W - m.r + 24, y: y(lb.y) + 4, class: "lab" }, g, lb.label);
+    }
+    // crosshair
+    const cross = el("line", { y1: m.t, y2: H - m.b, stroke: css("--muted"), "stroke-width": 1, visibility: "hidden" }, svg);
+    const dots = o.series.filter((s) => !s.noTip).map((s) => el("circle", { r: 4, fill: css(COL[s.key]), stroke: css("--panel"), "stroke-width": 2, visibility: "hidden" }, svg));
+    const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }, svg);
+    const xs = o.xs;
+    let idx = Math.floor(xs.length / 2);
+    function show(i) {
+      idx = Math.max(0, Math.min(xs.length - 1, i));
+      const xv = xs[idx], px = x(xv);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+      const rows = [];
+      o.series.filter((s) => !s.noTip).forEach((s, k) => {
+        const yv = interp(s.points, xv);
+        const inside = xv >= s.points[0][0] - 1e-9 && xv <= s.points[s.points.length - 1][0] + 1e-9;
+        dots[k].setAttribute("cx", px); dots[k].setAttribute("cy", y(yv)); dots[k].setAttribute("visibility", inside ? "visible" : "hidden");
+        if (inside) rows.push({ key: s.key, dash: s.dash, value: o.y.tipFmt(yv), label: s.label });
+      });
+      const r = svg.getBoundingClientRect(), sx = r.width / W;
+      tipRows(tip, o.x.tipFmt(xv), rows, px * sx, (m.t + 40) * sx, { width: r.width, height: r.height });
+    }
+    function hide() { cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); tip.hidden = true; }
+    hit.addEventListener("pointermove", (e) => {
+      const r = svg.getBoundingClientRect(), xv0 = (e.clientX - r.left) / r.width * W;
+      let best = 0, bd = Infinity;
+      xs.forEach((v, i) => { const dd = Math.abs(x(v) - xv0); if (dd < bd) { bd = dd; best = i; } });
+      show(best);
+    });
+    hit.addEventListener("pointerleave", hide);
+    for (const dt of o.dots || []) {
+      svg.appendChild(dt._g);                                   // above the hit area
+      const on = () => { hide(); const r = svg.getBoundingClientRect(), sc = r.width / W; tipRows(tip, dt.title, dt.rows, dt._cx * sc, dt._cy * sc, { width: r.width, height: r.height }); };
+      dt._g.addEventListener("pointerenter", on); dt._g.addEventListener("focus", on);
+      dt._g.addEventListener("pointerleave", () => { tip.hidden = true; }); dt._g.addEventListener("blur", () => { tip.hidden = true; });
+    }
+    svg.addEventListener("focus", () => show(idx));
+    svg.addEventListener("blur", hide);
+    svg.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") { show(idx + 1); e.preventDefault(); }
+      if (e.key === "ArrowLeft") { show(idx - 1); e.preventDefault(); }
+    });
+    return { svg, x, y, W, H, m };
+  }
+
+  // ------------------------------------------------------------ dumbbell: before -> after per row
+  function dumbbell(fig, o) {
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table, o.legend);
+    const W = Math.max(300, Math.round(plot.clientWidth));
+    const rowH = 32, m = { l: Math.min(o.ml || 200, W * 0.42), r: o.mr || 96, t: 10, b: 40 };
+    const H = m.t + m.b + rowH * o.rows.length;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria }, plot);
+    const x = lin(o.domain[0], o.domain[1], m.l, W - m.r);
+    const grid = css("--grid"), rule = css("--rule");
+    for (const v of niceTicks(o.domain[0], o.domain[1], 5)) {
+      el("line", { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, stroke: grid }, svg);
+      el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg, o.fmt(v));
+    }
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 6, "text-anchor": "middle" }, svg, o.label);
+    o.rows.forEach((r, i) => {
+      const cy = m.t + rowH * i + rowH / 2;
+      const g = el("g", { tabindex: "0", role: "listitem", "aria-label": `${r.label}: ${o.tipFmt(r.a)} to ${o.tipFmt(r.b)}` }, svg);
+      el("rect", { x: 0, y: cy - rowH / 2, width: W, height: rowH, fill: "transparent" }, g);
+      el("text", { x: m.l - 12, y: cy + 4, "text-anchor": "end", class: "lab" }, g, r.label);
+      el("line", { x1: x(r.a), x2: x(r.b), y1: cy, y2: cy, stroke: rule, "stroke-width": 2 }, g);
+      el("circle", { cx: x(r.a), cy, r: 5, fill: css(COL.baseline), stroke: css("--panel"), "stroke-width": 2 }, g);
+      el("circle", { cx: x(r.b), cy, r: 5, fill: css(COL[o.after]), stroke: css("--panel"), "stroke-width": 2 }, g);
+      const ch = r.a ? (r.b - r.a) / r.a * 100 : 0;
+      if (r.sep && i) el("line", { x1: 0, x2: W, y1: cy - rowH / 2, y2: cy - rowH / 2, stroke: rule }, g);
+      const vf = o.valFmt || o.fmt;
+      el("text", { x: W - m.r + 12, y: cy + 4, class: Math.abs(ch) >= 0.5 ? "lab-strong" : "lab" }, g,
+         Math.abs(ch) >= 0.5 ? `${vf(r.b)}  ${ch > 0 ? "+" : "−"}${Math.abs(ch).toFixed(0)} %` : `${vf(r.b)}  same`);
+      const on = () => {
+        const b = svg.getBoundingClientRect(), s = b.width / W;
+        tipRows(tip, r.label, [{ key: "baseline", value: o.tipFmt(r.a), label: o.names[0] },
+                               { key: o.after, value: o.tipFmt(r.b), label: o.names[1] }], x(Math.max(r.a, r.b)) * s, cy * s, b);
+      };
+      g.addEventListener("pointerenter", on); g.addEventListener("focus", on);
+      g.addEventListener("pointerleave", () => { tip.hidden = true; }); g.addEventListener("blur", () => { tip.hidden = true; });
+    });
+  }
+
+  // ------------------------------------------------------------ diverging bars: signed changes per row
+  function divergingBars(fig, o) {
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table, o.legend);
+    const W = Math.max(300, Math.round(plot.clientWidth));
+    const rowH = 34, m = { l: Math.min(o.ml || 230, W * 0.44), r: 70, t: 8, b: 36 };
+    const rows = o.rows, H = m.t + m.b + rowH * rows.length;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria }, plot);
+    const x = lin(o.domain[0], o.domain[1], m.l, W - m.r), grid = css("--grid"), rule = css("--rule");
+    for (const v of niceTicks(o.domain[0], o.domain[1], 6)) {
+      el("line", { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, stroke: v === 0 ? rule : grid }, svg);
+      el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg, o.fmt(v));
+    }
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }, svg, o.label);
+    rows.forEach((r, i) => {
+      const cy = m.t + rowH * i + rowH / 2, g = el("g", { tabindex: "0", "aria-label": `${r.label}: ${o.valFmt(r.value)}` }, svg);
+      el("rect", { x: 0, y: cy - rowH / 2, width: W, height: rowH, fill: "transparent" }, g);
+      if (r.total) el("line", { x1: 0, x2: W, y1: cy - rowH / 2, y2: cy - rowH / 2, stroke: rule }, g);
+      el("text", { x: m.l - 12, y: cy + 4, "text-anchor": "end", class: r.total ? "lab-strong" : "lab" }, g, r.label);
+      const x0 = x(0), x1 = x(r.value), bw = Math.max(1.5, Math.abs(x1 - x0));
+      el("rect", { x: Math.min(x0, x1), y: cy - 8, width: bw, height: 16, rx: 2,
+                   fill: css(r.total ? "--ink-2" : COL[o.key]) }, g);
+      const right = r.value >= 0;
+      el("text", { x: right ? x1 + 7 : x1 - 7, y: cy + 4, "text-anchor": right ? "start" : "end", class: r.total ? "lab-strong" : "lab" }, g, o.valFmt(r.value));
+      const on = () => { const b = svg.getBoundingClientRect(), s = b.width / W;
+        tipRows(tip, r.label, [{ key: r.total ? "--ink-2" : COL[o.key], value: o.valFmt(r.value), label: r.note || "" }], Math.max(x0, x1) * s, cy * s, b); };
+      g.addEventListener("pointerenter", on); g.addEventListener("focus", on);
+      g.addEventListener("pointerleave", () => { tip.hidden = true; }); g.addEventListener("blur", () => { tip.hidden = true; });
+    });
+  }
+
+  // ------------------------------------------------------------ as built -> same weight -> optimized, in per cent
+  function stepChart(fig, o) {
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table, o.legend);
+    const W = Math.max(300, Math.round(plot.clientWidth));
+    const rowH = 36, m = { l: Math.min(o.ml || 220, W * 0.4), r: Math.min(190, W * 0.3), t: 8, b: 36 };
+    const H = m.t + m.b + rowH * o.rows.length;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria }, plot);
+    const x = lin(o.domain[0], o.domain[1], m.l, W - m.r), grid = css("--grid"), rule = css("--rule");
+    for (const v of niceTicks(o.domain[0], o.domain[1], 6)) {
+      el("line", { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, stroke: v === 0 ? rule : grid }, svg);
+      el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg, `${v > 0 ? "+" : ""}${v} %`);
+    }
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }, svg, "change from the as-built plane");
+    const base = css(COL.baseline), opt = css(COL.optimized), panel = css("--panel");
+    o.rows.forEach((r, i) => {
+      const cy = m.t + rowH * i + rowH / 2, g = el("g", { tabindex: "0", "aria-label": `${r.label}: ${r.cText}` }, svg);
+      el("rect", { x: 0, y: cy - rowH / 2, width: W, height: rowH, fill: "transparent" }, g);
+      el("text", { x: m.l - 12, y: cy + 4, "text-anchor": "end", class: "lab" }, g, r.label);
+      el("line", { x1: x(0), x2: x(r.b), y1: cy, y2: cy, stroke: rule, "stroke-width": 2 }, g);
+      el("line", { x1: x(r.b), x2: x(r.c), y1: cy, y2: cy, stroke: opt, "stroke-width": 3 }, g);
+      el("circle", { cx: x(0), cy, r: 5, fill: base, stroke: panel, "stroke-width": 2 }, g);
+      el("circle", { cx: x(r.b), cy, r: 5, fill: panel, stroke: opt, "stroke-width": 2 }, g);
+      el("circle", { cx: x(r.c), cy, r: 5, fill: opt, stroke: panel, "stroke-width": 2 }, g);
+      el("text", { x: W - m.r + 12, y: cy + 1, class: "lab-strong" }, g, `${r.c > 0 ? "+" : "−"}${Math.abs(r.c).toFixed(1)} %`);
+      el("text", { x: W - m.r + 12, y: cy + 14, class: "lab" }, g, `weight ${r.w >= 0 ? "+" : "−"}${Math.abs(r.w).toFixed(1)} pts`);
+      const on = () => { const b = svg.getBoundingClientRect(), s = b.width / W;
+        tipRows(tip, r.label, [{ key: COL.baseline, value: r.aText, label: "as built" },
+                               { key: COL.optimized, value: r.bText, label: "optimized aero, as-built weight", dash: true },
+                               { key: COL.optimized, value: r.cText, label: "optimized" }], x(Math.max(0, r.b, r.c)) * s, cy * s, b); };
+      g.addEventListener("pointerenter", on); g.addEventListener("focus", on);
+      g.addEventListener("pointerleave", () => { tip.hidden = true; }); g.addEventListener("blur", () => { tip.hidden = true; });
+    });
+  }
+
+  // ------------------------------------------------------------ balance: where the wing, CG and heavy parts sit
+  function balanceChart(fig, o) {
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table, o.legend);
+    const W = Math.max(300, Math.round(plot.clientWidth)), m = { l: 90, r: 18, t: 18, b: 40 }, rowH = 80;
+    const H = m.t + m.b + rowH * o.rows.length;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria }, plot);
+    const x = lin(o.domain[0], o.domain[1], m.l, W - m.r), grid = css("--grid"), rule = css("--rule"), ink2 = css("--ink-2");
+    for (const v of niceTicks(o.domain[0], o.domain[1], 6)) {
+      el("line", { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, stroke: grid }, svg);
+      el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg, `${v}`);
+    }
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }, svg, "from the nose, mm");
+    o.rows.forEach((r, i) => {
+      const cy = m.t + rowH * i + rowH / 2, col = css(COL[r.key]);
+      el("text", { x: m.l - 12, y: cy + 4, "text-anchor": "end", class: "lab-strong" }, svg, r.label);
+      el("rect", { x: x(r.le), y: cy - 9, width: x(r.te) - x(r.le), height: 18, rx: 2, fill: col, opacity: 0.28 }, svg);
+      const labs = [{ x0: x(r.le) + 4, x1: x(r.le) + 4 + 30, text: "wing", anchor: "start", at: x(r.le) + 4 }];
+      for (const p of r.points) if (p.show && !p.cg) { const w = p.label.length * 7; labs.push({ x0: x(p.x) - w / 2, x1: x(p.x) + w / 2, text: p.label, anchor: "middle", at: x(p.x) }); }
+      labs.sort((a, b) => a.x0 - b.x0);
+      const ends = [];                                  // right end of the last label on each line
+      for (const l of labs) {
+        let line = ends.findIndex((e) => l.x0 > e + 6);
+        if (line < 0) line = ends.length;
+        ends[line] = l.x1;
+        el("text", { x: l.at, y: cy - 13 - 14 * line, "text-anchor": l.anchor, class: "lab" }, svg, l.text);
+      }
+      for (const p of r.points) {
+        const g = el("g", { tabindex: "0", "aria-label": `${r.label}, ${p.label}: ${p.x.toFixed(0)} mm` }, svg);
+        if (p.cg) {
+          el("path", { d: `M${x(p.x)},${cy - 2}l-6,12h12z`, fill: css("--ink"), stroke: css("--panel"), "stroke-width": 1.5 }, g);
+          el("text", { x: x(p.x), y: cy + 24, "text-anchor": "middle", class: "lab-strong" }, g, `CG ${p.x.toFixed(0)}`);
+        } else {
+          el("circle", { cx: x(p.x), cy, r: Math.max(3, Math.sqrt(p.g) * 1.3), fill: col, stroke: css("--panel"), "stroke-width": 1.5 }, g);
+        }
+        const on = () => { const b = svg.getBoundingClientRect(), s = b.width / W;
+          tipRows(tip, `${r.label}: ${p.label}`, [{ key: COL[r.key], value: `${p.x.toFixed(1)} mm`, label: p.g ? `${p.g.toFixed(1)} g` : "" }], x(p.x) * s, cy * s, b); };
+        g.addEventListener("pointerenter", on); g.addEventListener("focus", on);
+        g.addEventListener("pointerleave", () => { tip.hidden = true; }); g.addEventListener("blur", () => { tip.hidden = true; });
+      }
+    });
+    el("line", { x1: 0, x2: 0, y1: 0, y2: 0, stroke: ink2 }, svg);
+  }
+
+  const GROUPS = [
+    { key: "fairings", label: "Servo fairings (4)", test: (n) => n.startsWith("fairing") },
+    { key: "sleeves", label: "Joiner sleeves (2)", test: (n) => n.startsWith("sleeve") },
+    { key: "wing", label: "Wing (thinner section)", test: (n) => /^(wing_|aileron_)/.test(n) },
+    { key: "pod", label: "Pod (hood, tapered tail)", test: (n) => n.startsWith("pod_") },
+    { key: "lid", label: "Lid (starts behind the hood)", test: (n) => n === "lid" },
+  ];
+
+  function tile(parent, label, value, unit, was, delta, good) {
+    const t = h("div", { class: "tile" }, parent);
+    h("div", { class: "k" }, t, label);
+    const v = h("div", { class: "v" }, t, value);
+    if (unit) h("small", {}, v, unit);
+    const row = h("div", { class: "was" }, t);
+    const d = h("span", { class: "d" }, row, delta);
+    d.style.color = good ? css("--good") : css("--ink-2");
+    row.appendChild(document.createTextNode(`  as built ${was}`));
+  }
+
+  function render(D) {
+    const A = D.cases.A, B = D.cases.B, C = D.cases.C, va = D.variants.baseline, vc = D.variants.optimized;
+    const dm = vc.auw - va.auw, pc = (a, c) => (c - a) / a * 100;
+    const sgn = (v, f = 1) => `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toFixed(f)}`;
+    for (const id of ["summary", "weight", "flight", "method"]) $(id).hidden = false;
+    $("status").hidden = true;
+
+    // ---------------- summary
+    $("summary-intro").textContent = `The optimized plane is ${dm.toFixed(1)} g heavier (${sgn(pc(va.auw, vc.auw))} %). The weight takes back a sliver of what the aerodynamics give: at the ${D.cruise_v} m/s cruise it needs ${Math.abs(pc(A.power_cruise, C.power_cruise)).toFixed(1)} % less power, and would need ${Math.abs(pc(A.power_cruise, B.power_cruise)).toFixed(1)} % less at the old weight.`;
+    const tiles = $("tiles"); tiles.replaceChildren();
+    tile(tiles, "Weight (CAD)", vc.auw.toFixed(1), "g", `${va.auw.toFixed(1)} g`, `${sgn(dm)} g`, false);
+    tile(tiles, "Stall speed", C.stall.toFixed(2), "m/s", `${A.stall.toFixed(2)} m/s`, `${sgn(C.stall - A.stall, 2)} m/s`, C.stall <= A.stall);
+    tile(tiles, `Power at ${D.cruise_v} m/s`, C.power_cruise.toFixed(1), "W", `${A.power_cruise.toFixed(1)} W`, `${sgn(pc(A.power_cruise, C.power_cruise), 0)} %`, true);
+    tile(tiles, `Flight time at ${D.cruise_v} m/s`, C.endurance_cruise.toFixed(1), "min", `${A.endurance_cruise.toFixed(1)} min`, `${sgn(C.endurance_cruise - A.endurance_cruise)} min`, true);
+    tile(tiles, "Best glide ratio", C.ld_max.toFixed(1), "", A.ld_max.toFixed(1), `${sgn(pc(A.ld_max, C.ld_max), 0)} %`, true);
+    tile(tiles, "Best climb", C.climb_max.toFixed(2), "m/s", `${A.climb_max.toFixed(2)} m/s`, `${sgn(C.climb_max - A.climb_max, 2)} m/s`, C.climb_max >= A.climb_max);
+
+    // ---------------- weight
+    const rows = GROUPS.map((g) => {
+      const parts = D.mass.filter((m) => g.test(m.name));
+      const v = parts.reduce((s, m) => s + m.optimized - m.baseline, 0);
+      return { label: g.label, value: v, note: parts.map((m) => `${m.name} ${m.baseline.toFixed(1)} → ${m.optimized.toFixed(1)} g`).join(", ") };
+    }).filter((r) => Math.abs(r.value) >= 0.05);
+    rows.push({ label: "Net", value: dm, total: true, note: `${va.auw.toFixed(1)} → ${vc.auw.toFixed(1)} g` });
+    const mx = Math.ceil(Math.max(...rows.map((r) => Math.abs(r.value))) + 0.5);
+    $("weight-title").textContent = `Where the ${dm.toFixed(1)} g went`;
+    $("weight-intro").textContent = `The fairings and sleeves add weight; the thinner airfoil and the tapered pod take some back. Everything bought (servos, motor, battery, electronics) is the same in both. The rounding in the CAD masses is 0.1 g per part.`;
+    divergingBars($("f-mass"), {
+      title: "Weight change by part", sub: "Grams, optimized minus as built, from the CAD volumes", key: "optimized",
+      aria: "Weight change of each group of parts from the as-built to the optimized plane", rows, domain: [-mx, mx],
+      fmt: (v) => `${v > 0 ? "+" : ""}${v}`, valFmt: (v) => `${v > 0 ? "+" : "−"}${Math.abs(v).toFixed(1)} g`, label: "grams", ml: 210,
+      table: [["part", "as built, g", "optimized, g", "change"], ...D.mass.filter((m) => Math.abs(m.optimized - m.baseline) >= 0.05)
+        .map((m) => [m.name, m.baseline.toFixed(1), m.optimized.toFixed(1), `${m.optimized - m.baseline > 0 ? "+" : "−"}${Math.abs(m.optimized - m.baseline).toFixed(1)}`])],
+      caption: "Printed in lightweight PLA with one wall, the six fairings weigh about as much as a servo horn each. The joiner sleeves are solid PLA.",
+    });
+    const bal = (key, v, label) => {
+      const mass = Object.fromEntries(D.mass.map((m) => [m.name, { g: m[key], x: m[key === "baseline" ? "x_baseline" : "x_optimized"] }]));
+      const pts = [["battery", "battery", true], ["esc", "ESC", true], ["motor", "motor", false], ["fairing_ail_R", "fairings", true],
+                   ["servo_elev", "servos", false], ["camera", "camera", false]]
+        .filter(([n]) => mass[n] && mass[n].g > 0).map(([n, lab, show]) => ({ x: mass[n].x, g: n.startsWith("fairing") ? 3.7 : mass[n].g, label: lab, show }));
+      pts.push({ x: v.cg_x, cg: true, label: "centre of gravity" });
+      return { key, label, le: v.x_le, te: v.x_le + 97, points: pts };
+    };
+    balanceChart($("f-cg"), {
+      title: "Balance", sub: "The build moves the wing until the battery balances the plane at 28 % chord",
+      aria: "Wing position, centre of gravity and heavy parts along the fuselage for both planes",
+      rows: [bal("baseline", va, "As built"), bal("optimized", vc, "Optimized")], domain: [0, 320],
+      table: [["", "as built", "optimized"], ["wing leading edge, mm", va.x_le.toFixed(1), vc.x_le.toFixed(1)], ["centre of gravity, mm", va.cg_x.toFixed(1), vc.cg_x.toFixed(1)],
+              ["battery centre, mm", va.battery_x.toFixed(1), vc.battery_x.toFixed(1)], ["pod length, mm", va.pod_len.toFixed(1), vc.pod_len.toFixed(1)]],
+      caption: `The ESC moves ${(D.mass.find((m) => m.name === "esc").x_baseline - D.mass.find((m) => m.name === "esc").x_optimized).toFixed(0)} mm forward, out of the tapered tail, and the fairings sit a little behind the centre of gravity, so the wing moves ${(vc.x_le - va.x_le).toFixed(1)} mm aft to keep the balance. The battery stays where it was and the static margin is the same.`,
+    });
+
+    // ---------------- flight
+    $("flight-intro").textContent = `Each plane flies at its own weight with its own aerodynamics, on the same motor and prop. The middle case, the optimized aerodynamics at the as-built weight, splits every change into what the aerodynamics give and what the ${dm.toFixed(1)} g take back.`;
+    const MET = [
+      ["Power at 13 m/s", "power_cruise", (v) => `${v.toFixed(2)} W`, -1],
+      ["Flight time at 13 m/s", "endurance_cruise", (v) => `${v.toFixed(1)} min`, 1],
+      ["Longest flight", "endurance_max", (v) => `${v.toFixed(1)} min`, 1],
+      ["Furthest flight", "range_max", (v) => `${v.toFixed(1)} km`, 1],
+      ["Best glide ratio", "ld_max", (v) => v.toFixed(2), 1],
+      ["Least sink, motor off", "sink_min", (v) => `${v.toFixed(3)} m/s`, -1],
+      ["Best climb", "climb_max", (v) => `${v.toFixed(2)} m/s`, 1],
+      ["Stall speed", "stall", (v) => `${v.toFixed(2)} m/s`, -1],
+      ["Tightest turn at 13 m/s", "turn_radius_stall", (v) => `${v.toFixed(2)} m radius`, -1],
+    ];
+    const srows = MET.map(([label, k, f]) => ({ label, b: pc(A[k], B[k]), c: pc(A[k], C[k]), w: pc(A[k], C[k]) - pc(A[k], B[k]),
+      aText: f(A[k]), bText: f(B[k]), cText: f(C[k]) }));
+    const lo = Math.floor(Math.min(0, ...srows.map((r) => Math.min(r.b, r.c))) / 5) * 5, hi = Math.ceil(Math.max(0, ...srows.map((r) => Math.max(r.b, r.c))) / 5) * 5;
+    stepChart($("f-split"), {
+      title: "What the aerodynamics give and what the weight takes back", sub: "Per cent change from the as-built plane; the orange stretch is the weight's share",
+      aria: "For each flight measure, the change from the as-built plane with the optimized aerodynamics at the as-built weight, and at the optimized weight",
+      legend: [{ key: "baseline", mark: "dot", label: "as built" }, { key: "optimized", mark: "ring", label: "optimized aerodynamics, as-built weight" }, { key: "optimized", mark: "dot", label: "optimized (its own weight)" }],
+      rows: srows, domain: [lo, hi], ml: 190,
+      table: [["", "as built", "optimized aero, as-built weight", "optimized", "change", "of which weight"],
+        ...srows.map((r) => [r.label, r.aText, r.bText, r.cText, `${sgn(r.c)} %`, `${sgn(r.w)} pts`])],
+      caption: "Lower is better for power, sink, stall and turn radius. The weight's share is small everywhere, and for the stall the new airfoil's higher maximum lift more than pays for it.",
+    });
+
+    const series = (c) => c.curves.v.map((v, i) => [v, c.curves.power[i]]);
+    const vGrid = C.curves.v.filter((v) => v <= 22);
+    const top = Math.ceil(Math.max(...A.curves.power.filter((_, i) => A.curves.v[i] <= 22)) / 5) * 5;
+    lineChart($("f-power"), {
+      title: "Power needed to fly level", sub: "Electrical power against airspeed; the curves start at each plane's stall",
+      aria: "Power against airspeed for the as-built plane, the optimized aerodynamics at the as-built weight, and the optimized plane", height: 320,
+      legend: [{ key: "baseline", label: `as built, ${va.auw.toFixed(1)} g` }, { key: "optimized", dash: "3 3", label: `optimized aerodynamics at ${va.auw.toFixed(1)} g` }, { key: "optimized", label: `optimized, ${vc.auw.toFixed(1)} g` }],
+      x: { domain: [8, 22], label: "airspeed, m/s", fmt: (v) => `${v}`, tipFmt: (v) => `${v.toFixed(2)} m/s (${(v * 3.6).toFixed(0)} km/h)`, ticks: [8, 10, 12, 14, 16, 18, 20, 22] },
+      y: { domain: [0, top], label: "power, W", fmt: (v) => `${v}`, tipFmt: (v) => `${v.toFixed(2)} W`, ticks: niceTicks(0, top, 5) },
+      series: [{ key: "baseline", label: "as built", points: series(A).filter((p) => p[0] <= 22) },
+               { key: "optimized", label: "optimized aero, as-built weight", points: series(B).filter((p) => p[0] <= 22), dash: "3 3" },
+               { key: "optimized", label: "optimized", points: series(C).filter((p) => p[0] <= 22) }],
+      guides: [{ x: D.cruise_v, label: `cruise ${D.cruise_v} m/s` }], xs: vGrid, mr: 24,
+      table: [["airspeed", "as built", "optimized aero, as-built weight", "optimized"], ...vGrid.filter((v) => v % 1 === 0).map((v) =>
+        [`${v} m/s`, ...[A, B, C].map((c) => `${interp(series(c), v).toFixed(2)} W`)])],
+      caption: `The dashed line is hard to tell from the solid one: ${dm.toFixed(1)} g raise the power at ${D.cruise_v} m/s by ${(C.power_cruise - B.power_cruise).toFixed(2)} W, against the ${(A.power_cruise - B.power_cruise).toFixed(2)} W the aerodynamics save. Heavier planes need more lift, so more induced drag, and it shows most at low speed.`,
+    });
+
+    const SW = D.sweep, masses = SW.baseline.map((r) => r.mass);
+    const sweepChart = (id, key, title, sub, yl, fmt, tipFmt, extra = {}) => {
+      const pts = (k) => SW[k].map((r) => [r.mass, r[key]]).filter((p) => p[1] != null);
+      const ys = [...pts("baseline"), ...pts("optimized")].map((p) => p[1]).concat(extra.hlines ? extra.hlines.map((g) => g.y) : []);
+      const y0 = extra.y0 ?? Math.floor(Math.min(...ys) * 0.95), y1 = Math.ceil(Math.max(...ys) * 1.03 * 10) / 10;
+      lineChart($(id), {
+        title, sub, aria: `${title} against the plane's weight for both designs`, height: 250,
+        legend: [{ key: "baseline", label: "as built" }, { key: "optimized", label: "optimized" }],
+        x: { domain: [masses[0], masses[masses.length - 1]], label: "weight, g", fmt: (v) => `${v}`, tipFmt: (v) => `${v} g`, ticks: niceTicks(masses[0], masses[masses.length - 1], 5) },
+        y: { domain: [y0, y1], label: yl, fmt, tipFmt, ticks: niceTicks(y0, y1, 4) },
+        series: [{ key: "baseline", label: "as built", points: pts("baseline") }, { key: "optimized", label: "optimized", points: pts("optimized") }],
+        markers: [{ key: "baseline", x: va.auw, y: interp(pts("baseline"), va.auw) }, { key: "optimized", x: vc.auw, y: interp(pts("optimized"), vc.auw) }],
+        guides: extra.guides || [], hlines: extra.hlines || [], xs: masses, mr: 16,
+        table: [["weight", "as built", "optimized"], ...masses.map((mm, i) => [`${mm} g`, tipFmt(SW.baseline[i][key]), tipFmt(SW.optimized[i][key])])],
+        caption: extra.caption,
+      });
+    };
+    const p10 = D.per10g;
+    sweepChart("f-sw-time", "endurance_cruise", `Flight time at ${D.cruise_v} m/s`, "Against the plane's weight; dots at the two CAD weights", "minutes",
+      (v) => v.toFixed(0), (v) => `${v.toFixed(1)} min`,
+      { caption: `Every 10 g costs ${Math.abs(p10.optimized.endurance_cruise).toFixed(2)} min on the optimized plane (${Math.abs(p10.baseline.endurance_cruise).toFixed(2)} min as built). Its drag saving is worth ${(D.break_even_mass - vc.auw).toFixed(0)} g: it could weigh ${D.break_even_mass.toFixed(0)} g before it needed as much power as the as-built plane.` });
+    sweepChart("f-sw-stall", "stall", "Stall speed", `The ${D.stall_limit} m/s limit sets the heaviest each can be`, "m/s",
+      (v) => v.toFixed(1), (v) => `${v.toFixed(2)} m/s`,
+      { hlines: [{ y: D.stall_limit, label: `${D.stall_limit} m/s limit` }],
+        caption: `Every 10 g adds ${p10.optimized.stall.toFixed(2)} m/s. The limit allows ${D.max_mass_for_stall.baseline.toFixed(0)} g as built and ${D.max_mass_for_stall.optimized.toFixed(0)} g optimized: the new airfoil's higher maximum lift buys ${(D.max_mass_for_stall.optimized - D.max_mass_for_stall.baseline).toFixed(0)} g of headroom.` });
+    sweepChart("f-sw-climb", "climb_max", "Best climb rate", "Full throttle, the same motor and prop", "m/s",
+      (v) => v.toFixed(1), (v) => `${v.toFixed(2)} m/s`,
+      { caption: `The climb falls ${Math.abs(p10.optimized.climb_max).toFixed(2)} m/s every 10 g: the thrust stays the same while the weight to lift grows.` });
+    sweepChart("f-sw-long", "endurance_max", "Longest flight", "At the speed for the least power", "minutes",
+      (v) => v.toFixed(0), (v) => `${v.toFixed(1)} min`,
+      { caption: `Slow flight suffers most from weight, because induced drag grows with its square: ${Math.abs(p10.optimized.endurance_max).toFixed(2)} min every 10 g on the optimized plane.` });
+
+    const tf = $("t-flight"); tf.replaceChildren();
+    const thr = h("tr", {}, h("thead", {}, tf));
+    ["", "as built", "optimized aero, as-built weight", "optimized", "change", "from the aerodynamics", "from the weight"].forEach((c, i) => h("th", { class: i ? "n" : "" }, thr, c));
+    const tb = h("tbody", {}, tf);
+    const ROWS = [["Weight", "mass", (v) => `${v.toFixed(1)} g`], ["Wing loading", "loading", (v) => `${v.toFixed(1)} g/dm²`],
+      ["Maximum lift (3D)", "clmax", (v) => v.toFixed(3)], ...MET, ["Top speed", "top", (v) => `${v.toFixed(1)} m/s`],
+      ["Speed for the best glide", "v_ld_max", (v) => `${v.toFixed(1)} m/s`], ["Speed for the longest flight", "v_power_min", (v) => `${v.toFixed(1)} m/s`]];
+    for (const [label, k, f] of ROWS) {
+      if (A[k] == null || C[k] == null) continue;
+      const tr = h("tr", {}, tb); h("td", {}, tr, label);
+      [A[k], B[k], C[k]].forEach((v) => h("td", { class: "n" }, tr, f(v)));
+      const d = (a, b) => { const x = b - a; return Math.abs(x) < 1e-9 ? "–" : `${x > 0 ? "+" : "−"}${Math.abs(x) >= 1 ? Math.abs(x).toFixed(2) : Math.abs(x).toPrecision(2)}`; };
+      h("td", { class: "n" }, tr, d(A[k], C[k])); h("td", { class: "n" }, tr, d(A[k], B[k])); h("td", { class: "n" }, tr, d(B[k], C[k]));
+    }
+    $("method-caveat").textContent = `The aerodynamics carry the efficiency study's uncertainties: NeuralFoil's section drag has been cross-checked against XFOIL and CFD, the rest of the drag build-up is good to about ±30 %, and the maximum lift follows the section's, not a 3D measurement. The weights are the CAD's, so glue, paint and wire lengths are left out on both planes alike. A top speed step of 0.25 m/s is the grid the model flies on.`;
+    $("foot").textContent = `Generated ${D.generated} by aero/variants.py from the two CAD builds (airframe/viewer/spec.json and airframe/variants/optimized/viewer/spec.json).`;
+  }
+
+  // lineChart with horizontal reference lines
+  const _line = lineChart;
+  lineChart = function (fig, o) {
+    const r = _line(fig, o);
+    for (const g of o.hlines || []) {
+      const yy = r.y(g.y);
+      el("line", { x1: r.m.l, x2: r.W - r.m.r, y1: yy, y2: yy, stroke: css("--ink-2"), "stroke-width": 1, "stroke-dasharray": "5 4" }, r.svg);
+      el("text", { x: r.W - r.m.r - 4, y: yy - 5, "text-anchor": "end", class: "lab" }, r.svg, g.label);
+    }
+    return r;
+  };
+
+  let data = null;
+  window.__compare = fetch("compare.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then((d) => { data = d; render(d); window.__chartsReady = true; return d; })
+    .catch((e) => { $("status").textContent = "The comparison data (compare.json) did not load. Run python3 aero/variants.py, then serve the airframe folder and open variants/index.html."; window.__chartsReady = true; throw e; });
+  let lastW = 0, timer = 0;
+  new ResizeObserver(([e]) => {
+    const w = Math.round(e.contentRect.width);
+    if (Math.abs(w - lastW) < 24) return;
+    lastW = w; clearTimeout(timer); timer = setTimeout(() => data && render(data), 150);
+  }).observe(document.querySelector(".wrap"));
+  const rerender = () => data && render(data);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rerender);
+  new MutationObserver(rerender).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SUFFIX = /_(horn|shaft|lens|chips|leads|wires|pcb|pads|base|coil|nut|metal|xt30|jst|conn)$/;
+const base = (n) => n.replace(/_\d+$/, "").replace(SUFFIX, "");
+
+// what changed, and where to look at it (directions in the model's frame: x aft, y up, z to the left wing)
+const CHANGES = [
+  { id: "airfoil", title: "Optimized airfoil", parts: ["wing_R", "wing_L", "wing_centre", "aileron_R", "aileron_L"],
+    what: "11.1 % thick instead of the NACA 4412's 12.2 %, its camber further back. Spars, servos and hinge still fit.",
+    view: { dir: [0.02, 0.05, -1], fit: ["wing_R", "aileron_R"], pad: 0.55, clip: 0.15 } },
+  { id: "hood", title: "Rounded nose top", parts: ["pod_front", "lid"],
+    what: "An 8 mm radius on the pod's top front edge: a short hood over the camera. The lid starts behind it.",
+    view: { dir: [-0.9, 0.45, 0.5], fit: ["camera", "vtx"], pad: 2.4 } },
+  { id: "boattail", title: "Tapered pod tail", parts: ["pod_rear", "esc"],
+    what: "The last 30 mm step in 12° at the sides and 9° under the belly, down to the motor mount. The ESC moves forward to clear it.",
+    view: { dir: [0.7, -0.55, 0.75], fit: ["motor", "esc"], pad: 1.9 } },
+  { id: "antenna", title: "Antenna laid back", parts: ["antenna"],
+    what: "The VTX whip bent back 60° where it leaves the lid, out of the flow over the nose.",
+    view: { dir: [-0.15, 0.25, 1], fit: ["antenna", "vtx"], pad: 2.2 } },
+  { id: "fairings", title: "Servo fairings", parts: ["fairing_ail_R", "fairing_ail_L", "fairing_elev", "fairing_rud",
+                                                     "servo_ail_R", "servo_ail_L", "servo_elev", "servo_rud"],
+    what: "Single-wall blisters over the four servo horns, cut short, and the two aileron servos' bumps.",
+    view: { dir: [-0.35, -0.85, -0.6], fit: ["servo_ail_R", "servo_elev", "horn_ail_R"], pad: 1.15 } },
+  { id: "sleeves", title: "Joiner sleeves", parts: ["sleeve_R", "sleeve_L", "joiner_R", "joiner_L"],
+    what: "Streamlined sleeves glued on the two rudder joiner wires under the tail. They slide with the wire.",
+    view: { dir: [0.5, -0.6, 0.65], fit: ["bellcrank", "joiner_R", "rudder_L"], pad: 1.1 } },
+];
+const CHANGED = new Set(CHANGES.flatMap((c) => c.parts));
+const VIEWS = {
+  quarter: { dir: [-0.95, 0.62, 0.9], pad: 0.74 }, side: { dir: [0, 0.02, 1] }, top: { dir: [0, 1, 0.02], pad: 1.1 }, under: { dir: [-0.55, -0.8, 0.7] },
+};
+
+const stage = $("stage");
+const canvas = document.createElement("canvas");
+stage.prepend(canvas);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.localClippingEnabled = true;
+const env = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(26, 1, 0.005, 20);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+let dirty = true;                                   // draw only when something changed
+const invalidate = () => { dirty = true; };
+controls.addEventListener("change", invalidate);
+const clip = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0.15);
+
+function makeScene() {
+  const s = new THREE.Scene();
+  s.environment = env;
+  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(-0.4, 1.0, 0.6);
+  s.add(sun);
+  return s;
+}
+const views = [{ key: "baseline", scene: makeScene(), meshes: new Map() }, { key: "optimized", scene: makeScene(), meshes: new Map() }];
+
+async function load(urls) {
+  const loader = new GLTFLoader();
+  for (const u of urls) {
+    try { return await loader.loadAsync(u); } catch { /* next */ }
+  }
+  throw new Error("model did not load");
+}
+
+let box = new THREE.Box3(), center = new THREE.Vector3(), tween = null, highlight = false, active = null, clipOn = false;
+const stamp = (v, gltf) => {
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const name = o.name.replace(/_\d+$/, "");
+    o.material = new THREE.MeshStandardMaterial({
+      color: o.material.color.clone(), roughness: /^(tube|spar)/.test(name) ? 0.35 : 0.62,
+      metalness: name === "motor" ? 0.6 : 0.0, side: THREE.DoubleSide,
+    });
+    o.userData.name = name;
+    o.userData.part = base(name);
+    o.userData.colour = o.material.color.clone();
+    v.meshes.set(name, o);
+  });
+  v.scene.add(gltf.scene);
+};
+
+try {
+  const [a, b] = await Promise.all([load(["baseline.glb", "../viewer/airframe.glb"]), load(["optimized.glb", "optimized/viewer/airframe.glb"])]);
+  stamp(views[0], a);
+  stamp(views[1], b);
+  box.setFromObject(b.scene).union(new THREE.Box3().setFromObject(a.scene));
+  box.getCenter(center);
+  $("models").hidden = false;
+} catch (e) {
+  $("models").hidden = false;
+  $("hint").textContent = "The 3D models did not load; the charts below are unaffected.";
+}
+
+function frame(names) {
+  if (!names) return box;
+  const b = new THREE.Box3();
+  for (const v of views) v.meshes.forEach((m) => { if (names.includes(m.userData.part) || names.includes(m.userData.name)) b.expandByObject(m); });
+  return b.isEmpty() ? box : b;
+}
+function aspect() {
+  const r = canvas.getBoundingClientRect();
+  return stacked() ? r.width / (r.height / 2) : (r.width / 2) / r.height;
+}
+const stacked = () => canvas.getBoundingClientRect().width < 720;
+function fitDistance(dir, b, c, pad) {
+  const fwd = dir.clone().negate(), right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
+  const up = new THREE.Vector3().crossVectors(right, fwd);
+  let hw = 0, hh = 0, depth = 0;
+  for (const cx of [b.min.x, b.max.x]) for (const cy of [b.min.y, b.max.y]) for (const cz of [b.min.z, b.max.z]) {
+    const d = new THREE.Vector3(cx, cy, cz).sub(c);
+    hw = Math.max(hw, Math.abs(d.dot(right))); hh = Math.max(hh, Math.abs(d.dot(up))); depth = Math.max(depth, Math.abs(d.dot(dir)));
+  }
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  return 0.35 * depth + Math.max(hh / t, hw / (t * aspect())) * 1.08 * (pad ?? 1);
+}
+function setView(v, instant) {
+  const dir = new THREE.Vector3(...v.dir).normalize();
+  const b = frame(v.fit), c = b.getCenter(new THREE.Vector3());
+  const to = c.clone().add(dir.clone().multiplyScalar(fitDistance(dir, b, c, v.pad)));
+  clipOn = !!v.clip;
+  clip.constant = v.clip || 0.15;
+  for (const vw of views) vw.meshes.forEach((m) => { m.material.clippingPlanes = clipOn ? [clip] : []; m.material.needsUpdate = true; });
+  invalidate();
+  if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(c); controls.update(); return; }
+  tween = { from: camera.position.clone(), to, fromT: controls.target.clone(), toT: c, t0: performance.now() };
+}
+function paint() {
+  const opt = new THREE.Color(css("--s-opt")), was = new THREE.Color(css("--s-base")), dim = new THREE.Color(css("--stage"));
+  views.forEach((v, i) => v.meshes.forEach((m) => {
+    const hit = active ? active.parts.includes(m.userData.part) : CHANGED.has(m.userData.part);
+    if (!highlight && !active) { m.material.color.copy(m.userData.colour); return; }
+    if (hit) m.material.color.copy(i ? opt : was);
+    else m.material.color.copy(m.userData.colour).lerp(dim, 0.72);
+  }));
+  invalidate();
+}
+
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  active = null;
+  document.querySelectorAll(".change").forEach((x) => x.setAttribute("aria-pressed", "false"));
+  paint();
+  setView(VIEWS[b.dataset.view]);
+}));
+$("t-hl").addEventListener("click", () => {
+  highlight = $("t-hl").getAttribute("aria-pressed") !== "true";
+  $("t-hl").setAttribute("aria-pressed", String(highlight));
+  paint();
+});
+
+function cards(D) {
+  const wrap = $("changes");
+  wrap.replaceChildren();
+  const mass = D ? Object.fromEntries(D.mass.map((m) => [m.name, m])) : {};
+  for (const c of CHANGES) {
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "change"; btn.setAttribute("aria-pressed", "false");
+    const b = document.createElement("b"); b.textContent = c.title;
+    const w = document.createElement("span"); w.className = "what"; w.textContent = c.what;
+    const g = document.createElement("span"); g.className = "g";
+    const dg = c.parts.reduce((s, p) => s + (mass[p] ? mass[p].optimized - mass[p].baseline : 0), 0);
+    g.textContent = D ? (Math.abs(dg) < 0.05 ? "weight: no change" : `weight: ${dg > 0 ? "+" : "−"}${Math.abs(dg).toFixed(1)} g`) : "";
+    btn.append(b, w, g);
+    btn.addEventListener("click", () => {
+      const on = active !== c;
+      active = on ? c : null;
+      document.querySelectorAll(".change").forEach((x) => x.setAttribute("aria-pressed", String(x === btn && on)));
+      document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", "false"));
+      paint();
+      setView(on ? c.view : VIEWS.quarter);
+    });
+    wrap.appendChild(btn);
+  }
+}
+cards(null);
+window.__compare?.then((D) => {
+  cards(D);
+  $("lab-a-s").textContent = `${D.variants.baseline.auw.toFixed(1)} g · ${D.variants.baseline.airfoil}`;
+  $("lab-b-s").textContent = `${D.variants.optimized.auw.toFixed(1)} g · ${D.variants.optimized.airfoil} + details`;
+}).catch(() => {});
+
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  renderer.setSize(Math.round(r.width), Math.round(r.height), false);
+  camera.aspect = aspect();
+  camera.updateProjectionMatrix();
+  invalidate();
+}
+new ResizeObserver(resize).observe(stage);
+resize();
+setView(VIEWS.quarter, true);
+
+function draw() {
+  if (tween) {
+    const k = Math.min(1, (performance.now() - tween.t0) / 700), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+    camera.position.lerpVectors(tween.from, tween.to, e);
+    controls.target.lerpVectors(tween.fromT, tween.toT, e);
+    if (k >= 1) tween = null;
+    dirty = true;
+  }
+  if (controls.update()) dirty = true;
+  window.__still = !dirty;                          // for the screenshot tool
+  if (!dirty) { requestAnimationFrame(draw); return; }
+  dirty = false;
+  const w = renderer.domElement.width / renderer.getPixelRatio(), hgt = renderer.domElement.height / renderer.getPixelRatio();
+  renderer.setScissorTest(true);
+  views.forEach((v, i) => {
+    const [x, y, vw, vh] = stacked() ? [0, i ? 0 : hgt / 2, w, hgt / 2] : [i * w / 2, 0, w / 2, hgt];
+    renderer.setViewport(x, y, vw, vh);
+    renderer.setScissor(x, y, vw, vh);
+    renderer.render(v.scene, camera);
+  });
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+setTimeout(() => { window.__modelsReady = true; }, 600);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paint);
+</script>

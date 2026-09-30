@@ -32,6 +32,7 @@ class Params:
     span: float = 485.0
     aspect_ratio: float = 5.0
     naca: str = "4412"             # Clark-Y-like, forgiving at Re 50-80k
+    airfoil: str = ""              # a Selig .dat file (repo-relative) to use instead of the NACA section
     incidence: float = 2.0         # deg, wing chord vs tube line
     te_min: float = 0.8            # printable trailing-edge thickness
     center_width: float = 56.0     # minimum printed centre section across the pod
@@ -81,6 +82,14 @@ class Params:
     esc_bay: float = 8.4           # ESC card in its two ribs, just in front of the motor wall
     batt_trim: float = 16.0        # battery travel for balancing
     motor_z: float = 0.0           # thrust line on the boom centre-line
+
+    # Drag details (aero/models/airframe.py what-ifs; zero or off = as built)
+    nose_top_r: float = 0.0        # radius on the pod's top front edge: a short hood, the lid starts behind it
+    boattail: float = 0.0          # length of the taper on the pod's rear sides and belly
+    boattail_deg: float = 12.0     # the side taper; the belly stops where the motor boss needs room
+    antenna_lean: float = 0.0      # VTX whip bent back from vertical where it leaves the lid, degrees
+    fairings: bool = False         # blisters over the servo horns and the aileron servo bumps
+    joiner_sleeves: bool = False   # streamlined sleeves over the rudder joiner wires
 
     cg_target: float = 0.28        # fraction of chord, first flights
     bed: tuple = (180.0, 180.0, 180.0)   # printer build volume: Bambu Lab A1 mini
@@ -164,6 +173,19 @@ def round_to(v: float, step: float) -> float:
     return step * round(v / step)
 
 
+MOTOR_BOSS_R = 13.0                # the motor plate on the pod's back wall (build.py)
+
+
+def boattail_taper(p: "Params", L: "Layout") -> tuple[float, float]:
+    """How far the pod's sides and belly step in at the back wall (mm). The sides
+    taper at boattail_deg; the belly by as much, but no higher than the motor boss."""
+    if p.boattail <= 0:
+        return 0.0, 0.0
+    side = p.boattail * math.tan(math.radians(p.boattail_deg))
+    belly = max(0.0, min(side, (p.motor_z - MOTOR_BOSS_R - 0.2) - L.z_bottom))
+    return side, belly
+
+
 # --------------------------------------------------------------------------
 # Airfoil
 
@@ -185,6 +207,36 @@ def naca4(code: str, n: int = 60, te_frac: float = 0.0):
         upper.append((x - yt * math.sin(th), yc + yt * math.cos(th)))
         lower.append((x + yt * math.sin(th), yc - yt * math.cos(th)))
     return upper, lower
+
+
+def airfoil_file(path: str, n: int = 70):
+    """Upper and lower surfaces from a Selig .dat file (TE -> LE -> TE), LE -> TE,
+    chord 1, resampled to n cosine-spaced stations on each surface."""
+    from pathlib import Path
+    f = Path(path)
+    if not f.is_absolute():
+        f = Path(__file__).resolve().parents[1] / f
+    pts = []
+    for line in f.read_text().splitlines()[1:]:
+        v = line.split()
+        if len(v) == 2:
+            pts.append((float(v[0]), float(v[1])))
+    le = min(range(len(pts)), key=lambda i: pts[i][0])
+    up, lo = pts[:le + 1][::-1], pts[le:]
+    xs = [0.5 * (1 - math.cos(math.pi * i / (n - 1))) for i in range(n)]
+
+    def resample(side):
+        out = []
+        for x in xs:
+            for (x0, y0), (x1, y1) in zip(side, side[1:]):
+                if x0 <= x <= x1:
+                    t = 0.0 if x1 == x0 else (x - x0) / (x1 - x0)
+                    out.append((x, y0 + t * (y1 - y0)))
+                    break
+            else:
+                out.append(side[-1] if x > side[-1][0] else side[0])
+        return out
+    return resample(up), resample(lo)
 
 
 def camber(code: str, x: float):
@@ -264,7 +316,7 @@ class Layout:
         # VTX antenna: MMCX socket on the card's -y edge, plug and whip above it
         self.ant_x, self.ant_y, self.ant_z = self.vtx_x + 1.5, -(10.0 + 3.6), -6.5
         # ESC card stands crosswise between two ribs, just in front of the motor wall
-        self.esc_bay_x = self.pod_len - p.rear_wall - p.esc_bay            # bay front
+        self.esc_bay_x = self.pod_len - p.rear_wall - p.esc_bay - p.boattail   # bay front, ahead of any taper
         self.esc_x = self.esc_bay_x + 1.0 + 0.3                           # card front face
         # battery bay right behind the front bay: the motor is at the back, so the
         # battery balances the plane from the front

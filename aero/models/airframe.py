@@ -72,18 +72,20 @@ def params() -> list[Param]:
               "and the lid and the rear pod half must still fit the 180 mm bed"),
         Param("nose_r", p.nose_r, 0.0, 12.0, 0.5, "mm", "radius on the pod's front side and belly edges",
               "the 14 mm camera window needs a flat face at least 16 mm wide"),
-        Param("nose_top_r", 0.0, 0.0, 10.0, 0.5, "mm", "radius on the pod's top front edge (front of the lid)",
-              "a rounded nose block on the lid; the lid itself is only 0.8 mm", kind="what-if, not in the CAD"),
+        Param("nose_top_r", 0.0, 0.0, 10.0, 0.5, "mm", "radius on the pod's top front edge",
+              "a short hood over the camera; the lid starts behind it", kind="what-if, in the optimized CAD variant"),
         Param("boattail", 0.0, 0.0, 30.0, 2.0, "mm",
               f"{BOATTAIL_DEG:.0f}° taper on the pod's rear sides and belly, down to the motor mount",
-              "the motor mount needs 28 mm of width; the ESC moves 30 mm forward", kind="what-if, not in the CAD"),
+              "the motor mount needs 28 mm of width and the belly stops at the motor boss; the ESC moves "
+              "forward by the taper's length", kind="what-if, in the optimized CAD variant"),
         Param("antenna_lean", 0.0, 0.0, 60.0, 5.0, "°", "VTX whip laid back from vertical",
-              "60° still clears the wing", kind="what-if, not in the CAD"),
-        Param("fairings", 0.0, 0.0, 1.0, 1.0, "", "printed fairings over the four servo horns and "
-              "the aileron servo bumps", "about 1 g", kind="what-if, not in the CAD", labels={0: "none", 1: "fitted"}),
-        Param("joiners_hidden", 0.0, 0.0, 1.0, 1.0, "", "rudder joiner wires in a groove under the "
-              "stabiliser instead of across the open flow", "", kind="what-if, not in the CAD",
-              labels={0: "in the open", 1: "in a groove"}),
+              "60° still clears the wing", kind="what-if, in the optimized CAD variant"),
+        Param("fairings", 0.0, 0.0, 1.0, 1.0, "", "printed fairings over the four servo horns (trimmed) and "
+              "the aileron servo bumps", "3.8 g in the CAD", kind="what-if, in the optimized CAD variant",
+              labels={0: "none", 1: "fitted"}),
+        Param("joiners_hidden", 0.0, 0.0, 1.0, 1.0, "", "streamlined sleeves on the rudder joiner wires",
+              "1.2 g in the CAD; they slide with the wire", kind="what-if, in the optimized CAD variant",
+              labels={0: "bare", 1: "sleeved"}),
     ]
     for q in out:
         q.kind = q.kind or "CAD parameter"
@@ -147,8 +149,9 @@ def evaluate(x: dict, v: float) -> Result:
                         f"Cd {cd_front:.2f} on {a_front / 100:.1f} cm², top edge "
                         f"{'sharp' if x['nose_top_r'] == 0 else 'r ' + str(x['nose_top_r'])}"))
     # pod base: the back wall and the motor boss above the pod top
-    taper = x["boattail"] * math.tan(math.radians(BOATTAIL_DEG))
-    a_base = (pw - 2 * taper) * (ph - taper) + _segment(MOTOR_BOSS_R, MOTOR_BOSS_R - L.z_top)
+    side, belly = D.boattail_taper(replace(p, boattail=x["boattail"], boattail_deg=BOATTAIL_DEG), L)
+    taper = side
+    a_base = (pw - 2 * side) * (ph - belly) + _segment(MOTOR_BOSS_R, MOTOR_BOSS_R - L.z_top)
     items.append(K.Item("pod base (back wall)", K.CD_BASE * PROP_SUCTION * a_base * mm2, "pressure",
                         f"{a_base / 100:.1f} cm² of blunt base" + (", boat-tailed" if taper else "")))
     # pod skin: the top under the wing is not wetted
@@ -181,7 +184,7 @@ def evaluate(x: dict, v: float) -> Result:
     joiners = K.cylinder_cda(0.8 * mm, (L.b_h - 4) * mm) * (0.2 if x["joiners_hidden"] else 1)
     items.append(K.Item("rudder joiner wires", joiners, "protuberances",
                         f"0.8 mm wire, {L.b_h - 4:.0f} mm across the flow" +
-                        (", in a groove" if x["joiners_hidden"] else "")))
+                        (", in streamlined sleeves" if x["joiners_hidden"] else "")))
     tail_bits = (3 * K.CD_PLATE * 1.6 * 7.0 + K.CD_PLATE * 1.6 * 20.0) * mm2
     items.append(K.Item("elevator and rudder horns, bellcrank", tail_bits, "protuberances", ""))
     items.append(K.Item("VTX antenna", K.cylinder_cda(ANTENNA_D * mm, ANTENNA_UP * mm, x["antenna_lean"]),
@@ -238,8 +241,9 @@ METHOD = """
   10 % for the junctions. Induced drag with a span efficiency of 0.8.
 * The stall limit uses the CAD weight; the chord must leave room for the SG90
   tabs between the spars, as in the sizing loop.
-* What-ifs (not built in the CAD yet) are marked in the tables. They would
-  need CAD changes before they count.
+* What-ifs are marked in the tables. They are not in the as-built design;
+  `python3 airframe/build.py --variant optimized` builds them into the
+  optimized variant (airframe/variants/optimized/).
 * At Reynolds numbers of 50 000 to 300 000 the handbook coefficients are
   uncertain, perhaps +-30 % on the totals and more on the small items. Use the
   ranking and the differences, not the absolute numbers, and check anything

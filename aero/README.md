@@ -1,6 +1,6 @@
 # Drag and efficiency tools
 
-Three tools for this repository's aircraft:
+Four tools for this repository's aircraft:
 
 - **The efficiency study** (`efficiency.py`) is the one with real
   aerodynamics. It optimizes the Kipinä wing's airfoil with NeuralFoil, an
@@ -11,6 +11,10 @@ Three tools for this repository's aircraft:
   the whole plane through independent tools: XFOIL, 2D CFD in OpenFOAM, and
   AeroSandbox's drag build-up and vortex lattice
   ([Cross-checks](#cross-checks-do-other-tools-agree)).
+- **The variant comparison** (`variants.py`) flies the as-built and the
+  optimized CAD builds at their own weights, and splits every change into
+  aerodynamics and weight
+  ([As built against optimized](#as-built-against-optimized-the-weight-and-the-flight)).
 - **The handbook optimizer** (`optimize.py`) searches design choices with a
   drag build-up of handbook formulas. It covers the Kipinä airframe
   (`airframe`), and a typical 5-inch (`quad`) and 7-inch (`quad7`) FPV quad.
@@ -90,8 +94,8 @@ It writes these files:
 
 | | As built | Optimized airfoil | Airfoil + details |
 |---|---|---|---|
-| Drag | 33.0 gf | 31.2 gf | 24.9 gf |
-| Power | 12.0 W | 11.4 W | 9.4 W |
+| Drag | 33.0 gf | 31.2 gf | 25.0 gf |
+| Power | 12.0 W | 11.4 W | 9.5 W |
 | Flight time | 13.3 min | 14.0 min | 16.9 min |
 | Best glide ratio | 7.4 | 7.7 | 9.2 |
 
@@ -108,9 +112,76 @@ It writes these files:
   numbers XFOIL is good for ranking sections, but optimistic about laminar
   flow on a printed skin.
 - **Whole-plane numbers:** they carry the drag build-up's ±30 %.
-- **Detail changes:** they are not in the CAD yet.
+- **Detail changes:** they are drawn in the optimized CAD variant, which
+  weighs 2.6 g more than the as-built plane (see below).
 - **Check before trusting the minutes:** print one wing panel of each section
   and compare glides.
+
+## As built against optimized: the weight and the flight
+
+```sh
+python3 airframe/build.py                       # the as-built CAD
+python3 airframe/build.py --variant optimized   # the optimized CAD, in airframe/variants/optimized/
+python3 aero/variants.py                        # airframe/variants/compare.json and COMPARE.md
+```
+
+The optimized variant is a full CAD build. It has the study's airfoil and
+every detail change the optimizer picked, each drawn as a printable part:
+
+- the hood on the pod's top front edge;
+- the tapered pod tail, with the ESC moved forward;
+- the laid-back antenna;
+- four servo fairings;
+- two joiner sleeves.
+
+The build weighs every part and moves the wing to balance the battery, as it
+does for the as-built plane. `aero/variants.py` then flies both planes at
+their own CAD weights through the same model: NeuralFoil for the wing, the
+drag build-up for the rest, and the same motor and prop.
+
+A third case keeps the as-built weight with the optimized aerodynamics. It
+splits every change into what the aerodynamics give and what the weight
+takes back.
+
+| | As built | Optimized aero, as-built weight | Optimized |
+|---|---|---|---|
+| Weight (CAD) | 223.2 g | 223.2 g | 225.8 g |
+| Stall | 8.94 m/s | 8.87 m/s | 8.92 m/s |
+| Power at 13 m/s | 12.0 W | 9.47 W | 9.53 W |
+| Flight time at 13 m/s | 13.3 min | 16.9 min | 16.8 min |
+| Longest flight | 18.7 min | 20.9 min | 20.6 min |
+| Best glide ratio | 7.4 | 9.2 | 9.2 |
+| Best climb | 4.47 m/s | 4.73 m/s | 4.66 m/s |
+| Top speed | 18.4 m/s | 19.7 m/s | 19.7 m/s |
+
+**Where the weight goes:**
+- The fairings add 3.8 g and the sleeves 1.2 g.
+- The thinner wing section saves 1.1 g, and the tapered pod tail 1.3 g
+  (with the lid 0.1 g).
+- The net is +2.6 g (+1.2 %).
+- The ESC moves 27 mm forward, so the wing moves 3 mm aft to keep the
+  balance.
+
+**What the weight costs in the air:**
+- Every 10 g adds 0.2 m/s to the stall and 0.24 W at cruise.
+- The 2.6 g take back about 0.06 W of the 2.56 W the aerodynamics save, and
+  0.1 min of flight time.
+- The drag saving is worth 83 g: the optimized plane could weigh 309 g
+  before it needed the as-built plane's power at 13 m/s.
+- The stall limit is the real ceiling. At 9 m/s it allows 226 g as built and
+  230 g optimized, because the new airfoil's higher maximum lift buys 4 g of
+  headroom.
+
+The page `airframe/variants/index.html` shows both CAD models side by side,
+with the changes highlighted, and the charts. The screenshots are in
+`airframe/variants/figures/`; regenerate them with
+`node airframe/tools/shoot-variants.mjs`.
+
+| Both planes | What the weight takes back |
+|---|---|
+| ![Both planes](../airframe/variants/figures/models.png) | ![Split](../airframe/variants/figures/split.png) |
+| **Weight by part** | **Flight time against weight** |
+| ![Mass](../airframe/variants/figures/mass.png) | ![Flight time](../airframe/variants/figures/sw-time.png) |
 
 ## Cross-checks: do other tools agree?
 
@@ -371,17 +442,17 @@ limit. With that fixed, the rest of the sizing is pinned too:
 The drag to win is in the details. Together they cut the drag by about a
 fifth (32 → 26 gf, endurance 13.6 → 16.4 min at this speed):
 
-| change (none of these is in the CAD yet) | drag saved on its own |
+| change (built into the optimized CAD variant, below) | drag saved on its own |
 |---|---|
 | Round or chamfer the pod's top front edge (the front of the lid). It is the only sharp edge left on the nose. 6–8 mm does it; a 10 mm 45° chamfer does nearly as well and prints without support | 7.5 % |
-| Run the rudder joiner wires in a groove under the stabiliser: 171 mm of 0.8 mm wire across the flow | 4.0 % |
+| Streamlined sleeves on the rudder joiner wires under the stabiliser: 171 mm of 0.8 mm wire across the flow | 4.0 % |
 | Printed fairings over the four servo horns and the aileron servo bumps | 3.4 % |
-| Taper the pod's rear 30 mm at 12° towards the motor mount (the ESC moves forward) | 2.3 % |
+| Taper the pod's rear 30 mm at 12° towards the motor mount (the ESC moves forward) | 2.1 % |
 | Lay the VTX whip back 60° | 2.2 % |
 
 - **Letting the span grow** (`--free span`): the optimizer stretches the wing
   to 580 mm at aspect ratio 7 for the same area, and the drag falls by 24 %
-  instead of 19.5 %. That is a bigger plane, against the brief.
+  instead of 19.3 %. That is a bigger plane, against the brief.
 - **Compared with `design.py`**: the build-up here counts more drag than the
   quick estimate (22.9 cm² against 18.4 cm²), mostly small parts that the
   quick estimate lumps together.

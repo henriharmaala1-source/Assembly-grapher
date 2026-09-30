@@ -8,25 +8,25 @@ Objective: **drag**, lower is better, at **13.0 m/s (47 km/h)**. 8 of 9 paramete
 
 | | as built | optimised | change |
 |---|---|---|---|
-| Drag | 0.315 N (32.1 gf) | **0.254 N (25.9 gf)** | -19.5 % |
-| Drag area CdA | 22.89 cm² | 16.96 cm² | -25.9 % |
+| Drag | 0.315 N (32.1 gf) | **0.254 N (25.9 gf)** | -19.3 % |
+| Drag area CdA | 22.89 cm² | 17.02 cm² | -25.6 % |
 | Induced drag | 0.078 N (8.0 gf) | 0.078 N (8.0 gf) | |
 | Weight | 223 g | 223 g | |
 | Stall | 8.94 m/s | 8.94 m/s | |
 | Chord / pod length | 97 / 257 mm | 97 / 257 mm | |
-| Top speed (level) | 66 km/h | 70 km/h | |
-| Power at this speed | 11.7 W | 9.7 W | |
+| Top speed (level) | 66 km/h | 69 km/h | |
+| Power at this speed | 11.7 W | 9.8 W | |
 | Endurance at this speed | 13.6 min | 16.4 min | |
 
 ## Changes in the optimum
 
 | parameter | as built | optimised | what it is | kind |
 |---|---|---|---|---|
-| `nose_top_r` | 0.0 mm | **8.0 mm** | radius on the pod's top front edge (front of the lid) | what-if, not in the CAD |
-| `boattail` | 0 mm | **30 mm** | 12° taper on the pod's rear sides and belly, down to the motor mount | what-if, not in the CAD |
-| `antenna_lean` | 0 ° | **60 °** | VTX whip laid back from vertical | what-if, not in the CAD |
-| `fairings` | none | **fitted** | printed fairings over the four servo horns and the aileron servo bumps | what-if, not in the CAD |
-| `joiners_hidden` | in the open | **in a groove** | rudder joiner wires in a groove under the stabiliser instead of across the open flow | what-if, not in the CAD |
+| `nose_top_r` | 0.0 mm | **8.0 mm** | radius on the pod's top front edge | what-if, in the optimized CAD variant |
+| `boattail` | 0 mm | **30 mm** | 12° taper on the pod's rear sides and belly, down to the motor mount | what-if, in the optimized CAD variant |
+| `antenna_lean` | 0 ° | **60 °** | VTX whip laid back from vertical | what-if, in the optimized CAD variant |
+| `fairings` | none | **fitted** | printed fairings over the four servo horns (trimmed) and the aileron servo bumps | what-if, in the optimized CAD variant |
+| `joiners_hidden` | bare | **sleeved** | streamlined sleeves on the rudder joiner wires | what-if, in the optimized CAD variant |
 
 ## One change at a time
 
@@ -34,11 +34,11 @@ Each parameter alone, moved to its best allowed value, everything else as built.
 
 | change | from | to | drag | change |
 |---|---|---|---|---|
-| radius on the pod's top front edge (front of the lid) | 0.0 mm | 6.5 mm | 0.291 N (29.7 gf) | -7.5 % |
-| rudder joiner wires in a groove under the stabiliser instead of across the open flow | in the open | in a groove | 0.303 N (30.9 gf) | -4.0 % |
-| printed fairings over the four servo horns and the aileron servo bumps | none | fitted | 0.304 N (31.0 gf) | -3.4 % |
-| 12° taper on the pod's rear sides and belly, down to the motor mount | 0 mm | 30 mm | 0.308 N (31.4 gf) | -2.3 % |
+| radius on the pod's top front edge | 0.0 mm | 6.5 mm | 0.291 N (29.7 gf) | -7.5 % |
+| streamlined sleeves on the rudder joiner wires | bare | sleeved | 0.303 N (30.9 gf) | -4.0 % |
+| printed fairings over the four servo horns (trimmed) and the aileron servo bumps | none | fitted | 0.304 N (31.0 gf) | -3.4 % |
 | VTX whip laid back from vertical | 0 ° | 60 ° | 0.308 N (31.4 gf) | -2.2 % |
+| 12° taper on the pod's rear sides and belly, down to the motor mount | 0 mm | 30 mm | 0.308 N (31.4 gf) | -2.1 % |
 
 No single move of these improves the result by 0.03 % or more without breaking a limit: `aspect_ratio` (5.0), `tail_arm` (2.8 chords), `nose_r` (8.0 mm).
 
@@ -51,14 +51,14 @@ Parasite drag at the speed; the induced drag is on top of this.
 | wing, skin friction and form | 7.23 | 32 % | 7.23 | Re 86k, laminar over half the chord |
 | tail plates, skin friction | 2.13 | 9 % | 2.13 | stabiliser 175 x 48 mm, fins 39 mm tall |
 | pod front (pressure) | 2.36 | 10 % | 0.28 | Cd 0.26 on 9.0 cm², top edge sharp → Cd 0.03 on 9.0 cm², top edge r 8.0 |
-| pod base (back wall) | 1.49 | 7 % | 0.84 | 10.7 cm² of blunt base → 6.0 cm² of blunt base, boat-tailed |
+| pod base (back wall) | 1.49 | 7 % | 0.91 | 10.7 cm² of blunt base → 6.5 cm² of blunt base, boat-tailed |
 | pod, skin friction | 1.84 | 8 % | 1.84 | 257 mm long |
 | booms, skin friction | 0.46 | 2 % | 0.46 | 2 x 177 mm exposed |
 | boom sockets | 0.34 | 2 % | 0.34 | domed noses, step at the tube |
 | tail mount collars and guide | 0.46 | 2 % | 0.46 |  |
 | servo horns and aileron servo bumps | 1.52 | 7 % | 0.47 | 4 horns edge-on below the wing, 3 mm servo bumps → faired |
 | aileron horns and links | 0.36 | 2 % | 0.36 |  |
-| rudder joiner wires | 1.50 | 7 % | 0.30 | 0.8 mm wire, 171 mm across the flow → 0.8 mm wire, 171 mm across the flow, in a groove |
+| rudder joiner wires | 1.50 | 7 % | 0.30 | 0.8 mm wire, 171 mm across the flow → 0.8 mm wire, 171 mm across the flow, in streamlined sleeves |
 | elevator and rudder horns, bellcrank | 0.79 | 3 % | 0.79 |  |
 | VTX antenna | 0.77 | 3 % | 0.10 | whip 27 mm above the lid → whip 27 mm above the lid, laid back 60° |
 | junctions (10 % of the above) | 1.63 | 7 % | 1.36 | wing-pod, boom-wing and tail joints |
@@ -71,11 +71,11 @@ Parasite drag at the speed; the induced drag is on top of this.
 | `aspect_ratio` | 4.0 to 7.0 | 0.1 | the SG90's tabs must fit between the spars (chord of about 80 mm or more); stall | yes |
 | `tail_arm` | 2.0 chords to 4.0 chords | 0.1 chords | tail volumes are held, so stability stays the same; a longer arm moves the wing aft, and the lid and the rear pod half must still fit the 180 mm bed | yes |
 | `nose_r` | 0.0 mm to 12.0 mm | 0.5 mm | the 14 mm camera window needs a flat face at least 16 mm wide | yes |
-| `nose_top_r` | 0.0 mm to 10.0 mm | 0.5 mm | a rounded nose block on the lid; the lid itself is only 0.8 mm | yes |
-| `boattail` | 0 mm to 30 mm | 2 mm | the motor mount needs 28 mm of width; the ESC moves 30 mm forward | yes |
+| `nose_top_r` | 0.0 mm to 10.0 mm | 0.5 mm | a short hood over the camera; the lid starts behind it | yes |
+| `boattail` | 0 mm to 30 mm | 2 mm | the motor mount needs 28 mm of width and the belly stops at the motor boss; the ESC moves forward by the taper's length | yes |
 | `antenna_lean` | 0 ° to 60 ° | 5 ° | 60° still clears the wing | yes |
-| `fairings` | none to fitted | - | about 1 g | yes |
-| `joiners_hidden` | in the open to in a groove | - | - | yes |
+| `fairings` | none to fitted | - | 3.8 g in the CAD | yes |
+| `joiners_hidden` | bare to sleeved | - | 1.2 g in the CAD; they slide with the wire | yes |
 
 ## Method and limits
 
@@ -90,8 +90,9 @@ Parasite drag at the speed; the induced drag is on top of this.
   10 % for the junctions. Induced drag with a span efficiency of 0.8.
 * The stall limit uses the CAD weight; the chord must leave room for the SG90
   tabs between the spars, as in the sizing loop.
-* What-ifs (not built in the CAD yet) are marked in the tables. They would
-  need CAD changes before they count.
+* What-ifs are marked in the tables. They are not in the as-built design;
+  `python3 airframe/build.py --variant optimized` builds them into the
+  optimized variant (airframe/variants/optimized/).
 * At Reynolds numbers of 50 000 to 300 000 the handbook coefficients are
   uncertain, perhaps +-30 % on the totals and more on the small items. Use the
   ranking and the differences, not the absolute numbers, and check anything

@@ -439,6 +439,7 @@ down, and hold it with tape or two 3 mm magnets.
 pip install cadquery trimesh
 python3 airframe/design.py      # sizing sweep and layout, no CAD needed
 python3 airframe/build.py       # STLs, STEP, GLB, REPORT.md, sizing + interference checks
+python3 airframe/build.py --variant optimized   # the optimized variant in variants/optimized/ (--step for its STEP)
 
 python3 airframe/process.py     # BOP.md, DFMA.md, viewer/process.json (slices with prusa-slicer if installed)
 
@@ -479,18 +480,55 @@ right wing tip and z up, with z = 0 on the boom centre-line.
 this design (`python3 aero/optimize.py airframe`). With the span held at the
 brief's smallest passing size, the rest of the sizing is pinned by the stall
 limit, the SG90 tabs and the bed. It finds about 20 % less drag from small
-changes to the details: a rounded top front edge on the pod, the rudder
-joiners in a groove, horn fairings, a tapered pod rear and a laid-back
-antenna. See [aero/REPORT_airframe.md](../aero/REPORT_airframe.md).
+changes to the details: a rounded top front edge on the pod, sleeves on the
+rudder joiners, horn fairings, a tapered pod rear and a laid-back antenna.
+See [aero/REPORT_airframe.md](../aero/REPORT_airframe.md).
 
 The efficiency study (`python3 aero/efficiency.py`) goes further on the wing.
 It reshapes the NACA 4412 with NeuralFoil for the plane's own lift and
 Reynolds numbers, keeping the spars, the servo, the printable trailing edge
 and the stall. That cuts the wing's profile drag by about 20 % at cruise.
 Together with the detail changes, the flight time at 13 m/s rises from 13.3
-to 16.9 min. The charts are in
+to 16.9 min at the same weight. The charts are in
 [aero/study/index.html](../aero/study/index.html) and the airfoil in
 [aero/study/kipina-opt.dat](../aero/study/kipina-opt.dat).
+
+## The optimized variant
+
+`python3 airframe/build.py --variant optimized` builds the plane with the
+study's airfoil and every detail change, into `variants/optimized/` (STLs,
+GLB, REPORT.md). Each change is drawn as a part you can print:
+
+| Change | In the CAD | Weight |
+|---|---|---|
+| Airfoil | kipina-opt (11.1 % thick) instead of the NACA 4412 (12.2 %). The spars, servos and hinge still fit | −1.1 g |
+| Hood | an 8 mm radius on the pod's top front edge, over the camera. The lid starts behind it | −0.3 g |
+| Tapered pod tail | the last 30 mm step in at 12° on the sides and 9° under the belly (the motor boss sets the belly). The ESC bay moves 30 mm forward | −1.1 g |
+| Antenna | the VTX whip bent back 60° where it leaves the lid | 0 |
+| Servo fairings | single-wall blisters over the four servo horns (cut short) and the aileron servo bumps. They print on the bed and glue on | +3.8 g |
+| Joiner sleeves | streamlined sleeves glued on the two rudder joiner wires under the tail. They slide with the wire | +1.2 g |
+
+The optimized plane weighs 225.8 g against 223.2 g. The ESC moves forward
+and the fairings sit behind the centre of gravity, so the balance puts the
+wing 3 mm further aft. The build's interference check passes for both.
+
+`python3 aero/variants.py` flies both planes at their CAD weights. The 2.6 g
+cost 0.06 W at cruise, against the 2.56 W the aerodynamics save, and the
+flight time at 13 m/s goes from 13.3 to 16.8 min. The stall stays under the
+9 m/s limit. The page [variants/index.html](variants/index.html) shows the
+two CAD models side by side, with each change highlighted, next to the
+weight and flight charts. Serve `airframe/` over HTTP and open
+`/variants/index.html`. The numbers are in
+[variants/COMPARE.md](variants/COMPARE.md).
+
+Each picture has the as-built plane on the left and the optimized one on the
+right:
+
+| Three-quarter view | Side view |
+|---|---|
+| ![Both planes](variants/figures/models.png) | ![Side view](variants/figures/models-side.png) |
+| **Tapered pod tail** | **Servo fairings, from below** |
+| ![Tapered tail](variants/figures/models-boattail.png) | ![Fairings](variants/figures/models-fairings.png) |
 
 ## Known limitations
 

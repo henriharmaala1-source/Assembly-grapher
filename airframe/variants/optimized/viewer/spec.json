@@ -2,41 +2,41 @@
  "span": 485.0,
  "chord": 97.0,
  "area_dm2": 4.7,
- "length": 504,
+ "length": 507,
  "naca": "4412",
- "airfoil": "NACA 4412",
+ "airfoil": "kipina-opt",
  "incidence": 2.0,
  "details": {
-  "nose_top_r": 0.0,
-  "boattail": 0.0,
-  "antenna_lean": 0.0,
-  "fairings": false,
-  "joiner_sleeves": false
+  "nose_top_r": 8.0,
+  "boattail": 30.0,
+  "antenna_lean": 60.0,
+  "fairings": true,
+  "joiner_sleeves": true
  },
- "auw": 223,
- "auw_g": 223.2,
- "printed": 98,
- "printed_g": 98.38,
- "loading": 47.4,
- "stall": 8.9,
+ "auw": 226,
+ "auw_g": 225.8,
+ "printed": 101,
+ "printed_g": 100.97,
+ "loading": 48.0,
+ "stall": 9.0,
  "cruise": 13.0,
  "top": 19.1,
  "pitch_speed": 23.9,
  "endurance": 10,
  "vh": 0.5,
- "cruise_a": 2.1,
- "full_a": 9.4,
+ "cruise_a": 2.2,
+ "full_a": 9.5,
  "vv": 0.045,
- "x_le": 172.4,
- "x_te": 269.4,
- "pod_len": 272.4,
- "x_stab": 456.2,
+ "x_le": 175.4,
+ "x_te": 272.4,
+ "pod_len": 275.4,
+ "x_stab": 459.2,
  "c_h": 48.00510204081633,
- "cg_x": 199.6,
+ "cg_x": 202.6,
  "cg_pct": 28,
  "np_pct": 41,
- "np_x": 212.5,
- "battery_x": 91.0,
+ "np_x": 215.4,
+ "battery_x": 91.1,
  "battery_len": 58.0,
  "batt_range": [
   83,
@@ -47,9 +47,9 @@
  "tube_spacing": 140.0,
  "b_h": 175.0,
  "fin_h": 39,
- "tube_x0": 187.0,
- "tube_x1": 485.0,
- "x_prop": 287.2,
+ "tube_x0": 190.0,
+ "tube_x1": 488.0,
+ "x_prop": 290.2,
  "prop_r": 50.8,
  "split_x": 138,
  "stall_limit": 9.0,
@@ -58,58 +58,58 @@
  "sweep": [
   {
    "span": 300,
-   "auw": 172,
-   "stall": 12.7
+   "auw": 171,
+   "stall": 12.67
   },
   {
    "span": 320,
-   "auw": 177,
-   "stall": 12.06
+   "auw": 176,
+   "stall": 12.04
   },
   {
    "span": 340,
    "auw": 181,
-   "stall": 11.5
+   "stall": 11.49
   },
   {
    "span": 360,
    "auw": 186,
-   "stall": 11.0
+   "stall": 10.99
   },
   {
    "span": 380,
    "auw": 191,
-   "stall": 10.56
+   "stall": 10.55
   },
   {
    "span": 400,
    "auw": 196,
-   "stall": 10.17
+   "stall": 10.16
   },
   {
    "span": 420,
-   "auw": 202,
-   "stall": 9.82
+   "auw": 201,
+   "stall": 9.81
   },
   {
    "span": 440,
    "auw": 207,
-   "stall": 9.5
+   "stall": 9.49
   },
   {
    "span": 460,
    "auw": 213,
-   "stall": 9.21
+   "stall": 9.2
   },
   {
    "span": 480,
    "auw": 219,
-   "stall": 8.95
+   "stall": 8.94
   },
   {
    "span": 485,
    "auw": 220,
-   "stall": 8.89
+   "stall": 8.88
   },
   {
    "span": 500,
@@ -118,13 +118,13 @@
   },
   {
    "span": 520,
-   "auw": 233,
+   "auw": 232,
    "stall": 8.51
   },
   {
    "span": 540,
-   "auw": 241,
-   "stall": 8.34
+   "auw": 240,
+   "stall": 8.33
   },
   {
    "span": 560,
@@ -134,7 +134,7 @@
  ],
  "fc": "Matek F405-WMN",
  "esc": "Hobbywing XRotor Micro 30A",
- "variant": "baseline",
+ "variant": "optimized",
  "bed": [
   180.0,
   180.0,
@@ -145,15 +145,15 @@
   {
    "name": "wing_centre",
    "material": "LW-PLA",
-   "grams": 21.9,
-   "bed": "105 x 22 x 155",
+   "grams": 21.4,
+   "bed": "105 x 21 x 155",
    "fits": true,
    "note": "On its side, spar holes vertical. 0.5 mm walls, 5 % infill."
   },
   {
    "name": "wing_R",
    "material": "LW-PLA",
-   "grams": 10.8,
+   "grams": 10.6,
    "bed": "97 x 12 x 165",
    "fits": true,
    "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
@@ -161,7 +161,7 @@
   {
    "name": "wing_L",
    "material": "LW-PLA",
-   "grams": 10.8,
+   "grams": 10.6,
    "bed": "97 x 12 x 165",
    "fits": true,
    "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
@@ -169,16 +169,16 @@
   {
    "name": "aileron_R",
    "material": "LW-PLA",
-   "grams": 2.8,
-   "bed": "24 x 148 x 7",
+   "grams": 2.7,
+   "bed": "24 x 148 x 6",
    "fits": true,
    "note": "Flat on the lower surface. 1 wall, 0 % infill."
   },
   {
    "name": "aileron_L",
    "material": "LW-PLA",
-   "grams": 2.8,
-   "bed": "24 x 148 x 7",
+   "grams": 2.7,
+   "bed": "24 x 148 x 6",
    "fits": true,
    "note": "Flat on the lower surface. 1 wall, 0 % infill."
   },
@@ -249,15 +249,63 @@
   {
    "name": "lid",
    "material": "PLA/PETG",
-   "grams": 6.8,
-   "bed": "177 x 39 x 1",
+   "grams": 6.7,
+   "bed": "174 x 39 x 1",
    "fits": true,
    "note": "Flat."
   },
   {
+   "name": "fairing_ail_R",
+   "material": "LW-PLA",
+   "grams": 1.0,
+   "bed": "54 x 36 x 20",
+   "fits": true,
+   "note": "Rim down on the bed, brim. 1 wall, 0 % infill. Glue under the wing over the servo."
+  },
+  {
+   "name": "fairing_ail_L",
+   "material": "LW-PLA",
+   "grams": 1.0,
+   "bed": "54 x 36 x 20",
+   "fits": true,
+   "note": "Rim down on the bed, brim. 1 wall, 0 % infill. Glue under the wing over the servo."
+  },
+  {
+   "name": "fairing_elev",
+   "material": "LW-PLA",
+   "grams": 0.9,
+   "bed": "68 x 36 x 12",
+   "fits": true,
+   "note": "Rim down on the bed. 1 wall, 0 % infill. Glue under the wing centre."
+  },
+  {
+   "name": "fairing_rud",
+   "material": "LW-PLA",
+   "grams": 0.9,
+   "bed": "68 x 36 x 12",
+   "fits": true,
+   "note": "Rim down on the bed. 1 wall, 0 % infill. Glue under the wing centre."
+  },
+  {
+   "name": "sleeve_R",
+   "material": "PLA/PETG",
+   "grams": 1.0,
+   "bed": "6 x 122 x 2",
+   "fits": true,
+   "note": "Flat. Slide on the joiner wire before the Z-bends and glue."
+  },
+  {
+   "name": "sleeve_L",
+   "material": "PLA/PETG",
+   "grams": 0.2,
+   "bed": "6 x 24 x 2",
+   "fits": true,
+   "note": "Flat. Slide on the joiner wire before the Z-bends and glue."
+  },
+  {
    "name": "pod_front",
    "material": "PLA/PETG",
-   "grams": 12.6,
+   "grams": 12.4,
    "bed": "138 x 41 x 22",
    "fits": true,
    "note": "Upright, open top up. 2 walls, 15 % infill."
@@ -265,8 +313,8 @@
   {
    "name": "pod_rear",
    "material": "PLA/PETG",
-   "grams": 14.3,
-   "bed": "142 x 41 x 31",
+   "grams": 13.2,
+   "bed": "145 x 41 x 31",
    "fits": true,
    "note": "Upright, open top up, tongue forward. 2 walls, 15 % infill."
   }
@@ -274,113 +322,143 @@
  "mass": [
   {
    "name": "wing_centre",
-   "g": 21.9,
-   "x": 215
+   "g": 21.4,
+   "x": 219
   },
   {
    "name": "wing_R",
-   "g": 10.8,
-   "x": 211
+   "g": 10.6,
+   "x": 214
   },
   {
    "name": "wing_L",
-   "g": 10.8,
-   "x": 211
+   "g": 10.6,
+   "x": 214
   },
   {
    "name": "aileron_R",
-   "g": 2.8,
-   "x": 255
+   "g": 2.7,
+   "x": 258
   },
   {
    "name": "aileron_L",
-   "g": 2.8,
-   "x": 255
+   "g": 2.7,
+   "x": 258
   },
   {
    "name": "tail_mount",
    "g": 4.9,
-   "x": 470
+   "x": 473
   },
   {
    "name": "stab",
    "g": 4.1,
-   "x": 472
+   "x": 475
   },
   {
    "name": "elevator",
    "g": 2.0,
-   "x": 495
+   "x": 498
   },
   {
    "name": "fin_R",
    "g": 1.2,
-   "x": 472
+   "x": 475
   },
   {
    "name": "fin_L",
    "g": 1.2,
-   "x": 472
+   "x": 475
   },
   {
    "name": "rudder_R",
    "g": 0.9,
-   "x": 495
+   "x": 498
   },
   {
    "name": "rudder_L",
    "g": 0.9,
-   "x": 495
+   "x": 498
   },
   {
    "name": "bellcrank",
    "g": 0.2,
-   "x": 487
+   "x": 490
   },
   {
    "name": "lid",
-   "g": 6.8,
-   "x": 91
+   "g": 6.7,
+   "x": 96
+  },
+  {
+   "name": "fairing_ail_R",
+   "g": 1.0,
+   "x": 221
+  },
+  {
+   "name": "fairing_ail_L",
+   "g": 1.0,
+   "x": 221
+  },
+  {
+   "name": "fairing_elev",
+   "g": 0.9,
+   "x": 223
+  },
+  {
+   "name": "fairing_rud",
+   "g": 0.9,
+   "x": 223
+  },
+  {
+   "name": "sleeve_R",
+   "g": 1.0,
+   "x": 499
+  },
+  {
+   "name": "sleeve_L",
+   "g": 0.2,
+   "x": 499
   },
   {
    "name": "pod_front",
-   "g": 12.6,
-   "x": 62
+   "g": 12.4,
+   "x": 63
   },
   {
    "name": "pod_rear",
-   "g": 14.3,
-   "x": 215
+   "g": 13.2,
+   "x": 210
   },
   {
    "name": "tube_L",
    "g": 4.0,
-   "x": 336
+   "x": 339
   },
   {
    "name": "tube_R",
    "g": 4.0,
-   "x": 336
+   "x": 339
   },
   {
    "name": "spar_main",
    "g": 5.2,
-   "x": 197
+   "x": 200
   },
   {
    "name": "spar_rear",
    "g": 2.3,
-   "x": 240
+   "x": 243
   },
   {
    "name": "motor",
    "g": 9.0,
-   "x": 279
+   "x": 282
   },
   {
    "name": "prop",
    "g": 2.0,
-   "x": 287
+   "x": 290
   },
   {
    "name": "camera",
@@ -395,7 +473,7 @@
   {
    "name": "antenna",
    "g": 1.5,
-   "x": 17
+   "x": 27
   },
   {
    "name": "fc",
@@ -410,7 +488,7 @@
   {
    "name": "esc",
    "g": 6.0,
-   "x": 264
+   "x": 237
   },
   {
    "name": "battery",
@@ -420,72 +498,72 @@
   {
    "name": "servo_elev",
    "g": 9.0,
-   "x": 219
+   "x": 222
   },
   {
    "name": "pushrod_elev",
    "g": 0.3,
-   "x": 357
+   "x": 360
   },
   {
    "name": "servo_rud",
    "g": 9.0,
-   "x": 219
+   "x": 222
   },
   {
    "name": "pushrod_rud",
    "g": 0.3,
-   "x": 355
+   "x": 358
   },
   {
    "name": "joiner_R",
    "g": 0.3,
-   "x": 495
+   "x": 498
   },
   {
    "name": "joiner_L",
    "g": 0.3,
-   "x": 495
+   "x": 498
   },
   {
    "name": "servo_ail_R",
    "g": 9.0,
-   "x": 219
+   "x": 222
   },
   {
    "name": "horn_ail_R",
    "g": 0.3,
-   "x": 249
+   "x": 252
   },
   {
    "name": "pushrod_ail_R",
    "g": 0.2,
-   "x": 236
+   "x": 239
   },
   {
    "name": "servo_ail_L",
    "g": 9.0,
-   "x": 219
+   "x": 222
   },
   {
    "name": "horn_ail_L",
    "g": 0.3,
-   "x": 249
+   "x": 252
   },
   {
    "name": "pushrod_ail_L",
    "g": 0.2,
-   "x": 236
+   "x": 239
   },
   {
    "name": "wiring",
    "g": 6.0,
-   "x": 136
+   "x": 138
   },
   {
    "name": "hardware",
    "g": 2.0,
-   "x": 251
+   "x": 253
   }
  ]
 }

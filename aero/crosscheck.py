@@ -123,9 +123,10 @@ def xfoil(dat: Path, points, alphas, re_stall: float, n_crit: float) -> dict:
 
 # --------------------------------------------------------------------------- OpenFOAM
 
-def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path, log) -> dict:
+def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path, log, resume: bool = False) -> dict:
     """Two angles per point and section (the second restarted from the first), the
-    drag at the design lift coefficient by interpolation; and one coarser grid."""
+    drag at the design lift coefficient by interpolation; and one coarser grid.
+    With `resume`, cases already in `work` carry on from where they stopped."""
     meshes = {}
     for key, k in kulfans.items():
         af = asb.KulfanAirfoil(**k)
@@ -140,6 +141,8 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
 
     def case_dir(key, name, mesh_dir):
         d = work / key / name
+        if resume and (d / "case.json").exists():
+            return d
         shutil.rmtree(d, ignore_errors=True)
         (d / "constant").mkdir(parents=True)
         (d / "constant" / "polyMesh").symlink_to((mesh_dir / "constant" / "polyMesh").resolve())
@@ -150,7 +153,8 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         p = points[i]
         a1 = xfoil_alphas[key][i]
         d1 = case_dir(key, f"{p.name}_a", work / key / "mesh")
-        C.write_case(d1, p.re, a1, n_crit)
+        if not (d1 / "case.json").exists():
+            C.write_case(d1, p.re, a1, n_crit)
         r1 = C.results(d1, C.run(d1, log=log))
         if "error" in r1:
             return key, i, {"runs": [r1], "error": r1["error"]}
@@ -159,9 +163,10 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         if abs(a2 - a1) < 0.5:
             a2 = a1 + (0.75 if p.cl >= r1["cl"] else -0.75)
         d2 = work / key / f"{p.name}_b"
-        shutil.rmtree(d2, ignore_errors=True)
-        C.restart_at(d1, d2, a2)
-        r2 = C.results(d2, C.run(d2, min_iter=1000, log=log))
+        if not (resume and (d2 / "case.json").exists()):
+            shutil.rmtree(d2, ignore_errors=True)
+            C.restart_at(d1, d2, a2)
+        r2 = C.results(d2, C.run(d2, max_iter=4000, min_iter=1000, log=log))
         if "error" in r2:
             return key, i, {"runs": [r1, r2], "error": r2["error"]}
         return key, i, interpolate(r1, r2, p.cl)
@@ -175,7 +180,8 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         af = asb.KulfanAirfoil(**kulfans[key])
         info = C.mesh(m, af.upper_coordinates, af.lower_coordinates, scale=0.67)
         d = case_dir(key, "cruise_coarse", m)
-        C.write_case(d, p.re, xfoil_alphas[key][i], n_crit)
+        if not (d / "case.json").exists():
+            C.write_case(d, p.re, xfoil_alphas[key][i], n_crit)
         res = C.results(d, C.run(d, log=log))
         res.pop("surface", None)
         return {"cells": info["cells"], **res}
@@ -206,6 +212,7 @@ def interpolate(r1: dict, r2: dict, cl: float) -> dict:
         out[k] = r(mix(r1[k], r2[k]), 6 if k.startswith("cd") else 4)
     out["converged_runs"] = [bool(x["converged"]) for x in (r1, r2)]
     out["swing_cd"] = r(max(r1["cd_swing"], r2["cd_swing"]), 6)
+    out["swing_cl"] = r(max(r1["cl_swing"], r2["cl_swing"]), 4)
     out["iterations"] = [r1["iterations"], r2["iterations"]]
     out["yplus_max"] = r(max(r1["yplus_max"], r2["yplus_max"]), 2)
     s1, s2 = r1.get("surface"), r2.get("surface")
@@ -216,7 +223,8 @@ def interpolate(r1: dict, r2: dict, cl: float) -> dict:
                           for side in ("upper", "lower")}
     bub = [x.get("bubble_upper") for x in (r1, r2)]
     out["bubble_upper"] = bub[0] if abs(t) < 0.5 else bub[1]
-    out["runs"] = [{k: x[k] for k in ("alpha", "cl", "cd", "cm", "iterations", "converged", "cd_swing", "history")} for x in (r1, r2)]
+    out["runs"] = [{k: x[k] for k in ("alpha", "cl", "cd", "cd_pressure", "cd_friction", "cm", "iterations", "converged",
+                                      "cd_swing", "cl_swing", "snapshots", "history")} for x in (r1, r2)]
     return out
 
 
@@ -385,6 +393,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--cfd", action="store_true", help="also run the OpenFOAM 2D CFD (an hour or two)")
     ap.add_argument("--work", type=Path, help="where to keep the CFD cases (default: a temporary folder)")
+    ap.add_argument("--resume", action="store_true", help="carry on with the CFD cases already in --work")
     a = ap.parse_args(argv)
     log = lambda s: print(s, flush=True)  # noqa: E731
     t0 = time.time()
@@ -429,7 +438,7 @@ def main(argv=None):
         alphas = {k: [p["alpha"] if p else n["alpha"] for p, n in zip(xf[k]["points"], nf["large"][k]["points"])]
                   for k in KEYS}
         t1 = time.time()
-        res = cfd_all(kulfans, points, alphas, n_crit, work, log)
+        res = cfd_all(kulfans, points, alphas, n_crit, work, log, resume=a.resume and a.work is not None)
         out["tools"]["openfoam"] = {"label": f"{C.version()} simpleFoam, k-omega SST + Langtry-Menter",
                                     "sections": {k: {"points": res["points"][k]} for k in KEYS},
                                     "meshes": res["meshes"], "grid": res["grid"],

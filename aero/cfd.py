@@ -42,8 +42,10 @@ DS_LE, DS_TE = 1.0e-3, 2.5e-3   # spacing along the surface at the leading and t
 DZ = 0.1                # span of the one-cell-thick 2D mesh
 BLEND = (0.004, 0.4)    # grid lines turn from wall-normal to straight between these distances, chords
 VISC_RATIO = 5.0        # free-stream eddy viscosity / viscosity
-ITERATIONS = 8000        # most iterations per run
-CHUNK = 500             # iterations between force checks
+ITERATIONS = 6000        # most iterations per run
+CHUNK = 500             # iterations between convergence checks
+SAMPLE = 50             # iterations between the snapshots the forces are averaged over
+AVERAGE = 20            # snapshots in the average (the last 1000 iterations)
 
 
 # --------------------------------------------------------------------------- grid
@@ -372,8 +374,8 @@ stopAt          endTime;
 endTime         {end};
 deltaT          1;
 writeControl    timeStep;
-writeInterval   {CHUNK};
-purgeWrite      1;
+writeInterval   {SAMPLE};
+purgeWrite      0;
 writeFormat     ascii;
 writePrecision  10;
 writeCompression off;
@@ -407,37 +409,48 @@ def _latest(case: Path) -> int:
     return max(times) if times else 0
 
 
-def run(case: Path, max_iter: int | None = None, min_iter: int = 2000, log=None) -> list[dict]:
-    """simpleFoam in chunks, working out the coefficients after each, until they settle
-    (drag within 0.3 % and lift within 0.002 over two chunks), the residuals meet their
-    targets, or the iteration limit."""
+def run(case: Path, max_iter: int | None = None, min_iter: int = 2000, log=None) -> dict:
+    """simpleFoam in chunks of 500 iterations, with a snapshot every 50. At these
+    Reynolds numbers the laminar bubbles and the blunt trailing edge keep the
+    steady solution moving a little, so the forces are averaged over snapshots.
+    Stops when the mean over a chunk settles (drag within 0.3 %, lift within
+    0.002 of the chunk before), the residuals meet their targets, or at the limit."""
     max_iter = max_iter or ITERATIONS
     info = json.loads((case / "case.json").read_text())
-    history = []
-    start = _latest(case)
-    it = start
-    while it < start + max_iter:
+    samples, chunks = [], []
+    it = _latest(case)
+    first = it
+    while it < max_iter:
         _control(case, it + CHUNK)
         with open(case / "log.simpleFoam", "a") as f:
             rc = subprocess.run(["simpleFoam", "-case", str(case)], stdout=f, stderr=subprocess.STDOUT,
                                 env=_env()).returncode
-        new = _latest(case)
-        if rc != 0 or new <= it:
-            history.append({"iteration": new, "error": f"simpleFoam stopped (exit {rc})"})
-            break
-        it = new
-        c = coefficients(case, it, info["alpha"], info["nu"])
-        history.append({"iteration": it, **{k: c[k] for k in ("cl", "cd", "cm")}})
+        times = sorted(t for t in _times(case) if t > it)
+        if rc != 0 or not times:
+            return {"samples": samples, "chunks": chunks, "error": f"simpleFoam stopped (exit {rc})"}
+        for t in times:
+            c = coefficients(case, t, info["alpha"], info["nu"], surface=True)
+            samples.append({"iteration": t, **c})
+        for t in times[:-1]:
+            shutil.rmtree(case / str(t), ignore_errors=True)
+        samples = samples[-2 * AVERAGE:]
+        it = times[-1]
+        new = [x for x in samples if x["iteration"] > it - CHUNK]
+        chunks.append({"iteration": it, **{k: float(np.mean([x[k] for x in new])) for k in ("cl", "cd", "cm")}})
         if log:
-            log(f"    {case.name}: {it} iterations, cl {c['cl']:.4f} cd {c['cd']:.5f}")
-        tail = (case / "log.simpleFoam").read_text()[-4000:]
-        if "SIMPLE solution converged" in tail:
+            log(f"    {case.parent.name}/{case.name}: {it} iterations, cl {chunks[-1]['cl']:.4f} cd {chunks[-1]['cd']:.5f}"
+                f" (last {len(new)} snapshots)")
+        if "SIMPLE solution converged" in (case / "log.simpleFoam").read_text()[-4000:]:
             break
-        if it - start >= min_iter and len(history) >= 3:
-            h0, h2 = history[-3], history[-1]
-            if abs(h2["cd"] - h0["cd"]) < 0.003 * abs(h2["cd"]) and abs(h2["cl"] - h0["cl"]) < 0.002:
+        if it >= min_iter and it - first >= 2 * CHUNK and len(chunks) >= 2:
+            a, b = chunks[-2], chunks[-1]
+            if abs(b["cd"] - a["cd"]) < 0.003 * abs(b["cd"]) and abs(b["cl"] - a["cl"]) < 0.002:
                 break
-    return history
+    return {"samples": samples, "chunks": chunks}
+
+
+def _times(case: Path) -> list[int]:
+    return [int(d.name) for d in case.iterdir() if d.is_dir() and d.name.isdigit() and d.name != "0"]
 
 
 def _read_field(path: Path) -> np.ndarray | None:
@@ -497,20 +510,30 @@ def coefficients(case: Path, time: int, alpha: float, nu: float, surface: bool =
     return out
 
 
-def results(case: Path, history: list[dict]) -> dict:
+def results(case: Path, run_out: dict) -> dict:
+    """Averages over the last snapshots, how much they swing, and the averaged
+    surface pressure and friction."""
     info = json.loads((case / "case.json").read_text())
-    last = _latest(case)
-    out = {"alpha": info["alpha"], "re": info["re"], "iterations": last,
+    out = {"alpha": info["alpha"], "re": info["re"], "iterations": _latest(case),
            "converged": "SIMPLE solution converged" in (case / "log.simpleFoam").read_text()[-4000:]}
-    if not history or "error" in history[-1]:
-        return {**out, "error": history[-1]["error"] if history else "no run"}
-    out.update(coefficients(case, last, info["alpha"], info["nu"], surface=True))
-    tail = [h for h in history[-3:] if "cd" in h]
-    out["cd_swing"] = float(max(h["cd"] for h in tail) - min(h["cd"] for h in tail))
-    out["cl_swing"] = float(max(h["cl"] for h in tail) - min(h["cl"] for h in tail))
-    out["history"] = [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in h.items()} for h in history]
-    up = out["surface"]["upper"]
-    xs, cf = np.array(up["x"]), np.array(up["cf"])
+    samples = run_out.get("samples", [])[-AVERAGE:]
+    if "error" in run_out or not samples:
+        return {**out, "error": run_out.get("error", "no run")}
+    for k in ("cl", "cd", "cd_pressure", "cd_friction", "cm"):
+        v = np.array([x[k] for x in samples])
+        out[k] = float(v.mean())
+        out[k + "_swing"] = float(v.max() - v.min())
+    out["yplus_max"] = float(max(x["yplus_max"] for x in samples))
+    out["snapshots"] = len(samples)
+    surf = {}
+    for side in ("upper", "lower"):
+        first = samples[0]["surface"][side]
+        surf[side] = {"x": first["x"]}
+        for k in ("cp", "cf"):
+            surf[side][k] = np.round(np.mean([x["surface"][side][k] for x in samples], axis=0), 6 if k == "cf" else 4).tolist()
+    out["surface"] = surf
+    out["history"] = [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in c.items()} for c in run_out["chunks"]]
+    xs, cf = np.array(surf["upper"]["x"]), np.array(surf["upper"]["cf"])
     sep = np.where((cf < 0) & (xs > 0.02))[0]
     if sep.size:
         out["bubble_upper"] = [round(float(xs[sep[0]]), 3), round(float(xs[sep[-1]]), 3)]

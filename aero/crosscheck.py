@@ -55,6 +55,7 @@ from models import airframe as AF  # noqa: E402
 OUT = HERE / "study"
 KEYS = ("baseline", "optimized")
 STALL_ALPHAS = np.arange(0.0, 18.01, 0.25)
+VERIFY = {"re": 1.0e6, "alpha": 4.0, "n_crit": 9.0}   # where XFOIL and RANS are both dependable
 G = 9.81
 
 
@@ -149,13 +150,23 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         shutil.copy(mesh_dir / "wall.npz", d / "wall.npz")
         return d
 
+    def solved(d, **run_kw):
+        """A case's results, from its result.json when an earlier run finished it."""
+        f = d / "result.json"
+        if resume and f.exists():
+            return json.loads(f.read_text())
+        res = C.results(d, C.run(d, log=log, **run_kw))
+        if "error" not in res:
+            f.write_text(json.dumps(res))
+        return res
+
     def task(key, i):
         p = points[i]
         a1 = xfoil_alphas[key][i]
         d1 = case_dir(key, f"{p.name}_a", work / key / "mesh")
         if not (d1 / "case.json").exists():
             C.write_case(d1, p.re, a1, n_crit)
-        r1 = C.results(d1, C.run(d1, log=log))
+        r1 = solved(d1)
         if "error" in r1:
             return key, i, {"runs": [r1], "error": r1["error"]}
         slope = 0.105                                      # per degree, a first guess
@@ -166,7 +177,7 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         if not (resume and (d2 / "case.json").exists()):
             shutil.rmtree(d2, ignore_errors=True)
             C.restart_at(d1, d2, a2)
-        r2 = C.results(d2, C.run(d2, max_iter=4000, min_iter=1000, log=log))
+        r2 = solved(d2, max_iter=4000, min_iter=1000)
         if "error" in r2:
             return key, i, {"runs": [r1, r2], "error": r2["error"]}
         return key, i, interpolate(r1, r2, p.cl)
@@ -182,12 +193,23 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
         d = case_dir(key, "cruise_coarse", m)
         if not (d / "case.json").exists():
             C.write_case(d, p.re, xfoil_alphas[key][i], n_crit)
-        res = C.results(d, C.run(d, log=log))
+        res = dict(solved(d))
         res.pop("surface", None)
         return {"cells": info["cells"], **res}
 
+    def verify_task():
+        """The set-up against XFOIL where both are dependable: the NACA 4412 at Re 1e6."""
+        d = case_dir("baseline", "verify_re1e6", work / "baseline" / "mesh")
+        if not (d / "case.json").exists():
+            C.write_case(d, VERIFY["re"], VERIFY["alpha"], VERIFY["n_crit"])
+        res = dict(solved(d, max_iter=6500, min_iter=4000))
+        for k in ("surface", "history"):
+            res.pop(k, None)
+        return res
+
     out = {"meshes": meshes, "points": {k: [None] * len(points) for k in kulfans}}
-    with cf.ThreadPoolExecutor(max_workers=C.cpus()) as ex:
+    with cf.ThreadPoolExecutor(max_workers=C.cpus() + 1) as ex:
+        verify = ex.submit(verify_task)
         futs = [ex.submit(task, k, i) for k in kulfans for i in range(len(points))]
         grid = ex.submit(grid_task)
         for f in cf.as_completed(futs):
@@ -195,6 +217,8 @@ def cfd_all(kulfans: dict, points, xfoil_alphas: dict, n_crit: float, work: Path
             out["points"][key][i] = res
             log(f"  CFD {key} {points[i].name}: " + (res.get("error") or f"cd {res['cd']:.5f} at cl {res['cl']:.3f}"))
         out["grid"] = grid.result()
+        out["verify"] = verify.result()
+        log(f"  CFD check at Re {VERIFY['re']:.0e}: cl {out['verify'].get('cl', 0):.3f}, cd {out['verify'].get('cd', 0):.5f}")
     fine = out["points"]["baseline"][1]["runs"][0] if "runs" in out["points"]["baseline"][1] else None
     if fine and "cd" in out["grid"]:
         out["grid"]["fine_cells"] = meshes["baseline"]["cells"]
@@ -426,8 +450,11 @@ def main(argv=None):
         X.write_dat(dat, xy[:, 0], xy[:, 1], k)
         xf[k] = xfoil(dat, points, [p["alpha"] for p in nf["large"][k]["points"]], lim.re_stall, n_crit)
         log(f"  {k:9s} cd " + ", ".join(f"{p.name} {x['cd']:.5f}" if x else f"{p.name} -" for p, x in zip(points, xf[k]["points"])))
+    pts = X.run(tmp / "baseline.dat", VERIFY["re"], VERIFY["n_crit"],
+                ["ALFA 0", "PACC", "polar.txt", "", f"ASEQ 0.5 {VERIFY['alpha']:g} 0.5"])["points"]
+    ver = next((p for p in pts if abs(p["alpha"] - VERIFY["alpha"]) < 1e-6), None)
     shutil.rmtree(tmp, ignore_errors=True)
-    out["tools"]["xfoil"] = {"label": X.version(), "sections": xf}
+    out["tools"]["xfoil"] = {"label": X.version(), "sections": xf, "verify": ver}
 
     if a.cfd:
         if not C.available():
@@ -442,6 +469,7 @@ def main(argv=None):
         out["tools"]["openfoam"] = {"label": f"{C.version()} simpleFoam, k-omega SST + Langtry-Menter",
                                     "sections": {k: {"points": res["points"][k]} for k in KEYS},
                                     "meshes": res["meshes"], "grid": res["grid"],
+                                    "verify": {**VERIFY, "cfd": res.get("verify"), "xfoil": out["tools"]["xfoil"]["verify"]},
                                     "turbulence": {"tu_percent": r(100 * C.turbulence(points[1].re, n_crit)["tu"], 3)},
                                     "minutes": round((time.time() - t1) / 60)}
         if a.work is None:
@@ -514,6 +542,12 @@ def report(out: dict, study: dict) -> str:
                 b = x.get("bubble_upper")
                 L.append(f"| {'NACA 4412' if k == 'baseline' else 'optimized'} | {p['name']} | {x['alpha']:.2f} | {x['cd']:.4f} | "
                          f"{x['cd_pressure']:.4f} | {x['cd_friction']:.4f} | {x['cm']:.3f} | {'-' if not b else f'{b[0]:.2f}-{b[1]:.2f}'} |")
+        v = of.get("verify", {})
+        if v.get("cfd") and v.get("xfoil") and "cd" in v["cfd"]:
+            c, x = v["cfd"], v["xfoil"]
+            L += ["", f"Set-up check (NACA 4412, Re {v['re']:.0e}, {v['alpha']:g}°, n_crit {v['n_crit']:g}): CFD cl {c['cl']:.3f}, "
+                  f"cd {c['cd']:.5f}; XFOIL cl {x['cl']:.3f}, cd {x['cd']:.5f} "
+                  f"({(c['cl'] - x['cl']) / x['cl'] * 100:+.1f} % lift, {(c['cd'] - x['cd']) / x['cd'] * 100:+.1f} % drag)."]
         g = of.get("grid", {})
         if "fine_cd" in g and "cd" in g:
             L += ["", f"Grid check (NACA 4412 at cruise, same angle): {g['cells']} cells cd {g['cd']:.5f}, cl {g['cl']:.4f}; "

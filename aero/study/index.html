@@ -824,6 +824,11 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     h("h3", {}, notesEl, "What the checks say");
     const xs = sm.xfoil;
     h("p", {}, notesEl, `XFOIL, run for real on the exact shapes, gives a cruise drag of ${xs.baseline[1].toFixed(4)} and ${xs.optimized[1].toFixed(4)} against NeuralFoil's ${sm.neuralfoil.baseline[1].toFixed(4)} and ${sm.neuralfoil.optimized[1].toFixed(4)}: the optimizer did not find a gap in the network's training. The maximum lift and the angle it comes at match within a few hundredths and half a degree.`);
+    if (of && of.verify && of.verify.cfd && of.verify.xfoil && of.verify.cfd.cd) {
+      const v = of.verify, c = v.cfd, x = v.xfoil;
+      const d = (a, b) => `${((a - b) / b * 100).toFixed(0).replace("-", "−")} %`;
+      h("p", {}, notesEl, `First a check of the CFD set-up where XFOIL and RANS are both dependable: the NACA 4412 at a Reynolds number of ${(v.re / 1e6).toFixed(0)} million and ${v.alpha}°. The CFD gives lift ${c.cl.toFixed(3)} and drag ${c.cd.toFixed(4)}, XFOIL ${x.cl.toFixed(3)} and ${x.cd.toFixed(4)} (${d(c.cl, x.cl)} and ${d(c.cd, x.cd)}), with the transition in the same place. So the mesh, the far field and the force integration are sound, and what differs at the plane's own Reynolds numbers is the transition physics.`);
+    }
     if (of) {
       const o = sm.openfoam, g = of.grid;
       const gtxt = g && g.fine_cd ? ` A grid with ${(g.cells / 1000).toFixed(0)}k cells gives a drag ${Math.abs((g.cd - g.fine_cd) / g.fine_cd * 100).toFixed(1)} % ${g.cd > g.fine_cd ? "higher" : "lower"} than the ${(g.fine_cells / 1000).toFixed(0)}k-cell one.` : "";

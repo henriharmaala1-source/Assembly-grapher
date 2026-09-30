@@ -35,7 +35,8 @@ def _environment() -> dict:
         raise RuntimeError("XFOIL not found: install it (apt install xfoil) or set XFOIL=/path/to/xfoil")
     env = dict(os.environ)
     probe = "PLOP\nG F\n\nNACA 0012\nOPER\nVISC 100000\nALFA 1\n\nQUIT\n"
-    out = subprocess.run([exe], input=probe, capture_output=True, text=True, timeout=60, env=env)
+    scratch = tempfile.gettempdir()             # XFOIL leaves a ":00.bl" file where it runs
+    out = subprocess.run([exe], input=probe, capture_output=True, text=True, timeout=60, env=env, cwd=scratch)
     if "SIGFPE" in out.stdout + out.stderr or out.returncode < 0:
         cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kipina"
         cache.mkdir(parents=True, exist_ok=True)
@@ -45,7 +46,7 @@ def _environment() -> dict:
             src.write_text("void _gfortran_set_fpe(int v) { (void)v; }\n")
             subprocess.run(["cc", "-shared", "-fPIC", "-o", str(shim), str(src)], check=True)
         env["LD_PRELOAD"] = str(shim)
-        out = subprocess.run([exe], input=probe, capture_output=True, text=True, timeout=60, env=env)
+        out = subprocess.run([exe], input=probe, capture_output=True, text=True, timeout=60, env=env, cwd=scratch)
         if "SIGFPE" in out.stdout + out.stderr or out.returncode < 0:
             raise RuntimeError("XFOIL crashes on a floating-point trap even with the shim")
     env["XFOIL_EXE"] = exe
@@ -55,7 +56,7 @@ def _environment() -> dict:
 
 def version() -> str:
     out = subprocess.run([_environment()["XFOIL_EXE"]], input="QUIT\n", capture_output=True, text=True,
-                         timeout=30, env=_environment())
+                         timeout=30, env=_environment(), cwd=tempfile.gettempdir())
     for line in out.stdout.splitlines():
         if "Version" in line:
             return "XFOIL " + line.split("Version")[1].strip()

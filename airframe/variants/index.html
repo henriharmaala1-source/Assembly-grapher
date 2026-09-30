@@ -792,7 +792,13 @@ const views = [{ key: "baseline", scene: makeScene(), meshes: new Map() }, { key
 async function load(urls) {
   const loader = new GLTFLoader();
   for (const u of urls) {
-    try { return await loader.loadAsync(u); } catch { /* next */ }
+    try {
+      if (u.endsWith(".json")) {                     // hosts that don't serve .glb get the same binary as base64 JSON
+        const { glb } = await fetch(u).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+        return await loader.parseAsync(Uint8Array.from(atob(glb), (c) => c.charCodeAt(0)).buffer, "");
+      }
+      return await loader.loadAsync(u);
+    } catch { /* next */ }
   }
   throw new Error("model did not load");
 }
@@ -815,7 +821,7 @@ const stamp = (v, gltf) => {
 };
 
 try {
-  const [a, b] = await Promise.all([load(["baseline.glb", "../viewer/airframe.glb"]), load(["optimized.glb", "optimized/viewer/airframe.glb"])]);
+  const [a, b] = await Promise.all([load(["../viewer/airframe.glb", "baseline-glb.json"]), load(["optimized/viewer/airframe.glb", "optimized-glb.json"])]);
   stamp(views[0], a);
   stamp(views[1], b);
   box.setFromObject(b.scene).union(new THREE.Box3().setFromObject(a.scene));

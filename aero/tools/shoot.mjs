@@ -6,7 +6,7 @@
 //   node aero/tools/shoot.mjs --page     # and the whole page
 //
 // Serves aero/study/ on a local port, waits for the charts, and saves one PNG
-// per chart (and the whole page with --page).
+// per chart, the cross-checks too when crosscheck.json is there (and the whole page with --page).
 import { createServer } from "node:http";
 import { readFile, mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -21,7 +21,7 @@ let chromium;
 try { ({ chromium } = require("playwright")); }
 catch { ({ chromium } = require(path.join(process.execPath, "../../lib/node_modules/playwright"))); }
 
-const types = { ".html": "text/html", ".json": "application/json", ".dat": "text/plain" };
+const types = { ".html": "text/html", ".json": "application/json", ".dat": "text/plain", ".md": "text/plain" };
 const server = createServer(async (req, res) => {
   const file = path.join(root, decodeURIComponent(req.url.split("?")[0]).replace(/^\/$/, "/index.html"));
   try {
@@ -44,7 +44,10 @@ for (const theme of themes) {
   await page.waitForTimeout(600);                     // web fonts
   const suffix = theme === "dark" ? "-dark" : "";
   if (process.argv.includes("--page")) await page.screenshot({ path: path.join(out, `page${suffix}.png`), fullPage: true });
-  for (const id of ["summary", "f-shape", "f-points", "f-polar", "f-stall", "f-cp", "f-power", "f-breakdown"]) {
+  const ids = ["summary", "f-shape", "f-points", "f-polar", "f-stall", "f-cp", "f-power", "f-breakdown"];
+  if (await page.locator("#crosscheck").isVisible())                 // when crosscheck.json is there
+    ids.push("xc-tools", "f-xc-drag", "f-xc-stall", "f-xc-ncrit", "f-xc-cp-base", "f-xc-cp-opt", "f-xc-plane");
+  for (const id of ids) {
     await page.locator(`#${id}`).screenshot({ path: path.join(out, `${id.replace(/^f-/, "")}${suffix}.png`) });
   }
   console.log("wrote", theme);

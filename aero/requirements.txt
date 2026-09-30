@@ -1,3 +1,6 @@
-# for aero/efficiency.py (the handbook optimizer, aero/optimize.py, needs nothing extra)
+# for aero/efficiency.py and aero/crosscheck.py (the handbook optimizer, aero/optimize.py, needs nothing extra)
 neuralfoil>=0.3     # brings AeroSandbox and numpy
 scipy>=1.11
+# aero/crosscheck.py also runs two programs, not pip packages:
+#   XFOIL 6.99      apt install xfoil      (or set XFOIL=/path/to/xfoil)
+#   OpenFOAM        apt install openfoam   (only for --cfd; Ubuntu's ESI v1912 build)

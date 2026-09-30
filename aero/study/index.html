@@ -86,6 +86,15 @@
   .tip .r b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
   .tip .r span { color: var(--ink-2); }
 
+  .tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 10px; }
+  .tool { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 11px 14px; display: grid; gap: 3px; align-content: start; }
+  .tool b { font: 600 18px/1.15 var(--display); letter-spacing: .01em; }
+  .tool .what { font-size: 13.5px; color: var(--ink-2); }
+  .tool .use { font: 500 11.5px/1.3 var(--mono); color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend svg { display: block; }
+
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 14px; }
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
@@ -144,6 +153,24 @@
     <div class="card scroll"><table id="t-plane"></table></div>
   </section>
 
+  <section id="crosscheck" hidden>
+    <div class="prose">
+      <h2>Cross-checks: do other tools agree?</h2>
+      <p id="xc-intro"></p>
+    </div>
+    <div class="tools" id="xc-tools"></div>
+    <div class="grid2">
+      <figure class="wide" id="f-xc-drag"></figure>
+      <figure id="f-xc-stall"></figure>
+      <figure id="f-xc-ncrit"></figure>
+      <figure id="f-xc-cp-base"></figure>
+      <figure id="f-xc-cp-opt"></figure>
+      <figure class="wide" id="f-xc-plane"></figure>
+    </div>
+    <div class="card scroll"><table id="t-xc-parts"></table></div>
+    <div class="prose" id="xc-notes"></div>
+  </section>
+
   <section id="method" hidden>
     <div class="prose">
       <h2>How it was worked out</h2>
@@ -198,13 +225,24 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
   }
 
   // ------------------------------------------------------------ figure shell: title, table toggle, caption
-  function shell(fig, title, sub, caption, tableRows) {
+  function sample(parent, key, dash) {
+    const s = el("svg", { width: 26, height: 8, "aria-hidden": "true" }, parent);
+    el("line", { x1: 1, x2: 25, y1: 4, y2: 4, stroke: css(COL[key] || key), "stroke-width": 2, "stroke-linecap": "round",
+                 "stroke-dasharray": dashOf(dash) }, s);
+    return s;
+  }
+  const dashOf = (d) => (d ? (typeof d === "string" ? d : "2 4") : "none");
+  function shell(fig, title, sub, caption, tableRows, legend) {
     fig.replaceChildren();
     const head = h("div", { class: "fhead" }, fig);
     const t = h("div", {}, head);
     h("h3", {}, t, title);
     if (sub) h("p", {}, t, sub);
     const btn = h("button", { class: "tbtn", type: "button", "aria-pressed": "false" }, head, "Table");
+    if (legend) {
+      const lg = h("div", { class: "legend" }, fig);
+      for (const it of legend) { const sp = h("span", {}, lg); sample(sp, it.key, it.dash); sp.appendChild(document.createTextNode(it.label)); }
+    }
     const plot = h("div", { class: "plot" }, fig);
     const tw = h("div", { class: "scroll" }, fig);
     tw.hidden = true;
@@ -226,7 +264,7 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     for (const r of rows) {
       const row = h("div", { class: "r" }, tip);
       const k = h("i", {}, row); k.style.borderTopColor = css(COL[r.key] || r.key);
-      if (r.dash) k.style.borderTopStyle = "dotted";
+      if (r.dash) k.style.borderTopStyle = dashOf(r.dash).split(" ")[0] > 3 ? "dashed" : "dotted";
       h("b", {}, row, r.value); h("span", {}, row, r.label);
     }
     tip.hidden = false;
@@ -239,7 +277,7 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
 
   // ------------------------------------------------------------ generic line chart with a crosshair
   function lineChart(fig, o) {
-    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table);
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table, o.legend);
     const W = Math.max(300, Math.round(plot.clientWidth)), H = o.height || 300, m = { l: 66, r: o.mr || 96, t: 16, b: 44 };
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria, tabindex: "0" }, plot);
     const x = lin(o.x.domain[0], o.x.domain[1], m.l, W - m.r);
@@ -263,7 +301,8 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     for (const s of o.series) {
       const d = s.points.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
       el("path", { d, fill: "none", stroke: css(COL[s.key]), "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round",
-                   "stroke-dasharray": s.dash ? "2 4" : "none" }, svg);
+                   "stroke-dasharray": dashOf(s.dash) }, svg);
+      if (s.dots) for (const p of s.points) el("circle", { cx: x(p[0]), cy: y(p[1]), r: 4, fill: css(COL[s.key]), stroke: css("--panel"), "stroke-width": 2 }, svg);
     }
     for (const mk of o.markers || []) {
       el("circle", { cx: x(mk.x), cy: y(mk.y), r: 4.5, fill: css(COL[mk.key]), stroke: css("--panel"), "stroke-width": 2 }, svg);
@@ -313,9 +352,9 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
 
   // ------------------------------------------------------------ dumbbell: before -> after per row
   function dumbbell(fig, o) {
-    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table);
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table, o.legend);
     const W = Math.max(300, Math.round(plot.clientWidth));
-    const rowH = 32, m = { l: Math.min(o.ml || 200, W * 0.42), r: 96, t: 10, b: 40 };
+    const rowH = 32, m = { l: Math.min(o.ml || 200, W * 0.42), r: o.mr || 96, t: 10, b: 40 };
     const H = m.t + m.b + rowH * o.rows.length;
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria }, plot);
     const x = lin(o.domain[0], o.domain[1], m.l, W - m.r);
@@ -334,8 +373,10 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
       el("circle", { cx: x(r.a), cy, r: 5, fill: css(COL.baseline), stroke: css("--panel"), "stroke-width": 2 }, g);
       el("circle", { cx: x(r.b), cy, r: 5, fill: css(COL[o.after]), stroke: css("--panel"), "stroke-width": 2 }, g);
       const ch = r.a ? (r.b - r.a) / r.a * 100 : 0;
+      if (r.sep && i) el("line", { x1: 0, x2: W, y1: cy - rowH / 2, y2: cy - rowH / 2, stroke: rule }, g);
+      const vf = o.valFmt || o.fmt;
       el("text", { x: W - m.r + 12, y: cy + 4, class: Math.abs(ch) >= 0.5 ? "lab-strong" : "lab" }, g,
-         Math.abs(ch) >= 0.5 ? `${o.fmt(r.b)}  ${ch > 0 ? "+" : "−"}${Math.abs(ch).toFixed(0)} %` : `${o.fmt(r.b)}  same`);
+         Math.abs(ch) >= 0.5 ? `${vf(r.b)}  ${ch > 0 ? "+" : "−"}${Math.abs(ch).toFixed(0)} %` : `${vf(r.b)}  same`);
       const on = () => {
         const b = svg.getBoundingClientRect(), s = b.width / W;
         tipRows(tip, r.label, [{ key: "baseline", value: o.tipFmt(r.a), label: o.names[0] },
@@ -614,11 +655,191 @@ python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
     $("status").hidden = true;
   }
 
-  let study = null;
+  // ------------------------------------------------------------ cross-checks (crosscheck.json)
+  const TOOL = {
+    neuralfoil: { short: "NeuralFoil", dash: false },
+    neuralfoil_xxxl: { short: "NeuralFoil XXXL", dash: false },
+    xfoil: { short: "XFOIL", dash: "2 4" },
+    openfoam: { short: "OpenFOAM CFD", dash: "9 5" },
+  };
+  const DASH = { handbook: false, lattice: "2 4", buildup: "12 4 2 4" };
+
+  function renderCross(S, X) {
+    const T = X.tools, P = X.points, sm = X.summary, pl = X.plane;
+    const order = ["neuralfoil", "neuralfoil_xxxl", "xfoil", "openfoam"].filter((k) => T[k]);
+    const cap = (s) => s[0].toUpperCase() + s.slice(1);
+    const pct = (a, b) => `${((b - a) / a * 100).toFixed(0).replace("-", "−")} %`;
+    const gf = (n) => n / 9.81 * 1000;
+    const of = T.openfoam;
+
+    // what each tool is
+    const tools = $("xc-tools");
+    tools.replaceChildren();
+    const card = (name, what, use, key, dash) => {
+      const c = h("div", { class: "tool" }, tools);
+      const top = h("div", { class: "use" }, c);
+      if (key) { const sp = h("span", { class: "legend" }, top); sample(sp, key, dash); sp.appendChild(document.createTextNode(use)); }
+      else top.textContent = use;
+      h("b", {}, c, name);
+      h("div", { class: "what" }, c, what);
+    };
+    card(T.neuralfoil.label.replace(" (large)", ""), "The neural network the optimizer used, trained on XFOIL runs. Its biggest network (xxxlarge) checks the fit.", "the study", "--ink-2", false);
+    card(T.xfoil.label, "The panel code with a coupled boundary layer that NeuralFoil imitates, run for real on the exact shape. Transition by the eⁿ method.", "section", "--ink-2", TOOL.xfoil.dash);
+    if (of) card(of.label.split(" simpleFoam")[0] + " CFD", `2D Navier–Stokes (RANS) with the k-ω SST model and Langtry–Menter transition, ${(of.meshes.baseline.cells / 1000).toFixed(0)}k cells, first cell under y+ 1. Different physics from XFOIL.`, "section", "--ink-2", TOOL.openfoam.dash);
+    card("AeroSandbox AeroBuildup", "Whole-plane drag from its own component models: form factors, fully turbulent friction on the pod and booms, base drag, its own span efficiency.", "whole plane", "--ink-2", DASH.buildup);
+    card("Vortex lattice", `The wing as a lattice of horseshoe vortices, induced drag in the Trefftz plane: span efficiency ${pl.vlm.e.toFixed(2)} against the study's ${pl.vlm.assumed}.`, "whole plane", "--ink-2", DASH.lattice);
+
+    const wc = order.map((k) => sm[k]?.weighted_change).filter((v) => v !== null && v !== undefined);
+    $("xc-intro").textContent = `The study's numbers come from one model, so the same two sections and the same plane went through independent tools. ` +
+      `Every tool puts the optimized section ahead at all three points: the weighted drag saving is ${Math.min(...wc.map(Math.abs)).toFixed(0)}–${Math.max(...wc.map(Math.abs)).toFixed(0)} % depending on the tool, against ${Math.abs(sm.neuralfoil.weighted_change).toFixed(0)} % from the model the optimizer used.`;
+
+    // section drag, every tool
+    const rows = [];
+    P.forEach((p, i) => order.forEach((k, j) => {
+      const b = sm[k].baseline[i], o = sm[k].optimized[i];
+      if (b != null && o != null) rows.push({ label: `${cap(p.name)} · ${TOOL[k].short}`, a: b, b: o, sep: j === 0 });
+    }));
+    const lo = Math.floor(Math.min(...rows.map((r) => Math.min(r.a, r.b))) * 500) / 500, hi = Math.ceil(Math.max(...rows.map((r) => Math.max(r.a, r.b))) * 500) / 500;
+    dumbbell($("f-xc-drag"), {
+      title: "Section drag at the design points, by tool", sub: "Drag coefficient at each point's lift coefficient and Reynolds number, NACA 4412 to optimized",
+      aria: "Section drag coefficient of both sections at three points from each tool", rows, domain: [lo, hi],
+      fmt: (v) => v.toFixed(3), valFmt: (v) => v.toFixed(4), tipFmt: (v) => v.toFixed(4), label: "cd", after: "optimized", ml: 200, mr: 118, names: ["NACA 4412", "Optimized"],
+      legend: [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }],
+      table: [["point · tool", "NACA 4412", "optimized", "change"], ...rows.map((r) => [r.label, r.a.toFixed(4), r.b.toFixed(4), pct(r.a, r.b)])],
+      caption: of ? "The tools differ on the absolute drag by a few per cent, the CFD most (RANS transition models read low-Reynolds laminar runs differently from XFOIL), but they agree on the direction and roughly the size of the saving at every point." :
+        "XFOIL and both NeuralFoil networks agree within a few per cent on the absolute drag and on the saving at every point.",
+    });
+
+    // stall: NeuralFoil against XFOIL
+    const nfS = T.neuralfoil.sections, xfS = T.xfoil.sections;
+    const st = (sec) => sec.stall.alpha.map((a, i) => [a, sec.stall.cl[i]]).filter((p) => p[0] <= 16 && p[1] != null);
+    const aGrid = []; for (let v = 0; v <= 16.001; v += 0.5) aGrid.push(+v.toFixed(1));
+    const peak = (pts) => pts.reduce((a, b) => (b[1] > a[1] ? b : a));
+    lineChart($("f-xc-stall"), {
+      title: "Lift near the stall", sub: `At 9 m/s (Reynolds number ${(X.re_stall / 1e3).toFixed(0)}k), NeuralFoil against XFOIL`,
+      aria: "Lift coefficient against angle of attack near the stall from NeuralFoil and XFOIL for both sections",
+      legend: [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }, { key: "--ink", label: "NeuralFoil" }, { key: "--ink", dash: TOOL.xfoil.dash, label: "XFOIL" }],
+      x: { domain: [0, 16], label: "angle of attack, degrees", fmt: (v) => `${v}°`, tipFmt: (v) => `${v}°`, ticks: [0, 4, 8, 12, 16] },
+      y: { domain: [0.2, 1.6], label: "lift coefficient cl", fmt: (v) => v.toFixed(1), tipFmt: (v) => v.toFixed(3), ticks: [0.4, 0.8, 1.2, 1.6] },
+      series: [{ key: "baseline", label: "NACA 4412, NeuralFoil", points: st(nfS.baseline) }, { key: "baseline", label: "NACA 4412, XFOIL", points: st(xfS.baseline), dash: TOOL.xfoil.dash },
+               { key: "optimized", label: "Optimized, NeuralFoil", points: st(nfS.optimized) }, { key: "optimized", label: "Optimized, XFOIL", points: st(xfS.optimized), dash: TOOL.xfoil.dash }],
+      xs: aGrid, mr: 24,
+      table: [["angle", "NACA 4412 NeuralFoil", "NACA 4412 XFOIL", "optimized NeuralFoil", "optimized XFOIL"],
+        ...aGrid.filter((a) => a % 2 === 0).map((a) => [`${a}°`, ...[nfS.baseline, xfS.baseline, nfS.optimized, xfS.optimized].map((s) => interp(st(s), a).toFixed(3))])],
+      caption: `XFOIL puts the peaks at ${peak(st(xfS.baseline))[1].toFixed(2)} (${peak(st(xfS.baseline))[0]}°) and ${peak(st(xfS.optimized))[1].toFixed(2)} (${peak(st(xfS.optimized))[0]}°), NeuralFoil at ${peak(st(nfS.baseline))[1].toFixed(2)} and ${peak(st(nfS.optimized))[1].toFixed(2)}: the same maximum lift, and the optimized section peaks earlier in both.`,
+    });
+
+    // transition sensitivity: NeuralFoil against XFOIL
+    const nc = (obj) => Object.entries(obj).filter(([, v]) => v != null).map(([n, v]) => [+n, v]).sort((a, b) => a[0] - b[0]);
+    const nfR = S.robustness;
+    const all = [nc(nfR.baseline), nc(nfR.optimized), nc(xfS.baseline.n_crit_cruise), nc(xfS.optimized.n_crit_cruise)];
+    const cmax = Math.ceil(Math.max(...all.flat().map((p) => p[1])) * 500) / 500;
+    lineChart($("f-xc-ncrit"), {
+      title: "Cruise drag against surface quality", sub: "Transition sensitivity n_crit: 5 is a rough printed skin or gusty air, 9 a smooth wing in calm air",
+      aria: "Cruise section drag against n_crit from NeuralFoil and XFOIL for both sections",
+      legend: [{ key: "baseline", label: "NACA 4412" }, { key: "optimized", label: "Optimized" }, { key: "--ink", label: "NeuralFoil" }, { key: "--ink", dash: TOOL.xfoil.dash, label: "XFOIL" }],
+      x: { domain: [4.6, 9.4], label: "n_crit", fmt: (v) => `${v}`, tipFmt: (v) => `n_crit ${v}`, ticks: [5, 7, 9] },
+      y: { domain: [0.010, cmax], label: "cruise cd", fmt: (v) => v.toFixed(3), tipFmt: (v) => v.toFixed(4), ticks: niceTicks(0.010, cmax, 4) },
+      series: [{ key: "baseline", label: "NACA 4412, NeuralFoil", points: all[0], dots: true }, { key: "baseline", label: "NACA 4412, XFOIL", points: all[2], dash: TOOL.xfoil.dash, dots: true },
+               { key: "optimized", label: "Optimized, NeuralFoil", points: all[1], dots: true }, { key: "optimized", label: "Optimized, XFOIL", points: all[3], dash: TOOL.xfoil.dash, dots: true }],
+      xs: [5, 7, 9], mr: 24,
+      table: [["n_crit", "NACA 4412 NeuralFoil", "NACA 4412 XFOIL", "optimized NeuralFoil", "optimized XFOIL"], ...[5, 7, 9].map((n) => [String(n), ...all.map((s) => interp(s, n).toFixed(4))])],
+      caption: "The NACA 4412's drag climbs as the flow stays laminar longer and a separation bubble grows; the optimized section barely moves. XFOIL shows the same, so the saving does not rest on a perfectly smooth wing.",
+    });
+
+    // pressure at cruise, per section
+    const cpSeries = (key) => {
+      const out = [];
+      const nf = S.pressure[key];
+      out.push({ key, label: "NeuralFoil upper", points: nf.x.map((x, i) => [x, nf.upper[i]]) });
+      out.push({ key, label: "NeuralFoil lower", points: nf.x.map((x, i) => [x, nf.lower[i]]) });
+      const xf = xfS[key].points[1]?.surface;
+      if (xf) for (const side of ["upper", "lower"]) out.push({ key, label: `XFOIL ${side}`, dash: TOOL.xfoil.dash, points: xf[side].x.map((x, i) => [x, xf[side].cp[i]]) });
+      const cfd = of?.sections[key].points[1]?.surface;
+      if (cfd) for (const side of ["upper", "lower"]) out.push({ key, label: `CFD ${side}`, dash: TOOL.openfoam.dash, points: cfd[side].x.map((x, i) => [x, cfd[side].cp[i]]) });
+      return out;
+    };
+    const xGrid = []; for (let v = 0.02; v <= 0.98001; v += 0.02) xGrid.push(+v.toFixed(2));
+    for (const [key, id, name] of [["baseline", "f-xc-cp-base", "NACA 4412"], ["optimized", "f-xc-cp-opt", "Optimized"]]) {
+      const ser = cpSeries(key);
+      const legend = [{ key, label: "NeuralFoil" }, { key, dash: TOOL.xfoil.dash, label: "XFOIL" }];
+      if (of) legend.push({ key, dash: TOOL.openfoam.dash, label: "OpenFOAM" });
+      lineChart($(id), {
+        title: `Pressure at cruise: ${name}`, sub: `cl ${P[1].cl.toFixed(2)}, Reynolds number ${(P[1].re / 1e3).toFixed(0)}k; suction up`,
+        aria: `Pressure coefficient along the chord of the ${name} section from each tool`, legend,
+        x: { domain: [0, 1], label: "distance along the chord, x/c", fmt: (v) => v.toFixed(1), tipFmt: (v) => `x/c ${v.toFixed(2)}`, ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] },
+        y: { domain: [-1.4, 0.8], invert: true, base: 0, label: "pressure coefficient Cp", fmt: (v) => v.toFixed(1), tipFmt: (v) => v.toFixed(2), ticks: [-1.2, -0.8, -0.4, 0, 0.4, 0.8] },
+        series: ser.map((s) => ({ ...s, points: s.points.filter((p) => p[0] >= 0.005 && p[0] <= 0.995) })), xs: xGrid, mr: 24,
+        table: [["x/c", ...ser.map((s) => s.label)], ...[0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((xv) => [xv.toFixed(2), ...ser.map((s) => interp(s.points, xv).toFixed(2))])],
+        caption: key === "baseline"
+          ? "The upper curve is the suction side. Where the pressure flattens into a plateau and then drops back, a laminar separation bubble sits on the surface; the tools place it at about the same point."
+          : "The optimized section's longer, gently falling suction on the upper surface keeps the flow attached and laminar further back. Its bubble is shorter and later, the source of most of the saving.",
+      });
+    }
+
+    // whole plane: drag against speed by method
+    const V = pl.variants, spd = pl.speeds;
+    const ser = (k, m) => spd.map((v, i) => [v, gf(V[k][m][i])]);
+    const top = Math.ceil(Math.max(...["baseline", "optimized"].flatMap((k) => ["handbook", "handbook_vlm", "buildup"].flatMap((m) => V[k][m]))) * 1000 / 9.81 / 10) * 10;
+    const names = { handbook: "the study's build-up", handbook_vlm: "build-up, lattice induced drag", buildup: "AeroBuildup" };
+    const dashes = { handbook: DASH.handbook, handbook_vlm: DASH.lattice, buildup: DASH.buildup };
+    const pser = [];
+    for (const k of ["baseline", "optimized"]) for (const m of ["handbook", "handbook_vlm", "buildup"])
+      pser.push({ key: k === "baseline" ? "baseline" : "airfoil", label: `${k === "baseline" ? "As built" : "Optimized airfoil"}, ${names[m]}`, dash: dashes[m], points: ser(k, m) });
+    const cb = V.baseline.cruise;
+    lineChart($("f-xc-plane"), {
+      title: "Whole-plane drag by method", sub: "Total drag in grams-force against airspeed; the detail changes are left out (only the study models them)",
+      aria: "Whole-plane drag against airspeed from the study's build-up, the build-up with vortex-lattice induced drag, and AeroBuildup, as built and with the optimized airfoil",
+      height: 330, legend: [{ key: "baseline", label: "As built" }, { key: "airfoil", label: "Optimized airfoil" },
+        { key: "--ink", label: names.handbook }, { key: "--ink", dash: DASH.lattice, label: names.handbook_vlm }, { key: "--ink", dash: DASH.buildup, label: names.buildup }],
+      x: { domain: [9, 19.5], label: "airspeed, m/s", fmt: (v) => `${v}`, tipFmt: (v) => `${v} m/s`, ticks: [9, 11, 13, 15, 17, 19] },
+      y: { domain: [0, top], label: "drag, gf", fmt: (v) => `${v}`, tipFmt: (v) => `${v.toFixed(1)} gf`, ticks: niceTicks(0, top, 5) },
+      series: pser, xs: spd, mr: 24, guides: [{ x: S.cruise_v, label: `cruise ${S.cruise_v} m/s` }],
+      table: [["airspeed", ...pser.map((s) => s.label)], ...spd.map((v, i) => [`${v} m/s`, ...pser.map((s) => s.points[i][1].toFixed(1))])],
+      caption: `AeroBuildup comes out ${Math.abs((cb.buildup - cb.handbook) / cb.handbook * 100).toFixed(0)} % below the study at cruise, almost all of it in parts AeroBuildup has no model for (the table below). Both methods give the optimized airfoil the same saving. The lattice's span efficiency takes another ${((cb.handbook - cb.handbook_vlm) / cb.handbook * 100).toFixed(0)} % off the study's cruise drag.`,
+    });
+
+    const tb = $("t-xc-parts");
+    tb.replaceChildren();
+    const hr = h("tr", {}, h("thead", {}, tb));
+    [`At ${S.cruise_v} m/s, as built`, "study's build-up", "AeroBuildup", ""].forEach((c, i) => h("th", { class: i && i < 3 ? "n" : "" }, hr, c));
+    const bb = h("tbody", {}, tb);
+    const notes = { wing: "both use NeuralFoil at the flying lift coefficient", tail: "", pod: "AeroBuildup has no blunt-nose drag; it treats the pod as a streamlined body",
+                    booms: "", small: "not modelled in AeroBuildup", junctions: "not modelled in AeroBuildup", induced: "both close to span efficiency 0.8; the lattice says 0.93" };
+    for (const [c, label] of pl.categories) {
+      const tr = h("tr", {}, bb);
+      h("td", {}, tr, label);
+      h("td", { class: "n" }, tr, `${gf(cb.handbook_parts[c]).toFixed(1)} gf`);
+      h("td", { class: "n" }, tr, `${gf(cb.buildup_parts[c]).toFixed(1)} gf`);
+      h("td", { class: "no" }, tr, notes[c] || "");
+    }
+    const trT = h("tr", {}, bb);
+    h("td", {}, trT, "Total");
+    h("td", { class: "n" }, trT, `${gf(cb.handbook).toFixed(1)} gf`);
+    h("td", { class: "n" }, trT, `${gf(cb.buildup).toFixed(1)} gf`);
+    h("td", {}, trT, "");
+
+    const notesEl = $("xc-notes");
+    notesEl.replaceChildren();
+    h("h3", {}, notesEl, "What the checks say");
+    const xs = sm.xfoil;
+    h("p", {}, notesEl, `XFOIL, run for real on the exact shapes, gives a cruise drag of ${xs.baseline[1].toFixed(4)} and ${xs.optimized[1].toFixed(4)} against NeuralFoil's ${sm.neuralfoil.baseline[1].toFixed(4)} and ${sm.neuralfoil.optimized[1].toFixed(4)}: the optimizer did not find a gap in the network's training. The maximum lift and the angle it comes at match within a few hundredths and half a degree.`);
+    if (of) {
+      const o = sm.openfoam, g = of.grid;
+      const gtxt = g && g.fine_cd ? ` A grid with ${(g.cells / 1000).toFixed(0)}k cells gives a drag ${Math.abs((g.cd - g.fine_cd) / g.fine_cd * 100).toFixed(1)} % ${g.cd > g.fine_cd ? "higher" : "lower"} than the ${(g.fine_cells / 1000).toFixed(0)}k-cell one.` : "";
+      h("p", {}, notesEl, `The CFD is the independent one: a different transition model on a real mesh. It gives the NACA 4412 a cruise drag of ${o.baseline[1]?.toFixed(4) ?? "–"} and the optimized section ${o.optimized[1]?.toFixed(4) ?? "–"} (${o.change[1] != null ? (o.change[1] > 0 ? "+" : "−") + Math.abs(o.change[1]).toFixed(0) + " %" : "–"}), at a free-stream turbulence of ${of.turbulence.tu_percent} % to match n_crit ${X.n_crit}.${gtxt} RANS transition models are calibrated on higher Reynolds numbers than these, so its absolute drag is the least certain of the four; the direction of the change is the point.`);
+    }
+    h("p", {}, notesEl, `For the whole plane, the part both methods model the same way (the wing) agrees within ${Math.abs((cb.buildup_parts.wing - cb.handbook_parts.wing) / cb.handbook_parts.wing * 100).toFixed(0)} %. The study's extra drag is the blunt pod nose, the horns, wires and antenna, and the junctions, which AeroBuildup leaves out, so its total is a floor, not a better estimate. The vortex lattice says the study's induced drag is about ${((1 - pl.vlm.assumed / pl.vlm.e) * 100).toFixed(0)} % high. Taken together the study's whole-plane numbers look, if anything, pessimistic; a glide test is still the real check.`);
+    $("crosscheck").hidden = false;
+  }
+
+  let study = null, cross = null;
+  const draw = () => { if (!study) return; render(study); if (cross) renderCross(study, cross); };
   fetch("study.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then((s) => { study = s; render(s); window.__ready = true; })
+    .then((s) => { study = s; render(s); return fetch("crosscheck.json").then((r) => (r.ok ? r.json() : null)).catch(() => null); })
+    .then((x) => { if (x && study) { cross = x; renderCross(study, x); } window.__ready = true; })
     .catch(() => { $("status").textContent = "The study data (study.json) did not load. Run python3 aero/efficiency.py, then serve the aero/study folder and open index.html."; window.__ready = true; });
-  const rerender = () => { if (study) render(study); };
+  const rerender = draw;
   let lastW = 0, timer = 0;
   new ResizeObserver(([e]) => {
     const w = Math.round(e.contentRect.width);

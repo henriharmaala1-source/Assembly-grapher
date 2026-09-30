@@ -17,7 +17,8 @@ one mesh serves every angle and Reynolds number.
 
 The free-stream turbulence is matched to XFOIL's n_crit with Mack's relation
 (n_crit 7 is about 0.16 %), allowing for its decay on the way from the far
-field to the wing.
+field to the wing. The far field carries a point vortex for the current lift,
+updated every 500 iterations, so the 20-chord domain does not turn the flow.
 """
 from __future__ import annotations
 
@@ -421,7 +422,13 @@ def run(case: Path, max_iter: int | None = None, min_iter: int = 2000, log=None)
     samples, chunks = [], []
     it = _latest(case)
     first = it
+    far = _farfield_centres(case)
+    try:
+        cl_est = coefficients(case, it, info["alpha"], info["nu"])["cl"]
+    except (TypeError, ValueError, IndexError, KeyError):
+        cl_est = 0.0                                   # a fresh case: uniform fields
     while it < max_iter:
+        _farfield_bc(case, it, info["alpha"], cl_est, far)
         _control(case, it + CHUNK)
         with open(case / "log.simpleFoam", "a") as f:
             rc = subprocess.run(["simpleFoam", "-case", str(case)], stdout=f, stderr=subprocess.STDOUT,
@@ -438,6 +445,7 @@ def run(case: Path, max_iter: int | None = None, min_iter: int = 2000, log=None)
         it = times[-1]
         new = [x for x in samples if x["iteration"] > it - CHUNK]
         chunks.append({"iteration": it, **{k: float(np.mean([x[k] for x in new])) for k in ("cl", "cd", "cm")}})
+        cl_est = chunks[-1]["cl"]
         if log:
             log(f"    {case.parent.name}/{case.name}: {it} iterations, cl {chunks[-1]['cl']:.4f} cd {chunks[-1]['cd']:.5f}"
                 f" (last {len(new)} snapshots)")
@@ -448,6 +456,60 @@ def run(case: Path, max_iter: int | None = None, min_iter: int = 2000, log=None)
             if abs(b["cd"] - a["cd"]) < DRAG_TOL * abs(b["cd"]) and abs(b["cl"] - a["cl"]) < LIFT_TOL:
                 break
     return {"samples": samples, "chunks": chunks}
+
+
+def _list(text: str, start: int = 0) -> tuple[int, int, int]:
+    """Where the first "N\n(" list after `start` begins and ends in an OpenFOAM file."""
+    m = re.compile(r"\n(\d+)\s*\n\(").search(text, start)
+    body = m.end()
+    return int(m.group(1)), body, text.index("\n)", body)
+
+
+def _farfield_centres(case: Path) -> np.ndarray:
+    """Centres (x, y) of the far-field faces, in patch order (cached next to the case)."""
+    cache = case / "farfield.npz"
+    if cache.exists():
+        return np.load(cache)["xy"]
+    mesh = (case / "constant" / "polyMesh").resolve()
+    b = (mesh / "boundary").read_text()
+    m = re.search(r"farfield\s*\{[^}]*?nFaces\s+(\d+);\s*startFace\s+(\d+);", b)
+    n, start = int(m.group(1)), int(m.group(2))
+    t = (mesh / "points").read_text()
+    _, i0, i1 = _list(t)
+    pts = np.array(t[i0:i1].replace("(", " ").replace(")", " ").split(), float).reshape(-1, 3)
+    t = (mesh / "faces").read_text()
+    _, i0, i1 = _list(t)
+    lines = t[i0:i1].split("\n")[1:][start:start + n]
+    idx = np.array([ln[ln.index("(") + 1:ln.index(")")].split() for ln in lines], int)
+    xy = pts[idx][:, :, :2].mean(1)
+    np.savez(cache, xy=xy)
+    return xy
+
+
+def _farfield_bc(case: Path, time: int, alpha: float, cl: float, xy: np.ndarray) -> None:
+    """Point-vortex far field: the free stream plus the velocity of a vortex at the
+    quarter chord carrying the current lift (circulation cl / 2), and the pressure
+    that goes with it. Without it, a boundary 20 chords out cuts off the wing's own
+    upwash, turns the flow at the wing about 0.2 degrees and adds cl x 0.0035 of
+    drag; with it the domain size stops mattering."""
+    a = math.radians(alpha)
+    g = 0.5 * cl / (2 * math.pi)
+    dx, dy = xy[:, 0] - 0.25, xy[:, 1]
+    r2 = dx * dx + dy * dy
+    u = math.cos(a) + g * dy / r2
+    v = math.sin(a) - g * dx / r2
+    pf = 0.5 * (1 - u * u - v * v)
+    n = len(xy)
+    vec = f"nonuniform List<vector> {n}\n(\n" + "\n".join(f"({x:.9g} {y:.9g} 0)" for x, y in zip(u, v)) + "\n)\n"
+    sca = f"nonuniform List<scalar> {n}\n(\n" + "\n".join(f"{x:.9g}" for x in pf) + "\n)\n"
+    for field, kind, values in (("U", "freestreamVelocity", vec), ("p", "freestreamPressure", sca)):
+        path = case / str(time) / field
+        text = path.read_text()
+        i = text.index("\n    farfield\n    {\n")
+        j = text.index("\n    }\n", i)
+        block = (f"\n    farfield\n    {{\n        type            {kind};\n"
+                 f"        freestreamValue {values};\n        value           {values};")
+        path.write_text(text[:i] + block + text[j:])
 
 
 def _times(case: Path) -> list[int]:

@@ -483,6 +483,15 @@ changes to the details: a rounded top front edge on the pod, the rudder
 joiners in a groove, horn fairings, a tapered pod rear and a laid-back
 antenna. See [aero/REPORT_airframe.md](../aero/REPORT_airframe.md).
 
+The efficiency study (`python3 aero/efficiency.py`) goes further on the wing.
+It reshapes the NACA 4412 with NeuralFoil for the plane's own lift and
+Reynolds numbers, keeping the spars, the servo, the printable trailing edge
+and the stall. That cuts the wing's profile drag by about 20 % at cruise.
+Together with the detail changes, the flight time at 13 m/s rises from 13.3
+to 16.9 min. The charts are in
+[aero/study/index.html](../aero/study/index.html) and the airfoil in
+[aero/study/kipina-opt.dat](../aero/study/kipina-opt.dat).
+
 ## Known limitations
 
 - The weights are estimates. LW-PLA density depends heavily on print

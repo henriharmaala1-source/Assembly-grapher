@@ -1,0 +1,631 @@
+<title>Kipinä Efficiency Study</title>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* A wind-tunnel test sheet in the Kipinä viewer's clothes: summary strip, then the wing
+     section, then the whole plane; baseline in gray, the optimized airfoil in blue, the
+     airfoil plus the detail changes in orange. */
+  :root {
+    --ground: #EEF1F2;
+    --panel: #F8FAFA;
+    --ink: #1B2226;
+    --ink-2: #4E5B61;
+    --muted: #6E7B80;
+    --rule: #C9D1D4;
+    --grid: #E1E6E8;
+    --s-base: #898781;
+    --s-air: #2a78d6;
+    --s-full: #eb6834;
+    --good: #006300;
+    --tip: #FFFFFF;
+    --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #111517; --panel: #182125; --ink: #E6ECEE; --ink-2: #B8C4C9; --muted: #94A3A9;
+      --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-air: #3987e5; --s-full: #d95926;
+      --good: #0ca30c; --tip: #212C31; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #111517; --panel: #182125; --ink: #E6ECEE; --ink-2: #B8C4C9; --muted: #94A3A9;
+    --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-air: #3987e5; --s-full: #d95926;
+    --good: #0ca30c; --tip: #212C31; color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--ground); color: var(--ink); font: 16px/1.55 var(--body); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: grid; gap: 44px; }
+  header { display: grid; gap: 8px; max-width: 70ch; }
+  .eyebrow { font: 500 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { font: 700 clamp(40px, 6vw, 64px)/0.95 var(--display); margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  h2 { font: 600 30px/1.1 var(--display); margin: 0; text-wrap: balance; }
+  h3 { font: 600 20px/1.2 var(--display); margin: 0; letter-spacing: .01em; }
+  p { margin: 0; }
+  .lede { color: var(--ink-2); font-size: 17px; }
+  .prose { max-width: 68ch; display: grid; gap: 10px; color: var(--ink-2); }
+  code { font: 13px var(--mono); }
+  section { display: grid; gap: 18px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 2px; align-content: start; }
+  .tile .k { font: 500 12px/1.3 var(--body); color: var(--muted); letter-spacing: .02em; }
+  .tile .v { font: 600 34px/1.05 var(--display); }
+  .tile .v small { font: 500 15px var(--body); color: var(--ink-2); margin-left: 4px; }
+  .tile .was { font-size: 13px; color: var(--ink-2); }
+  .delta { font: 600 13px var(--body); color: var(--good); display: inline-flex; gap: 4px; align-items: center; }
+
+  .key { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; color: var(--ink-2); }
+  .key span { display: inline-flex; align-items: center; gap: 8px; }
+  .key i { width: 18px; height: 0; border-top: 2px solid; display: inline-block; }
+
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 880px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+  figure.wide { grid-column: 1 / -1; }
+  .fhead { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+  .fhead p { font-size: 14px; color: var(--ink-2); margin-top: 2px; }
+  .tbtn { font: 500 12px var(--body); color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+  .tbtn[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .tbtn:focus-visible, svg:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .plot { position: relative; }
+  .plot svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  svg text { font-family: var(--body); font-size: 12px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  svg .lab { fill: var(--ink-2); font-size: 12.5px; }
+  svg .lab-strong { fill: var(--ink); font-weight: 600; font-size: 12.5px; }
+  figcaption { font-size: 13.5px; color: var(--ink-2); max-width: 90ch; }
+  .tip { position: absolute; pointer-events: none; background: var(--tip); border: 1px solid var(--rule); border-radius: 5px; padding: 7px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.12); display: grid; gap: 3px; min-width: 150px; z-index: 2; }
+  .tip .t { color: var(--muted); font-size: 12px; }
+  .tip .r { display: grid; grid-template-columns: 14px auto 1fr; gap: 6px; align-items: center; }
+  .tip .r i { width: 14px; border-top: 2px solid; }
+  .tip .r b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .tip .r span { color: var(--ink-2); }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { font: 500 12px var(--body); color: var(--muted); letter-spacing: .03em; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  .ok { color: var(--good); font-weight: 600; }
+  .no { color: var(--ink-2); }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 6px; }
+  pre { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font: 13px/1.6 var(--mono); }
+  .status { padding: 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+  footer { font-size: 13px; color: var(--muted); }
+  @media (prefers-reduced-motion: no-preference) { .tbtn { transition: background .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Kipinä 485 · drag and efficiency study</div>
+    <h1>Kipinä efficiency study</h1>
+    <p class="lede" id="lede">The Kipinä wing's airfoil, reshaped by an optimizer for the speeds the plane actually flies at, and the whole plane compared before and after.</p>
+  </header>
+
+  <div class="status" id="status">Loading the study…</div>
+
+  <section id="summary" hidden>
+    <div class="tiles" id="tiles"></div>
+    <div class="key" id="key"></div>
+  </section>
+
+  <section id="wing" hidden>
+    <div class="prose">
+      <h2>The wing section</h2>
+      <p id="wing-intro"></p>
+    </div>
+    <div class="grid2">
+      <figure class="wide" id="f-shape"></figure>
+      <figure id="f-points"></figure>
+      <figure id="f-polar"></figure>
+      <figure id="f-stall"></figure>
+      <figure id="f-cp"></figure>
+    </div>
+    <div class="prose"><h3>Known airfoils against the same limits</h3>
+      <p>Thin low-Reynolds sections have less drag than the NACA 4412, but they are too thin for the aileron servo and lose lift near the stall.</p></div>
+    <div class="card scroll"><table id="t-refs"></table></div>
+  </section>
+
+  <section id="plane" hidden>
+    <div class="prose">
+      <h2>The whole plane</h2>
+      <p id="plane-intro"></p>
+    </div>
+    <div class="grid2">
+      <figure class="wide" id="f-power"></figure>
+      <figure class="wide" id="f-breakdown"></figure>
+    </div>
+    <div class="card scroll"><table id="t-plane"></table></div>
+  </section>
+
+  <section id="method" hidden>
+    <div class="prose">
+      <h2>How it was worked out</h2>
+      <p>The airfoil is a Kulfan (CST) shape: eight weights on each surface, a leading-edge weight and the 0.8 mm trailing edge the printer needs. NeuralFoil, a neural network trained on tens of millions of XFOIL analyses, gives its lift, drag, pitching moment, transition points and boundary layer in about a millisecond. SLSQP minimizes the weighted profile drag at the three operating points while holding every limit in the table under the shape chart, and it only accepts shapes NeuralFoil is confident about.</p>
+      <p>For the whole plane, the wing's profile drag comes from NeuralFoil at each speed, the induced drag from the lift and the aspect ratio (span efficiency 0.8), and every other part from the drag build-up in <code>aero/models/airframe.py</code>. The detail changes are the ones the drag optimizer picks: they are not in the CAD yet.</p>
+      <p id="caveat"></p>
+    </div>
+    <pre>pip install -r aero/requirements.txt
+python3 aero/efficiency.py            # rerun the study (about a minute)
+python3 aero/efficiency.py --n-crit 5 # for a rougher printed skin
+# then serve aero/study/ and open index.html; the airfoil is in aero/study/kipina-opt.dat</pre>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+(() => {
+  const NS = "http://www.w3.org/2000/svg";
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const COL = { baseline: "--s-base", airfoil: "--s-air", optimized: "--s-air", full: "--s-full" };
+
+  function el(tag, attrs, parent, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function h(tag, attrs, parent, text) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  const lin = (d0, d1, r0, r1) => (v) => r0 + (v - d0) / (d1 - d0) * (r1 - r0);
+  function niceTicks(lo, hi, n) {
+    const span = hi - lo, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n) || 10 * mag;
+    const out = [];
+    for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+    return out;
+  }
+  function interp(pts, x) {
+    if (x <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (x <= pts[i][0]) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0); }
+    }
+    return pts[pts.length - 1][1];
+  }
+
+  // ------------------------------------------------------------ figure shell: title, table toggle, caption
+  function shell(fig, title, sub, caption, tableRows) {
+    fig.replaceChildren();
+    const head = h("div", { class: "fhead" }, fig);
+    const t = h("div", {}, head);
+    h("h3", {}, t, title);
+    if (sub) h("p", {}, t, sub);
+    const btn = h("button", { class: "tbtn", type: "button", "aria-pressed": "false" }, head, "Table");
+    const plot = h("div", { class: "plot" }, fig);
+    const tw = h("div", { class: "scroll" }, fig);
+    tw.hidden = true;
+    const table = h("table", {}, tw);
+    const [cols, ...rows] = tableRows;
+    const trh = h("tr", {}, h("thead", {}, table));
+    cols.forEach((c, i) => h("th", { class: i ? "n" : "" }, trh, c));
+    const tb = h("tbody", {}, table);
+    rows.forEach((r) => { const tr = h("tr", {}, tb); r.forEach((c, i) => h("td", { class: i ? "n" : "" }, tr, c)); });
+    btn.addEventListener("click", () => { const on = tw.hidden; tw.hidden = !on; btn.setAttribute("aria-pressed", String(on)); btn.textContent = on ? "Hide table" : "Table"; });
+    if (caption) h("figcaption", {}, fig, caption);
+    const tip = h("div", { class: "tip" }, plot);
+    tip.hidden = true;
+    return { plot, tip };
+  }
+  function tipRows(tip, title, rows, px, py, box) {
+    tip.replaceChildren();
+    h("div", { class: "t" }, tip, title);
+    for (const r of rows) {
+      const row = h("div", { class: "r" }, tip);
+      const k = h("i", {}, row); k.style.borderTopColor = css(COL[r.key] || r.key);
+      if (r.dash) k.style.borderTopStyle = "dotted";
+      h("b", {}, row, r.value); h("span", {}, row, r.label);
+    }
+    tip.hidden = false;
+    const w = tip.offsetWidth, hgt = tip.offsetHeight;
+    let left = px + 14, top = py - hgt / 2;
+    if (left + w > box.width) left = px - w - 14;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = Math.max(0, Math.min(top, box.height - hgt)) + "px";
+  }
+
+  // ------------------------------------------------------------ generic line chart with a crosshair
+  function lineChart(fig, o) {
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table);
+    const W = Math.max(300, Math.round(plot.clientWidth)), H = o.height || 300, m = { l: 66, r: o.mr || 96, t: 16, b: 44 };
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria, tabindex: "0" }, plot);
+    const x = lin(o.x.domain[0], o.x.domain[1], m.l, W - m.r);
+    const y = o.y.invert ? lin(o.y.domain[0], o.y.domain[1], m.t, H - m.b) : lin(o.y.domain[0], o.y.domain[1], H - m.b, m.t);
+    const grid = css("--grid"), rule = css("--rule");
+    for (const v of o.y.ticks || niceTicks(o.y.domain[0], o.y.domain[1], 5)) {
+      el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: grid, "stroke-width": 1 }, svg);
+      el("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, svg, o.y.fmt(v));
+    }
+    for (const v of o.x.ticks || niceTicks(o.x.domain[0], o.x.domain[1], 6)) {
+      el("line", { x1: x(v), x2: x(v), y1: H - m.b, y2: H - m.b + 4, stroke: rule }, svg);
+      el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg, o.x.fmt(v));
+    }
+    el("line", { x1: m.l, x2: W - m.r, y1: o.y.invert ? y(o.y.base ?? 0) : H - m.b, y2: o.y.invert ? y(o.y.base ?? 0) : H - m.b, stroke: rule }, svg);
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 6, "text-anchor": "middle" }, svg, o.x.label);
+    el("text", { x: 12, y: (m.t + H - m.b) / 2, "text-anchor": "middle", transform: `rotate(-90 12 ${(m.t + H - m.b) / 2})` }, svg, o.y.label);
+    for (const g of o.guides || []) {
+      el("line", { x1: x(g.x), x2: x(g.x), y1: m.t, y2: H - m.b, stroke: rule, "stroke-width": 1 }, svg);
+      el("text", { x: x(g.x) + 4, y: m.t + 11, class: "lab" }, svg, g.label);
+    }
+    for (const s of o.series) {
+      const d = s.points.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+      el("path", { d, fill: "none", stroke: css(COL[s.key]), "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round",
+                   "stroke-dasharray": s.dash ? "2 4" : "none" }, svg);
+    }
+    for (const mk of o.markers || []) {
+      el("circle", { cx: x(mk.x), cy: y(mk.y), r: 4.5, fill: css(COL[mk.key]), stroke: css("--panel"), "stroke-width": 2 }, svg);
+      if (mk.label) el("text", { x: x(mk.x) + (mk.dx ?? 8), y: y(mk.y) + (mk.dy ?? -8), class: mk.strong ? "lab-strong" : "lab", "text-anchor": mk.anchor || "start" }, svg, mk.label);
+    }
+    for (const lb of o.endLabels || []) {
+      const g = el("g", {}, svg);
+      el("line", { x1: W - m.r + 8, x2: W - m.r + 20, y1: y(lb.y), y2: y(lb.y), stroke: css(COL[lb.key]), "stroke-width": 2 }, g);
+      el("text", { x: W - m.r + 24, y: y(lb.y) + 4, class: "lab" }, g, lb.label);
+    }
+    // crosshair
+    const cross = el("line", { y1: m.t, y2: H - m.b, stroke: css("--muted"), "stroke-width": 1, visibility: "hidden" }, svg);
+    const dots = o.series.filter((s) => !s.noTip).map((s) => el("circle", { r: 4, fill: css(COL[s.key]), stroke: css("--panel"), "stroke-width": 2, visibility: "hidden" }, svg));
+    const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }, svg);
+    const xs = o.xs;
+    let idx = Math.floor(xs.length / 2);
+    function show(i) {
+      idx = Math.max(0, Math.min(xs.length - 1, i));
+      const xv = xs[idx], px = x(xv);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+      const rows = [];
+      o.series.filter((s) => !s.noTip).forEach((s, k) => {
+        const yv = interp(s.points, xv);
+        const inside = xv >= s.points[0][0] - 1e-9 && xv <= s.points[s.points.length - 1][0] + 1e-9;
+        dots[k].setAttribute("cx", px); dots[k].setAttribute("cy", y(yv)); dots[k].setAttribute("visibility", inside ? "visible" : "hidden");
+        if (inside) rows.push({ key: s.key, dash: s.dash, value: o.y.tipFmt(yv), label: s.label });
+      });
+      const r = svg.getBoundingClientRect(), sx = r.width / W;
+      tipRows(tip, o.x.tipFmt(xv), rows, px * sx, (m.t + 40) * sx, { width: r.width, height: r.height });
+    }
+    function hide() { cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); tip.hidden = true; }
+    hit.addEventListener("pointermove", (e) => {
+      const r = svg.getBoundingClientRect(), xv0 = (e.clientX - r.left) / r.width * W;
+      let best = 0, bd = Infinity;
+      xs.forEach((v, i) => { const dd = Math.abs(x(v) - xv0); if (dd < bd) { bd = dd; best = i; } });
+      show(best);
+    });
+    hit.addEventListener("pointerleave", hide);
+    svg.addEventListener("focus", () => show(idx));
+    svg.addEventListener("blur", hide);
+    svg.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") { show(idx + 1); e.preventDefault(); }
+      if (e.key === "ArrowLeft") { show(idx - 1); e.preventDefault(); }
+    });
+    return { svg, x, y, W, H, m };
+  }
+
+  // ------------------------------------------------------------ dumbbell: before -> after per row
+  function dumbbell(fig, o) {
+    const { plot, tip } = shell(fig, o.title, o.sub, o.caption, o.table);
+    const W = Math.max(300, Math.round(plot.clientWidth));
+    const rowH = 32, m = { l: Math.min(o.ml || 200, W * 0.42), r: 96, t: 10, b: 40 };
+    const H = m.t + m.b + rowH * o.rows.length;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria }, plot);
+    const x = lin(o.domain[0], o.domain[1], m.l, W - m.r);
+    const grid = css("--grid"), rule = css("--rule");
+    for (const v of niceTicks(o.domain[0], o.domain[1], 5)) {
+      el("line", { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, stroke: grid }, svg);
+      el("text", { x: x(v), y: H - m.b + 18, "text-anchor": "middle" }, svg, o.fmt(v));
+    }
+    el("text", { x: (m.l + W - m.r) / 2, y: H - 6, "text-anchor": "middle" }, svg, o.label);
+    o.rows.forEach((r, i) => {
+      const cy = m.t + rowH * i + rowH / 2;
+      const g = el("g", { tabindex: "0", role: "listitem", "aria-label": `${r.label}: ${o.tipFmt(r.a)} to ${o.tipFmt(r.b)}` }, svg);
+      el("rect", { x: 0, y: cy - rowH / 2, width: W, height: rowH, fill: "transparent" }, g);
+      el("text", { x: m.l - 12, y: cy + 4, "text-anchor": "end", class: "lab" }, g, r.label);
+      el("line", { x1: x(r.a), x2: x(r.b), y1: cy, y2: cy, stroke: rule, "stroke-width": 2 }, g);
+      el("circle", { cx: x(r.a), cy, r: 5, fill: css(COL.baseline), stroke: css("--panel"), "stroke-width": 2 }, g);
+      el("circle", { cx: x(r.b), cy, r: 5, fill: css(COL[o.after]), stroke: css("--panel"), "stroke-width": 2 }, g);
+      const ch = r.a ? (r.b - r.a) / r.a * 100 : 0;
+      el("text", { x: W - m.r + 12, y: cy + 4, class: Math.abs(ch) >= 0.5 ? "lab-strong" : "lab" }, g,
+         Math.abs(ch) >= 0.5 ? `${o.fmt(r.b)}  ${ch > 0 ? "+" : "−"}${Math.abs(ch).toFixed(0)} %` : `${o.fmt(r.b)}  same`);
+      const on = () => {
+        const b = svg.getBoundingClientRect(), s = b.width / W;
+        tipRows(tip, r.label, [{ key: "baseline", value: o.tipFmt(r.a), label: o.names[0] },
+                               { key: o.after, value: o.tipFmt(r.b), label: o.names[1] }], x(Math.max(r.a, r.b)) * s, cy * s, b);
+      };
+      g.addEventListener("pointerenter", on); g.addEventListener("focus", on);
+      g.addEventListener("pointerleave", () => { tip.hidden = true; }); g.addEventListener("blur", () => { tip.hidden = true; });
+    });
+  }
+
+  // ------------------------------------------------------------ airfoil helpers
+  function surfaces(shape) {
+    const n = shape.x.length;
+    let le = 0;
+    for (let i = 1; i < n; i++) if (shape.x[i] < shape.x[le]) le = i;
+    const up = [], lo = [];
+    for (let i = le; i >= 0; i--) up.push([shape.x[i], shape.y[i]]);
+    for (let i = le; i < n; i++) lo.push([shape.x[i], shape.y[i]]);
+    return { up, lo };
+  }
+
+  function shapeFigure(fig, S) {
+    const L = S.limits, c = L.chord_mm;
+    const sb = surfaces(S.shapes.baseline), so = surfaces(S.shapes.optimized);
+    const secB = S.sections.baseline, secO = S.sections.optimized, need = L.needs;
+    const table = [["limit", "needs", "NACA 4412", "optimized"],
+      ["depth at the 3 mm main spar", `≥ ${need.main_spar_depth_mm.toFixed(1)} mm`, `${secB.depth_main.toFixed(1)} mm`, `${secO.depth_main.toFixed(1)} mm`],
+      ["depth at the 2 mm rear spar", `≥ ${need.rear_spar_depth_mm.toFixed(1)} mm`, `${secB.depth_rear.toFixed(1)} mm`, `${secO.depth_rear.toFixed(1)} mm`],
+      ["depth at the aileron hinge", `≥ ${need.hinge_depth_mm.toFixed(1)} mm`, `${secB.depth_hinge.toFixed(1)} mm`, `${secO.depth_hinge.toFixed(1)} mm`],
+      ["SG90 standing out below the wing", `≤ ${need.servo_bump_mm.toFixed(1)} mm`, `${secB.servo_bump.toFixed(1)} mm`, `${secO.servo_bump.toFixed(1)} mm`],
+      ["maximum lift at 9 m/s", `≥ ${need.clmax.toFixed(2)}`, secB.clmax.toFixed(2), secO.clmax.toFixed(2)],
+      ["lowest lift past the stall (9–16°)", `≥ ${need.cl_post.toFixed(2)}`, secB.cl_post.toFixed(2), secO.cl_post.toFixed(2)],
+      ["pitching moment at cruise", `≥ ${need.cm.toFixed(3)}`, secB.cm[1].toFixed(3), secO.cm[1].toFixed(3)],
+      ["maximum thickness", `≤ ${(need.max_tc * 100).toFixed(0)} %`, `${(secB.max_tc * 100).toFixed(1)} %`, `${(secO.max_tc * 100).toFixed(1)} %`],
+      ["trailing edge", `${L.te_mm} mm`, `${L.te_mm} mm`, `${L.te_mm} mm`]];
+    const { plot, tip } = shell(fig, "The two sections at full size",
+      `Chord ${c.toFixed(0)} mm, drawn to scale, with what the printed wing has to hold`,
+      "The optimized section is a little thinner at the front and carries its camber further back. Both spars, the servo and the hinge still fit; the servo stands out below the wing by the same few millimetres as now.",
+      table);
+    const W = Math.max(300, Math.round(plot.clientWidth)), m = { l: 14, r: 14, t: 30, b: 34 };
+    const y0 = -9, y1 = 15, sc = (W - m.l - m.r) / c, H = m.t + m.b + (y1 - y0) * sc;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H.toFixed(0)}`, role: "img", tabindex: "0",
+      "aria-label": "Outlines of the NACA 4412 and the optimized airfoil at full size, with the spar holes, the servo and the aileron hinge" }, plot);
+    const x = (v) => m.l + v * sc, y = (v) => m.t + (y1 - v) * sc;
+    const rule = css("--rule"), muted = css("--muted"), grid = css("--grid");
+    for (let v = 0; v <= c + 1e-6; v += (W < 600 ? 20 : 10)) {
+      el("line", { x1: x(v), x2: x(v), y1: y(y0), y2: y(y0) + 4, stroke: rule }, svg);
+      el("text", { x: x(v), y: y(y0) + 18, "text-anchor": v === 0 ? "start" : "middle" }, svg, v === 0 ? "0 mm" : String(v));
+    }
+    el("line", { x1: x(0), x2: x(c), y1: y(0), y2: y(0), stroke: grid }, svg);
+    const outline = (s) => s.up.concat(s.lo.slice(1).reverse()).map((p, i) => `${i ? "L" : "M"}${x(p[0] * c).toFixed(1)},${y(p[1] * c).toFixed(1)}`).join("") + "Z";
+    el("path", { d: outline(sb), fill: "none", stroke: css(COL.baseline), "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    el("path", { d: outline(so), fill: "none", stroke: css(COL.optimized), "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    // what the wing holds, placed on the optimized section
+    const camber = (xc) => (interp(so.up, xc) + interp(so.lo, xc)) / 2 * c;
+    for (const sp of [L.main_spar, L.rear_spar]) {
+      el("circle", { cx: x(sp.x * c), cy: y(camber(sp.x)), r: (sp.d_mm / 2 + 0.1) * sc, fill: "none", stroke: css("--ink-2"), "stroke-width": 1.5 }, svg);
+      el("text", { x: x(sp.x * c), y: y(y1) + 2, "text-anchor": "middle", class: "lab" }, svg, `${sp.d_mm} mm spar`);
+      el("line", { x1: x(sp.x * c), x2: x(sp.x * c), y1: y(y1) + 6, y2: y(camber(sp.x) + sp.d_mm / 2 + 0.6), stroke: rule }, svg);
+    }
+    const [z0, z1] = L.servo_zone_mm;
+    const xm = (z0 + z1) / 2, body = 22.8;
+    let top = Infinity;
+    for (let v = z0; v <= z1; v += 1) top = Math.min(top, interp(so.up, v / c) * c);
+    top -= L.servo_top_gap_mm;
+    el("rect", { x: x(xm - body / 2), y: y(top), width: body * sc, height: L.servo_width_mm * sc, fill: "none", stroke: css("--ink-2"), "stroke-width": 1.5, rx: 2 }, svg);
+    el("text", { x: x(xm), y: y(top - L.servo_width_mm) + 16, "text-anchor": "middle", class: "lab" }, svg, "SG90 on its side, under the panel");
+    const xh = L.hinge_x * c;
+    el("line", { x1: x(xh), x2: x(xh), y1: y(interp(so.up, L.hinge_x) * c) - 4, y2: y(interp(so.lo, L.hinge_x) * c) + 4, stroke: css("--ink-2"), "stroke-width": 1.5 }, svg);
+    el("text", { x: x(xh) + 6, y: y(interp(so.lo, L.hinge_x) * c) + 22, class: "lab" }, svg, "aileron hinge");
+    // labels on the outlines
+    el("text", { x: x(4), y: y(interp(sb.up, 0.2) * c) - 8, class: "lab" }, svg, "NACA 4412");
+    el("text", { x: x(c * 0.86), y: y(interp(so.up, 0.86) * c) - 10, class: "lab-strong" }, svg, "Optimized");
+    // crosshair with thickness readout
+    const cross = el("line", { y1: y(y1), y2: y(y0), stroke: muted, visibility: "hidden" }, svg);
+    const hit = el("rect", { x: x(0), y: y(y1), width: c * sc, height: (y1 - y0) * sc, fill: "transparent" }, svg);
+    const xs = []; for (let v = 1; v <= c - 1; v += 1) xs.push(v);
+    let idx = 25;
+    const show = (i) => {
+      idx = Math.max(0, Math.min(xs.length - 1, i));
+      const v = xs[idx], xc = v / c;
+      cross.setAttribute("x1", x(v)); cross.setAttribute("x2", x(v)); cross.setAttribute("visibility", "visible");
+      const tb = (interp(sb.up, xc) - interp(sb.lo, xc)) * c, to = (interp(so.up, xc) - interp(so.lo, xc)) * c;
+      const r = svg.getBoundingClientRect(), s = r.width / W;
+      tipRows(tip, `${v} mm from the leading edge · thickness`, [
+        { key: "baseline", value: `${tb.toFixed(1)} mm`, label: "NACA 4412" },
+        { key: "optimized", value: `${to.toFixed(1)} mm`, label: "Optimized" }], x(v) * s, y(4) * s, { width: r.width, height: r.height });
+    };
+    const hide = () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
+    hit.addEventListener("pointermove", (e) => { const r = svg.getBoundingClientRect(); show(Math.round(((e.clientX - r.left) / r.width * W - m.l) / sc) - 1); });
+    hit.addEventListener("pointerleave", hide);
+    svg.addEventListener("focus", () => show(idx)); svg.addEventListener("blur", hide);
+    svg.addEventListener("keydown", (e) => { if (e.key === "ArrowRight") { show(idx + 1); e.preventDefault(); } if (e.key === "ArrowLeft") { show(idx - 1); e.preventDefault(); } });
+  }
+
+  // ------------------------------------------------------------ page
+  function tile(parent, label, value, unit, was, change, better) {
+    const t = h("div", { class: "tile" }, parent);
+    h("div", { class: "k" }, t, label);
+    const v = h("div", { class: "v" }, t, value);
+    if (unit) h("small", {}, v, unit);
+    const row = h("div", { class: "was" }, t);
+    const d = h("span", { class: "delta" }, row, `${better ? "▲" : "▼"} ${change}`);
+    d.setAttribute("aria-label", `${change}, better`);
+    row.appendChild(document.createTextNode(`  was ${was}`));
+  }
+
+  function render(S) {
+    const sm = S.summary, B = sm.baseline, A = sm.airfoil, F = sm.full, Lb = S.labels;
+    const gf = (n) => n / 9.81 * 1000;
+    const pct = (a, b) => `${((b - a) / a * 100).toFixed(0).replace("-", "−")} %`;
+    const vc = S.cruise_v;
+    $("lede").textContent = `The Kipinä ${S.plane.span_mm.toFixed(0)}'s NACA 4412 wing section, reshaped by an optimizer for the speeds the plane actually flies at, then the whole plane compared before and after. Profile drag comes from NeuralFoil, a model trained on XFOIL; every other part from the drag build-up in aero/.`;
+
+    for (const id of ["tiles", "key", "t-refs", "t-plane"]) $(id).replaceChildren();
+    for (const id of ["summary", "wing", "plane", "method"]) $(id).hidden = false;
+    $("status").hidden = true;
+    const tiles = $("tiles");
+    tile(tiles, `Drag at ${vc} m/s cruise`, gf(F.drag_cruise).toFixed(1), "gf", `${gf(B.drag_cruise).toFixed(1)} gf`, pct(B.drag_cruise, F.drag_cruise), false);
+    tile(tiles, "Power at cruise", F.power_cruise.toFixed(1), "W", `${B.power_cruise.toFixed(1)} W`, pct(B.power_cruise, F.power_cruise), false);
+    tile(tiles, "Flight time at cruise", F.endurance_cruise.toFixed(1), "min", `${B.endurance_cruise.toFixed(1)} min`, `+${((F.endurance_cruise / B.endurance_cruise - 1) * 100).toFixed(0)} %`, true);
+    tile(tiles, "Best glide ratio", F.ld_max.toFixed(1), "", B.ld_max.toFixed(1), `+${((F.ld_max / B.ld_max - 1) * 100).toFixed(0)} %`, true);
+    tile(tiles, "Wing section drag at cruise", S.sections.optimized.cd[1].toFixed(4), "cd", S.sections.baseline.cd[1].toFixed(4), pct(S.sections.baseline.cd[1], S.sections.optimized.cd[1]), false);
+    const key = $("key");
+    for (const k of ["baseline", "airfoil", "full"]) {
+      const s = h("span", {}, key); const i = h("i", {}, s); i.style.borderTopColor = css(COL[k]);
+      s.appendChild(document.createTextNode(Lb[k]));
+    }
+
+    // ---------------- wing section
+    const P = S.points;
+    $("wing-intro").textContent = `The optimizer reshaped the section for three operating points, weighted ${P.map((p) => p.weight * 10).join(" : ")}: ` +
+      P.map((p) => `${p.name} at ${p.v} m/s (lift coefficient ${p.cl.toFixed(2)}, Reynolds number ${(p.re / 1e3).toFixed(0)}k)`).join(", ") +
+      `. It keeps room for both spars and the aileron servo, a printable ${S.limits.te_mm} mm trailing edge, the same maximum lift and a gentle stall. Started from ${S.runs.map((r) => r.start).join(", ")}, it lands on the same shape every time.`;
+    shapeFigure($("f-shape"), S);
+
+    const sb = S.sections.baseline, so = S.sections.optimized;
+    dumbbell($("f-points"), {
+      title: "Profile drag at the three operating points", sub: "Section drag coefficient, NACA 4412 to optimized",
+      aria: "Section drag coefficient at loiter, cruise and fast flight for both sections",
+      rows: P.map((p, i) => ({ label: `${p.name[0].toUpperCase() + p.name.slice(1)}, ${p.v} m/s`, a: sb.cd[i], b: so.cd[i] })),
+      domain: [0.010, 0.024], fmt: (v) => v.toFixed(3), tipFmt: (v) => v.toFixed(4), label: "cd", after: "optimized", ml: 130,
+      names: ["NACA 4412", "Optimized"],
+      table: [["point", "cl", "Re", "NACA 4412 cd", "optimized cd", "change"],
+        ...P.map((p, i) => [p.name, p.cl.toFixed(2), `${(p.re / 1e3).toFixed(0)}k`, sb.cd[i].toFixed(4), so.cd[i].toFixed(4), pct(sb.cd[i], so.cd[i])])],
+      caption: "Each point at the lift coefficient and Reynolds number the plane flies it at. The objective weights cruise most.",
+    });
+
+    const attached = (pl) => {
+      const out = [];
+      for (let i = 0; i < pl.cl.length; i++) {
+        if (pl.cd[i] > 0.035 || (out.length && pl.cl[i] <= out[out.length - 1][0])) break;
+        out.push([pl.cl[i], pl.cd[i]]);
+      }
+      return out;
+    };
+    const pb = attached(S.polars.baseline.cruise), po = attached(S.polars.optimized.cruise);
+    const clGrid = []; for (let v = -0.1; v <= 1.3001; v += 0.02) clGrid.push(+v.toFixed(2));
+    lineChart($("f-polar"), {
+      title: "Drag polar at cruise", sub: `Reynolds number ${(P[1].re / 1e3).toFixed(0)}k, up to maximum lift`,
+      aria: "Drag coefficient against lift coefficient for both sections",
+      x: { domain: [-0.1, 1.4], label: "lift coefficient cl", fmt: (v) => v.toFixed(1), tipFmt: (v) => `cl ${v.toFixed(2)}`, ticks: [0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2] },
+      y: { domain: [0, 0.04], label: "drag coefficient cd", fmt: (v) => v.toFixed(2), tipFmt: (v) => v.toFixed(4), ticks: [0, 0.01, 0.02, 0.03, 0.04] },
+      series: [{ key: "baseline", label: "NACA 4412", points: pb }, { key: "optimized", label: "Optimized", points: po }],
+      guides: P.map((p) => ({ x: p.cl, label: p.name })),
+      endLabels: [{ key: "baseline", y: pb[pb.length - 1][1] - 0.002, label: "NACA 4412" }, { key: "optimized", y: po[po.length - 1][1] + 0.002, label: "Optimized" }],
+      xs: clGrid, mr: 92,
+      table: [["cl", "NACA 4412 cd", "optimized cd"], ...[0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2].map((c) => [c.toFixed(1), interp(pb, c).toFixed(4), interp(po, c).toFixed(4)])],
+      caption: "Lower is better. The optimized section wins across the whole flying range and gives some back only above cl 1.0, near the stall.",
+    });
+
+    const stB = S.polars.baseline.stall, stO = S.polars.optimized.stall;
+    const sp = (pl) => pl.alpha.map((a, i) => [a, pl.cl[i]]).filter((p) => p[0] >= 0 && p[0] <= 16);
+    const lb = sp(stB), lo = sp(stO);
+    const peak = (pts) => pts.reduce((a, b) => (b[1] > a[1] ? b : a));
+    const kb = peak(lb), ko = peak(lo);
+    const aGrid = []; for (let v = 0; v <= 16.001; v += 0.5) aGrid.push(+v.toFixed(1));
+    lineChart($("f-stall"), {
+      title: "Lift near the stall", sub: `At 9 m/s, just above stall speed (Reynolds number ${(S.limits.chord_mm * 9 / 14.6).toFixed(0)}k)`,
+      aria: "Lift coefficient against angle of attack for both sections at stall speed",
+      x: { domain: [0, 16], label: "angle of attack, degrees", fmt: (v) => `${v}°`, tipFmt: (v) => `${v}°`, ticks: [0, 4, 8, 12, 16] },
+      y: { domain: [0.2, 1.6], label: "lift coefficient cl", fmt: (v) => v.toFixed(1), tipFmt: (v) => v.toFixed(3), ticks: [0.4, 0.8, 1.2, 1.6] },
+      series: [{ key: "baseline", label: "NACA 4412", points: lb }, { key: "optimized", label: "Optimized", points: lo }],
+      markers: [{ key: "baseline", x: kb[0], y: kb[1], label: `peak ${kb[1].toFixed(2)} at ${kb[0]}°`, dy: 46, dx: 0, anchor: "end" },
+                { key: "optimized", x: ko[0], y: ko[1], label: `peak ${ko[1].toFixed(2)} at ${ko[0]}°`, dy: -10, dx: -6, anchor: "end", strong: true }],
+      xs: aGrid, mr: 24,
+      table: [["angle", "NACA 4412 cl", "optimized cl"], ...aGrid.filter((a) => a % 2 === 0).map((a) => [`${a}°`, interp(lb, a).toFixed(3), interp(lo, a).toFixed(3)])],
+      caption: "Both reach the same maximum lift, so the stall speed holds. The optimized section peaks at a lower angle and then settles at about the NACA 4412's level, a slightly sharper stall.",
+    });
+
+    const cpB = S.pressure.baseline, cpO = S.pressure.optimized;
+    const cps = (c, side) => c.x.map((x, i) => [x, c[side][i]]);
+    const xGrid = cpB.x.map((v) => +v.toFixed(4));
+    lineChart($("f-cp"), {
+      title: "Pressure on the surface at cruise", sub: `cl ${P[1].cl.toFixed(2)}, ${P[1].v} m/s; suction up, the upper surface is the upper curve`,
+      aria: "Pressure coefficient along the chord on both surfaces for both sections",
+      x: { domain: [0, 1], label: "distance along the chord, x/c", fmt: (v) => v.toFixed(1), tipFmt: (v) => `x/c ${v.toFixed(2)}`, ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] },
+      y: { domain: [-1.4, 0.6], invert: true, base: 0, label: "pressure coefficient Cp", fmt: (v) => v.toFixed(1), tipFmt: (v) => v.toFixed(2), ticks: [-1.2, -0.8, -0.4, 0, 0.4] },
+      series: [{ key: "baseline", label: "NACA 4412 upper", points: cps(cpB, "upper") }, { key: "baseline", label: "NACA 4412 lower", points: cps(cpB, "lower"), dash: true },
+               { key: "optimized", label: "Optimized upper", points: cps(cpO, "upper") }, { key: "optimized", label: "Optimized lower", points: cps(cpO, "lower"), dash: true }],
+      markers: [{ key: "baseline", x: cpB.xtr_upper, y: interp(cps(cpB, "upper"), cpB.xtr_upper), label: `transition ${cpB.xtr_upper.toFixed(2)}`, dy: -10, dx: 6 },
+                { key: "optimized", x: cpO.xtr_upper, y: interp(cps(cpO, "upper"), cpO.xtr_upper), label: `transition ${cpO.xtr_upper.toFixed(2)}`, dy: 20, dx: -6, anchor: "end", strong: true }],
+      xs: xGrid, mr: 24,
+      table: [["x/c", "NACA 4412 upper", "NACA 4412 lower", "optimized upper", "optimized lower"],
+        ...cpB.x.filter((_, i) => i % 3 === 0).map((xv) => [xv.toFixed(2), interp(cps(cpB, "upper"), xv).toFixed(2), interp(cps(cpB, "lower"), xv).toFixed(2), interp(cps(cpO, "upper"), xv).toFixed(2), interp(cps(cpO, "lower"), xv).toFixed(2)])],
+      caption: "Solid lines are the upper surface, dotted the lower. The optimized section spreads its suction more evenly and keeps a longer run of gently falling pressure on the upper surface, which is what holds the boundary layer laminar at these Reynolds numbers.",
+    });
+
+    const refs = $("t-refs");
+    const rh = h("tr", {}, h("thead", {}, refs));
+    ["airfoil", "cruise cd", "max lift", "thickness", "servo bump", "limits"].forEach((c, i) => h("th", { class: i && i < 5 ? "n" : "" }, rh, c));
+    const rb = h("tbody", {}, refs);
+    for (const r of S.references) {
+      const tr = h("tr", {}, rb);
+      h("td", {}, tr, r.name === "Optimized" ? "Optimized" : r.name);
+      h("td", { class: "n" }, tr, r.cd[1].toFixed(4));
+      h("td", { class: "n" }, tr, r.clmax.toFixed(2));
+      h("td", { class: "n" }, tr, `${(r.max_tc * 100).toFixed(1)} %`);
+      h("td", { class: "n" }, tr, `${r.servo_bump.toFixed(1)} mm`);
+      h("td", { class: r.problems.length ? "no" : "ok" }, tr, r.problems.length ? `misses: ${r.problems.join(", ")}` : "✓ all met");
+    }
+
+    // ---------------- whole plane
+    const V = S.variants;
+    $("plane-intro").textContent = `The same airframe in three versions: ${Lb.baseline.toLowerCase()}, with the ${Lb.airfoil.toLowerCase().replace("optimized ", "optimized ")}, and with the airfoil plus the detail changes the drag optimizer picks (a rounded pod nose edge, a tapered pod tail, horn fairings, rudder joiners in a groove and a laid-back antenna). Same weight, same wing, same stall speed of ${B.stall.toFixed(1)} m/s.`;
+    const pw = (k) => V[k].rows.filter((r) => r.v <= 20).map((r) => [r.v, r.power]);
+    const vGrid = V.baseline.rows.filter((r) => r.v <= 20).map((r) => r.v);
+    const last = (k) => pw(k)[pw(k).length - 1][1];
+    const pTop = Math.ceil(Math.max(...["baseline", "airfoil", "full"].map(last)) / 5) * 5;
+    lineChart($("f-power"), {
+      title: "Power needed to fly level", sub: "Electrical power at the battery against airspeed; lower is better",
+      aria: "Power required against airspeed for the three versions", height: 330,
+      x: { domain: [8.5, 20], label: "airspeed, m/s", fmt: (v) => `${v}`, tipFmt: (v) => `${v.toFixed(2)} m/s (${(v * 3.6).toFixed(0)} km/h)`, ticks: [9, 11, 13, 15, 17, 19] },
+      y: { domain: [0, pTop], label: "power, W", fmt: (v) => `${v}`, tipFmt: (v) => `${v.toFixed(1)} W`, ticks: niceTicks(0, pTop, 5) },
+      series: ["baseline", "airfoil", "full"].map((k) => ({ key: k, label: Lb[k], points: pw(k) })),
+      guides: [{ x: vc, label: `cruise ${vc} m/s` }],
+      endLabels: [{ key: "baseline", y: last("baseline") + pTop * 0.02, label: "As built" }, { key: "airfoil", y: last("airfoil") - pTop * 0.03, label: "Airfoil" },
+                  { key: "full", y: last("full"), label: "+ details" }],
+      markers: [{ key: "full", x: vc, y: interp(pw("full"), vc), label: `${F.power_cruise.toFixed(1)} W`, dy: 18, dx: 8, strong: true },
+                { key: "baseline", x: vc, y: interp(pw("baseline"), vc), label: `${B.power_cruise.toFixed(1)} W`, dy: -10, dx: -8, anchor: "end" }],
+      xs: vGrid, mr: 88,
+      table: [["airspeed", ...["baseline", "airfoil", "full"].map((k) => Lb[k])], ...vGrid.filter((v) => Math.abs(v * 2 - Math.round(v * 2)) < 1e-6 && v % 1 === 0).map((v) => [`${v} m/s`, ...["baseline", "airfoil", "full"].map((k) => `${interp(pw(k), v).toFixed(1)} W`)])],
+      caption: `Power = drag × speed ÷ 40 % propulsion efficiency, plus the avionics. The curves start at the stall. At the ${vc} m/s cruise the flight time goes from ${B.endurance_cruise} to ${A.endurance_cruise} min with the airfoil and to ${F.endurance_cruise} min with the details as well.`,
+    });
+
+    const at = (k) => V[k].rows.reduce((a, r) => (Math.abs(r.v - vc) < Math.abs(a.v - vc) ? r : a));
+    const itB = at("baseline").items, itF = Object.fromEntries(at("full").items);
+    const names = { "wing profile (NeuralFoil)": "wing profile drag", induced: "induced drag (lift)", junctions: "junctions" };
+    const rows = itB.map(([n, v]) => ({ label: names[n] || n, a: gf(v), b: gf(itF[n] ?? 0) })).sort((p, q) => q.a - p.a);
+    dumbbell($("f-breakdown"), {
+      title: `Where the drag goes at ${vc} m/s`, sub: `Each part's drag in grams-force, ${Lb.baseline.toLowerCase()} to ${Lb.full.toLowerCase()}`,
+      aria: "Drag of each part at cruise, as built and optimized", rows, domain: [0, Math.ceil(Math.max(...rows.map((r) => r.a)) / 2) * 2], fmt: (v) => v.toFixed(0), tipFmt: (v) => `${v.toFixed(2)} gf`,
+      label: "drag, grams-force", after: "full", ml: 250, names: [Lb.baseline, Lb.full],
+      table: [["part", `${Lb.baseline}, gf`, `${Lb.full}, gf`, "change"], ...rows.map((r) => [r.label, r.a.toFixed(2), r.b.toFixed(2), r.a ? pct(r.a, r.b) : ""])],
+      caption: "Induced drag, the price of lift, is the biggest single item and the optimization leaves it alone: it depends on weight and span, which the brief fixes. The wing's profile drag falls with the new section; the joiners, horns, pod and antenna fall with the details.",
+    });
+
+    const tp = $("t-plane");
+    const th = h("tr", {}, h("thead", {}, tp));
+    ["", Lb.baseline, Lb.airfoil, Lb.full].forEach((c, i) => h("th", { class: i ? "n" : "" }, th, c));
+    const tbody = h("tbody", {}, tp);
+    const line = (label, f) => { const tr = h("tr", {}, tbody); h("td", {}, tr, label); [B, A, F].forEach((s) => h("td", { class: "n" }, tr, f(s))); };
+    line(`Drag at ${vc} m/s`, (s) => `${gf(s.drag_cruise).toFixed(1)} gf`);
+    line(`Power at ${vc} m/s`, (s) => `${s.power_cruise.toFixed(1)} W`);
+    line(`Flight time at ${vc} m/s`, (s) => `${s.endurance_cruise.toFixed(1)} min`);
+    line("Best glide ratio", (s) => `${s.ld_max.toFixed(1)} at ${s.v_ld_max} m/s`);
+    line("Longest flight time", (s) => `${s.endurance_max.toFixed(1)} min at ${s.v_power_min} m/s`);
+    line("Top speed, level", (s) => (s.top ? `${(s.top * 3.6).toFixed(0)} km/h` : "–"));
+    line("Stall speed", (s) => `${s.stall.toFixed(2)} m/s`);
+    line("Weight", (s) => `${s.mass.toFixed(0)} g`);
+
+    const rb2 = S.robustness;
+    $("caveat").textContent = `NeuralFoil is as good as XFOIL, and XFOIL at these Reynolds numbers is good for ranking sections but optimistic about laminar flow on a printed skin. The results use a transition sensitivity of n_crit ${S.n_crit}. The new section holds up if the skin trips the flow earlier: its cruise drag coefficient runs ${rb2.optimized["5"].toFixed(4)} to ${rb2.optimized["9"].toFixed(4)} between n_crit 5 and 9, against ${rb2.baseline["5"].toFixed(4)} to ${rb2.baseline["9"].toFixed(4)} for the NACA 4412. The whole-plane numbers carry the drag build-up's ±30 %. Print one panel of each and compare glides before trusting the minutes.`;
+    $("foot").textContent = `Generated ${S.generated} by aero/efficiency.py with ${S.model}. Kipinä ${S.plane.span_mm.toFixed(0)}: chord ${S.plane.chord_mm} mm, ${S.plane.mass_g} g.`;
+    for (const id of ["summary", "wing", "plane", "method"]) $(id).hidden = false;
+    $("status").hidden = true;
+  }
+
+  let study = null;
+  fetch("study.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then((s) => { study = s; render(s); window.__ready = true; })
+    .catch(() => { $("status").textContent = "The study data (study.json) did not load. Run python3 aero/efficiency.py, then serve the aero/study folder and open index.html."; window.__ready = true; });
+  const rerender = () => { if (study) render(study); };
+  let lastW = 0, timer = 0;
+  new ResizeObserver(([e]) => {
+    const w = Math.round(e.contentRect.width);
+    if (Math.abs(w - lastW) < 24) return;
+    lastW = w; clearTimeout(timer); timer = setTimeout(rerender, 150);
+  }).observe(document.querySelector(".wrap"));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rerender);
+  new MutationObserver(rerender).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>

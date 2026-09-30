@@ -1,0 +1,3 @@
+# for aero/efficiency.py (the handbook optimizer, aero/optimize.py, needs nothing extra)
+neuralfoil>=0.3     # brings AeroSandbox and numpy
+scipy>=1.11

@@ -9,9 +9,9 @@
   electronics, sizing report). Every part prints on a Bambu Lab A1 mini. It
   also has a bill of process with its precedence graph, an assembly animation
   and a DFMA analysis.
-- [`aero/`](aero/README.md): a simple aerodynamic optimizer with two models: the
-  airframe's drag, and the airframe aerodynamics of typical 5-inch and 7-inch
-  FPV quads (stock propulsion, scored on cruise power, with no speed
-  objective). It ranks
-  single design changes and searches for the best mix within each design's
-  limits.
+- [`aero/`](aero/README.md): drag and efficiency tools. An efficiency study
+  optimizes the Kipinä wing's airfoil with NeuralFoil (an XFOIL-trained model)
+  within what the printed wing needs, then compares the whole plane before and
+  after, with charts. A handbook optimizer ranks design changes for the
+  airframe and for typical 5-inch and 7-inch FPV quads (stock propulsion,
+  scored on cruise power, with no speed objective).

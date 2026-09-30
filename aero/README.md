@@ -1,17 +1,114 @@
-# Air-resistance optimizer
+# Drag and efficiency tools
 
-A small, dependency-free tool with two models:
+Two tools for this repository's aircraft:
 
-- **`airframe`**: the Kipinä twin-boom pusher. It looks for the lowest drag at
-  cruise.
-- **`quad`** and **`quad7`**: a typical 5-inch freestyle quad at 60 km/h and a
-  typical 7-inch long-range quad at 100 km/h. Both keep their stock motors,
-  props and battery, and look for the airframe aerodynamics that need the
-  least power at cruise (see
+- **The efficiency study** (`efficiency.py`) is the one with real
+  aerodynamics. It optimizes the Kipinä wing's airfoil with NeuralFoil, an
+  XFOIL-trained model, within what the printed wing and the plane need. It
+  then compares the whole plane before and after, with charts
+  ([study/index.html](study/index.html)).
+- **The handbook optimizer** (`optimize.py`) searches design choices with a
+  drag build-up of handbook formulas. It covers the Kipinä airframe
+  (`airframe`), and a typical 5-inch (`quad`) and 7-inch (`quad7`) FPV quad.
+  The quads keep their stock motors, props and battery (see
   [What the quad models will not do](#what-the-quad-models-will-not-do)).
 
-It uses handbook formulas, not CFD or thrust-stand data. That makes it good for
-ranking design changes and seeing what matters, but not for exact numbers.
+## Efficiency study: the Kipinä wing and the whole plane
+
+```sh
+pip install -r aero/requirements.txt
+python3 aero/efficiency.py              # about a minute; writes aero/study/
+python3 aero/efficiency.py --n-crit 5   # a rougher printed skin, or gusty air
+node aero/tools/shoot.mjs               # the chart PNGs below (needs playwright)
+```
+
+It writes these files:
+
+- `study/study.json`: the data behind the charts;
+- `study/REPORT.md`: the numbers as tables;
+- `study/kipina-opt.dat`: the optimized airfoil's coordinates, in Selig
+  format for XFLR5 or the CAD;
+- `study/index.html`: the comparison page. Serve the `study/` folder over HTTP
+  to open it.
+
+![Summary](study/figures/summary.png)
+
+**How it works:**
+
+1. **Operating points.** It takes the plane as built from
+   `airframe/design.py`: chord 97 mm, 223 g, NACA 4412. It flies three points
+   at the lift coefficient and Reynolds number each one needs: loiter at
+   10.7 m/s, cruise at 13 m/s and fast at 18 m/s. The objective weights them
+   3 : 5 : 2.
+2. **Section optimization.** The airfoil is a Kulfan (CST) shape with 17
+   free weights. SLSQP minimizes the weighted profile drag from NeuralFoil
+   while holding these limits:
+   - room for the 3 mm and 2 mm spars;
+   - the SG90 aileron servo standing out below the wing no more than now;
+   - enough depth at the aileron hinge;
+   - the 0.8 mm printable trailing edge;
+   - at least the NACA 4412's maximum lift, so the stall speed holds;
+   - a stall no sharper than the NACA 4412's;
+   - a pitching moment no more nose-down;
+   - only shapes NeuralFoil is confident about.
+
+   It starts from four known airfoils (NACA 4412, SD7062, SD7037, E387) and
+   lands on the same shape from all four.
+3. **Whole plane.** It puts the new section into the whole plane: the wing's
+   profile drag from NeuralFoil at every speed, the induced drag, and every
+   other part from the drag build-up. There are three versions: as built,
+   with the optimized airfoil, and with the airfoil plus the detail changes
+   the handbook optimizer picks.
+
+![The two sections](study/figures/shape.png)
+
+**Wing section.** Profile drag falls 18 % at loiter, 20 % at cruise and
+25 % at 18 m/s.
+- **Limits:** every one still holds.
+- **Maximum lift:** 1.41, against 1.38 for the NACA 4412.
+- **Pitching moment:** milder (−0.085 against −0.104), so the tail needs less
+  trim.
+- **Stall:** it peaks at 10.5° instead of 14°, then settles at about the
+  NACA 4412's level, a slightly sharper stall.
+- **Rough skins:** it is also less sensitive to an early transition from the
+  printed skin. Its cruise drag coefficient moves 0.0142–0.0151 between n_crit
+  5 and 9, against 0.0158–0.0214 for the NACA 4412.
+- **Known thin airfoils:** SD7037 and E387 have less drag than the NACA 4412,
+  but they are too thin for the servo and lose lift near the stall.
+
+| Drag at the operating points | Drag polar at cruise |
+|---|---|
+| ![Operating points](study/figures/points.png) | ![Polar](study/figures/polar.png) |
+| **Lift near the stall** | **Surface pressure at cruise** |
+| ![Stall](study/figures/stall.png) | ![Pressure](study/figures/cp.png) |
+
+**Whole plane.** At the 13 m/s cruise:
+
+| | As built | Optimized airfoil | Airfoil + details |
+|---|---|---|---|
+| Drag | 33.0 gf | 31.2 gf | 24.9 gf |
+| Power | 12.0 W | 11.4 W | 9.4 W |
+| Flight time | 13.3 min | 14.0 min | 16.9 min |
+| Best glide ratio | 7.4 | 7.7 | 9.2 |
+
+- **Stall speed:** stays at 8.9 m/s.
+- **Induced drag:** the largest single item. It depends on weight and span,
+  which the brief fixes, so the optimization leaves it alone.
+
+![Power against airspeed](study/figures/power.png)
+
+![Drag by part](study/figures/breakdown.png)
+
+**Limits of the study:**
+- **NeuralFoil:** its results match XFOIL. At these Reynolds numbers XFOIL is
+  good for ranking sections, but optimistic about laminar flow on a printed
+  skin.
+- **Whole-plane numbers:** they carry the drag build-up's ±30 %.
+- **Detail changes:** they are not in the CAD yet.
+- **Check before trusting the minutes:** print one wing panel of each section
+  and compare glides.
+
+## Handbook optimizer
 
 ```sh
 python3 aero/optimize.py airframe                 # Kipinä drag at its 13 m/s cruise
@@ -23,7 +120,10 @@ python3 aero/optimize.py quad --fix motor_tilt    # keep the motors straight
 python3 aero/optimize.py quad7                    # 7-inch long-range quad at 100 km/h
 ```
 
-Each run prints a summary and writes `aero/REPORT_<model>.md`, which has:
+It needs nothing beyond Python. Its drag build-up uses handbook formulas, not
+CFD or thrust-stand data. That makes it good for ranking design changes and
+seeing what matters, but not for exact numbers. Each run prints a summary and
+writes `aero/REPORT_<model>.md`, which has:
 
 - the result before and after;
 - the changes in the optimum;
@@ -32,9 +132,9 @@ Each run prints a summary and writes `aero/REPORT_<model>.md`, which has:
 - the drag build-up, item by item;
 - every parameter's range and what limits it.
 
-## Results
+### Results
 
-### Typical 5-inch FPV quad, at 60 km/h ([REPORT_quad.md](REPORT_quad.md))
+#### Typical 5-inch FPV quad, at 60 km/h ([REPORT_quad.md](REPORT_quad.md))
 
 The quad is an ordinary 6S freestyle build: 2306 1750 KV motors, 5.1 × 4.3
 tri-blades, a 6S 1100 mAh LiPo and 504 g all-up. Its propulsion stays stock.
@@ -84,7 +184,7 @@ What else it found:
   Aerodynamic work on a 5-inch quad pays at brisk cruising speeds, not at a
   gentle pace.
 
-### Typical 7-inch long-range quad, at 100 km/h ([REPORT_quad7.md](REPORT_quad7.md))
+#### Typical 7-inch long-range quad, at 100 km/h ([REPORT_quad7.md](REPORT_quad7.md))
 
 The same model on an ordinary 7-inch long-range build, 980 g:
 
@@ -136,7 +236,7 @@ again.
   optimum is a canopy instead of the full fairing, sleeves and 7° of motor
   tilt: −10 % power, 14.8 → 16.5 min.
 
-### What the quad models will not do
+#### What the quad models will not do
 
 The brief was to make a typical FPV drone better without it turning into an
 interceptor:
@@ -153,7 +253,7 @@ interceptor:
 An earlier version of the 5-inch model searched the props, motors and battery for
 flight time instead. It is in the git history (commit `dbd5d35`).
 
-### Kipinä, at its 13 m/s cruise ([REPORT_airframe.md](REPORT_airframe.md))
+#### Kipinä, at its 13 m/s cruise ([REPORT_airframe.md](REPORT_airframe.md))
 
 The span is fixed by the brief: the smallest plane that passes the stall
 limit. With that fixed, the rest of the sizing is pinned too:
@@ -181,7 +281,7 @@ fifth (32 → 26 gf, endurance 13.6 → 16.4 min at this speed):
   quick estimate (22.9 cm² against 18.4 cm²), mostly small parts that the
   quick estimate lumps together.
 
-## How it works
+### How it works
 
 - **`dragkit.py`** has the drag formulas:
   - skin friction on a flat plate (laminar, turbulent, or mixed) times a form
@@ -224,7 +324,7 @@ fifth (32 → 26 gf, endurance 13.6 → 16.4 min at this speed):
 In the reports, the **kind** column says whether a change is a parameter of
 the CAD, a what-if the CAD doesn't build yet, or a part you choose.
 
-## Adding a model
+### Adding a model
 
 A model is a module in `aero/models/` with:
 
@@ -240,7 +340,7 @@ A model is a module in `aero/models/` with:
   items, the numbers to show and any limits broken;
 - `speed_text(v)` and `value_text(value)` for the report.
 
-## Limits
+### Limits
 
 - The coefficients come from handbooks and typical-prop fits, not
   measurements. Expect about ±30 % on the drag of each part (the airframe's

@@ -46,6 +46,7 @@ ITERATIONS = 6000        # most iterations per run
 CHUNK = 500             # iterations between convergence checks
 SAMPLE = 50             # iterations between the snapshots the forces are averaged over
 AVERAGE = 20            # snapshots in the average (the last 1000 iterations)
+DRAG_TOL, LIFT_TOL = 0.01, 0.005   # settled: chunk means within 1 % drag and 0.005 lift (the bubbles' own swing)
 
 
 # --------------------------------------------------------------------------- grid
@@ -413,8 +414,8 @@ def run(case: Path, max_iter: int | None = None, min_iter: int = 2000, log=None)
     """simpleFoam in chunks of 500 iterations, with a snapshot every 50. At these
     Reynolds numbers the laminar bubbles and the blunt trailing edge keep the
     steady solution moving a little, so the forces are averaged over snapshots.
-    Stops when the mean over a chunk settles (drag within 0.3 %, lift within
-    0.002 of the chunk before), the residuals meet their targets, or at the limit."""
+    Stops when the mean over a chunk settles (drag within 1 %, lift within
+    0.005 of the chunk before), the residuals meet their targets, or at the limit."""
     max_iter = max_iter or ITERATIONS
     info = json.loads((case / "case.json").read_text())
     samples, chunks = [], []
@@ -444,7 +445,7 @@ def run(case: Path, max_iter: int | None = None, min_iter: int = 2000, log=None)
             break
         if it >= min_iter and it - first >= 2 * CHUNK and len(chunks) >= 2:
             a, b = chunks[-2], chunks[-1]
-            if abs(b["cd"] - a["cd"]) < 0.003 * abs(b["cd"]) and abs(b["cl"] - a["cl"]) < 0.002:
+            if abs(b["cd"] - a["cd"]) < DRAG_TOL * abs(b["cd"]) and abs(b["cl"] - a["cl"]) < LIFT_TOL:
                 break
     return {"samples": samples, "chunks": chunks}
 

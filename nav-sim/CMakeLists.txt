@@ -414,6 +414,11 @@ if(BUILD_TESTS)
   add_test(NAME mission_sim_rooms
            COMMAND kestrel mission sim ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/missions/rooms.kms
                    --seconds 240)
+  # The whole mission at the resolution the aircraft flies (at 424x240 the
+  # map honestly cannot certify the open room it needs): ~40 s here, over 90 s
+  # on the Windows runner. Its own timeout, and alone -- run in parallel it
+  # starved rl_env_check past ITS limit too.
+  set_tests_properties(mission_sim_rooms PROPERTIES TIMEOUT 400 RUN_SERIAL TRUE)
   add_executable(flight_show_check test/flight_show_check.cpp flight_show.cpp
                  ${KESTREL_AUTONOMY_SRC})
   target_include_directories(flight_show_check PRIVATE

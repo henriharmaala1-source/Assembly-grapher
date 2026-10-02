@@ -59,6 +59,14 @@ public:
         float directPitch  = 0.35f;
         float directSlowM  = 4.f;
         float newRadiusM   = 3.f;      // `new`: farther than this from anything visited
+        // A path's anchor follows each new measurement of its object by this
+        // fraction per tick it is in view (a smoothed re-grounding, not a jump).
+        float anchorGain   = 0.15f;
+        // STEER: metres per second for a full forward stick (the airframe's
+        // own number; the sim's is 4), and the roll stick per degree of aim
+        // error when strafing.
+        float mpsPerStick  = 4.f;
+        float strafeKp     = 0.02f;
     };
     using ModeLookup = std::function<IControlMode*(const std::string&)>;
 
@@ -115,7 +123,8 @@ private:
     // onlyNew: skip objects whose ground position is within newRadiusM of a
     // place already marked for this label (`new`).
     bool seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
-               float* offDeg, float* distM, float* fill, bool onlyNew = false) const;
+               float* offDeg, float* distM, float* fill, bool onlyNew = false,
+               cv::Rect* boxOut = nullptr) const;
     bool tracking_(const WorldState& s, const std::string& label) const;
     // Metres tall, or -1; *assumed says the compiler filled it in.
     float sizeOf_(const std::string& label, bool* assumed = nullptr) const;
@@ -156,6 +165,13 @@ private:
     std::vector<Place> places_;
     struct Visited { std::string label; double e, n; };
     std::vector<Visited> visited_;   // every object a `seen` marked, for `new`
+    // THE ACTIVE PATH ANCHOR: which place, and what object re-grounds it.
+    int anchorT_ = -1;
+    std::string anchorLabel_;
+    // Where the anchor's object is now (e/n), measured from the camera: for
+    // re-grounding, and for a path's first point.
+    bool measureObject_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
+                        double& e, double& n, double& bearing) const;
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction
     double opAux_ = 0;       // per-op scratch (a turn's goal heading, last-seen time)

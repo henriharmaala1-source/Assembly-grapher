@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 4;
+constexpr uint32_t kVersion = 6;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -70,6 +70,21 @@ enum class Op : uint8_t {
     NAV,          // a = 0 certified (every leg checked by the planner), 1 direct
                   // (straight at the target on heading + pitch, NOTHING checked:
                   // outdoors, above the obstacles, inside the fence)
+    // A PATH ANCHORED ON A TRACKED OBJECT (`path door { to ahead A right R }`).
+    ANCHOR,       // target (RUNTIME) := where `text` is, as MARK_SEEN -- and from
+                  // now until UNANCHOR, RE-MEASURED every tick it is in view with
+                  // a range, so the path's points move with a better estimate.
+                  // Its reference heading (the line of sight at the start)
+                  // stays fixed, so "ahead" and "right" do not swing as the
+                  // aircraft moves round it. jump = not seen / no range.
+    UNANCHOR,     // stop re-measuring it
+    TURN_TO_PLACE,// target: face that place, b = timeout s
+    // STEER ON THE LOCK, in the image: aim at a point on the object's box
+    // (a = box widths right of its centre, - = left), fly at b m/s, until
+    // `cond` holds (or c seconds, which fails). FLAG_STRAFE: keep the aim
+    // point centred by rolling sideways instead of yawing. Unchecked by any
+    // planner, like `nav direct`. jump = lost it.
+    STEER,
     COUNT_
 };
 
@@ -120,13 +135,14 @@ struct Instr {
     int32_t jump = -1;       // pc to go to (JUMP, failures); -1 = none
     int32_t cond = -1;       // condition index
     int32_t text = -1;       // strings index
-    float   a = 0.f, b = 0.f;
+    float   a = 0.f, b = 0.f, c = 0.f;
     // FLAG_NEW (search / seen / mark): only objects NOT already visited --
     // whose ground position is not within newRadiusM of a place this mission
     // already marked for that label. "The next one", for any chain of them.
     uint8_t flags = 0;
 };
 constexpr uint8_t FLAG_NEW = 1;
+constexpr uint8_t FLAG_STRAFE = 2;    // STEER: roll to it, do not yaw
 
 // `on COND { ... }`: checked every tick while the main program runs; fires
 // once. Its body ends in LAND/RTL/END, or RESUME back to what it interrupted.

@@ -582,6 +582,112 @@ private:
             prog().name = next().text;
             endStatement(); return false;
         }
+        if (w == "steer") {
+            // STEER ON THE LOCK: aim at a point on the object's box, in box
+            // widths so it holds still as the box grows; a speed; a way to
+            // turn; and what ends it.
+            next();
+            const std::string lab = label();
+            double aim = 0, speed = 1.0, timeout = 30;
+            bool strafe = false;
+            int until = -1;
+            for (;;) {
+                if (acceptWord("aim")) {
+                    double sign = 1;
+                    if (acceptWord("left")) sign = -1;
+                    else if (!acceptWord("right")) acceptWord("centre");
+                    if (at(Tk::NUMBER)) aim = sign * positive(Unit::NONE, "the aim (box widths)", 0, 20);
+                } else if (acceptWord("speed")) {
+                    speed = positive(Unit::SPEED, "the speed", 0, 15);
+                } else if (acceptWord("strafe")) {
+                    strafe = true;
+                } else if (acceptWord("until")) {
+                    until = condition();
+                } else if (acceptWord("timeout")) {
+                    timeout = positive(Unit::TIME, "the timeout", 0.5, 600);
+                } else break;
+            }
+            prog().caps |= Program::NEEDS_DETECTOR;
+            if (!warnedDirect_) {
+                warnedDirect_ = true;
+                warn(L, t.col, "steer flies at the object with NOTHING checking the way for "
+                               "obstacles -- keep it short, give it an until, keep the fence tight");
+            }
+            const int pc = emit(Op::STEER, L);
+            at_(pc).text = str(lab);
+            at_(pc).a = float(aim); at_(pc).b = float(speed); at_(pc).c = float(timeout);
+            at_(pc).cond = until;
+            if (strafe) at_(pc).flags = FLAG_STRAFE;
+            elseBranch(pc);
+            endStatement(); return false;
+        }
+        if (w == "path") {
+            // A PATH ANCHORED ON A TRACKED OBJECT -- what the editor's
+            // first-person pane writes. Points are AHEAD/RIGHT of the object
+            // along the line of sight at the start; the object is re-measured
+            // all the way, and the points move with it.
+            next();
+            const std::string lab = label();
+            bool facing = false;
+            double radius = 0.75, timeout = 60;
+            for (;;) {
+                if (acceptWord("facing")) facing = true;
+                else if (acceptWord("radius")) radius = positive(Unit::LEN, "the arrival radius", 0.3, 20);
+                else if (acceptWord("timeout")) timeout = positive(Unit::TIME, "the timeout per point", 1, 600);
+                else break;
+            }
+            prog().caps |= Program::NEEDS_POSITION | Program::NEEDS_DETECTOR | Program::NEEDS_RANGE;
+            Target an; an.kind = Target::RUNTIME;
+            const int ai = addTarget(an);
+            const int anc = emit(Op::ANCHOR, L);
+            at_(anc).target = ai; at_(anc).text = str(lab);
+            skipNewlines();
+            expectSym("{", "to open the path's points");
+            int points = 0;
+            for (;;) {
+                if (skipSeparators()) continue;
+                if (isSym("}")) { next(); break; }
+                if (at(Tk::END)) fail(peek(), "missing '}': the path is never closed");
+                const Token st = peek();
+                if (acceptWord("to")) {
+                    double a = 0, r = 0;
+                    for (;;) {
+                        const Token dt = peek();
+                        if (!at(Tk::IDENT)) break;
+                        const std::string d = peek().text;
+                        double sign = 1, *slot = nullptr;
+                        if (d == "ahead" || d == "behind") { slot = &a; sign = d == "behind" ? -1 : 1; }
+                        else if (d == "right" || d == "left") { slot = &r; sign = d == "left" ? -1 : 1; }
+                        else if (d == "radius" || d == "timeout") break;
+                        else fail(dt, "'" + d + "': a path point is `to ahead A right R`");
+                        next();
+                        *slot += sign * number(Unit::LEN, "a distance");
+                        if (isSym(",")) next();
+                    }
+                    double pr = radius;
+                    if (acceptWord("radius")) pr = positive(Unit::LEN, "the arrival radius", 0.3, 20);
+                    Target off; off.kind = Target::REL; off.base = ai; off.x = a; off.y = r;
+                    const int ti = addTarget(off);
+                    const int g = emit(Op::GOTO, st.line);
+                    at_(g).target = ti; at_(g).a = float(pr); at_(g).b = float(timeout);
+                    if (facing) {
+                        const int fc = emit(Op::TURN_TO_PLACE, st.line);
+                        at_(fc).target = ai; at_(fc).b = 20.f;
+                    }
+                    ++points;
+                } else if (acceptWord("hold")) {
+                    const int h = emit(Op::HOLD, st.line);
+                    at_(h).a = float(positive(Unit::TIME, "the hold", 0.1, 600));
+                } else {
+                    fail(st, "inside a path: `to ahead A right R` or `hold N s`");
+                }
+                endStatement();
+            }
+            if (!points) fail(t, "a path needs at least one `to` point");
+            emit(Op::UNANCHOR, L);
+            elseBranch(anc);
+            endStatement(); return false;
+        }
         if (w == "nav") {
             next();
             const Token mt = peek();

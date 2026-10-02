@@ -499,6 +499,115 @@ int main() {
                   sim.s.fcRequest == WorldState::FcRequest::RTL, b);
     }
 
+    // ------------------- A PATH DRAWN AROUND THE TRACKED OBJECT, RE-GROUNDED
+    // The door is 10 m north. The detector's range reads 4 % long per metre
+    // (+40 % at 10 m, +8 % at 2 m), so the anchor starts 4 m too far. The
+    // path's points are relative to the door; re-measured as the aircraft
+    // closes, they land where they were drawn -- and `facing` ends looking
+    // at it.
+    {
+        ScriptMode::Params pp = params();
+        pp.detTiltDeg = 0.f;
+        ScriptMode m(pp);
+        std::string err;
+        const char* src =
+            "path door facing {\n"
+            "  to ahead -3 right -2\n"
+            "  to ahead -2 right 2\n"
+            "} else { end }\n"
+            "end\n";
+        m.load(compileOk(src), &err);
+        Sim sim; sim.init();
+        sim.s.vehYawDeg = 0.f;
+        const double doorE = 0.0, doorN = 10.0, f = 554.256;
+        double firstAnchorN = -1;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 120 && !m.finished(); ++i) {
+            const double de = doorE - sim.s.estPe, dn = doorN - sim.s.estPn;
+            const double d = std::hypot(de, dn);
+            double off = std::atan2(de, dn) * 57.2958 - sim.s.vehYawDeg;
+            while (off > 180) off -= 360;
+            while (off <= -180) off += 360;
+            sim.s.detections.clear();
+            if (std::fabs(off) < 28.0 && d > 0.5) {
+                Detection dd; dd.label = "door"; dd.confidence = 0.9f;
+                const int cx = int(320 + f * std::tan(off / 57.2958));
+                dd.box = cv::Rect(cx - 20, 200, 40, 80);
+                dd.rangeM = float(d * (1.0 + 0.04 * d));          // biased depth
+                sim.s.detections.push_back(dd);
+            }
+            sim.s.detStampS = sim.t;
+            sim.step(m, 640, 480);
+            double e, n;
+            if (firstAnchorN < 0 && m.targetPos(1, e, n)) firstAnchorN = n;
+        }
+        const double wantE = 2.0, wantN = 8.0;               // ahead -2, right 2 of the door
+        const double errM = std::hypot(sim.s.estPe - wantE, sim.s.estPn - wantN);
+        double look = std::atan2(doorE - sim.s.estPe, doorN - sim.s.estPn) * 57.2958 - sim.s.vehYawDeg;
+        while (look > 180) look -= 360;
+        while (look <= -180) look += 360;
+        char b[200];
+        std::snprintf(b, sizeof b, "anchor first read %.1f m north (truth 10); ends %.2f m from the "
+                      "drawn point, looking %.0f deg off it; %s", firstAnchorN, errM, look,
+                      m.status().c_str());
+        check("a path drawn round the tracked door lands where drawn (re-grounded)",
+              m.finished() && !m.failed() && firstAnchorN > 13.0 && errM < 0.9, b);
+        check("  ...and `facing` leaves it looking at the door", std::fabs(look) < 10.0, b);
+    }
+
+    // -------------------------- STEER ON THE LOCK: aim point, speed, until
+    // The door (1 m wide) 10 m north; the "detector" gives its box and a
+    // true range every tick. Aim at its centre: stop at 3 m. Aim 1.5 widths
+    // right of it: pass it on the right. Strafe: no yaw at all.
+    struct SteerRun { double e, n, yaw; bool done; std::string st; };
+    auto steerRun = [&](const char* src) {
+        ScriptMode::Params pp = params();
+        pp.detTiltDeg = 0.f;
+        ScriptMode m(pp);
+        std::string err;
+        m.load(compileOk(src), &err);
+        Sim sim; sim.init();
+        sim.s.vehYawDeg = 0.f;
+        const double f = 554.256;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 60 && !m.finished(); ++i) {
+            const double de = 0.0 - sim.s.estPe, dn = 10.0 - sim.s.estPn;
+            const double d = std::hypot(de, dn);
+            double off = std::atan2(de, dn) * 57.2958 - sim.s.vehYawDeg;
+            while (off > 180) off -= 360;
+            while (off <= -180) off += 360;
+            sim.s.detections.clear();
+            if (std::fabs(off) < 40.0 && d > 0.5) {
+                Detection dd; dd.label = "door"; dd.confidence = 0.9f;
+                const int w = int(f * 1.0 / d), h = int(std::min(470.0, f * 2.0 / d));
+                const int cx = int(320 + f * std::tan(off / 57.2958));
+                dd.box = cv::Rect(cx - w / 2, 240 - h / 2, w, h);
+                dd.rangeM = float(d);
+                sim.s.detections.push_back(dd);
+            }
+            sim.s.detStampS = sim.t;
+            sim.step(m, 640, 480);
+        }
+        return SteerRun{sim.s.estPe, sim.s.estPn, sim.s.vehYawDeg, m.finished() && !m.failed(),
+                        m.status()};
+    };
+    {
+        const SteerRun r = steerRun("steer door aim centre speed 1 m/s until range to door < 3 m "
+                                    "timeout 30 s else { end }\nend\n");
+        char b[128]; std::snprintf(b, sizeof b, "stopped %.2f m short, %.2f m off its line; %s",
+                                   10.0 - r.n, r.e, r.st.c_str());
+        check("steer at the lock's centre, 1 m/s, until range < 3 m: stops ~3 m out",
+              r.done && 10.0 - r.n > 2.4 && 10.0 - r.n < 3.3 && std::fabs(r.e) < 0.3, b);
+    }
+    {
+        const SteerRun r = steerRun("steer door aim right 1.5 speed 1 m/s until range to door < 2.5 m "
+                                    "timeout 30 s else { end }\nend\n");
+        char b[128]; std::snprintf(b, sizeof b, "ended %.2f m right of the door, %.2f m short; %s",
+                                   r.e, 10.0 - r.n, r.st.c_str());
+        check("aim 1.5 box-widths RIGHT of it: it ends up passing on its right",
+              r.done && r.e > 0.5, b);
+    }
+
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

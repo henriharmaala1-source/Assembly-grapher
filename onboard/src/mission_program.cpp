@@ -1,5 +1,6 @@
 #include "mission_program.hpp"
 
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -13,7 +14,8 @@ const char* opName(Op o) {
                               "FACE", "APPROACH", "EXPLORE", "RUN", "WAIT", "JUMP",
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
                               "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
-                              "TURN_REF", "CLIMB_BY", "APPROACH_TO", "NAV"};
+                              "TURN_REF", "CLIMB_BY", "APPROACH_TO", "NAV",
+                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
@@ -111,7 +113,7 @@ std::vector<uint8_t> serialize(const Program& p) {
     w.u32(uint32_t(p.code.size()));
     for (const auto& in : p.code) {
         w.u8(uint8_t(in.op)); w.i32(in.line); w.i32(in.target); w.i32(in.jump);
-        w.i32(in.cond); w.i32(in.text); w.f32(in.a); w.f32(in.b); w.u8(in.flags);
+        w.i32(in.cond); w.i32(in.text); w.f32(in.a); w.f32(in.b); w.f32(in.c); w.u8(in.flags);
     }
     const uint32_t c = crc32(w.b.data() + 12, w.b.size() - 12);
     for (int i = 0; i < 4; ++i) w.b[8 + size_t(i)] = uint8_t(c >> (8 * i));
@@ -187,6 +189,7 @@ bool verify(const Program& p, std::string* err) {
                 if (in.target < 0 || in.target >= int(p.states.size())) return fail(at + "state out of range");
                 break;
             case Op::GOTO: case Op::MARK: case Op::MARK_SEEN: case Op::TURN_REF:
+            case Op::ANCHOR: case Op::TURN_TO_PLACE:
                 if (in.target < 0 || in.target >= nT) return fail(at + "target out of range");
                 break;
             case Op::SET_REG: case Op::LOOP: case Op::TIMER: case Op::JUMP_TIMEUP:
@@ -198,14 +201,18 @@ bool verify(const Program& p, std::string* err) {
             return fail(at + "jump missing");
         if (in.op == Op::JUMP_IFNOT && (in.cond < 0 || in.jump < 0)) return fail(at + "branch incomplete");
         if (in.op == Op::WAIT && in.cond < 0) return fail(at + "wait without condition");
+        if (in.op == Op::STEER && (!(in.c > 0.f) || !(in.b >= 0.f) || std::fabs(in.a) > 20.f))
+            return fail(at + "steer needs a timeout, a speed >= 0 and an aim within 20 box widths");
         if ((in.op == Op::SEARCH || in.op == Op::FACE || in.op == Op::APPROACH ||
              in.op == Op::SAY || in.op == Op::RUN || in.op == Op::MARK_SEEN ||
-             in.op == Op::TRACK || in.op == Op::APPROACH_TO) && in.text < 0)
+             in.op == Op::TRACK || in.op == Op::APPROACH_TO || in.op == Op::ANCHOR ||
+             in.op == Op::STEER) && in.text < 0)
             return fail(at + "missing text");
         // Every op that takes time has a bound: nothing waits for ever.
         const bool timed = in.op == Op::GOTO || in.op == Op::TURN_TO || in.op == Op::TURN_BY ||
                            in.op == Op::CLIMB || in.op == Op::APPROACH || in.op == Op::TURN_REF ||
-                           in.op == Op::CLIMB_BY || in.op == Op::APPROACH_TO;
+                           in.op == Op::CLIMB_BY || in.op == Op::APPROACH_TO ||
+                           in.op == Op::TURN_TO_PLACE;
         if (timed && !(in.b > 0.f)) return fail(at + "no timeout");
         if ((in.op == Op::HOLD || in.op == Op::EXPLORE || in.op == Op::RUN ||
              in.op == Op::SEARCH || in.op == Op::FACE || in.op == Op::WAIT ||
@@ -255,10 +262,10 @@ bool deserialize(const std::vector<uint8_t>& bytes, Program& out, std::string* e
     for (uint32_t n = r.count(9), i = 0; i < n && !r.bad; ++i) {
         ObjectSize z; z.label = r.i32(); z.heightM = r.f32(); z.assumed = r.u8(); p.sizes.push_back(z);
     }
-    for (uint32_t n = r.count(30), i = 0; i < n && !r.bad; ++i) {
+    for (uint32_t n = r.count(34), i = 0; i < n && !r.bad; ++i) {
         Instr in;
         in.op = Op(r.u8()); in.line = r.i32(); in.target = r.i32(); in.jump = r.i32();
-        in.cond = r.i32(); in.text = r.i32(); in.a = r.f32(); in.b = r.f32(); in.flags = r.u8();
+        in.cond = r.i32(); in.text = r.i32(); in.a = r.f32(); in.b = r.f32(); in.c = r.f32(); in.flags = r.u8();
         p.code.push_back(in);
     }
     if (r.bad) return fail("truncated");
@@ -349,7 +356,13 @@ std::string disassemble(const Program& p) {
         std::string arg;
         switch (in.op) {
             case Op::GOTO: arg = T(in.target) + cv_fmt(" r=%.2f t=%.0f", in.a, in.b); break;
-            case Op::MARK: case Op::TURN_REF: arg = T(in.target); break;
+            case Op::MARK: case Op::TURN_REF: case Op::TURN_TO_PLACE: arg = T(in.target); break;
+            case Op::STEER:
+                arg = "\"" + S(in.text) + "\"" + cv_fmt(" aim %+.2f widths, %.2f m/s", in.a, in.b) +
+                      cv_fmt(", until cond#%d, %.0f s", in.cond, in.c) +
+                      ((in.flags & FLAG_STRAFE) ? " strafe" : "");
+                break;
+            case Op::ANCHOR: arg = T(in.target) + " = tracked \"" + S(in.text) + "\" (re-measured)"; break;
             case Op::GO_STATE:
                 arg = in.target >= 0 && in.target < int(p.states.size())
                           ? S(p.states[size_t(in.target)].name) : "?";

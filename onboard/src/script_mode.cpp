@@ -68,6 +68,7 @@ void ScriptMode::reset_() {
     state_ = -1; trackReqT_ = -1;
     direct_ = false;
     visited_.clear();
+    anchorT_ = -1; anchorLabel_.clear();
     fired_.assign(prog_.handlers.size(), false);
     regs_.assign(size_t(std::max(0, prog_.registers)), 0.0);
     places_.assign(prog_.targets.size(), Place());
@@ -216,7 +217,8 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
 
 // ------------------------------------------------------------ detections
 bool ScriptMode::seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
-                       float* offDeg, float* distM, float* fill, bool onlyNew) const {
+                       float* offDeg, float* distM, float* fill, bool onlyNew,
+                       cv::Rect* boxOut) const {
     if (ctx.frameW <= 0 || ctx.frameH <= 0) return false;
     const bool detFresh = s.tickMonoS - s.detStampS <= p_.detStaleSec;
     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
@@ -263,7 +265,9 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
             if (la > 0.0) dist = float(la * std::cos(elCentre * kD2R));
         }
     };
+    cv::Rect used;
     auto give = [&](float off, float dist, float fl) {
+        if (boxOut) *boxOut = used;
         if (offDeg) *offDeg = off;
         if (distM) *distM = dist;
         if (fill) *fill = fl;
@@ -283,6 +287,7 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
         for (const Detection* d : c) {
             float off, dist, fl;
             measure(d->box, d, losOf(*d, false), off, dist, fl);
+            used = d->box;
             bool visited = false;
             if (dist > 0.f && s.estValid) {
                 const double b = (s.vehYawDeg + off) * kD2R;
@@ -317,11 +322,24 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
         else if (tref_.valid && scales && s.targetBox.height > 0)
             los = tref_.losM * tref_.size0 / double(s.targetBox.height);
         measure(s.targetBox, anchor ? best : nullptr, los, off, dist, fl);
+        used = s.targetBox;
         return give(off, dist, fl);
     }
     if (!best) return false;
     measure(best->box, best, losOf(*best, false), off, dist, fl);
+    used = best->box;
     return give(off, dist, fl);
+}
+
+bool ScriptMode::measureObject_(const WorldState& s, const std::string& label,
+                                const ControlCtx& ctx, double& e, double& n,
+                                double& bearing) const {
+    float off = 0, d = -1;
+    if (!s.estValid || !seen_(s, label, ctx, &off, &d, nullptr) || !(d > 0.f)) return false;
+    bearing = wrap360(s.vehYawDeg + off);
+    e = s.estPe + d * std::sin(bearing * kD2R);
+    n = s.estPn + d * std::cos(bearing * kD2R);
+    return true;
 }
 
 float ScriptMode::sizeOf_(const std::string& label, bool* assumed) const {
@@ -478,12 +496,25 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             const kms::Transition& tr = prog_.transitions[size_t(k)];
             if (tr.to != state_ && cond_(tr.cond, s)) {
                 endOp_(s);
+                anchorT_ = -1; anchorLabel_.clear();       // an abandoned path lets go
                 state_ = tr.to;
                 next_(prog_.states[size_t(tr.to)].pc);
                 status_ = "-> state " + stateName() + " (line " + std::to_string(tr.line) + ")";
                 std::printf("[script] %s\n", status_.c_str());
                 break;
             }
+        }
+    }
+
+    // RE-GROUNDING: while a path is anchored on an object, every tick that
+    // object is measured moves the anchor toward the new measurement -- and
+    // with it every point of the path. Its reference heading does not move.
+    if (anchorT_ >= 0) {
+        double e, n, b;
+        if (measureObject_(s, anchorLabel_, ctx, e, n, b)) {
+            Place& a = places_[size_t(anchorT_)];
+            a.e += p_.anchorGain * (e - a.e);
+            a.n += p_.anchorGain * (n - a.n);
         }
     }
 
@@ -557,6 +588,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             }
             case Op::GO_STATE:
                 endOp_(s);
+                anchorT_ = -1; anchorLabel_.clear();
                 inHandler_ = false;              // a handler that goes somewhere is done
                 state_ = in.target;
                 next_(prog_.states[size_t(state_)].pc);
@@ -567,6 +599,73 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 direct_ = in.a > 0.5f;
                 next_(pc_ + 1);
                 continue;
+            case Op::STEER: {
+                if (in.cond >= 0 && cond_(in.cond, s)) { status_ = "steer: done"; next_(pc_ + 1); continue; }
+                if (opT_ > in.c) {
+                    if (!fail(in, "steer: its until never came true")) return out(hover_());
+                    continue;
+                }
+                cv::Rect box;
+                if (seen_(s, text, ctx, nullptr, nullptr, nullptr, false, &box)) {
+                    opAux_ = opT_;
+                    // The aim point: `a` box widths right of the box's centre,
+                    // as a bearing off the nose.
+                    const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
+                    const double ax = box.x + box.width * (0.5 + double(in.a)) - ctx.frameW * 0.5;
+                    const float aimDeg = float(std::atan(ax / f) / kD2R);
+                    ControlCmd c = hover_();
+                    const float fwd = std::min(1.f, in.b / std::max(0.1f, p_.mpsPerStick));
+                    if (in.flags & kms::FLAG_STRAFE) {
+                        c.roll = std::max(-0.5f, std::min(0.5f, p_.strafeKp * aimDeg));
+                        c.pitch = fwd;
+                    } else {
+                        c.yaw = yawTo_(aimDeg);
+                        // Ease off while far off the aim: turn first, then go.
+                        c.pitch = fwd * std::max(0.f, 1.f - std::fabs(aimDeg) / 30.f);
+                    }
+                    s.missionActive = true;
+                    s.missionPhase = "DIRECT";
+                    status_ = "steer on '" + text + "'" + fmt(" aim %+.0f deg", aimDeg);
+                    return out(c);
+                }
+                if (opT_ - opAux_ > 2.0) {
+                    if (!fail(in, "steer: lost '" + text + "'")) return out(hover_());
+                    continue;
+                }
+                return out(hover_());                    // a moment out of view: hold still
+            }
+            case Op::ANCHOR: {
+                double e, n, b;
+                if (!measureObject_(s, text, ctx, e, n, b)) {
+                    if (!fail(in, "'" + text + "' not in view with a range to anchor the path on"))
+                        return out(hover_());
+                    continue;
+                }
+                Place& p = places_[size_t(in.target)];
+                p.set = true; p.e = e; p.n = n; p.refYaw = b;   // line of sight: the path's frame
+                anchorT_ = in.target; anchorLabel_ = text;
+                visited_.push_back({text, e, n});
+                status_ = "path anchored on '" + text + "'";
+                next_(pc_ + 1);
+                continue;
+            }
+            case Op::UNANCHOR:
+                anchorT_ = -1; anchorLabel_.clear();
+                next_(pc_ + 1);
+                continue;
+            case Op::TURN_TO_PLACE: {
+                Place tp;
+                if (!resolve_(in.target, tp) || !s.estValid) { next_(pc_ + 1); continue; }
+                const double brg = wrap360(std::atan2(tp.e - s.estPe, tp.n - s.estPn) / kD2R);
+                const double err = wrap180(brg - s.vehYawDeg);
+                if (std::fabs(err) < 5.0) { next_(pc_ + 1); continue; }
+                if (opT_ > in.b) { next_(pc_ + 1); continue; }   // best effort: never stops the path
+                ControlCmd c = hover_();
+                c.yaw = yawTo_(float(err));
+                status_ = "facing it";
+                s.missionPhase = "SCAN";
+                return out(c);
+            }
             case Op::UNTRACK:
                 ++s.trackReleaseSeq;
                 s.trackLabel.clear();

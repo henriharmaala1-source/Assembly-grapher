@@ -155,6 +155,9 @@ Tunables load_tunables(Config& c) {
 
     // --- camera geometry (monocular tilt handling) ---
     t.cameraMountTiltDeg = c.f("camera.mount_tilt_deg",    t.cameraMountTiltDeg);
+    t.scriptPath       = c.s("script.file",          t.scriptPath);
+    t.scriptDetHfovDeg = c.f("script.det_hfov_deg",  t.scriptDetHfovDeg);
+    t.scriptDetTiltDeg = c.f("script.det_tilt_deg",  t.cameraMountTiltDeg);
     t.scanCamUpMaxDeg    = c.f("nav.scan_cam_up_max_deg",  t.scanCamUpMaxDeg);
     t.scanCamDownMaxDeg  = c.f("nav.scan_cam_down_max_deg", t.scanCamDownMaxDeg);
 

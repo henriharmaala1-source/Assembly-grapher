@@ -1,0 +1,586 @@
+#include "script_mode.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+
+using kms::CondOp;
+using kms::Instr;
+using kms::Op;
+using kms::Target;
+
+namespace {
+constexpr double kPi = 3.14159265358979;
+constexpr double kD2R = kPi / 180.0;
+// Instantaneous instructions run back to back within a tick, up to this many:
+// a loop of nothing but jumps cannot hold the fly loop.
+constexpr int kMaxStepsPerTick = 100;
+
+double wrap180(double d) {
+    while (d > 180.0) d -= 360.0;
+    while (d <= -180.0) d += 360.0;
+    return d;
+}
+double wrap360(double d) {
+    while (d >= 360.0) d -= 360.0;
+    while (d < 0.0) d += 360.0;
+    return d;
+}
+std::string fmt(const char* f, double a = 0, double b = 0) {
+    char buf[160];
+    std::snprintf(buf, sizeof buf, f, a, b);
+    return buf;
+}
+}  // namespace
+
+ScriptMode::ScriptMode() : ScriptMode(Params()) {}
+
+ScriptMode::ScriptMode(Params p, ModeLookup lookup)
+    : p_(p), lookup_(std::move(lookup)), mission_(p.mission) {}
+
+bool ScriptMode::load(const kms::Program& prog, std::string* err) {
+    if (!kms::verify(prog, err)) return false;
+    for (const Instr& in : prog.code)
+        if (in.op == Op::RUN) {
+            const std::string& m = prog.strings[size_t(in.text)];
+            if (!lookup_ || !lookup_(m)) {
+                if (err) *err = "line " + std::to_string(in.line) + ": this aircraft has no mode '" +
+                                m + "'";
+                return false;
+            }
+        }
+    prog_ = prog;
+    loaded_ = true;
+    reset_();
+    status_ = "loaded \"" + prog_.name + "\"";
+    return true;
+}
+
+bool ScriptMode::loadFile(const std::string& path, std::string* err) {
+    kms::Program p;
+    if (!kms::loadProgram(path, p, err)) return false;
+    return load(p, err);
+}
+
+void ScriptMode::reset_() {
+    started_ = finished_ = failed_ = false;
+    pc_ = 0; savedPc_ = -1; inHandler_ = false;
+    fired_.assign(prog_.handlers.size(), false);
+    regs_.assign(size_t(std::max(0, prog_.registers)), 0.0);
+    places_.assign(prog_.targets.size(), Place());
+    t_ = opT_ = opAux_ = noPosT_ = 0;
+    opBegun_ = false;
+    delegate_ = nullptr;
+    missionOn_ = false;
+}
+
+void ScriptMode::onEnter(WorldState& s) {
+    reset_();
+    s.missionGo = false;              // armed: nothing moves before GO
+    s.missionGoalValid = false; s.missionLegCapM = 0.f;
+    s.fcRequest = WorldState::FcRequest::NONE;
+    s.scriptActive = loaded_;
+    status_ = loaded_ ? "armed: \"" + prog_.name + "\" -- waiting for GO"
+                      : "no mission loaded (kestrel --script FILE.kmb)";
+}
+
+void ScriptMode::onExit(WorldState& s) {
+    endOp_(s);
+    mission_.enable(false);
+    s.missionGo = false;
+    s.missionGoalValid = false; s.missionLegCapM = 0.f;
+    s.fcRequest = WorldState::FcRequest::NONE;
+    s.scriptActive = false;
+}
+
+// --------------------------------------------------------------- places
+void ScriptMode::start_(const WorldState& s) {
+    started_ = true;
+    Place& st = places_[0];
+    st.set = true;
+    st.e = s.estValid ? s.estPe : 0.0;
+    st.n = s.estValid ? s.estPn : 0.0;
+    st.refYaw = s.vehYawDeg;
+    for (size_t i = 1; i < prog_.targets.size(); ++i) {
+        const Target& t = prog_.targets[i];
+        Place& p = places_[i];
+        if (t.kind == Target::ENU) {
+            p.set = true; p.e = st.e + t.x; p.n = st.n + t.y; p.refYaw = st.refYaw;
+        } else if (t.kind == Target::GPS && s.vehFix >= 3) {
+            // Equirectangular about the start: exact enough inside a fence of
+            // a few hundred metres, and the frame estPe/estPn are in.
+            const double dn = (t.x - s.vehLat) * 111320.0;
+            const double de = (t.y - s.vehLon) * 111320.0 * std::cos(s.vehLat * kD2R);
+            p.set = true; p.e = st.e + de; p.n = st.n + dn; p.refYaw = st.refYaw;
+        } else if (t.kind == Target::START) {
+            p = st;
+        }
+    }
+}
+
+bool ScriptMode::resolve_(int i, Place& out) const {
+    if (i < 0 || i >= int(places_.size())) return false;
+    const Target& t = prog_.targets[size_t(i)];
+    if (t.kind == Target::OFFSET || t.kind == Target::REL) {
+        Place b;
+        if (!resolve_(t.base, b)) return false;      // bases point backwards: terminates
+        out = b;
+        if (t.kind == Target::OFFSET) { out.e += t.x; out.n += t.y; }
+        else {
+            const double h = b.refYaw * kD2R;        // x ahead, y right of the base's heading
+            out.e += t.x * std::sin(h) + t.y * std::cos(h);
+            out.n += t.x * std::cos(h) - t.y * std::sin(h);
+        }
+        return true;
+    }
+    out = places_[size_t(i)];
+    return out.set;
+}
+
+bool ScriptMode::targetPos(int i, double& e, double& n) const {
+    Place p;
+    if (!started_ || !resolve_(i, p)) return false;
+    e = p.e; n = p.n;
+    return true;
+}
+
+// ------------------------------------------------------------ conditions
+bool ScriptMode::cond_(int c, const WorldState& s) const {
+    const kms::CondRange& r = prog_.conds[size_t(c)];
+    bool st[64]; int sp = 0;
+    auto cmp = [](uint8_t k, double a, double b) {
+        switch (k) {
+            case CondOp::LT: return a < b;
+            case CondOp::LE: return a <= b;
+            case CondOp::GT: return a > b;
+            default:         return a >= b;
+        }
+    };
+    for (int j = r.start; j < r.start + r.count && sp < 64; ++j) {
+        const CondOp& o = prog_.condOps[size_t(j)];
+        switch (o.kind) {
+            case CondOp::TRUE_: st[sp++] = true; break;
+            case CondOp::POSITIONED: st[sp++] = s.estValid; break;
+            case CondOp::SEEN: {
+                bool any = false;
+                if (s.tickMonoS - s.detStampS <= p_.detStaleSec)
+                    for (const Detection& d : s.detections)
+                        any |= d.label == prog_.strings[size_t(o.arg)];
+                st[sp++] = any;
+                break;
+            }
+            case CondOp::VAR: {
+                double v = 0;
+                switch (o.var) {
+                    case CondOp::BATTERY: v = s.vehBattery * 100.0; break;
+                    case CondOp::ALT:     v = s.vehAltM; break;
+                    case CondOp::TIME:    v = t_; break;
+                    case CondOp::SPEED:   v = s.vehGroundspeed; break;
+                    default:              v = s.vehYawDeg; break;
+                }
+                st[sp++] = cmp(o.cmp, v, o.value);
+                break;
+            }
+            case CondOp::DIST: {
+                Place p;
+                // An unknown place, or no position: the comparison is FALSE --
+                // a distance nobody can measure satisfies nothing.
+                st[sp++] = s.estValid && resolve_(o.arg, p) &&
+                           cmp(o.cmp, std::hypot(p.e - s.estPe, p.n - s.estPn), o.value);
+                break;
+            }
+            case CondOp::NOT: st[sp - 1] = !st[sp - 1]; break;
+            case CondOp::AND: --sp; st[sp - 1] = st[sp - 1] && st[sp]; break;
+            case CondOp::OR:  --sp; st[sp - 1] = st[sp - 1] || st[sp]; break;
+        }
+    }
+    return sp > 0 && st[sp - 1];
+}
+
+// ------------------------------------------------------------ detections
+bool ScriptMode::seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
+                       float* offDeg, float* distM, float* fill) const {
+    if (s.tickMonoS - s.detStampS > p_.detStaleSec || ctx.frameW <= 0 || ctx.frameH <= 0)
+        return false;
+    const Detection* best = nullptr;
+    for (const Detection& d : s.detections)
+        if (d.label == label && (!best || d.confidence > best->confidence)) best = &d;
+    if (!best) return false;
+    const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
+    const double cx = best->box.x + best->box.width * 0.5 - ctx.frameW * 0.5;
+    if (offDeg) *offDeg = float(std::atan(cx / f) / kD2R);
+    if (fill) *fill = float(best->box.height) / float(ctx.frameH);
+    if (distM) {
+        *distM = -1.f;
+        const double cy = best->box.y + best->box.height * 0.5 - ctx.frameH * 0.5;
+        const double elCentre = p_.detTiltDeg - std::atan(cy / f) / kD2R;
+        if (best->rangeM > 0.f) {
+            // MEASURED: horizontal part of the range to the box's centre.
+            *distM = float(best->rangeM * std::cos(elCentre * kD2R));
+        } else {
+            // THE GROUND PLANE, for something standing on it: the box's
+            // bottom edge is where it meets the ground, so its depression
+            // below the horizon and the altitude give the distance. Refused
+            // near the horizon, where it explodes, and without an altitude.
+            const double yb = best->box.y + best->box.height - ctx.frameH * 0.5;
+            const double dep = -(p_.detTiltDeg - std::atan(yb / f) / kD2R);   // + below
+            if (s.vehAltM > 0.5f && dep > 3.0) {
+                const double d = s.vehAltM / std::tan(dep * kD2R);
+                if (d <= p_.maxRangeM) *distM = float(d);
+            }
+        }
+    }
+    return true;
+}
+
+float ScriptMode::yawTo_(float errDeg) const {
+    return std::max(-p_.maxYaw, std::min(p_.maxYaw, p_.yawKp * errDeg / 90.f));
+}
+
+ControlCmd ScriptMode::fly_(WorldState& s, float dt, bool goal, float bearing, float capM) {
+    if (!missionOn_) { mission_.enable(true); missionOn_ = true; }
+    s.missionGoalValid = goal;
+    s.missionGoalBearing = bearing;
+    s.missionLegCapM = goal ? capM : 0.f;
+    s.missionGo = true;
+    return mission_.update(s, dt);
+}
+
+// ------------------------------------------------------------ control flow
+void ScriptMode::endOp_(WorldState& s) {
+    if (missionOn_) { mission_.enable(false); missionOn_ = false; }
+    if (delegate_) { delegate_->onExit(s); delegate_ = nullptr; }
+    s.missionGoalValid = false;
+    s.missionLegCapM = 0.f;
+}
+
+void ScriptMode::next_(int pc) {
+    pc_ = pc;
+    opT_ = 0; opAux_ = 0; opBegun_ = false;
+}
+
+void ScriptMode::finish_(WorldState& s, bool failed, const std::string& why) {
+    endOp_(s);
+    finished_ = true;
+    failed_ = failed;
+    status_ = why;
+}
+
+ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
+    s.scriptActive = loaded_;
+    if (!loaded_) {
+        s.scriptStatus = status_;
+        return {};                                   // nothing to fly: release
+    }
+    auto out = [&](ControlCmd c) {
+        s.scriptStatus = status_;
+        s.scriptLine = (pc_ >= 0 && pc_ < int(prog_.code.size())) ? prog_.code[size_t(pc_)].line : 0;
+        return c;
+    };
+    if (finished_) {
+        // LAND/RTL keep asking; anything else ends in a hover.
+        if (s.fcRequest != WorldState::FcRequest::NONE) return out({});
+        s.missionActive = true; s.missionPhase = "ARMED";
+        return out(hover_());
+    }
+    if (!s.missionGo) {
+        if (started_) {
+            endOp_(s);
+            status_ = "paused (GO is off) at line " +
+                      std::to_string(prog_.code[size_t(pc_)].line);
+        }
+        s.missionActive = true; s.missionPhase = "ARMED";
+        return out(hover_());
+    }
+    if (!started_) {
+        if ((prog_.caps & kms::Program::NEEDS_POSITION) && !s.estValid) {
+            status_ = "waiting for a position estimate before starting";
+            s.missionActive = true; s.missionPhase = "ARMED";
+            return out(hover_());
+        }
+        if ((prog_.caps & kms::Program::NEEDS_GPS) && s.vehFix < 3) {
+            status_ = "waiting for a 3D GPS fix before starting (a gps() place)";
+            s.missionActive = true; s.missionPhase = "ARMED";
+            return out(hover_());
+        }
+        start_(s);
+        status_ = "started \"" + prog_.name + "\"";
+    }
+
+    const double dt = std::max(0.f, ctx.dt);
+    t_ += dt;
+    if (t_ > prog_.timeoutS) {
+        finish_(s, true, fmt("STOPPED: the mission timeout (%.0f s) ran out", prog_.timeoutS));
+        return out(hover_());
+    }
+    if (s.estValid && places_[0].set &&
+        std::hypot(s.estPe - places_[0].e, s.estPn - places_[0].n) > prog_.fenceM) {
+        finish_(s, true, fmt("STOPPED: outside the %.0f m fence", prog_.fenceM));
+        return out(hover_());
+    }
+    // HANDLERS: each fires once, and not while another is running.
+    if (!inHandler_)
+        for (size_t h = 0; h < prog_.handlers.size(); ++h)
+            if (!fired_[h] && cond_(prog_.handlers[h].cond, s)) {
+                fired_[h] = true;
+                endOp_(s);
+                savedPc_ = pc_;
+                inHandler_ = true;
+                next_(prog_.handlers[h].pc);
+                status_ = "handler (line " + std::to_string(prog_.handlers[h].line) + ") fired";
+                break;
+            }
+
+    auto fail = [&](const Instr& in, const std::string& why) -> bool {
+        endOp_(s);
+        if (in.jump >= 0) { status_ = why + " -- taking the else"; next_(in.jump); return true; }
+        finish_(s, true, "STOPPED at line " + std::to_string(in.line) + ": " + why);
+        return false;
+    };
+
+    for (int steps = 0; steps < kMaxStepsPerTick; ++steps) {
+        if (finished_) return out(s.fcRequest != WorldState::FcRequest::NONE ? ControlCmd{} : hover_());
+        const Instr& in = prog_.code[size_t(pc_)];
+        const std::string text = in.text >= 0 ? prog_.strings[size_t(in.text)] : std::string();
+        const bool first = !opBegun_;
+        opBegun_ = true;
+        if (!first) opT_ += dt;
+        s.missionActive = true;
+
+        switch (in.op) {
+            // ---------------------------------------------- instantaneous
+            case Op::JUMP: next_(in.jump); continue;
+            case Op::JUMP_IFNOT: next_(cond_(in.cond, s) ? pc_ + 1 : in.jump); continue;
+            case Op::SET_REG: regs_[size_t(in.target)] = in.a; next_(pc_ + 1); continue;
+            case Op::LOOP:
+                regs_[size_t(in.target)] -= 1.0;
+                next_(regs_[size_t(in.target)] > 0.5 ? in.jump : pc_ + 1);
+                continue;
+            case Op::TIMER: regs_[size_t(in.target)] = t_; next_(pc_ + 1); continue;
+            case Op::JUMP_TIMEUP:
+                next_(t_ - regs_[size_t(in.target)] >= in.a ? in.jump : pc_ + 1);
+                continue;
+            case Op::SAY:
+                status_ = "\"" + text + "\"";
+                std::printf("[script] line %d: %s\n", in.line, text.c_str());
+                next_(pc_ + 1);
+                continue;
+            case Op::MARK: {
+                if (!s.estValid) { if (!fail(in, "no position to mark")) return out(hover_()); continue; }
+                Place& p = places_[size_t(in.target)];
+                p.set = true; p.e = s.estPe; p.n = s.estPn; p.refYaw = s.vehYawDeg;
+                next_(pc_ + 1);
+                continue;
+            }
+            case Op::MARK_SEEN: {
+                float off = 0, d = -1;
+                if (!s.estValid) { if (!fail(in, "no position to place it from")) return out(hover_()); continue; }
+                if (!seen_(s, text, ctx, &off, &d, nullptr)) {
+                    if (!fail(in, "'" + text + "' is not in view")) return out(hover_());
+                    continue;
+                }
+                if (!(d > 0.f)) {
+                    if (!fail(in, "'" + text + "' seen but no range (no depth, and not on the ground below)"))
+                        return out(hover_());
+                    continue;
+                }
+                // THE OBJECT'S POSITION: along the bearing it is seen on, at
+                // its range; its reference heading is that line of sight.
+                const double brg = wrap360(s.vehYawDeg + off);
+                Place& p = places_[size_t(in.target)];
+                p.set = true;
+                p.e = s.estPe + d * std::sin(brg * kD2R);
+                p.n = s.estPn + d * std::cos(brg * kD2R);
+                p.refYaw = brg;
+                status_ = fmt("marked it %.1f m away on %03.0f", d, brg);
+                next_(pc_ + 1);
+                continue;
+            }
+            case Op::RESUME:
+                inHandler_ = false;
+                next_(savedPc_ >= 0 ? savedPc_ : pc_ + 1);
+                continue;
+            case Op::END:
+                finish_(s, false, inHandler_ ? "finished (in a handler): hovering"
+                                             : "finished: hovering");
+                return out(hover_());
+            case Op::LAND:
+            case Op::RTL:
+                finish_(s, false, in.op == Op::LAND ? "LAND handed to the flight controller"
+                                                   : "RTL handed to the flight controller");
+                s.fcRequest = in.op == Op::LAND ? WorldState::FcRequest::LAND
+                                                : WorldState::FcRequest::RTL;
+                return out({});
+
+            // ---------------------------------------------- takes time
+            case Op::HOLD:
+                if (opT_ >= in.a) { next_(pc_ + 1); continue; }
+                status_ = fmt("hold %.0f of %.0f s", opT_, in.a);
+                s.missionPhase = "SCAN";             // still: a vantage for the map
+                return out(hover_());
+
+            case Op::TURN_TO:
+            case Op::TURN_BY: {
+                if (first) opAux_ = in.op == Op::TURN_TO ? in.a : wrap360(s.vehYawDeg + in.a);
+                const double err = wrap180(opAux_ - s.vehYawDeg);
+                if (std::fabs(err) < 4.0) { next_(pc_ + 1); continue; }
+                if (opT_ > in.b) { if (!fail(in, "turn timed out")) return out(hover_()); continue; }
+                ControlCmd c = hover_();
+                c.yaw = yawTo_(float(err));
+                status_ = fmt("turning to %03.0f", opAux_);
+                s.missionPhase = "SCAN";
+                return out(c);
+            }
+
+            case Op::CLIMB: {
+                if (s.vehAltM >= in.a - 0.2f) { next_(pc_ + 1); continue; }
+                if (opT_ > in.b) { if (!fail(in, "climb timed out")) return out(hover_()); continue; }
+                ControlCmd c = hover_();
+                c.throttle = p_.climbThrottle;
+                status_ = fmt("climbing to %.1f m (%.1f)", in.a, s.vehAltM);
+                s.missionPhase = "CLIMB";
+                return out(c);
+            }
+
+            case Op::GOTO: {
+                Place tg;
+                if (!resolve_(in.target, tg)) {
+                    if (!fail(in, "that place was never marked")) return out(hover_());
+                    continue;
+                }
+                if (opT_ > in.b) {
+                    if (!fail(in, fmt("goto timed out after %.0f s", in.b))) return out(hover_());
+                    continue;
+                }
+                if (!s.estValid) {
+                    noPosT_ += dt;
+                    if (noPosT_ > p_.noPositionMaxS) {
+                        if (!fail(in, "position estimate lost")) return out(hover_());
+                        continue;
+                    }
+                    status_ = "goto: no position estimate -- hovering";
+                    return out(hover_());
+                }
+                noPosT_ = 0;
+                const double de = tg.e - s.estPe, dn = tg.n - s.estPn;
+                const double dist = std::hypot(de, dn);
+                if (dist <= in.a) { endOp_(s); next_(pc_ + 1); continue; }
+                if (mission_.phase() == MissionController::Phase::STUCK) {
+                    if (!fail(in, "boxed in on the way (STUCK)")) return out(hover_());
+                    continue;
+                }
+                const double brg = wrap360(std::atan2(de, dn) / kD2R);
+                const double err = wrap180(brg - s.vehYawDeg);
+                status_ = fmt("goto: %.1f m to go, bearing %03.0f", dist, brg);
+                // A target outside what the camera can certify: turn to face it
+                // first (rotation keeps the map honest), never mid-leg.
+                const bool moving = missionOn_ && mission_.phase() == MissionController::Phase::MOVE;
+                if (!moving && std::fabs(err) > p_.mission.hFovDeg * 0.5 - 10.0) {
+                    if (missionOn_) { mission_.enable(false); missionOn_ = false; }
+                    ControlCmd c = hover_();
+                    c.yaw = yawTo_(float(err));
+                    s.missionPhase = "SCAN";
+                    return out(c);
+                }
+                return out(fly_(s, float(dt), true, float(brg), float(dist)));
+            }
+
+            case Op::EXPLORE:
+                if (opT_ >= in.a) { endOp_(s); next_(pc_ + 1); continue; }
+                status_ = fmt("exploring %.0f of %.0f s", opT_, in.a);
+                return out(fly_(s, float(dt), false, s.vehYawDeg, 0.f));
+
+            case Op::SEARCH: {
+                if (seen_(s, text, ctx, nullptr, nullptr, nullptr)) {
+                    status_ = "found '" + text + "'";
+                    next_(pc_ + 1); continue;
+                }
+                if (opT_ > in.a) {
+                    if (!fail(in, "'" + text + "' not found")) return out(hover_());
+                    continue;
+                }
+                ControlCmd c = hover_();
+                c.yaw = float(in.b) * p_.searchYaw;
+                status_ = "searching for '" + text + "'";
+                s.missionPhase = "SCAN";
+                return out(c);
+            }
+
+            case Op::FACE: {
+                float off = 0;
+                if (seen_(s, text, ctx, &off, nullptr, nullptr)) {
+                    opAux_ = opT_;                   // last time it was seen
+                    if (std::fabs(off) < 4.f) { next_(pc_ + 1); continue; }
+                    ControlCmd c = hover_();
+                    c.yaw = yawTo_(off);
+                    status_ = "facing '" + text + "'" + fmt(" (%+.0f deg)", off);
+                    s.missionPhase = "SCAN";
+                    return out(c);
+                }
+                if (opT_ - opAux_ > 2.0 || opT_ > in.a) {
+                    if (!fail(in, "lost '" + text + "'")) return out(hover_());
+                    continue;
+                }
+                s.missionPhase = "SCAN";
+                return out(hover_());
+            }
+
+            case Op::APPROACH: {
+                float off = 0, fill = 0;
+                if (opT_ > in.b) { if (!fail(in, "approach timed out")) return out(hover_()); continue; }
+                if (seen_(s, text, ctx, &off, nullptr, &fill)) {
+                    opAux_ = opT_;
+                    if (fill >= in.a) { endOp_(s); status_ = "close to '" + text + "'"; next_(pc_ + 1); continue; }
+                    const bool moving = missionOn_ && mission_.phase() == MissionController::Phase::MOVE;
+                    if (!moving && std::fabs(off) > 12.f) {
+                        if (missionOn_) { mission_.enable(false); missionOn_ = false; }
+                        ControlCmd c = hover_();
+                        c.yaw = yawTo_(off);
+                        s.missionPhase = "SCAN";
+                        status_ = "approach: turning onto '" + text + "'";
+                        return out(c);
+                    }
+                    status_ = "approaching '" + text + "'";
+                    // Short certified legs, re-aimed at it after every one.
+                    return out(fly_(s, float(dt), true, float(wrap360(s.vehYawDeg + off)), 1.5f));
+                }
+                if (opT_ - opAux_ > 3.0) {
+                    if (!fail(in, "lost '" + text + "'")) return out(hover_());
+                    continue;
+                }
+                return out(missionOn_ ? fly_(s, float(dt), s.missionGoalValid, s.missionGoalBearing,
+                                             s.missionLegCapM)
+                                      : hover_());
+            }
+
+            case Op::RUN: {
+                if (first) {
+                    delegate_ = lookup_ ? lookup_(text) : nullptr;
+                    if (!delegate_) { if (!fail(in, "no mode '" + text + "'")) return out(hover_()); continue; }
+                    delegate_->onEnter(s);
+                    s.missionGo = true;            // a mission-like delegate is past GO already
+                }
+                if (opT_ >= in.a) { endOp_(s); next_(pc_ + 1); continue; }
+                status_ = "running " + text + fmt(" (%.0f of %.0f s)", opT_, in.a);
+                s.missionActive = false;            // its own phases, or none
+                return out(delegate_->update(s, ctx));
+            }
+
+            case Op::WAIT:
+                if (cond_(in.cond, s)) { next_(pc_ + 1); continue; }
+                if (opT_ > in.a) {
+                    if (in.jump >= 0) { next_(in.jump); continue; }
+                    next_(pc_ + 1); continue;       // no else: carry on
+                }
+                status_ = fmt("waiting (%.0f of %.0f s)", opT_, in.a);
+                s.missionPhase = "SCAN";
+                return out(hover_());
+
+            default:
+                finish_(s, true, "STOPPED: unknown instruction");
+                return out(hover_());
+        }
+    }
+    status_ = "yielding (many instant steps)";
+    return out(hover_());
+}

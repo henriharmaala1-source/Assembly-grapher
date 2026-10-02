@@ -183,6 +183,16 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
             if (p_.farChoose) {
                 if (c.len < p_.legKeepFrac * bestLen) continue;   // near decides first
                 score = c.far - p_.legTieM * c.dev / 90.f;
+            } else if (s.missionGoalValid) {
+                // GOING SOMEWHERE (a SCRIPT goto): departure from the GOAL
+                // costs goalTieM per 90 deg -- the leg leans toward the target
+                // and still takes a clearly longer certified line round an
+                // obstacle. Every candidate is still certified; this only
+                // chooses among them.
+                float g = c.brg - s.missionGoalBearing;
+                while (g > 180.f) g -= 360.f;
+                while (g <= -180.f) g += 360.f;
+                score = c.len - p_.goalTieM * std::fabs(g) / 90.f;
             } else {
                 score = c.len - p_.legTieM * c.dev / 90.f;
             }

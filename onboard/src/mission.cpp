@@ -117,8 +117,8 @@ void MissionController::commitWaypoint_(const WorldState& s) {
     const float b = desiredBearing_(s) * kPi / 180.f;
     legE_   = s.estPe;                            // leg start — gates leg length
     legN_   = s.estPn;
-    wpE_    = s.estPe + p_.stepM * std::sin(b);   // ENU east (display target)
-    wpN_    = s.estPn + p_.stepM * std::cos(b);   // ENU north
+    wpE_    = s.estPe + stepFor_(s) * std::sin(b);   // ENU east (display target)
+    wpN_    = s.estPn + stepFor_(s) * std::cos(b);   // ENU north
     haveWp_ = true;
 }
 
@@ -235,7 +235,7 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
             const bool  blocked = fresh && s.corridorOpen < p_.minOpenToKeep;
             const bool  blind   = !fresh;
 
-            if (legDist >= p_.stepM || tPhase_ >= p_.moveTimeoutSec || blocked || blind) {
+            if (legDist >= stepFor_(s) || tPhase_ >= p_.moveTimeoutSec || blocked || blind) {
                 phase_ = Phase::ARRIVE; tPhase_ = 0.f;
                 break;              // hover this tick
             }
@@ -257,8 +257,8 @@ ControlCmd MissionController::update(WorldState& s, float dt) {
                 roundSign_ = 0.f;
             // Keep the displayed leg target following the live heading.
             const float b = desired * kPi / 180.f;
-            wpE_ = s.estPe + p_.stepM * std::sin(b);
-            wpN_ = s.estPn + p_.stepM * std::cos(b);
+            wpE_ = s.estPe + stepFor_(s) * std::sin(b);
+            wpN_ = s.estPn + stepFor_(s) * std::cos(b);
             break;
         }
         case Phase::ARRIVE: {
@@ -301,7 +301,7 @@ void MissionController::thinkVoxel_(const WorldState& s) {
         return;
     }
     if (s.voxFrames < p_.voxMinFrames) return;     // still filling: hover, wait
-    const float len = std::min(p_.stepM, s.voxLegFreeM - p_.voxStopMarginM);
+    const float len = std::min(stepFor_(s), s.voxLegFreeM - p_.voxStopMarginM);
     // The certificate alone decides. It is independent evidence: a straight
     // leg the map confirms free is flyable even when no curved primitive at
     // the planner's speeds survived, and `blocked` with no leg means no leg.
@@ -328,7 +328,7 @@ void MissionController::scanVoxel_(const WorldState& s, ControlCmd& c) {
         phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f;
         return;
     }
-    const float len = std::min(p_.stepM, s.voxLegFreeM - p_.voxStopMarginM);
+    const float len = std::min(stepFor_(s), s.voxLegFreeM - p_.voxStopMarginM);
     if (s.voxFrames >= p_.voxMinFrames && len >= p_.voxMinLegM) {
         phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f;   // commit next tick
         return;

@@ -33,6 +33,12 @@ struct Detection {
     std::string label;
     float       confidence = 0.f;
     cv::Rect    box;
+    // MEASURED range to it, metres, when the detector had depth registered
+    // to its image (the D435i: median depth inside the box); <= 0 = none. A
+    // script placing the object (`let p = seen person`) uses this, and only
+    // without it falls back to the ground-plane estimate from the box's
+    // bottom edge.
+    float       rangeM = -1.f;
 };
 
 // ----------------------------------------------------------------- world state
@@ -164,6 +170,23 @@ struct WorldState {
     // Operator inputs (set by keys / RC AUX / any command source):
     float       missionGoalBearing = 0.f;  // desired direction, deg (0 = North)
     bool        missionGo = false;         // "go" latch — cycle waits for this
+    // A goal the mission should actually GET TO (a SCRIPT goto), as opposed to
+    // a direction to wander in. When set, the voxel layer's leg choice leans
+    // toward missionGoalBearing (VoxelNavModule::Params::goalTieM), and no leg
+    // is longer than missionLegCapM (0 = no cap). Cleared by whoever set it.
+    bool        missionGoalValid = false;
+    float       missionLegCapM   = 0.f;
+
+    // --- Mission script (SCRIPT mode; mission_program.hpp) ---
+    bool        scriptActive = false;
+    int         scriptLine   = 0;          // source line being executed
+    std::string scriptStatus;              // what it is doing, in words
+    // A FLIGHT-CONTROLLER mode the active control mode asks for: the script's
+    // `land` and `rtl`. The manager turns RTL into its RTH path; main hands
+    // LAND to the FC link. Neither is a stick command, so they cannot travel
+    // in a ControlCmd.
+    enum class FcRequest { NONE, LAND, RTL };
+    FcRequest   fcRequest = FcRequest::NONE;
 
     // --- Shadow: what AUTONOMY *would* command, computed but NOT sent (SHADOW
     // mode — operator flies; the overlay is drawn on the feed for validation) ---

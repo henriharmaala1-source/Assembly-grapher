@@ -54,6 +54,10 @@ public:
     // --- fly-loop intent (thread-safe) ---
     void command(const ControlCmd& cmd, bool live);
     void commandRth(bool live);
+    // The FC's own LAND (a script's `land`). Same keep-alive as RTH. Backends
+    // with no mode API (MSP) refuse setMode: then nothing is sent and the FC's
+    // own RC-loss failsafe takes over -- the same fallback RTH has there.
+    void commandLand(bool live);
     void feedGps(const ExtGps& g);
     void latchBaseline();
     // PROXIMITY for the FC's own avoidance (OBSTACLE_DISTANCE on MAVLink). The
@@ -81,6 +85,7 @@ private:
     ControlCmd cmd_{};
     bool       live_      = false;
     bool       rth_       = false;
+    bool       land_      = false;
     double     cmdStampS_ = -1e9;
     bool       latchReq_  = false;
     bool       gpsReq_    = false;

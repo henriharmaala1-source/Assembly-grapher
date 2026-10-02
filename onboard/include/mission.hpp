@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <string>
 
 #include "control_types.hpp"
@@ -160,6 +161,12 @@ private:
     // blended with the vetted-open corridor. Used both to commit a leg target and
     // to RE-STEER live while moving (reactive avoidance, not a blind waypoint run).
     float desiredBearing_(const WorldState& s) const;
+    // How far one leg may go: stepM, or less when whoever set the goal also
+    // capped the leg (WorldState::missionLegCapM -- a SCRIPT goto, so the
+    // aircraft stops ON its target instead of a step past it).
+    float stepFor_(const WorldState& s) const {
+        return s.missionLegCapM > 0.f ? std::min(p_.stepM, s.missionLegCapM) : p_.stepM;
+    }
     void  commitWaypoint_(const WorldState& s);
     bool  tallyStuck_(float e, float n);   // net-displacement stuck detector
 

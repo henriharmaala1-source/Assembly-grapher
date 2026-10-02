@@ -19,6 +19,12 @@ bool ModeManager::select(const std::string& name, WorldState& s) {
     return false;   // unknown mode name — caller keeps the current mode
 }
 
+IControlMode* ModeManager::find(const std::string& name) const {
+    for (const auto& m : modes_)
+        if (name == m->name()) return m.get();
+    return nullptr;
+}
+
 std::vector<std::string> ModeManager::names() const {
     std::vector<std::string> out;
     out.reserve(modes_.size());
@@ -63,5 +69,14 @@ ControlCmd ModeManager::tick(WorldState& s, const ControlCtx& ctx, bool& rthTrig
     // A motion mode flying with no (or stale) obstacle perception has NO reflex
     // protecting it — surface that instead of failing silent.
     s.modeReason = (wantsReflex && !fresh) ? "no obstacle perception" : "";
-    return active_->update(s, ctx);
+    const ControlCmd c = active_->update(s, ctx);
+    // A mode that asked for the FC's own return takes the failsafe's path to
+    // it -- one RTH mechanism, not two.
+    if (s.fcRequest == WorldState::FcRequest::RTL) {
+        rthTrigger = true;
+        s.behavior = Behavior::RTL;
+        ControlCmd r; r.valid = false;
+        return r;
+    }
+    return c;
 }

@@ -30,12 +30,17 @@ FcTelemetry FcLink::telemetry() const {
 
 void FcLink::command(const ControlCmd& cmd, bool live) {
     std::lock_guard<std::mutex> lk(mu_);
-    cmd_ = cmd; live_ = live; rth_ = false; cmdStampS_ = monoNowS();
+    cmd_ = cmd; live_ = live; rth_ = false; land_ = false; cmdStampS_ = monoNowS();
 }
 
 void FcLink::commandRth(bool live) {
     std::lock_guard<std::mutex> lk(mu_);
-    rth_ = true; live_ = live; cmdStampS_ = monoNowS();
+    rth_ = true; land_ = false; live_ = live; cmdStampS_ = monoNowS();
+}
+
+void FcLink::commandLand(bool live) {
+    std::lock_guard<std::mutex> lk(mu_);
+    land_ = true; rth_ = false; live_ = live; cmdStampS_ = monoNowS();
 }
 
 void FcLink::feedGps(const ExtGps& g) {
@@ -66,17 +71,20 @@ void FcLink::loop_() {
     // Elevate this thread so inference on the Deliberator can't delay RC — the
     // hard deadline (iNAV failsafes below ~5 Hz). Non-fatal if not permitted.
     if (rtPrio_ > 0 || rtCpu_ >= 0) rt::make_realtime("fclink", rtPrio_, rtCpu_);
-    bool lastRth = false, rthCmding = false;
+    // The FC mode this link is holding the aircraft in: RTL or LAND (handed to
+    // the FC), or UNKNOWN = none (the OS's sticks).
+    FcMode lastSpecial = FcMode::UNKNOWN;
+    bool rthCmding = false;
 
     while (run_.load()) {
         const auto t0 = steady_clock::now();
 
         // Snapshot the fly loop's intent under the lock.
-        ControlCmd cmd; bool live, rth; double stamp;
+        ControlCmd cmd; bool live, rth, land; double stamp;
         bool doLatch, doGps; ExtGps g;
         {
             std::lock_guard<std::mutex> lk(mu_);
-            cmd = cmd_; live = live_; rth = rth_; stamp = cmdStampS_;
+            cmd = cmd_; live = live_; rth = rth_; land = land_; stamp = cmdStampS_;
             doLatch = latchReq_; latchReq_ = false;
             doGps   = gpsReq_;   gpsReq_   = false;  g = gps_;
         }
@@ -125,10 +133,13 @@ void FcLink::loop_() {
         if (doGps)   fc_->feedExternalGps(g);
 
         // Mode latch only on transition (some backends send on setMode).
-        if (rth != lastRth) {
-            rthCmding = fc_->setMode(rth ? FcMode::RTL : FcMode::ANGLE) && rth;
-            lastRth = rth;
+        const FcMode special = rth ? FcMode::RTL : land ? FcMode::LAND : FcMode::UNKNOWN;
+        if (special != lastSpecial) {
+            const bool on = special != FcMode::UNKNOWN;
+            rthCmding = fc_->setMode(on ? special : FcMode::ANGLE) && on;
+            lastSpecial = special;
         }
+        rth = rth || land;                 // both: the FC flies, RC kept alive
 
         // Emit control (dry-run sends nothing).
         if (live) {

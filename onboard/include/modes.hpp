@@ -2,6 +2,7 @@
 
 #include "control_mode.hpp"
 #include "mission.hpp"
+#include "script_mode.hpp"
 
 // The standard control modes for the demonstrator. Each is a small, independent
 // IControlMode — a template for writing your own: implement update() (+ a couple
@@ -128,7 +129,8 @@ public:
 // Register the standard demonstrator set. The FIRST added (FLY) is the default.
 // missionParams tunes the AUTONOMY cycle (from the config file; defaults if none).
 inline void register_standard_modes(ModeManager& mgr,
-                                    const MissionController::Params& missionParams = {}) {
+                                    const MissionController::Params& missionParams = {},
+                                    ScriptMode::Params scriptParams = ScriptMode::Params()) {
     mgr.add(std::make_unique<FlyMode>());
     mgr.add(std::make_unique<AssistMode>());
     mgr.add(std::make_unique<LockOnMode>());
@@ -138,4 +140,9 @@ inline void register_standard_modes(ModeManager& mgr,
     mgr.add(std::make_unique<AutonomyMode>(missionParams));
     mgr.add(std::make_unique<ShadowMode>(missionParams));
     mgr.add(std::make_unique<FollowSubjectMode>());
+    // SCRIPT: a compiled mission (.kmb). Its `run MODE for T` drives the
+    // modes above, looked up by name in this manager.
+    scriptParams.mission = missionParams;
+    mgr.add(std::make_unique<ScriptMode>(
+        scriptParams, [&mgr](const std::string& n) { return mgr.find(n); }));
 }

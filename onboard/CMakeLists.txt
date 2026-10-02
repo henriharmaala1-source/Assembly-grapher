@@ -51,6 +51,11 @@ add_executable(kestrel
   src/sim_fc_backend.cpp
   src/deliberator.cpp
   src/mission.cpp
+  # SCRIPT mode: the compiled-mission interpreter. The COMPILER
+  # (src/mission_compile.cpp) is deliberately not here -- missions are
+  # translated where they are written, never on the aircraft.
+  src/script_mode.cpp
+  src/mission_program.cpp
   src/nav_map.cpp
   src/control_mode.cpp
   src/config.cpp
@@ -164,7 +169,14 @@ if(BUILD_TESTS)
 
   kestrel_test(test_estimator src/state_estimator.cpp)
   kestrel_test(test_modes src/control_mode.cpp src/controller.cpp
-               src/mission.cpp src/nav_map.cpp src/world_model.cpp)
+               src/mission.cpp src/nav_map.cpp src/world_model.cpp
+               src/script_mode.cpp src/mission_program.cpp)
+  # Mission scripts end to end: compiler, .kmb loader, SCRIPT mode flying the
+  # real MissionController. The compiler is linked HERE (and in nav-sim's
+  # kestrel), never into the aircraft's binary.
+  kestrel_test(test_script src/mission_compile.cpp src/mission_program.cpp
+               src/script_mode.cpp src/control_mode.cpp src/controller.cpp src/mission.cpp
+               src/nav_map.cpp src/world_model.cpp)
   kestrel_test(test_msp src/msp_backend.cpp src/serial_port.cpp)
   target_link_libraries(test_msp PRIVATE util)   # openpty
   # MAVLink codec against golden frames from pymavlink. No serial, no hardware:
@@ -179,7 +191,8 @@ if(BUILD_TESTS)
                src/mission.cpp src/nav_map.cpp src/control_mode.cpp src/world_model.cpp
                src/rc_command.cpp)
   kestrel_test(test_rc src/rc_command.cpp src/control_mode.cpp
-               src/controller.cpp src/mission.cpp src/nav_map.cpp src/world_model.cpp)
+               src/controller.cpp src/mission.cpp src/nav_map.cpp src/world_model.cpp
+               src/script_mode.cpp src/mission_program.cpp)
   kestrel_test(test_nav_map src/nav_map.cpp)
   kestrel_test(test_fc_link src/fc_link.cpp src/sim_fc_backend.cpp
                src/world_model.cpp src/realtime.cpp)

@@ -77,6 +77,13 @@ struct Tunables {
 
     RcConfig rc;           // radio-as-command-source (P2.2)
 
+    // SCRIPT mode (script_mode.hpp): the compiled mission it loads at start
+    // (--script overrides), and the detection camera's geometry it turns
+    // boxes into bearings and ground ranges with.
+    std::string scriptPath;
+    float scriptDetHfovDeg = 60.f;
+    float scriptDetTiltDeg = 0.f;
+
     // Real-time scheduling for the control threads (F9). SCHED_FIFO priorities
     // (1..99, 0 = leave normal); FcLink higher — RC cadence is the hard deadline.
     // controlCpu >= 0 pins fly+FcLink to that core (default off; see realtime.hpp).

@@ -207,6 +207,7 @@ int main(int argc, char** argv) {
         "{fc-port        | /dev/ttyAMA0 | FC serial device }"
         "{fc-baud        | 115200 | FC serial baud }"
         "{auto           | false | autonomous move-stop-sense cycle (hover→think→plan→move) }"
+        "{script         |       | a COMPILED mission (.kmb from `kestrel mission compile`) for SCRIPT mode; starts in SCRIPT, waiting for GO (script.file) }"
         "{allow-control  | false | actually SEND control to the FC (else dry-run) }"
         "{assist         | false | flight-assist: trim from the operator's current sticks (else total autonomy from neutral) }"
         "{bench-test     | false | connect FC, print live telemetry table, then exit (no camera) }"
@@ -385,7 +386,25 @@ int main(int argc, char** argv) {
     ModeManager      modes(tune.mode);
     RcCommandSource  rc(tune.rc);   // radio as a command source (mode/GO/steer)
     if (rc.enabled()) std::printf("[rc] command source active (mode/go/steer via AUX)\n");
-    register_standard_modes(modes, tune.mission);   // FLY ASSIST LOCK_ON HOLD FOLLOW_ROAD WAYPOINT AUTONOMY ...
+    ScriptMode::Params scriptP;
+    scriptP.detHfovDeg = tune.scriptDetHfovDeg;
+    scriptP.detTiltDeg = tune.scriptDetTiltDeg;
+    register_standard_modes(modes, tune.mission, scriptP);   // FLY ASSIST ... AUTONOMY ... SCRIPT
+    // THE MISSION, compiled on the ground. Only the binary form is read here:
+    // no text, no parser on the aircraft. A file that fails its checks stops
+    // the program now, not at the line that would have broken in the air.
+    std::string scriptPath = parser.get<std::string>("script");
+    if (scriptPath.empty()) scriptPath = tune.scriptPath;
+    if (!scriptPath.empty()) {
+        auto* sm = static_cast<ScriptMode*>(modes.find("SCRIPT"));
+        std::string serr;
+        if (!sm || !sm->loadFile(scriptPath, &serr)) {
+            std::fprintf(stderr, "[script] %s: %s\n", scriptPath.c_str(), serr.c_str());
+            return 1;
+        }
+        std::printf("[script] loaded \"%s\" (%zu instructions) -- select SCRIPT, then GO\n",
+                    sm->program().name.c_str(), sm->program().code.size());
+    }
     const bool     autoStart = parser.get<bool>("auto");
     auto           tFeed = std::chrono::steady_clock::now();
 
@@ -434,7 +453,9 @@ int main(int argc, char** argv) {
     auto   tPrev   = std::chrono::steady_clock::now();
     auto   tLog    = tPrev;
 
-    wm.with([&](WorldState& s){ modes.select(autoStart ? "AUTONOMY" : "FLY", s); });
+    wm.with([&](WorldState& s){
+        modes.select(!scriptPath.empty() ? "SCRIPT" : autoStart ? "AUTONOMY" : "FLY", s);
+    });
     deliberator.start(frameBus, wm);   // heavy perception on its own thread (SCHED_OTHER)
 
     // F9: put the fly loop on SCHED_FIFO so the Deliberator's inference can never
@@ -611,12 +632,15 @@ int main(int argc, char** argv) {
         // Hand intent to the I/O thread. Failsafe → RTH; a released command
         // (valid=false, e.g. FLY/SHADOW) is passed as not-live so the thread
         // sends nothing (operator/iNAV flies); an active command sends live.
+        const bool landReq = wm.snapshot().fcRequest == WorldState::FcRequest::LAND;
         if (rthTrigger && fcLink.haveFc()) {
             fcLink.commandRth(allowControl);
+        } else if (landReq && fcLink.haveFc()) {
+            fcLink.commandLand(allowControl);
         } else if (fcLink.haveFc()) {
             fcLink.command(cmd, allowControl && cmd.valid);
         }
-        const bool sent = allowControl && fcLink.linkUp() && (rthTrigger || cmd.valid);
+        const bool sent = allowControl && fcLink.linkUp() && (rthTrigger || landReq || cmd.valid);
 
         wm.with([&](WorldState& s) {
             s.fps = fps; s.frameId = frameId;

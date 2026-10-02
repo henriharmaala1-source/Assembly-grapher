@@ -68,6 +68,9 @@ public:
         float legStepDeg      = 3.f;
         float legFovMarginDeg = 8.f;
         float legTieM         = 0.25f;
+        // With a goal (WorldState::missionGoalValid): metres of certified leg
+        // that 90 deg of departure from the goal bearing is worth.
+        float goalTieM        = 3.f;
         // THE FAR TIER CHOOSING AMONG SAFE LEGS -- OFF, BECAUSE IT MEASURED
         // WORSE. Two steps, near first:
         //   1. every bearing whose certified leg is within legKeepFrac of the

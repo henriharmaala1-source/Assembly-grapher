@@ -71,6 +71,10 @@ public:
     bool select(const std::string& name, WorldState& s);   // switch active mode
     IControlMode* active() const { return active_; }
     std::vector<std::string> names() const;
+    // A registered mode by name, or null -- for a mode that drives another
+    // (SCRIPT's `run MODE for T`). The manager's safety layers still wrap
+    // whichever mode is ACTIVE, so a delegated mode is wrapped by them too.
+    IControlMode* find(const std::string& name) const;
 
     void requestAbort() { abort_ = true; }        // operator kill → RTH
 

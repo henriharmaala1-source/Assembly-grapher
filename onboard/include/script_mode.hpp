@@ -110,10 +110,26 @@ private:
     bool seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
                float* offDeg, float* distM, float* fill) const;
     bool tracking_(const WorldState& s, const std::string& label) const;
+    // Metres tall, or -1; *assumed says the compiler filled it in.
+    float sizeOf_(const std::string& label, bool* assumed = nullptr) const;
+
+    // RANGE THROUGH THE TRACKER. A detection gives an absolute range (depth,
+    // or its known height over its box height); the tracker's box is square
+    // and its own, so its SIZE means nothing absolute -- but its CHANGE does:
+    // range = range0 * size0 / size. Anchored whenever a fresh detection lands
+    // on the tracked box, so tracker scale drift is reset each time YOLO runs.
+    struct TrackRef { bool valid = false; double losM = 0; float size0 = 0; };
+    mutable TrackRef tref_;
+    ControlCtx ctx_;          // the last tick's frame size, for conditions
     float yawTo_(float errDeg) const;
     // One tick of a mission-cycle leg toward `bearing` capped at `capM`
     // (capM <= 0, goal off: explore).
     ControlCmd fly_(WorldState& s, float dt, bool goal, float bearing, float capM);
+    // Turn onto `bearing` first, if it is outside what the camera can certify
+    // -- but only BETWEEN legs (op start, or the cycle settling after one),
+    // never mid-leg and never while the cycle is looking round (THINK/SCAN):
+    // fighting its scan reset it every few seconds and flew nothing.
+    bool faceFirst_(const WorldState& s, float bearing, ControlCmd& c);
 
     Params p_;
     ModeLookup lookup_;
@@ -134,7 +150,9 @@ private:
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction
     double opAux_ = 0;       // per-op scratch (a turn's goal heading, last-seen time)
+    double opAux2_ = 0;      // ...and a second (last time a range was had)
     bool opBegun_ = false;
+    bool facing_ = false;     // turning onto a goal, until within 5 deg
     double noPosT_ = 0;
     std::string status_;
 };

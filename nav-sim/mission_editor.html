@@ -1,0 +1,804 @@
+<title>Kestrel Mission Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a ground-station bench. Palette of steps on the left, the state
+   machine in the middle (graph above, state cards below), the generated
+   .kms on the right. Stacks to one column on a phone. */
+:root {
+  --bg: #eef2f4;          /* bench: grey with a steel-blue bias */
+  --panel: #ffffff;
+  --ink: #17222b;
+  --muted: #5d6b76;
+  --line: #d3dce2;
+  --accent: #2869e6;      /* the planner ribbon's blue, as in the voxel view */
+  --trigger: #c97a0a;     /* amber: a trigger, the thing that switches state */
+  --danger: #c2392f;
+  --ok: #2c8a52;
+  --code-bg: #f6f8f9;
+  --chip: #e6ecf0;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
+    --accent: #6c9cff; --trigger: #f0a43a; --danger: #ff7a70; --ok: #5fcf8c;
+    --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
+  --accent: #6c9cff; --trigger: #f0a43a; --danger: #ff7a70; --ok: #5fcf8c;
+  --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--body); font-size: 14px; line-height: 1.45; padding-inline: 16px; padding-block: 14px 28px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: .01em; margin: 0; text-wrap: balance; }
+h1 { font-size: 26px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+button, select, input { font: inherit; color: var(--ink); }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; }
+header.top .meta { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.field input, .field select { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+.field input.num { width: 76px; font-variant-numeric: tabular-nums; }
+.sub { color: var(--muted); max-width: 70ch; }
+
+.bench { display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(0, 380px); gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .bench { grid-template-columns: 180px minmax(0, 1fr); } .out { grid-column: 1 / -1; } }
+@media (max-width: 720px) {
+  .bench { grid-template-columns: minmax(0, 1fr); }
+  .palette { position: static; }
+  .palette .group { flex-direction: row; flex-wrap: wrap; }
+  .palette .group h2 { flex-basis: 100%; }
+  .pal small { display: none; }
+}
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+
+/* palette */
+.palette { display: flex; flex-direction: column; gap: 12px; position: sticky; top: env(safe-area-inset-top, 0px); }
+.palette .group { display: flex; flex-direction: column; gap: 5px; }
+.pal { display: flex; justify-content: space-between; align-items: center; gap: 6px; text-align: left; background: var(--chip); border: 1px solid transparent; border-radius: 6px; padding: 5px 9px; }
+.pal:hover { border-color: var(--accent); }
+.pal small { color: var(--muted); font-size: 11px; }
+.hint { font-size: 12px; color: var(--muted); }
+
+/* graph */
+.graph-wrap { overflow-x: auto; }
+svg.graph { display: block; width: 100%; min-width: 420px; height: auto; }
+svg.graph text { font-family: var(--body); fill: var(--ink); }
+svg.graph .node { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+svg.graph .node.sel { stroke: var(--accent); stroke-width: 2.5; }
+svg.graph .node.start { stroke: var(--ok); }
+svg.graph .tr { stroke: var(--trigger); fill: none; stroke-width: 1.8; }
+svg.graph .go { stroke: var(--accent); fill: none; stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg.graph .lbl { font-size: 11px; fill: var(--trigger); }
+svg.graph .end { font-size: 10px; fill: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.legend i { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--trigger); vertical-align: middle; margin-right: 5px; }
+.legend i.go { border-top: 2px dashed var(--accent); }
+
+/* states */
+.middle { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.states { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.state { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.state.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.state .head { display: flex; gap: 6px; align-items: center; }
+.state .head input { font-family: var(--display); font-size: 19px; font-weight: 600; border: 1px solid transparent; background: transparent; border-radius: 5px; padding: 1px 4px; flex: 1; min-width: 0; }
+.state .head input:hover, .state .head input:focus { border-color: var(--line); }
+.badge { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; padding: 2px 6px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+.badge.start { color: var(--ok); }
+.sect { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.trig, .step { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; border-radius: 6px; padding: 5px 6px; }
+.trig { background: color-mix(in srgb, var(--trigger) 10%, var(--panel)); border-left: 3px solid var(--trigger); }
+.step { background: var(--chip); }
+.step.dragging { opacity: .45; }
+.steps { display: flex; flex-direction: column; gap: 4px; min-height: 30px; border-radius: 6px; }
+.steps.over { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.kw { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.kw.t { color: var(--trigger); }
+.kw.s { color: var(--accent); }
+.trig select, .trig input, .step select, .step input { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; min-width: 0; }
+.trig input.num, .step input.num { width: 58px; font-variant-numeric: tabular-nums; }
+.trig input.txt, .step input.txt { width: 92px; }
+.unit { font-size: 12px; color: var(--muted); }
+.tools { margin-left: auto; display: flex; gap: 2px; }
+.icon { border: 0; background: transparent; color: var(--muted); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.icon:hover { background: var(--panel); color: var(--ink); }
+.icon.del:hover { color: var(--danger); }
+.add { border: 1px dashed var(--line); background: transparent; color: var(--muted); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+.add:hover { color: var(--accent); border-color: var(--accent); }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 5px 11px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* places + safety */
+.side2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.place { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.place:last-child { border-bottom: 0; }
+.place input, .place select, .safety input, .safety select { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; min-width: 0; }
+.place input.num, .safety input.num { width: 58px; }
+.place input.name { width: 90px; font-family: var(--mono); font-size: 12px; }
+
+/* output */
+.out { display: flex; flex-direction: column; gap: 10px; position: sticky; top: env(safe-area-inset-top, 0px); }
+pre.code { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.55; overflow: auto; max-height: 58vh; white-space: pre; }
+pre.code .c { color: var(--muted); }
+pre.code .k { color: var(--accent); font-weight: 600; }
+pre.code .t { color: var(--trigger); font-weight: 600; }
+.problems { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.problems .p { color: var(--danger); }
+.problems .okmsg { color: var(--ok); }
+.cmd { font-family: var(--mono); font-size: 12px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; overflow-x: auto; white-space: nowrap; }
+textarea#importBox { width: 100%; min-height: 90px; font-family: var(--mono); font-size: 12px; background: var(--code-bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+.toast { font-size: 12px; color: var(--ok); min-height: 1em; }
+@media (prefers-reduced-motion: no-preference) { .state, .step, .trig { transition: border-color .15s, box-shadow .15s; } }
+</style>
+
+<header class="top">
+  <div>
+    <h1>Kestrel Mission Editor</h1>
+    <p class="sub">Build the aircraft's behaviour as states. A <b style="color:var(--trigger)">trigger</b> switches state the moment it holds, for example when the detector sees a door. The <b style="color:var(--accent)">steps</b> are what the state does, in order. Copy the text and compile it on your computer; the aircraft only ever gets the compiled file.</p>
+  </div>
+  <div class="meta">
+    <div class="field"><label for="tpl">Start from</label>
+      <select id="tpl">
+        <option value="door">Door: detect, track, approach</option>
+        <option value="person">Person: find, fly over, circle</option>
+        <option value="square">Square patrol</option>
+        <option value="blank">Blank</option>
+      </select></div>
+    <div class="field"><label for="mName">Mission name</label><input id="mName" type="text"></div>
+    <div class="field"><label for="mFence">Fence (m)</label><input id="mFence" class="num" type="number" min="2" max="2000" step="1"></div>
+    <div class="field"><label for="mTimeout">Time limit (min)</label><input id="mTimeout" class="num" type="number" min="1" max="60" step="0.5"></div>
+  </div>
+</header>
+
+<div class="bench">
+  <aside class="panel palette" aria-label="Steps">
+    <div class="hint">Click a step to add it to the selected state, or drag it onto any state.</div>
+    <div class="group" id="palMove"><h2>Move</h2></div>
+    <div class="group" id="palSee"><h2>See and track</h2></div>
+    <div class="group" id="palPlace"><h2>Places</h2></div>
+    <div class="group" id="palFlow"><h2>Flow</h2></div>
+  </aside>
+
+  <main class="middle">
+    <section class="panel">
+      <div class="row" style="justify-content:space-between"><h2>State machine</h2><button class="add" id="addState">+ state</button></div>
+      <div class="graph-wrap"><svg class="graph" id="graph" viewBox="0 0 640 300" role="img" aria-label="States and the triggers between them"></svg></div>
+      <div class="legend"><span><i></i>trigger: switches as soon as it holds</span><span><i class="go"></i>step: go to another state</span></div>
+    </section>
+    <section class="states" id="states"></section>
+    <section class="side2">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between"><h2>Places</h2><button class="add" id="addPlace">+ place</button></div>
+        <div id="places"></div>
+        <p class="hint">"Marked in flight" starts at the takeoff point; a <b>Mark</b> step sets it again, for example to where a person was seen. Ahead and right are measured from the heading at GO, which suits indoors.</p>
+      </div>
+      <div class="panel">
+        <div class="row" style="justify-content:space-between"><h2>Object sizes</h2><button class="add" id="addSize">+ size</button></div>
+        <div id="sizes"></div>
+        <p class="hint">How tall each object is. With no depth camera the range comes from its size in the picture, and the tracker carries it between detections as the box grows.</p>
+      </div>
+      <div class="panel safety">
+        <h2>Always on</h2>
+        <div class="row" style="margin-top:8px">
+          <label for="battOn"><input id="battOn" type="checkbox"> When battery is below</label>
+          <input id="battPct" class="num" type="number" min="5" max="90" step="1"><span class="unit">%</span>
+          <select id="battAct" aria-label="Battery action"><option value="rtl">return to launch</option><option value="land">land</option></select>
+        </div>
+        <p class="hint">On top of this, the aircraft's own failsafe and the operator's abort still return it home. The fence and the time limit stop the mission and hover.</p>
+      </div>
+    </section>
+  </main>
+
+  <aside class="out">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between"><h2>mission.kms</h2>
+        <div class="row"><button class="btn primary" id="copy">Copy</button><button class="btn" id="save" hidden>Save .kms</button></div></div>
+      <div class="toast" id="toast" aria-live="polite"></div>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="panel">
+      <h2>Checks</h2>
+      <div class="problems" id="problems" style="margin-top:6px"></div>
+      <p class="hint" style="margin-top:8px">These are quick checks in the page. The full check is the compiler's:</p>
+      <div class="cmd" id="cmd">kestrel mission check door.kms</div>
+    </div>
+    <details class="panel">
+      <summary><b>Open a mission saved from here</b></summary>
+      <p class="hint">Paste a .kms this editor wrote. Its last line carries the editor's layout.</p>
+      <textarea id="importBox" aria-label="Paste a .kms file"></textarea>
+      <div class="row"><button class="btn" id="importBtn">Open</button><span class="toast" id="importMsg"></span></div>
+    </details>
+  </aside>
+</div>
+
+<script>
+"use strict";
+// ======================================================================
+// THE MODEL AND THE TEXT IT BECOMES. Pure functions: no DOM, so they can be
+// checked on their own (nav-sim/test/mission_editor_check.js compiles every
+// template's output with the real compiler).
+// ======================================================================
+const STEP_TYPES = {
+  move:     { group: "Move", label: "Move", hint: "certified legs", make: () => ({ dir: "forward", m: 2 }) },
+  yaw:      { group: "Move", label: "Yaw", hint: "turn on the spot", make: () => ({ dir: "right", deg: 45 }) },
+  up:       { group: "Move", label: "Up", hint: "climb", make: () => ({ m: 1 }) },
+  hold:     { group: "Move", label: "Hold", hint: "hover", make: () => ({ s: 2 }) },
+  explore:  { group: "Move", label: "Explore", hint: "safe travel", make: () => ({ s: 30 }) },
+  search:   { group: "See", label: "Search", hint: "spin until seen", make: () => ({ label: "person", s: 30, dir: "right", fail: "" }) },
+  track:    { group: "See", label: "Track", hint: "hand to tracker", make: () => ({ label: "door", s: 5, fail: "" }) },
+  face:     { group: "See", label: "Face", hint: "turn onto it", make: () => ({ label: "door", s: 15, fail: "" }) },
+  approach: { group: "See", label: "Approach", hint: "to a range", make: () => ({ label: "door", by: "range", m: 2, fill: 0.5, s: 60, fail: "" }) },
+  untrack:  { group: "See", label: "Release tracker", hint: "", make: () => ({}) },
+  mark:     { group: "Place", label: "Mark place", hint: "here / where seen", make: () => ({ place: "", from: "seen", label: "person", fail: "" }) },
+  goto:     { group: "Place", label: "Go to place", hint: "", make: () => ({ place: "" }) },
+  over:     { group: "Place", label: "Fly over", hint: "and hover", make: () => ({ place: "", hold: 3 }) },
+  orbit:    { group: "Place", label: "Circle", hint: "around a place", make: () => ({ place: "", r: 3, laps: 1 }) },
+  say:      { group: "Flow", label: "Say", hint: "to the log", make: () => ({ text: "hello" }) },
+  go:       { group: "Flow", label: "Go to state", hint: "", make: () => ({ state: "" }) },
+  land:     { group: "Flow", label: "Land", hint: "FC's LAND", make: () => ({}) },
+  rtl:      { group: "Flow", label: "Return home", hint: "FC's RTL", make: () => ({}) },
+};
+const TERMINAL = new Set(["go", "land", "rtl"]);
+const COND_TYPES = {
+  seen:        { text: "sees", arg: "label" },
+  notseen:     { text: "does not see", arg: "label" },
+  tracking:    { text: "is tracking", arg: "label" },
+  range:       { text: "is closer than", arg: "range" },
+  nottracking: { text: "loses track of", arg: "label" },
+  battery:     { text: "battery below", arg: "num", unit: "%" },
+  time:        { text: "mission time over", arg: "num", unit: "s" },
+  near:        { text: "is within", arg: "place" },
+};
+
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const RESERVED = new Set(["start", "here", "seen", "enu", "fwd", "gps", "state", "when", "go", "let", "set",
+  "and", "or", "not", "if", "else", "on", "repeat", "while", "true", "mission", "fence", "timeout"]);
+const num = (v, d) => { const x = Number(v); return Number.isFinite(x) ? x : d; };
+const fmt = (x) => String(Math.round(x * 100) / 100);
+const lab = (s) => IDENT.test(s) ? s : JSON.stringify(String(s).replace(/"/g, "'"));
+
+function condText(c) {
+  switch (c.kind) {
+    case "seen": return "seen " + lab(c.label);
+    case "notseen": return "not seen " + lab(c.label);
+    case "tracking": return "tracking " + lab(c.label);
+    case "nottracking": return "not tracking " + lab(c.label);
+    case "battery": return "battery < " + fmt(num(c.value, 25)) + "%";
+    case "time": return "time > " + fmt(num(c.value, 60)) + " s";
+    case "near": return "distance to " + c.place + " < " + fmt(num(c.value, 2)) + " m";
+    case "range": return "range to " + lab(c.label) + " < " + fmt(num(c.value, 3)) + " m";
+  }
+  return "true";
+}
+
+function elseText(fail) { return fail ? " else { -> " + fail + " }" : ""; }
+
+function stepText(s) {
+  switch (s.type) {
+    case "move": return "move " + s.dir + " " + fmt(num(s.m, 1)) + " m";
+    case "yaw": return "yaw " + s.dir + " " + fmt(num(s.deg, 45));
+    case "up": return "up " + fmt(num(s.m, 1)) + " m";
+    case "hold": return "hold " + fmt(num(s.s, 2)) + " s";
+    case "explore": return "explore " + fmt(num(s.s, 30)) + " s";
+    case "search": return "search " + lab(s.label) + " timeout " + fmt(num(s.s, 30)) + " s " + s.dir + elseText(s.fail);
+    case "track": return "track " + lab(s.label) + " timeout " + fmt(num(s.s, 5)) + " s" + elseText(s.fail);
+    case "face": return "face " + lab(s.label) + " timeout " + fmt(num(s.s, 15)) + " s" + elseText(s.fail);
+    case "approach": return "approach " + lab(s.label) +
+      (s.by === "fill" ? " fill " + fmt(num(s.fill, 0.5)) : " to " + fmt(num(s.m, 2)) + " m") +
+      " timeout " + fmt(num(s.s, 60)) + " s" + elseText(s.fail);
+    case "untrack": return "untrack";
+    case "mark": return "set " + s.place + " = " + (s.from === "here" ? "here" : "seen " + lab(s.label) + elseText(s.fail));
+    case "goto": return "goto " + s.place;
+    case "over": return "over " + s.place + " hold " + fmt(num(s.hold, 3)) + " s";
+    case "orbit": return "orbit " + s.place + " radius " + fmt(num(s.r, 3)) + " m laps " + fmt(num(s.laps, 1));
+    case "say": return "say " + JSON.stringify(String(s.text || "").replace(/"/g, "'"));
+    case "go": return "-> " + s.state;
+    case "land": return "land";
+    case "rtl": return "rtl";
+  }
+  return "# ?";
+}
+
+function placeText(p) {
+  if (p.kind === "here") return "let " + p.name + " = here";
+  if (p.kind === "enu") return "let " + p.name + " = enu(" + fmt(num(p.a, 0)) + ", " + fmt(num(p.b, 0)) + ")";
+  return "let " + p.name + " = fwd(" + fmt(num(p.a, 0)) + ", " + fmt(num(p.b, 0)) + ")";
+}
+
+function b64(s) {
+  if (typeof btoa === "function") return btoa(unescape(encodeURIComponent(s)));
+  return Buffer.from(s, "utf8").toString("base64");
+}
+function unb64(s) {
+  if (typeof atob === "function") return decodeURIComponent(escape(atob(s)));
+  return Buffer.from(s, "base64").toString("utf8");
+}
+
+function generate(m) {
+  const L = [];
+  L.push("# Written by the Kestrel mission editor. Check and compile on your computer:");
+  L.push("#   kestrel mission check FILE.kms   then   kestrel mission compile FILE.kms");
+  L.push('mission ' + JSON.stringify(String(m.name || "mission").replace(/"/g, "'")));
+  L.push("fence " + fmt(num(m.fence, 40)) + " m");
+  L.push("timeout " + fmt(num(m.timeoutMin, 8)) + " min");
+  L.push("");
+  if (m.battery && m.battery.on) {
+    L.push("on battery < " + fmt(num(m.battery.pct, 25)) + "% { " + (m.battery.act === "land" ? "land" : "rtl") + " }");
+    L.push("");
+  }
+  for (const z of (m.sizes || [])) L.push("size " + lab(z.label) + " " + fmt(num(z.m, 1)) + " m");
+  if ((m.sizes || []).length) L.push("");
+  for (const p of m.places) L.push(placeText(p));
+  if (m.places.length) L.push("");
+  for (const st of m.states) {
+    L.push("state " + st.name + " {");
+    for (const t of st.triggers) L.push("  when " + condText(t) + " -> " + t.to);
+    for (const s of st.steps) L.push("  " + stepText(s));
+    L.push("}");
+    L.push("");
+  }
+  L.push("# kestrel-editor: " + b64(JSON.stringify(m)));
+  return L.join("\n") + "\n";
+}
+
+// Quick checks, phrased for a person. The compiler is the real authority.
+function problems(m) {
+  const out = [];
+  const states = new Set(), places = new Set();
+  if (!m.states.length) out.push("Add at least one state.");
+  for (const st of m.states) {
+    if (!IDENT.test(st.name) || RESERVED.has(st.name)) out.push('State name "' + st.name + '" must be one word of letters, digits or _, and not a keyword.');
+    else if (states.has(st.name)) out.push('Two states are called "' + st.name + '".');
+    states.add(st.name);
+  }
+  for (const p of m.places) {
+    if (!IDENT.test(p.name) || RESERVED.has(p.name)) out.push('Place name "' + p.name + '" must be one word of letters, digits or _, and not a keyword.');
+    else if (places.has(p.name)) out.push('Two places are called "' + p.name + '".');
+    places.add(p.name);
+    if (p.kind !== "here" && Math.hypot(num(p.a, 0), num(p.b, 0)) > num(m.fence, 40))
+      out.push('Place "' + p.name + '" is outside the ' + fmt(num(m.fence, 40)) + " m fence.");
+  }
+  for (const z of (m.sizes || []))
+    if (!String(z.label || "").trim() || !(num(z.m, 0) > 0)) out.push("Each object size needs a name and a height above 0.");
+  for (const st of m.states) {
+    for (const t of st.triggers) {
+      if (!states.has(t.to)) out.push('In "' + st.name + '": a trigger goes to a state that does not exist.');
+      if (t.to === st.name) out.push('In "' + st.name + '": a trigger points at its own state, so it never fires.');
+      if (t.kind === "near" && !places.has(t.place)) out.push('In "' + st.name + '": a trigger uses a place that does not exist.');
+      if ((COND_TYPES[t.kind].arg === "label" || COND_TYPES[t.kind].arg === "range") && !String(t.label || "").trim()) out.push('In "' + st.name + '": a trigger needs an object name.');
+    }
+    st.steps.forEach((s, i) => {
+      const where = 'In "' + st.name + '", step ' + (i + 1) + " (" + STEP_TYPES[s.type].label + ")";
+      if ("place" in s && !places.has(s.place)) out.push(where + ": choose a place.");
+      if (s.type === "mark" && places.has(s.place) && (m.places.find(p => p.name === s.place) || {}).kind !== "here")
+        out.push(where + ': only places "marked in flight" can be marked again.');
+      if (s.type === "go" && !states.has(s.state)) out.push(where + ": choose a state.");
+      if (s.fail && !states.has(s.fail)) out.push(where + ": the failure branch goes to a state that does not exist.");
+      if ("label" in s && !String(s.label || "").trim()) out.push(where + ": name the object.");
+      if (TERMINAL.has(s.type) && i < st.steps.length - 1) out.push(where + ": nothing after it will run.");
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- templates
+function tplDoor() {
+  return {
+    name: "door", fence: 25, timeoutMin: 6, battery: { on: true, pct: 25, act: "rtl" }, places: [],
+    sizes: [{ label: "door", m: 2.0 }],
+    states: [
+      { name: "patrol", triggers: [{ kind: "seen", label: "door", to: "acquire" }],
+        steps: [{ type: "yaw", dir: "right", deg: 45 }, { type: "hold", s: 2 }, { type: "go", state: "patrol" }] },
+      { name: "acquire", triggers: [],
+        steps: [{ type: "track", label: "door", s: 5, fail: "patrol" }, { type: "go", state: "go_through" }] },
+      { name: "go_through", triggers: [{ kind: "nottracking", label: "door", to: "patrol" }],
+        steps: [{ type: "approach", label: "door", by: "range", m: 2, fill: 0.5, s: 60, fail: "" }, { type: "go", state: "step_aside" }] },
+      { name: "step_aside", triggers: [],
+        steps: [{ type: "untrack" }, { type: "move", dir: "left", m: 1 }, { type: "land" }] },
+    ],
+  };
+}
+function tplPerson() {
+  return {
+    name: "fly over the person", fence: 40, timeoutMin: 8, battery: { on: true, pct: 25, act: "rtl" },
+    sizes: [{ label: "person", m: 1.7 }],
+    places: [{ name: "home", kind: "here", a: 0, b: 0 }, { name: "spot", kind: "here", a: 0, b: 0 }],
+    states: [
+      { name: "find", triggers: [],
+        steps: [{ type: "search", label: "person", s: 40, dir: "right", fail: "nobody" },
+                { type: "mark", place: "spot", from: "seen", label: "person", fail: "find" },
+                { type: "go", state: "visit" }] },
+      { name: "visit", triggers: [],
+        steps: [{ type: "over", place: "spot", hold: 5 }, { type: "orbit", place: "spot", r: 3, laps: 1 },
+                { type: "goto", place: "home" }, { type: "land" }] },
+      { name: "nobody", triggers: [],
+        steps: [{ type: "say", text: "nobody found" }, { type: "goto", place: "home" }, { type: "land" }] },
+    ],
+  };
+}
+function tplSquare() {
+  return {
+    name: "square patrol", fence: 20, timeoutMin: 5, battery: { on: true, pct: 25, act: "rtl" }, places: [],
+    states: [
+      { name: "leg", triggers: [{ kind: "time", value: 120, to: "home" }],
+        steps: [{ type: "move", dir: "forward", m: 4 }, { type: "yaw", dir: "right", deg: 90 }, { type: "go", state: "leg" }] },
+      { name: "home", triggers: [], steps: [{ type: "rtl" }] },
+    ],
+  };
+}
+function tplBlank() {
+  return { name: "my mission", fence: 30, timeoutMin: 5, battery: { on: true, pct: 25, act: "rtl" }, places: [],
+           states: [{ name: "begin", triggers: [], steps: [{ type: "hold", s: 2 }, { type: "land" }] }] };
+}
+const TEMPLATES = { door: tplDoor, person: tplPerson, square: tplSquare, blank: tplBlank };
+
+if (typeof module !== "undefined") module.exports = { generate, problems, TEMPLATES };
+
+// ======================================================================
+// THE PAGE
+// ======================================================================
+if (typeof document !== "undefined") (function () {
+  const $ = (id) => document.getElementById(id);
+  let model = null, sel = 0, dragStep = null, dragPal = null;
+
+  function store() { try { localStorage.setItem("kestrel-mission-draft", JSON.stringify(model)); } catch (e) {} }
+  function restore() {
+    try { const s = localStorage.getItem("kestrel-mission-draft"); if (s) return JSON.parse(s); } catch (e) {}
+    return null;
+  }
+  const slug = () => (String(model.name || "mission").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "mission");
+
+  function el(tag, attrs, ...kids) {
+    const e = document.createElement(tag);
+    for (const k in attrs || {}) {
+      if (k === "class") e.className = attrs[k];
+      else if (k.startsWith("on")) e.addEventListener(k.slice(2), attrs[k]);
+      else if (k === "value") e.value = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    }
+    for (const c of kids) if (c != null) e.append(c);
+    return e;
+  }
+  function select(options, value, onchange, aria) {
+    const s = el("select", { "aria-label": aria || "choice", onchange: (e) => onchange(e.target.value) });
+    for (const [v, t] of options) s.append(el("option", { value: v }, t));
+    s.value = value;
+    return s;
+  }
+  function numIn(value, onchange, aria, step) {
+    return el("input", { class: "num", type: "number", step: step || "any", value: value, "aria-label": aria,
+                         oninput: (e) => onchange(e.target.value) });
+  }
+  function txtIn(value, onchange, aria) {
+    return el("input", { class: "txt", type: "text", value: value, "aria-label": aria,
+                         oninput: (e) => onchange(e.target.value) });
+  }
+  const unit = (u) => el("span", { class: "unit" }, u);
+  const stateOpts = (blank) => (blank ? [["", blank]] : []).concat(model.states.map(s => [s.name, s.name]));
+  const placeOpts = () => [["", "choose a place"]].concat(model.places.map(p => [p.name, p.name]));
+
+  // Only re-render what depends on text, so typing does not lose focus.
+  function changed(full) {
+    if (full) render(); else { renderGraph(); renderOut(); }
+    store();
+  }
+
+  // ---------------------------------------------------------------- palette
+  function renderPalette() {
+    const groups = { Move: $("palMove"), See: $("palSee"), Place: $("palPlace"), Flow: $("palFlow") };
+    for (const [type, def] of Object.entries(STEP_TYPES)) {
+      const b = el("button", { class: "pal", draggable: "true", title: "Add to the selected state",
+        onclick: () => addStep(sel, type),
+        ondragstart: (e) => { dragPal = type; e.dataTransfer.setData("text/plain", type); e.dataTransfer.effectAllowed = "copy"; },
+        ondragend: () => { dragPal = null; } }, def.label, def.hint ? el("small", {}, def.hint) : null);
+      groups[def.group].append(b);
+    }
+  }
+  function addStep(si, type, at) {
+    const st = model.states[si];
+    if (!st) return;
+    const s = Object.assign({ type }, STEP_TYPES[type].make());
+    if ("place" in s && model.places.length) s.place = model.places[0].name;
+    if (type === "mark") { const p = model.places.find(p => p.kind === "here"); if (p) s.place = p.name; }
+    if (type === "go") s.state = (model.states[si + 1] || model.states[0]).name;
+    // A new step goes before a final go/land/rtl, which must stay last.
+    let i = at != null ? at : st.steps.length;
+    if (at == null && st.steps.length && TERMINAL.has(st.steps[st.steps.length - 1].type) && !TERMINAL.has(type)) i = st.steps.length - 1;
+    st.steps.splice(i, 0, s);
+    changed(true);
+  }
+
+  // ----------------------------------------------------------- state cards
+  function renameState(old, name) {
+    for (const st of model.states) {
+      for (const t of st.triggers) if (t.to === old) t.to = name;
+      for (const s of st.steps) { if (s.state === old) s.state = name; if (s.fail === old) s.fail = name; }
+    }
+  }
+  function renderStep(si, st, s, i) {
+    const set = (k, full) => (v) => { s[k] = v; changed(full); };
+    const parts = [el("span", { class: "kw s" }, STEP_TYPES[s.type].label)];
+    const failSel = () => [el("span", { class: "unit" }, "if it fails"),
+      select([["", "stop and hover"]].concat(model.states.map(x => [x.name, "go to " + x.name])), s.fail || "", set("fail", false), "If it fails")];
+    switch (s.type) {
+      case "move": parts.push(select([["forward", "forward"], ["back", "back"], ["left", "left"], ["right", "right"]], s.dir, set("dir")), numIn(s.m, set("m"), "metres", "0.5"), unit("m")); break;
+      case "yaw": parts.push(select([["left", "left"], ["right", "right"]], s.dir, set("dir")), numIn(s.deg, set("deg"), "degrees", "5"), unit("deg")); break;
+      case "up": parts.push(numIn(s.m, set("m"), "metres", "0.5"), unit("m")); break;
+      case "hold": case "explore": parts.push(numIn(s.s, set("s"), "seconds", "1"), unit("s")); break;
+      case "search": parts.push(txtIn(s.label, set("label"), "object"), select([["right", "turning right"], ["left", "turning left"]], s.dir, set("dir")), unit("for"), numIn(s.s, set("s"), "seconds", "1"), unit("s"), ...failSel()); break;
+      case "track": case "face": parts.push(txtIn(s.label, set("label"), "object"), unit("within"), numIn(s.s, set("s"), "seconds", "1"), unit("s"), ...failSel()); break;
+      case "approach": parts.push(txtIn(s.label, set("label"), "object"),
+          select([["range", "until it is"], ["fill", "until it fills"]], s.by || "range", set("by", true), "stop when"));
+        if ((s.by || "range") === "range") parts.push(numIn(s.m, set("m"), "metres", "0.5"), unit("m away"));
+        else parts.push(numIn(s.fill, set("fill"), "fill", "0.05"), unit("of the frame"));
+        parts.push(...failSel()); break;
+      case "mark": parts.push(select(placeOpts(), s.place, set("place", true), "place"), unit("="), select([["seen", "where it sees"], ["here", "where it is now"]], s.from, set("from", true), "from"));
+        if (s.from === "seen") parts.push(txtIn(s.label, set("label"), "object"), ...failSel()); break;
+      case "goto": parts.push(select(placeOpts(), s.place, set("place"), "place")); break;
+      case "over": parts.push(select(placeOpts(), s.place, set("place"), "place"), unit("hover"), numIn(s.hold, set("hold"), "seconds", "1"), unit("s")); break;
+      case "orbit": parts.push(select(placeOpts(), s.place, set("place"), "place"), unit("radius"), numIn(s.r, set("r"), "radius", "0.5"), unit("m"), numIn(s.laps, set("laps"), "laps", "0.25"), unit("laps")); break;
+      case "say": parts.push(el("input", { class: "txt", type: "text", value: s.text, "aria-label": "message", style: "width:160px", oninput: (e) => { s.text = e.target.value; changed(false); } })); break;
+      case "go": parts.push(select(stateOpts("choose"), s.state, set("state", true), "state")); break;
+    }
+    parts.push(el("span", { class: "tools" },
+      el("button", { class: "icon", title: "Move up", "aria-label": "Move step up", onclick: () => { if (i > 0) { st.steps.splice(i - 1, 0, st.steps.splice(i, 1)[0]); changed(true); } } }, "↑"),
+      el("button", { class: "icon", title: "Move down", "aria-label": "Move step down", onclick: () => { if (i < st.steps.length - 1) { st.steps.splice(i + 1, 0, st.steps.splice(i, 1)[0]); changed(true); } } }, "↓"),
+      el("button", { class: "icon del", title: "Remove", "aria-label": "Remove step", onclick: () => { st.steps.splice(i, 1); changed(true); } }, "✕")));
+    const row = el("div", { class: "step", draggable: "true",
+      ondragstart: (e) => { dragStep = { si, i }; row.classList.add("dragging"); e.dataTransfer.setData("text/plain", "step"); e.dataTransfer.effectAllowed = "move"; },
+      ondragend: () => { dragStep = null; row.classList.remove("dragging"); } }, ...parts);
+    row.dataset.index = i;
+    return row;
+  }
+  function renderTrigger(st, t, i) {
+    const def = COND_TYPES[t.kind];
+    const parts = [el("span", { class: "kw t" }, "when it"),
+      select(Object.entries(COND_TYPES).map(([k, d]) => [k, d.text]), t.kind, (v) => {
+        t.kind = v; if (COND_TYPES[v].arg === "label" && !t.label) t.label = "person";
+        if (v === "battery" && t.value == null) t.value = 30; if (v === "time" && t.value == null) t.value = 60;
+        if (v === "range") { t.label = t.label || "door"; t.value = t.value || 3; }
+        if (v === "near") { t.value = t.value || 2; t.place = t.place || (model.places[0] || {}).name || ""; }
+        changed(true); }, "condition")];
+    if (def.arg === "label") parts.push(txtIn(t.label || "", (v) => { t.label = v; changed(false); }, "object"));
+    if (def.arg === "num") parts.push(numIn(t.value, (v) => { t.value = v; changed(false); }, "value", "1"), unit(def.unit));
+    if (def.arg === "range") parts.push(txtIn(t.label || "", (v) => { t.label = v; changed(false); }, "object"),
+      unit("by"), numIn(t.value, (v) => { t.value = v; changed(false); }, "metres", "0.5"), unit("m"));
+    if (def.arg === "place") parts.push(numIn(t.value, (v) => { t.value = v; changed(false); }, "metres", "0.5"), unit("m of"),
+      select(placeOpts(), t.place || "", (v) => { t.place = v; changed(false); }, "place"));
+    parts.push(el("span", { class: "kw t" }, "→"), select(stateOpts("choose"), t.to, (v) => { t.to = v; changed(true); }, "next state"),
+      el("span", { class: "tools" }, el("button", { class: "icon del", title: "Remove", "aria-label": "Remove trigger", onclick: () => { st.triggers.splice(i, 1); changed(true); } }, "✕")));
+    return el("div", { class: "trig" }, ...parts);
+  }
+  function renderStates() {
+    const box = $("states");
+    box.textContent = "";
+    model.states.forEach((st, si) => {
+      const steps = el("div", { class: "steps" });
+      st.steps.forEach((s, i) => steps.append(renderStep(si, st, s, i)));
+      steps.addEventListener("dragover", (e) => { e.preventDefault(); steps.classList.add("over"); });
+      steps.addEventListener("dragleave", () => steps.classList.remove("over"));
+      steps.addEventListener("drop", (e) => {
+        e.preventDefault(); steps.classList.remove("over");
+        const rows = [...steps.querySelectorAll(".step")];
+        let at = rows.length;
+        for (const r of rows) { const b = r.getBoundingClientRect(); if (e.clientY < b.top + b.height / 2) { at = Number(r.dataset.index); break; } }
+        if (dragPal) { sel = si; addStep(si, dragPal, at); }
+        else if (dragStep) {
+          const from = model.states[dragStep.si];
+          const [moved] = from.steps.splice(dragStep.i, 1);
+          if (dragStep.si === si && dragStep.i < at) at--;
+          st.steps.splice(at, 0, moved);
+          changed(true);
+        }
+      });
+      const card = el("article", { class: "state" + (si === sel ? " sel" : ""), onclick: (e) => { if (sel !== si && !e.target.closest("button,select,input")) { sel = si; render(); } } },
+        el("div", { class: "head" },
+          el("input", { type: "text", value: st.name, "aria-label": "State name",
+            onchange: (e) => { const v = e.target.value.trim(); renameState(st.name, v); st.name = v; changed(true); } }),
+          si === 0 ? el("span", { class: "badge start" }, "starts here") : null,
+          el("button", { class: "icon", title: "Make this the first state", "aria-label": "Make first", onclick: () => { if (si > 0) { model.states.unshift(model.states.splice(si, 1)[0]); sel = 0; changed(true); } } }, "★"),
+          el("button", { class: "icon del", title: "Delete state", "aria-label": "Delete state", onclick: () => { model.states.splice(si, 1); sel = Math.max(0, Math.min(sel, model.states.length - 1)); changed(true); } }, "✕")),
+        el("div", { class: "sect" }, "Triggers", el("button", { class: "add", onclick: () => { st.triggers.push({ kind: "seen", label: "person", to: (model.states.find(x => x !== st) || st).name }); changed(true); } }, "+ trigger")),
+        ...st.triggers.map((t, i) => renderTrigger(st, t, i)),
+        st.triggers.length ? null : el("div", { class: "hint" }, "No triggers: this state runs its steps to the end."),
+        el("div", { class: "sect" }, "Steps"),
+        steps,
+        st.steps.length ? null : el("div", { class: "hint" }, "Drag steps here, or select this state and click a step."));
+      box.append(card);
+    });
+  }
+
+  // ------------------------------------------------------------------ graph
+  function renderGraph() {
+    const svg = $("graph");
+    const W = 640, n = model.states.length, H = n > 4 ? 340 : 280;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    const NS = "http://www.w3.org/2000/svg";
+    const mk = (tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
+    svg.textContent = "";
+    const defs = mk("defs", {});
+    for (const [id, col] of [["aT", "var(--trigger)"], ["aG", "var(--accent)"]]) {
+      const m = mk("marker", { id, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" });
+      m.append(mk("path", { d: "M0,0 L10,5 L0,10 z", fill: col }));
+      defs.append(m);
+    }
+    svg.append(defs);
+    const cx = W / 2, cy = H / 2, R = n <= 1 ? 0 : Math.min(W * 0.36, H * 0.34);
+    const pos = model.states.map((s, i) => {
+      const a = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(1, n);
+      return { x: cx + R * Math.cos(a) * 1.35, y: cy + R * Math.sin(a) };
+    });
+    const idx = Object.fromEntries(model.states.map((s, i) => [s.name, i]));
+    const nodeW = 112, nodeH = 34;
+    const edge = (i, j, cls, marker, label, bend) => {
+      const a = pos[i], b = pos[j];
+      if (i === j) {
+        const p = mk("path", { d: `M${a.x + 20},${a.y - nodeH / 2} C${a.x + 60},${a.y - 70} ${a.x - 60},${a.y - 70} ${a.x - 20},${a.y - nodeH / 2}`, class: cls, "marker-end": "url(#" + marker + ")" });
+        svg.append(p);
+        if (label) { const t = mk("text", { x: a.x, y: a.y - 58, "text-anchor": "middle", class: "lbl" }); t.textContent = label; svg.append(t); }
+        return;
+      }
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      // Leave the node boxes: clip to their edges along the line.
+      const clip = (ux, uy) => Math.min((nodeW / 2) / Math.max(1e-6, Math.abs(ux)), (nodeH / 2) / Math.max(1e-6, Math.abs(uy)));
+      const ux = dx / d, uy = dy / d, ka = clip(ux, uy) + 3, kb = clip(ux, uy) + 6;
+      const sx = a.x + ux * ka, sy = a.y + uy * ka, ex = b.x - ux * kb, ey = b.y - uy * kb;
+      // Bend to a side fixed by the PAIR, not the direction, so a trigger
+      // one way and a failure branch back curve apart instead of together.
+      const side = i < j ? 1 : -1;
+      const mx = (sx + ex) / 2 - uy * bend * side, my = (sy + ey) / 2 + ux * bend * side;
+      svg.append(mk("path", { d: `M${sx},${sy} Q${mx},${my} ${ex},${ey}`, class: cls, "marker-end": "url(#" + marker + ")" }));
+      if (label) { const t = mk("text", { x: mx, y: my - 4, "text-anchor": "middle", class: "lbl" }); t.textContent = label; svg.append(t); }
+    };
+    model.states.forEach((st, i) => {
+      st.triggers.forEach((t) => { if (t.to in idx) edge(i, idx[t.to], "tr", "aT", condText(t).replace(/^not /, "no ").slice(0, 22), 26); });
+      st.steps.forEach((s) => {
+        if (s.type === "go" && s.state in idx) edge(i, idx[s.state], "go", "aG", "", -18);
+        if (s.fail && s.fail in idx) edge(i, idx[s.fail], "go", "aG", "if it fails", -40);
+      });
+    });
+    model.states.forEach((st, i) => {
+      const p = pos[i];
+      svg.append(mk("rect", { x: p.x - nodeW / 2, y: p.y - nodeH / 2, width: nodeW, height: nodeH, rx: 8,
+        class: "node" + (i === sel ? " sel" : "") + (i === 0 ? " start" : "") }));
+      const t = mk("text", { x: p.x, y: p.y + 5, "text-anchor": "middle", "font-weight": "600", "font-size": "14" });
+      t.textContent = st.name.length > 14 ? st.name.slice(0, 13) + "…" : st.name;
+      svg.append(t);
+      const last = st.steps[st.steps.length - 1];
+      if (last && (last.type === "land" || last.type === "rtl")) {
+        const e = mk("text", { x: p.x, y: p.y + nodeH / 2 + 13, "text-anchor": "middle", class: "end" });
+        e.textContent = last.type === "land" ? "lands" : "returns home";
+        svg.append(e);
+      }
+    });
+  }
+
+  // ----------------------------------------------------------------- places
+  function renderPlaces() {
+    const box = $("places");
+    box.textContent = "";
+    model.places.forEach((p, i) => {
+      const row = el("div", { class: "place" },
+        el("input", { class: "name", type: "text", value: p.name, "aria-label": "Place name",
+          onchange: (e) => { const old = p.name, v = e.target.value.trim(); p.name = v;
+            for (const st of model.states) { for (const s of st.steps) if (s.place === old) s.place = v; for (const t of st.triggers) if (t.place === old) t.place = v; }
+            changed(true); } }),
+        select([["here", "marked in flight"], ["fwd", "ahead/right of start"], ["enu", "east/north of start"]], p.kind, (v) => { p.kind = v; changed(true); }, "kind"));
+      if (p.kind !== "here") row.append(numIn(p.a, (v) => { p.a = v; changed(false); }, p.kind === "fwd" ? "ahead" : "east", "0.5"), el("span", { class: "unit" }, p.kind === "fwd" ? "ahead" : "E"),
+                                        numIn(p.b, (v) => { p.b = v; changed(false); }, p.kind === "fwd" ? "right" : "north", "0.5"), el("span", { class: "unit" }, p.kind === "fwd" ? "right (m)" : "N (m)"));
+      row.append(el("span", { class: "tools" }, el("button", { class: "icon del", "aria-label": "Remove place", onclick: () => { model.places.splice(i, 1); changed(true); } }, "✕")));
+      box.append(row);
+    });
+    if (!model.places.length) box.append(el("div", { class: "hint" }, "No places yet."));
+  }
+
+  function renderSizes() {
+    const box = $("sizes");
+    box.textContent = "";
+    model.sizes = model.sizes || [];
+    model.sizes.forEach((z, i) => {
+      box.append(el("div", { class: "place" },
+        el("input", { class: "name", type: "text", value: z.label, "aria-label": "Object",
+          oninput: (e) => { z.label = e.target.value.trim(); changed(false); } }),
+        numIn(z.m, (v) => { z.m = v; changed(false); }, "height in metres", "0.1"), el("span", { class: "unit" }, "m tall"),
+        el("span", { class: "tools" }, el("button", { class: "icon del", "aria-label": "Remove size", onclick: () => { model.sizes.splice(i, 1); changed(true); } }, "\u2715"))));
+    });
+    if (!model.sizes.length) box.append(el("div", { class: "hint" }, "None declared: typical heights are assumed for common objects."));
+  }
+
+  // ----------------------------------------------------------------- output
+  function highlight(text) {
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    return text.split("\n").map((ln) => {
+      if (/^\s*#/.test(ln)) return '<span class="c">' + esc(ln.length > 90 ? ln.slice(0, 60) + "…" : ln) + "</span>";
+      return esc(ln).replace(/^(\s*)(state|on|let|mission|fence|timeout)\b/, '$1<span class="k">$2</span>')
+                    .replace(/^(\s*)(when)\b/, '$1<span class="t">$2</span>')
+                    .replace(/(-&gt;|->)/g, '<span class="t">$1</span>');
+    }).join("\n");
+  }
+  function renderOut() {
+    const text = generate(model);
+    $("code").innerHTML = highlight(text);
+    const probs = problems(model);
+    const pb = $("problems");
+    pb.textContent = "";
+    if (!probs.length) pb.append(el("div", { class: "okmsg" }, "No problems found here. Run the compiler's check before flying it."));
+    for (const p of probs) pb.append(el("div", { class: "p" }, p));
+    $("cmd").textContent = "kestrel mission check " + slug() + ".kms";
+  }
+  function renderMeta() {
+    $("mName").value = model.name; $("mFence").value = model.fence; $("mTimeout").value = model.timeoutMin;
+    $("battOn").checked = !!model.battery.on; $("battPct").value = model.battery.pct; $("battAct").value = model.battery.act;
+  }
+  function render() { renderMeta(); renderStates(); renderPlaces(); renderSizes(); renderGraph(); renderOut(); }
+
+  function load(m) { model = m; sel = 0; render(); store(); }
+  function toast(id, msg) { const t = $(id); t.textContent = msg; setTimeout(() => { if (t.textContent === msg) t.textContent = ""; }, 2500); }
+
+  renderPalette();
+  $("tpl").addEventListener("change", (e) => load(TEMPLATES[e.target.value]()));
+  $("mName").addEventListener("input", (e) => { model.name = e.target.value; changed(false); });
+  $("mFence").addEventListener("input", (e) => { model.fence = e.target.value; changed(false); });
+  $("mTimeout").addEventListener("input", (e) => { model.timeoutMin = e.target.value; changed(false); });
+  $("battOn").addEventListener("change", (e) => { model.battery.on = e.target.checked; changed(false); });
+  $("battPct").addEventListener("input", (e) => { model.battery.pct = e.target.value; changed(false); });
+  $("battAct").addEventListener("change", (e) => { model.battery.act = e.target.value; changed(false); });
+  $("addState").addEventListener("click", () => {
+    let k = model.states.length + 1, name = "state" + k;
+    while (model.states.some(s => s.name === name)) name = "state" + (++k);
+    model.states.push({ name, triggers: [], steps: [{ type: "hold", s: 2 }] });
+    sel = model.states.length - 1; changed(true);
+  });
+  $("addSize").addEventListener("click", () => {
+    model.sizes = model.sizes || [];
+    model.sizes.push({ label: "object", m: 1 }); changed(true);
+  });
+  $("addPlace").addEventListener("click", () => {
+    let k = model.places.length + 1, name = "place" + k;
+    while (model.places.some(p => p.name === name)) name = "place" + (++k);
+    model.places.push({ name, kind: "here", a: 0, b: 0 }); changed(true);
+  });
+  $("copy").addEventListener("click", () => {
+    const text = generate(model);
+    const done = () => toast("toast", "Copied. Save it as " + slug() + ".kms.");
+    try {
+      navigator.clipboard.writeText(text).then(done, () => { selectCode(); toast("toast", "Selected: press Ctrl+C to copy."); });
+    } catch (e) { selectCode(); toast("toast", "Selected: press Ctrl+C to copy."); }
+  });
+  function selectCode() { const r = document.createRange(); r.selectNodeContents($("code")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  // Saving a file works when this page is opened from disk (the kestrel
+  // window's "Open the visual editor"); inside a viewer frame it would not,
+  // so the button is only offered at the top level.
+  let topLevel = false;
+  try { topLevel = window.top === window; } catch (e) { topLevel = false; }
+  if (topLevel && location.protocol === "file:") {
+    $("save").hidden = false;
+    $("save").addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([generate(model)], { type: "text/plain" }));
+      a.download = slug() + ".kms";
+      document.body.append(a); a.click(); a.remove();
+    });
+  }
+  $("importBtn").addEventListener("click", () => {
+    const m = /#\s*kestrel-editor:\s*([A-Za-z0-9+/=]+)/.exec($("importBox").value);
+    if (!m) { toast("importMsg", "That file has no editor line, so it was not written here. Edit it as text instead."); return; }
+    try { load(JSON.parse(unb64(m[1]))); toast("importMsg", "Opened."); }
+    catch (e) { toast("importMsg", "The editor line is damaged, so it could not be opened."); }
+  });
+
+  load(restore() || tplDoor());
+})();
+</script>

@@ -307,6 +307,27 @@ PyState g_py;
 std::vector<std::string> g_models;
 void refreshModels(const std::string& dir) { g_models = findModels(dir); }
 
+// BEHAVIOUR SCRIPTS (.kms) for the mission panel: here, missions/, and the
+// missions/ beside the exe -- deduped the way findModels is. Refreshed with
+// the models, since running the editor or a compile is what makes new ones.
+std::vector<std::string> g_missions;
+void refreshMissions(const std::string& dir) {
+    std::vector<std::string> v = filesIn(".", {".kms"}, 8);
+    for (const std::string& f : filesIn("missions", {".kms"}, 12)) v.push_back(f);
+    for (const std::string& f : filesIn(dir + "/missions", {".kms"}, 12)) v.push_back(f);
+    std::vector<std::string> out, seen;
+    for (const std::string& f : v) {
+        std::error_code ec;
+        const std::string key = fs::weakly_canonical(f, ec).string();
+        const std::string k = ec ? f : key;
+        if (std::find(seen.begin(), seen.end(), k) != seen.end()) continue;
+        seen.push_back(k);
+        out.push_back(f);
+        if (out.size() >= 8) break;
+    }
+    g_missions = out;
+}
+
 void refreshPy(const std::string& dir) {
     g_py.pys = kpy::discover(dir);
     g_py.abi = kpy::moduleAbi(dir);
@@ -314,9 +335,9 @@ void refreshPy(const std::string& dir) {
 }
 
 // ----------------------------------------------------------------- settings
-enum Mode { TRACK = 0, BENCH, SIM, DEMO, TRAIN, WATCH, EVAL, REPORT, NMODES };
+enum Mode { TRACK = 0, BENCH, SIM, DEMO, TRAIN, WATCH, EVAL, REPORT, MISSION, NMODES };
 const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "demo", "train",
-                                 "watch", "evaluate", "report"};
+                                 "watch", "evaluate", "report", "mission"};
 
 // 0 means FOREVER -- run until stopped by hand, saving on the way out. The
 // rest are close enough together that a run can be sized without dropping to
@@ -604,7 +625,18 @@ struct Cfg {
     bool  rDet = false, rProgress = false, rBaselines = false, rRandom = false;
     bool  rNoHome = false;
     bool  rStereo = false, rNoVeto = false, rVary = false;
+    // mission: what to do with a behaviour script, and which one.
+    int   mAction = 0;          // 0 check, 1 compile, 2 fly it in the sim, 3 the editor
+    int   mFile = 0;            // index into g_missions
+    int   mWorld = 0;           // 0 gallery, 1 hall (sim)
+    bool  mLowres = false;      // --lowres: 424x240, about twice as fast
+    bool  mShot = true;         // --shot mission: the map from above, with its places
 };
+
+const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor"};
+const char* MISSION_ACTION_LABEL[] = {"Check it", "Compile for the Pi", "Fly it in the sim",
+                                      "Visual editor"};
+const char* MISSION_WORLD[] = {"gallery", "hall"};
 
 const int PANE_PX[] = {240, 320, 420, 520};
 const int NPANE_PX = int(sizeof PANE_PX / sizeof *PANE_PX);
@@ -723,6 +755,17 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (c.rNoVeto) a.push_back("--no-veto");
             if (c.rVary) a.push_back("--vary-goal");
             break;
+        case MISSION:
+            a.push_back(MISSION_ACTION[c.mAction]);
+            if (c.mAction == 3) break;                    // the editor takes no file
+            a.push_back(c.mFile >= 0 && c.mFile < int(g_missions.size())
+                            ? g_missions[size_t(c.mFile)] : std::string("(no mission)"));
+            if (c.mAction == 2) {
+                a.push_back("--world"); a.push_back(MISSION_WORLD[c.mWorld]);
+                if (c.mLowres) a.push_back("--lowres");
+                if (c.mShot) { a.push_back("--shot"); a.push_back("mission"); }
+            }
+            break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
             a.push_back("--px");     a.push_back(std::to_string(PANE_PX[c.paneIdx]));
@@ -810,6 +853,9 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     if (c.mode == DEMO && c.dSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
+    if (c.mode == MISSION && c.mAction != 3 &&
+        (c.mFile < 0 || c.mFile >= int(g_missions.size())))
+        return g_missions.empty() ? "no .kms found: open the editor" : "pick a mission";
     return "";
 }
 
@@ -871,6 +917,9 @@ enum {
     // clicks every button and fails one that changes nothing.
     ID_D_MODEL = 830,
     ID_D_POSE = 870,      // +0..2
+    ID_M_ACT = 900,       // +0..3, the order of MISSION_ACTION
+    ID_M_FILE = 910,      // +index, up to 8
+    ID_M_WORLD = 930, ID_M_LOWRES, ID_M_SHOT,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -1435,6 +1484,7 @@ const FlagBtn FLAG_BTNS[] = {
     {REPORT, ID_R_RANDOM,   "--random"},
     {REPORT, ID_R_STEREO,   "--stereo"},
     {DEMO,  ID_D_MIRROR,    "--no-mirror"},
+    {MISSION, ID_M_LOWRES,  "--lowres"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
     {BENCH, ID_BENCH_STEREO, "--stereo"},
     // Three-state, so the table cannot name one flag: lit for --cuda AND for
@@ -1523,6 +1573,64 @@ void panelReport(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
         x, 552, 0.42, DIM);
 }
 
+void panelMission(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
+    const int x = 266;
+    txt(im, "behaviour scripts for the aircraft", x, 106, 0.66, INK, 2);
+    txt(im, "States and triggers: the detector sees a door, the tracker takes it, a "
+            "state fires and", x, 128, 0.44, DIM);
+    txt(im, "the steps you wrote fly. Written and COMPILED here; the Pi only gets the "
+            ".kmb and runs", x, 146, 0.44, DIM);
+    txt(im, "it in SCRIPT mode, every leg still certified by its own planner.", x, 164, 0.44, DIM);
+
+    for (int i = 0; i < 4; ++i)
+        bs.push_back({cv::Rect(x + i * 190, 184, 180, 36), MISSION_ACTION_LABEL[i],
+                      ID_M_ACT + i, c.mAction == i});
+
+    if (c.mAction == 3) {
+        txt(im, "Builds a mission from blocks -- states, triggers, move / yaw / track /",
+            x, 252, 0.46, INK);
+        txt(im, "approach -- and writes the .kms text. Save it into missions/ beside",
+            x, 272, 0.46, INK);
+        txt(im, "this exe and it appears in the list here to check, fly and compile.",
+            x, 292, 0.46, INK);
+        txt(im, "It opens in your browser: mission_editor.html, no install, works offline.",
+            x, 324, 0.42, DIM);
+        return;
+    }
+    txt(im, "MISSION", x, 248, 0.42, DIM);
+    if (g_missions.empty())
+        txt(im, "no .kms in ./, ./missions or missions/ beside the exe -- open the editor",
+            x, 274, 0.44, DIM);
+    for (size_t i = 0; i < g_missions.size(); ++i) {
+        const int col = int(i % 2), row = int(i / 2);
+        bs.push_back({cv::Rect(x + col * 380, 258 + row * 42, 370, 36),
+                      fs::path(g_missions[i]).filename().string(), ID_M_FILE + int(i),
+                      c.mFile == int(i)});
+    }
+    const int rows = std::max(1, int(g_missions.size() + 1) / 2);
+    const int y = 258 + rows * 42 + 14;
+    if (c.mAction == 2) {
+        bs.push_back({cv::Rect(x, y, 180, 36), std::string("world: ") + MISSION_WORLD[c.mWorld],
+                      ID_M_WORLD, c.mWorld != 0});
+        bs.push_back({cv::Rect(x + 190, y, 180, 36), c.mLowres ? "424x240 (sees less)" : "848x480 (as flown)",
+                      ID_M_LOWRES, c.mLowres});
+        bs.push_back({cv::Rect(x + 380, y, 220, 36), c.mShot ? "write the pictures" : "no pictures",
+                      ID_M_SHOT, c.mShot});
+        txt(im, "On the aircraft's own SCRIPT mode, MissionController and voxel module. No "
+                "detector in the sim:", x, y + 60, 0.42, DIM);
+        txt(im, "seen/track never fire, so their else branches run. Pictures: "
+                "mission_mission.png, _chase.png", x, y + 78, 0.42, DIM);
+    } else if (c.mAction == 1) {
+        txt(im, "Writes FILE.kmb beside it and reads it back as the Pi will. On the "
+                "aircraft:", x, y + 14, 0.44, INK);
+        txt(im, "kestrel --script FILE.kmb, then select SCRIPT and GO.", x, y + 34, 0.44, INK);
+    } else {
+        txt(im, "Every error with its line and column, then the instructions the aircraft "
+                "will run.", x, y + 14, 0.44, INK);
+        txt(im, "Language: onboard/docs/mission-scripts.md", x, y + 34, 0.42, DIM);
+    }
+}
+
 // ------------------------------------------------------------------- compose
 // ONE FUNCTION DRAWS THE WHOLE WINDOW and hands back the buttons it drew, so
 // hit-testing cannot disagree with what is on screen. It also means the layout
@@ -1576,6 +1684,7 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
         case WATCH: panelWatch(im, bs, c); break;
         case EVAL:  panelEval(im, bs, c); break;
         case REPORT: panelReport(im, bs, c); break;
+        case MISSION: panelMission(im, bs, c); break;
         default:    panelTrain(im, bs, c); break;
     }
 
@@ -1622,6 +1731,11 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
 void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
            const std::vector<std::string>& recs) {
     if (id >= ID_MODE && id < ID_MODE + NMODES) { c.mode = id - ID_MODE; return; }
+    if (id >= ID_M_ACT && id < ID_M_ACT + 4) { c.mAction = id - ID_M_ACT; return; }
+    if (id >= ID_M_FILE && id < ID_M_FILE + 8) { c.mFile = id - ID_M_FILE; return; }
+    if (id == ID_M_WORLD)  { c.mWorld = (c.mWorld + 1) % 2; return; }
+    if (id == ID_M_LOWRES) { c.mLowres = !c.mLowres; return; }
+    if (id == ID_M_SHOT)   { c.mShot = !c.mShot; return; }
     if (id >= ID_D_MODEL && id < ID_D_MODEL + 30) {
         c.dModel = id - ID_D_MODEL - 1;      // the first entry is "none"
         return;
@@ -1815,6 +1929,7 @@ int run(const Actions& act, const std::string& exeDir) {
     if (!recs.empty())   c.replay = 0;
     refreshPy(exeDir);
     refreshModels(exeDir);
+    refreshMissions(exeDir);
 
     cv::namedWindow(WIN, cv::WINDOW_AUTOSIZE);
     cv::setMouseCallback(WIN, onMouse);
@@ -1904,11 +2019,13 @@ int run(const Actions& act, const std::string& exeDir) {
             // whatever the last line does, so every mode is now named and
             // default only catches TRAIN.
             case REPORT: rc = act.report(args); break;
+            case MISSION: rc = act.mission ? act.mission(args) : 2; break;
             default:    rc = act.train(args); break;
         }
         // The listing is read in the terminal, so hold the window closed until
         // it has been: reopening instantly would put it back over the output.
-        if (isPythons) {
+        // A mission check or compile is read in the terminal too.
+        if (isPythons || (c.mode == MISSION && c.mAction != 3 && hit == ID_RUN)) {
             std::printf("\n[kestrel] press Enter to return to the window ");
             std::fflush(stdout);
             int ch; while ((ch = std::getchar()) != '\n' && ch != EOF) {}
@@ -1923,6 +2040,8 @@ int run(const Actions& act, const std::string& exeDir) {
         recs = findRecordings(exeDir);
         refreshPy(exeDir);
         refreshModels(exeDir);
+        refreshMissions(exeDir);
+        if (c.mFile >= int(g_missions.size())) c.mFile = 0;
         if (c.dModel >= int(g_models.size())) c.dModel = -1;
         if (c.input >= int(inputs.size())) c.input = inputs.empty() ? -1 : 0;
         if (c.replay >= int(recs.size()))  c.replay = recs.empty() ? -1 : 0;
@@ -1986,6 +2105,18 @@ int check() {
             // check that only ever sees the empty state is not checking the
             // panel, it is checking a placeholder.
             const PyState saved = g_py;
+            const std::vector<std::string> savedMissions = g_missions;
+            g_missions = variant == 3 ? std::vector<std::string>{}
+                                      : std::vector<std::string>{"missions/door.kms",
+                                                                 "missions/over_person.kms",
+                                                                 "a_rather_long_mission_name_here.kms"};
+            // Every action's panel in turn; the richest (sim: files and its
+            // options) in variant 0, where every button is clicked, and
+            // compile with NO missions in variant 3, the refused state.
+            {
+                const int act[4] = {2, 0, 3, 1};
+                c.mAction = act[variant];
+            }
             kpy::Py fake;
             fake.exe = "C:\\Users\\Somebody\\AppData\\Local\\Programs\\"
                        "Python\\Python311\\python.exe";
@@ -2151,6 +2282,7 @@ int check() {
                     ++bad;
                 }
             g_py = saved;
+            g_missions = savedMissions;
 
             for (size_t i = 0; i < bs.size(); ++i) {
                 const Btn& a = bs[i];
@@ -2202,6 +2334,7 @@ int shot(const std::string& exeDir, const std::string& prefix) {
     // empty policy list however many .onnx files were sitting there, so the one
     // artefact that gets reviewed over ssh showed a control that looks broken.
     refreshModels(exeDir);
+    refreshMissions(exeDir);
     int n = 0;
     for (int m = 0; m < NMODES; ++m) {
         Cfg c;

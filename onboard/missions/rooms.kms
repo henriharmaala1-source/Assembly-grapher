@@ -1,0 +1,21 @@
+# A tour from the takeoff point, written relative to the heading at GO (fwd),
+# so it means the same thing indoors with no compass. Every leg is certified
+# by the aircraft's own planner; a place it cannot reach in time takes its
+# else instead of stopping the mission.
+mission "rooms"
+fence 30 m
+timeout 6 min
+
+on battery < 25% { rtl }
+
+let home  = here
+let far   = fwd(6, 0)          # 6 m ahead of where it started
+let side  = fwd(3, 3)          # 3 m ahead, 3 m right
+
+goto far timeout 90 s else { say "could not reach far" }
+yaw right 90
+hold 2 s
+goto side timeout 90 s else { say "could not reach side" }
+move left 1 m else { say "no room to step left" }
+goto home timeout 120 s
+land

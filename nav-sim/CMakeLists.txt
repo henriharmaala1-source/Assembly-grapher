@@ -358,7 +358,11 @@ set(KESTREL_AUTONOMY_SRC
   ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/voxel_nav.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/mission.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/nav_map.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/world_model.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/world_model.cpp
+  # SCRIPT mode and the compiled-mission format: the showcase can fly a
+  # mission (`kestrel mission sim`) on the aircraft's own interpreter.
+  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/script_mode.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/mission_program.cpp)
 add_executable(kestrel
   kestrel.cpp
   kestrel_gui.cpp
@@ -368,6 +372,9 @@ add_executable(kestrel
   voxel_live.cpp
   # The demo: four panes, four threads, no second implementation of anything.
   kestrel_demo.cpp
+  # `kestrel mission`: the mission COMPILER lives here, on the ground.
+  kestrel_mission.cpp
+  ../onboard/src/mission_compile.cpp
   # People in the camera image: built-in YOLOX-nano, HOG, or an .onnx file.
   person_detector.cpp
   # The showcase flight: the AIRCRAFT'S OWN voxel module and mission, compiled
@@ -387,8 +394,26 @@ target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
   ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
+# The visual mission editor and the example missions travel with the exe, so
+# `kestrel mission editor` and the window's mission list find them beside it.
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mission_editor.html
+               ${CMAKE_CURRENT_BINARY_DIR}/mission_editor.html COPYONLY)
+file(GLOB KESTREL_MISSIONS ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/missions/*.kms)
+foreach(m ${KESTREL_MISSIONS})
+  get_filename_component(mn ${m} NAME)
+  configure_file(${m} ${CMAKE_CURRENT_BINARY_DIR}/missions/${mn} COPYONLY)
+endforeach()
 # The showcase maps flown by the real stack: no collision, and it gets somewhere.
 if(BUILD_TESTS)
+  # Every example mission compiles cleanly with the real compiler, and one is
+  # flown end to end on the aircraft's SCRIPT mode in the gallery.
+  foreach(m ${KESTREL_MISSIONS})
+    get_filename_component(mn ${m} NAME_WE)
+    add_test(NAME mission_check_${mn} COMMAND kestrel mission check ${m})
+  endforeach()
+  add_test(NAME mission_sim_rooms
+           COMMAND kestrel mission sim ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/missions/rooms.kms
+                   --seconds 240)
   add_executable(flight_show_check test/flight_show_check.cpp flight_show.cpp
                  ${KESTREL_AUTONOMY_SRC})
   target_include_directories(flight_show_check PRIVATE

@@ -133,6 +133,11 @@ jobs:
             Write-Warning "voxelenv.pyd was not built - `kestrel train` will not run from this zip"
           }
           Copy-Item RUN_ME_windows.txt dist/RUN_ME.txt
+          # The visual mission editor and the example missions, beside the exe
+          # where `kestrel mission` and the window's mission panel look.
+          Copy-Item mission_editor.html dist/
+          New-Item -ItemType Directory -Force dist/missions | Out-Null
+          Copy-Item ../onboard/missions/*.kms dist/missions/
           # YOLOX-nano is compiled into kestrel.exe; Apache-2.0 asks that its
           # licence travel with the binary.
           Copy-Item models/LICENSE-YOLOX dist/LICENSE-YOLOX.txt

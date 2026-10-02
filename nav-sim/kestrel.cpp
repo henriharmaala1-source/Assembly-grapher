@@ -5,6 +5,7 @@
 //   kestrel bench  [--worlds ...] the non-RL path-planner baselines
 //   kestrel sim    [args...]      the live voxel sim, in this process
 //   kestrel demo   [args...]      the showcase: four panes, four threads
+//   kestrel mission check|compile|sim|editor   behaviour scripts for the aircraft
 //   kestrel train  [args...]      RL training         (runs python train.py)
 //   kestrel gui                   the window (also what a double-click gets)
 //   kestrel menu                  the text menu, for a headless box
@@ -50,6 +51,7 @@
 
 #include "kestrel_demo.hpp"
 #include "kestrel_gui.hpp"
+#include "kestrel_mission.hpp"
 #include "kestrel_report.hpp"
 #include "kestrel_python.hpp"
 #include "lock_tracker_fused.hpp"
@@ -658,6 +660,7 @@ int gui(const std::string& dir) {
     a.train = [dir](std::vector<std::string> v) { return cmdTrain(dir, v); };
     a.watch = [dir](std::vector<std::string> v) { return cmdWatch(dir, v); };
     a.report = [dir](std::vector<std::string> v) { return cmdReport(dir, v); };
+    a.mission = [dir](std::vector<std::string> v) { return kmission::run(v, dir); };
     a.eval  = [dir](std::vector<std::string> v) { return cmdEval(dir, v); };
     a.pythons = [dir]() { kpy::report(kpy::discover(dir), dir); return 0; };
     return kgui::run(a, dir);
@@ -684,6 +687,7 @@ int main(int argc, char** argv) {
     if (cmd == "watch") return cmdWatch(dir, rest);
     if (cmd == "evaluate" || cmd == "eval") return cmdEval(dir, rest);
     if (cmd == "report") return cmdReport(dir, rest);
+    if (cmd == "mission") return kmission::run(rest, dir);
     if (cmd == "gui") {
         // --shot renders the panels to PNG with no display attached. The
         // window is the only thing in this binary that cannot be checked over
@@ -700,7 +704,7 @@ int main(int argc, char** argv) {
     if (cmd == "python") { kpy::report(kpy::discover(dir), dir); return 0; }
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf(
-            "kestrel [track|bench|sim|demo|train|watch|evaluate|report|gui|menu|python]\n"
+            "kestrel [track|bench|sim|demo|mission|train|watch|evaluate|report|gui|menu|python]\n"
             "  no arguments opens the window; `menu` is the text one, for a\n"
             "  headless box or over ssh. Every button in the window prints the\n"
             "  command it runs, so anything you can click you can also type.\n"
@@ -719,6 +723,16 @@ int main(int argc, char** argv) {
             "                    Runs until closed: the default --world tour flies\n"
             "                    gallery and hall in turn, moving to the next map on\n"
             "                    a collision, after 3 minutes, or on [r].\n"
+            "  mission           BEHAVIOUR SCRIPTS for the aircraft, written here and\n"
+            "                    compiled here -- the Pi only gets the compiled file:\n"
+            "                      mission check FILE.kms     errors, then the listing\n"
+            "                      mission compile FILE.kms   -> FILE.kmb (--script on the Pi)\n"
+            "                      mission sim FILE.kms       fly it on the aircraft's own\n"
+            "                        SCRIPT mode in gallery/hall (--world --seed\n"
+            "                        --seconds --lowres --shot PREFIX)\n"
+            "                      mission editor             the visual state-machine editor\n"
+            "                    States, triggers (`when seen door -> approach`), the\n"
+            "                    tracker hand-off, moves: onboard/docs/mission-scripts.md\n"
             "  train --install   pip the RL stack into the interpreter that can\n"
             "                    load voxelenv, named by absolute path\n"
             "  python            list every python found here and say which one\n"

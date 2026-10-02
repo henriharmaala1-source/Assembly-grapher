@@ -90,6 +90,12 @@ struct ShowSnap {
     std::vector<cv::Point3f> trail;
     std::vector<Leg> legs;
     std::vector<Ray> fan;
+    // A SCRIPT's places, where they are now (world frame), with their names:
+    // drawn on the map from above so a mission can be checked against the
+    // path it produced.
+    struct Mark { float e = 0, n = 0; std::string name; };
+    std::vector<Mark> marks;
+    std::string scriptLine;                         // "line N: status" when a script flies
     cv::Mat     depth;                              // the last frame the module had
     long        depthSeq = 0;                       // ... and which one it was
 

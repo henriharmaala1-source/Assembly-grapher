@@ -367,6 +367,82 @@ int main() {
                   std::hypot(dE, dN) > 1.4 && std::hypot(dE, dN) < 3.2, b);
     }
 
+    // ------------------------------------------------ RANGE FROM ITS SIZE
+    // No depth: `size person 1.7 m` and a 94 px tall box at the optical
+    // centre is f * 1.7 / 94 = 10.0 m away, on the heading.
+    {
+        ScriptMode::Params pp = params();
+        pp.detTiltDeg = 0.f;
+        ScriptMode m(pp);
+        std::string err;
+        m.load(compileOk("size person 1.7 m\nlet p = seen person else { end }\nend\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehYawDeg = 90.f;
+        Detection d; d.label = "person"; d.confidence = 0.9f;
+        d.box = cv::Rect(320 - 20, 240 - 47, 40, 94);
+        sim.s.detections = {d};
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        sim.s.detStampS = 0.05;
+        sim.step(m);
+        double pe = 0, pn = 0;
+        const bool ok = m.targetPos(1, pe, pn);
+        const double want = 554.256 * 1.7 / 94.0;
+        char b[96]; std::snprintf(b, sizeof b, "at (%.2f, %.2f), want (%.2f, 0)", pe, pn, want);
+        check("`size person 1.7 m`: a 94 px box is placed 10.0 m out on its bearing",
+              ok && std::fabs(pe - want) < 0.05 && std::fabs(pn) < 0.05, b);
+    }
+
+    // ------------------- RANGE THROUGH THE TRACKER: detector once, scale after
+    // The detector sees the door ONCE and is never run again. The tracker's
+    // box is square and its own size, but it SCALES with the door -- so the
+    // range at hand-off, carried by that scale, says when it is 3 m away.
+    for (int scales = 1; scales >= 0; --scales) {
+        ScriptMode::Params pp = params();
+        pp.detTiltDeg = 0.f;
+        ScriptMode m(pp);
+        std::string err;
+        m.load(compileOk("size door 2.0 m\n"
+                         "track door timeout 5 s else { end }\n"
+                         "approach door to 3 m timeout 60 s else { say \"no range\"; end }\n"
+                         "land\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehYawDeg = 90.f;
+        const double doorE = 9.0, f = 554.256;
+        int lastReq = 0; bool locked = false;
+        sim.s.targetCore = scales ? "fused" : "mosse";
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 90 && !m.finished(); ++i) {
+            const double dist = doorE - sim.s.estPe;
+            const int h = int(f * 2.0 / dist);
+            const cv::Rect det(320 - h / 4, 240 - h / 2, h / 2, h);
+            // THE DETECTOR: only in the first half second.
+            sim.s.detections.clear();
+            if (i < 10) {
+                Detection d; d.label = "door"; d.confidence = 0.9f; d.box = det;
+                sim.s.detections.push_back(d);
+                sim.s.detStampS = sim.t;
+            }
+            if (sim.s.trackRequestSeq != lastReq) { lastReq = sim.s.trackRequestSeq; locked = true; }
+            sim.s.targetValid = sim.s.targetLocked = locked;
+            if (locked) {
+                // Square, and NOT the door's size -- a scaling core keeps its
+                // CHANGE right; a fixed one does not change at all.
+                const int side = scales ? int(150.0 * 4.0 / dist) : 60;
+                sim.s.targetBox = cv::Rect(320 - side / 2, 240 - side / 2, side, side);
+                sim.s.targetStampS = sim.t; sim.s.targetFixAgeS = 0.f;
+            }
+            sim.step(m, 640, 480);
+        }
+        const double dist = doorE - sim.s.estPe;
+        char b[128]; std::snprintf(b, sizeof b, "stopped %.2f m from it: %s", dist, m.status().c_str());
+        if (scales)
+            check("a SCALING tracker carries the range: `approach door to 3 m` stops at 3 m",
+                  sim.s.fcRequest == WorldState::FcRequest::LAND && std::fabs(dist - 3.0) < 0.5, b);
+        else
+            check("  ...a fixed-size tracker cannot, and it says so instead of guessing",
+                  m.finished() && sim.s.fcRequest == WorldState::FcRequest::NONE && dist > 3.4, b);
+    }
+
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

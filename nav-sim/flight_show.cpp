@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace kshow {
 
@@ -92,6 +93,22 @@ FlightShow::FlightShow(const FlightParams& p)
     mod_.reset(new VoxelNavModule(std::unique_ptr<sim::FrameSource>(src_), vp));
     mission_.reset(new MissionController(mp));
     mission_->enable(true);
+    if (p.script) {
+        // The aircraft's SCRIPT mode, with the same cycle parameters every
+        // goto flies -- and the D435i's field of view for "is it in front".
+        ScriptMode::Params sp;
+        sp.mission = mp;
+        sp.mission.hFovDeg = cp.hfovDeg;
+        sp.detHfovDeg = cp.hfovDeg;
+        script_.reset(new ScriptMode(sp, {}));
+        std::string err;
+        if (!script_->load(*p.script, &err)) {
+            std::fprintf(stderr, "[flight] script refused: %s\n", err.c_str());
+            script_.reset();
+        } else {
+            wm_.with([&](WorldState& s) { script_->onEnter(s); s.missionGo = true; });
+        }
+    }
 
     const int n = int(g.sizeM);
     visited_.assign(size_t(n) * size_t(n), 0);
@@ -146,7 +163,19 @@ void FlightShow::tick() {
     }
 
     ControlCmd c;
-    wm_.with([&](WorldState& s) { c = mission_->update(s, dt); });
+    if (script_) {
+        if (scriptEnded_) return;                      // landed / home: the flight is over
+        wm_.with([&](WorldState& s) {
+            ControlCtx cx;
+            cx.dt = dt; cx.frameW = p_.camW; cx.frameH = p_.camH;
+            c = script_->update(s, cx);
+            if (s.fcRequest != WorldState::FcRequest::NONE) scriptEnded_ = true;
+        });
+        if (!c.valid) c = ControlCmd();                // released: hover
+        if (script_->finished()) scriptEnded_ = true;
+    } else {
+        wm_.with([&](WorldState& s) { c = mission_->update(s, dt); });
+    }
     const WorldState s = wm_.snapshot();
     if (s.missionPhase == "MOVE" && phase_ != "MOVE") {
         ++stats_.legs;
@@ -164,6 +193,7 @@ void FlightShow::tick() {
     while (truth_.yawDeg >= 360.f) truth_.yawDeg -= 360.f;
     while (truth_.yawDeg < 0.f) truth_.yawDeg += 360.f;
     v_ += (c.pitch * vPerPitch - v_) * dt / tau;
+    truth_.u += c.throttle * 0.8f * dt;               // a script's climb: 0.8 m/s at full
     const float a = truth_.yawDeg * kPi / 180.f;
     const float stepE = std::sin(a) * v_ * dt, stepN = std::cos(a) * v_ * dt;
     truth_.e += stepE; truth_.n += stepN;

@@ -305,7 +305,8 @@ void MissionController::thinkVoxel_(const WorldState& s) {
     // The certificate alone decides. It is independent evidence: a straight
     // leg the map confirms free is flyable even when no curved primitive at
     // the planner's speeds survived, and `blocked` with no leg means no leg.
-    if (legWorthIt_(s, len)) {
+    if (legWorthIt_(s, len) && legTowardGoal_(s)) {
+        awayOk_ = false;
         legBearing_ = s.voxLegBearingDeg;
         legLenM_    = len;
         legE_ = s.estPe; legN_ = s.estPn;
@@ -329,7 +330,8 @@ void MissionController::scanVoxel_(const WorldState& s, ControlCmd& c) {
         return;
     }
     const float len = std::min(stepFor_(s), s.voxLegFreeM - p_.voxStopMarginM);
-    if (s.voxFrames >= p_.voxMinFrames && legWorthIt_(s, len)) {
+    if (s.missionGoalValid && tPhase_ >= 0.5f * p_.scanTimeoutSec) awayOk_ = true;
+    if (s.voxFrames >= p_.voxMinFrames && legWorthIt_(s, len) && legTowardGoal_(s)) {
         phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f;   // commit next tick
         return;
     }
@@ -338,7 +340,17 @@ void MissionController::scanVoxel_(const WorldState& s, ControlCmd& c) {
         phase_ = tallyStuck_(s.estPe, s.estPn) ? Phase::STUCK : Phase::SETTLE;
         return;
     }
-    if (scanDir_ == 0.f) scanDir_ = (roundSign_ != 0.f) ? roundSign_ : -1.f;
+    if (scanDir_ == 0.f) {
+        // Toward the goal's side when there is one: the leg wanted is there.
+        if (s.missionGoalValid) {
+            float d = s.missionGoalBearing - s.vehYawDeg;
+            while (d > 180.f) d -= 360.f;
+            while (d <= -180.f) d += 360.f;
+            scanDir_ = d >= 0.f ? 1.f : -1.f;
+        } else {
+            scanDir_ = (roundSign_ != 0.f) ? roundSign_ : -1.f;
+        }
+    }
     c.yaw = scanDir_ * p_.scanYawRate;
 }
 

@@ -27,6 +27,8 @@ struct Actions {
     std::function<int(std::vector<std::string>)> eval;
     // The failure report: flies episodes, writes report.csv, draws the panels.
     std::function<int(std::vector<std::string>)> report;
+    // Behaviour scripts: check / compile / sim / editor (kestrel_mission.cpp).
+    std::function<int(std::vector<std::string>)> mission;
     // The interpreter listing. No arguments -- it reports, it does not act.
     std::function<int()> pythons;
 };

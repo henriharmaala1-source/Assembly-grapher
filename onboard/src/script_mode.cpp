@@ -191,6 +191,16 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
                 break;
             }
             case CondOp::TRACKING: st[sp++] = tracking_(s, prog_.strings[size_t(o.arg)]); break;
+            case CondOp::RANGE: {
+                float d = -1.f;
+                // Unseen, or seen with no range: FALSE either way -- a range
+                // nobody can measure is not below anything.
+                const bool vis = seen_(s, prog_.strings[size_t(o.arg)], ctx_, nullptr, &d, nullptr);
+                st[sp++] = vis && d > 0.f && (o.cmp == CondOp::LT ? d < o.value
+                                            : o.cmp == CondOp::LE ? d <= o.value
+                                            : o.cmp == CondOp::GT ? d > o.value : d >= o.value);
+                break;
+            }
             case CondOp::NOT: st[sp - 1] = !st[sp - 1]; break;
             case CondOp::AND: --sp; st[sp - 1] = st[sp - 1] && st[sp]; break;
             case CondOp::OR:  --sp; st[sp - 1] = st[sp - 1] || st[sp]; break;
@@ -208,42 +218,84 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
     if (detFresh)
         for (const Detection& d : s.detections)
             if (d.label == label && (!best || d.confidence > best->confidence)) best = &d;
-    Detection fromTracker;
-    if (tracking_(s, label)) {
-        // THE TRACKER'S BOX, which is fresh every frame. Range is not
-        // something a tracker measures: borrow it from a detection of the
-        // same thing that overlaps, if there is one this moment.
-        fromTracker.label = label;
-        fromTracker.box = s.targetBox;
-        if (best && (best->box & s.targetBox).area() > 0) fromTracker.rangeM = best->rangeM;
-        best = &fromTracker;
-    }
-    if (!best) return false;
     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
-    const double cx = best->box.x + best->box.width * 0.5 - ctx.frameW * 0.5;
+    // A detection's own line-of-sight range: MEASURED (depth in the box), else
+    // its known height over its box height -- refused when the box is cut by
+    // the frame edge, where its height is not the object's.
+    //   1 measured depth   2 a DECLARED size   3 the ground plane (below)
+    //   4 a typical size the compiler assumed -- a guess never beats geometry
+    auto losOf = [&](const Detection& d, bool allowAssumed) -> double {
+        if (d.rangeM > 0.f) return d.rangeM;
+        bool assumed = false;
+        const float hM = sizeOf_(d.label, &assumed);
+        if (assumed && !allowAssumed) return -1.0;
+        const bool cut = d.box.y <= 2 || d.box.y + d.box.height >= ctx.frameH - 2;
+        if (hM > 0.f && !cut && d.box.height >= 8) {
+            const double r = f * hM / d.box.height;
+            if (r <= p_.maxRangeM) return r;
+        }
+        return -1.0;
+    };
+    double los = -1.0;
+    cv::Rect box;
+    if (tracking_(s, label)) {
+        // THE TRACKER'S BOX, fresh every frame, for the bearing. Range through
+        // its scale change, anchored on the detector (TrackRef).
+        box = s.targetBox;
+        const bool anchor = best && (best->box & s.targetBox).area() > 0;
+        // The tracker has no ground contact point, so an assumed size is
+        // better than nothing for anchoring it.
+        const double dl = anchor ? losOf(*best, true) : -1.0;
+        if (dl > 0.0) { tref_.valid = true; tref_.losM = dl; tref_.size0 = float(s.targetBox.height); }
+        // Only cores that estimate SCALE can carry it between detections;
+        // a fixed-size box would freeze the range at its anchor, silently.
+        const std::string core = s.targetCore ? s.targetCore : "";
+        const bool scales = core == "fused" || core == "csrt";
+        if (dl > 0.0) los = dl;
+        else if (tref_.valid && scales && s.targetBox.height > 0)
+            los = tref_.losM * tref_.size0 / double(s.targetBox.height);
+    } else if (best) {
+        box = best->box;
+        los = losOf(*best, false);
+    } else {
+        return false;
+    }
+    const double cx = box.x + box.width * 0.5 - ctx.frameW * 0.5;
     if (offDeg) *offDeg = float(std::atan(cx / f) / kD2R);
-    if (fill) *fill = float(best->box.height) / float(ctx.frameH);
+    if (fill) *fill = float(box.height) / float(ctx.frameH);
     if (distM) {
         *distM = -1.f;
-        const double cy = best->box.y + best->box.height * 0.5 - ctx.frameH * 0.5;
+        const double cy = box.y + box.height * 0.5 - ctx.frameH * 0.5;
         const double elCentre = p_.detTiltDeg - std::atan(cy / f) / kD2R;
-        if (best->rangeM > 0.f) {
-            // MEASURED: horizontal part of the range to the box's centre.
-            *distM = float(best->rangeM * std::cos(elCentre * kD2R));
+        if (los > 0.0) {
+            *distM = float(los * std::cos(elCentre * kD2R));     // its horizontal part
         } else {
             // THE GROUND PLANE, for something standing on it: the box's
             // bottom edge is where it meets the ground, so its depression
             // below the horizon and the altitude give the distance. Refused
             // near the horizon, where it explodes, and without an altitude.
-            const double yb = best->box.y + best->box.height - ctx.frameH * 0.5;
+            const double yb = box.y + box.height - ctx.frameH * 0.5;
             const double dep = -(p_.detTiltDeg - std::atan(yb / f) / kD2R);   // + below
             if (s.vehAltM > 0.5f && dep > 3.0) {
                 const double d = s.vehAltM / std::tan(dep * kD2R);
                 if (d <= p_.maxRangeM) *distM = float(d);
             }
+            if (*distM < 0.f && best) {               // 4: the typical size, last
+                const double la = losOf(*best, true);
+                if (la > 0.0) *distM = float(la * std::cos(elCentre * kD2R));
+            }
         }
     }
     return true;
+}
+
+float ScriptMode::sizeOf_(const std::string& label, bool* assumed) const {
+    for (const kms::ObjectSize& z : prog_.sizes)
+        if (prog_.strings[size_t(z.label)] == label) {
+            if (assumed) *assumed = z.assumed != 0;
+            return z.heightM;
+        }
+    return -1.f;
 }
 
 bool ScriptMode::tracking_(const WorldState& s, const std::string& label) const {
@@ -265,6 +317,18 @@ ControlCmd ScriptMode::fly_(WorldState& s, float dt, bool goal, float bearing, f
     return mission_.update(s, dt);
 }
 
+bool ScriptMode::faceFirst_(const WorldState& s, float bearing, ControlCmd& c) {
+    const double err = wrap180(bearing - s.vehYawDeg);
+    const MissionController::Phase ph = mission_.phase();
+    const bool between = !missionOn_ || ph == MissionController::Phase::SETTLE;
+    if (!facing_ && !(between && std::fabs(err) > p_.mission.hFovDeg * 0.5 - 10.0)) return false;
+    if (std::fabs(err) < 5.0) { facing_ = false; return false; }
+    facing_ = true;
+    c = hover_();
+    c.yaw = yawTo_(float(err));
+    return true;
+}
+
 // ------------------------------------------------------------ control flow
 void ScriptMode::endOp_(WorldState& s) {
     if (missionOn_) { mission_.enable(false); missionOn_ = false; }
@@ -275,7 +339,7 @@ void ScriptMode::endOp_(WorldState& s) {
 
 void ScriptMode::next_(int pc) {
     pc_ = pc;
-    opT_ = 0; opAux_ = 0; opBegun_ = false;
+    opT_ = 0; opAux_ = 0; opAux2_ = 0; opBegun_ = false; facing_ = false;
 }
 
 void ScriptMode::finish_(WorldState& s, bool failed, const std::string& why) {
@@ -286,6 +350,7 @@ void ScriptMode::finish_(WorldState& s, bool failed, const std::string& why) {
 }
 
 ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
+    ctx_ = ctx;
     s.scriptActive = loaded_;
     if (!loaded_) {
         s.scriptStatus = status_;
@@ -444,6 +509,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             case Op::UNTRACK:
                 ++s.trackReleaseSeq;
                 s.trackLabel.clear();
+                tref_ = TrackRef();
                 next_(pc_ + 1);
                 continue;
             case Op::RESUME:
@@ -528,6 +594,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                         ++s.trackRequestSeq;
                         s.trackLabel = text;
                         trackReqT_ = s.tickMonoS;
+                        tref_ = TrackRef();
                     }
                 }
                 status_ = trackReqT_ < 0 ? "waiting to see '" + text + "' to track it"
@@ -576,16 +643,11 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 const double brg = wrap360(std::atan2(de, dn) / kD2R);
                 const double err = wrap180(brg - s.vehYawDeg);
                 status_ = fmt("goto: %.1f m to go, bearing %03.0f", dist, brg);
-                // A target outside what the camera can certify: turn to face it
-                // first (rotation keeps the map honest), never mid-leg.
-                const bool moving = missionOn_ && mission_.phase() == MissionController::Phase::MOVE;
-                if (!moving && std::fabs(err) > p_.mission.hFovDeg * 0.5 - 10.0) {
-                    if (missionOn_) { mission_.enable(false); missionOn_ = false; }
-                    ControlCmd c = hover_();
-                    c.yaw = yawTo_(float(err));
-                    s.missionPhase = "SCAN";
-                    return out(c);
-                }
+                (void)err;
+                // A target outside what the camera can certify: turn to face
+                // it first (rotation keeps the map honest) -- between legs only.
+                ControlCmd turn;
+                if (faceFirst_(s, float(brg), turn)) { s.missionPhase = "SCAN"; return out(turn); }
                 return out(fly_(s, float(dt), true, float(brg), float(dist)));
             }
 
@@ -635,9 +697,10 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 if (seen_(s, text, ctx, &off, nullptr, &fill)) {
                     opAux_ = opT_;
                     if (fill >= in.a) { endOp_(s); status_ = "close to '" + text + "'"; next_(pc_ + 1); continue; }
-                    const bool moving = missionOn_ && mission_.phase() == MissionController::Phase::MOVE;
-                    if (!moving && std::fabs(off) > 12.f) {
-                        if (missionOn_) { mission_.enable(false); missionOn_ = false; }
+                    // Onto it before each leg, as a goto turns onto its place.
+                    const bool between = !missionOn_ ||
+                                         mission_.phase() == MissionController::Phase::SETTLE;
+                    if (between && std::fabs(off) > 12.f) {
                         ControlCmd c = hover_();
                         c.yaw = yawTo_(off);
                         s.missionPhase = "SCAN";
@@ -647,6 +710,51 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                     status_ = "approaching '" + text + "'";
                     // Short certified legs, re-aimed at it after every one.
                     return out(fly_(s, float(dt), true, float(wrap360(s.vehYawDeg + off)), 1.5f));
+                }
+                if (opT_ - opAux_ > 3.0) {
+                    if (!fail(in, "lost '" + text + "'")) return out(hover_());
+                    continue;
+                }
+                return out(missionOn_ ? fly_(s, float(dt), s.missionGoalValid, s.missionGoalBearing,
+                                             s.missionLegCapM)
+                                      : hover_());
+            }
+
+            case Op::APPROACH_TO: {
+                float off = 0, d = -1;
+                if (opT_ > in.b) { if (!fail(in, "approach timed out")) return out(hover_()); continue; }
+                if (seen_(s, text, ctx, &off, &d, nullptr)) {
+                    opAux_ = opT_;
+                    if (d > 0.f && d <= in.a + 0.15f) {
+                        endOp_(s);
+                        status_ = fmt("at %.1f m from '", d) + text + "'";
+                        next_(pc_ + 1); continue;
+                    }
+                    const bool between = !missionOn_ ||
+                                         mission_.phase() == MissionController::Phase::SETTLE;
+                    if (between && std::fabs(off) > 12.f) {
+                        ControlCmd c = hover_();
+                        c.yaw = yawTo_(off);
+                        s.missionPhase = "SCAN";
+                        status_ = "approach: turning onto '" + text + "'";
+                        return out(c);
+                    }
+                    if (!(d > 0.f)) {
+                        // Seen, no range: nothing says when to stop, so it
+                        // does not move -- and gives up after a while.
+                        if (opT_ - opAux2_ > 3.0) {
+                            if (!fail(in, "no range to '" + text + "' (no depth, no size)"))
+                                return out(hover_());
+                            continue;
+                        }
+                        status_ = "approach: '" + text + "' has no range yet";
+                        return out(hover_());
+                    }
+                    opAux2_ = opT_;
+                    status_ = "approaching '" + text + "'" + fmt(" %.1f m, stop at %.1f", d, in.a);
+                    // A leg never longer than what is left to the stop.
+                    const float cap = std::max(0.3f, std::min(1.5f, d - in.a));
+                    return out(fly_(s, float(dt), true, float(wrap360(s.vehYawDeg + off)), cap));
                 }
                 if (opT_ - opAux_ > 3.0) {
                     if (!fail(in, "lost '" + text + "'")) return out(hover_());

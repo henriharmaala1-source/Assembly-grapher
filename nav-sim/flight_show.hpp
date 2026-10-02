@@ -40,6 +40,8 @@
 #include "voxel_world.hpp"
 
 #include "mission.hpp"      // onboard
+#include "mission_program.hpp"  // onboard
+#include "script_mode.hpp"  // onboard
 #include "voxel_nav.hpp"    // onboard
 #include "world_model.hpp"  // onboard
 
@@ -70,6 +72,10 @@ struct FlightParams {
     float pitchMinM = -1.f, pitchMaxM = -1.f;
     float wallFrac = -1.f;
     bool  stereo = true;             // false: perfect depth (a control)
+    // A COMPILED MISSION to fly instead of AUTONOMY's wandering: the
+    // aircraft's own SCRIPT mode (script_mode.hpp) on the same stack. GO is
+    // pressed at the first tick. `kestrel mission sim`.
+    std::shared_ptr<const kms::Program> script;
 };
 
 struct FlightStats {
@@ -120,6 +126,12 @@ public:
     const sim::CamPose&   lastDepthPose() const;
     long                  depthFrames() const;   // frames the module has taken
 
+    // The script flying, if one is (null otherwise), and whether it has
+    // ended: finished, stopped, or handed LAND/RTL to the flight controller
+    // (which the sim takes as the end of the flight).
+    const ScriptMode* script() const { return script_.get(); }
+    bool scriptEnded() const { return scriptEnded_; }
+
     // Distance from (x,y,z) to the nearest solid voxel of the TRUE world,
     // up to `upTo`.
     float clearance(float x, float y, float z, float upTo) const;
@@ -134,6 +146,8 @@ private:
     Source* src_ = nullptr;                // owned by mod_
     std::unique_ptr<VoxelNavModule> mod_;
     std::unique_ptr<MissionController> mission_;
+    std::unique_ptr<ScriptMode> script_;
+    bool scriptEnded_ = false;
     WorldModel wm_;
     float v_ = 0.f;
     int   ticks_ = 0, lastResets_ = -1;

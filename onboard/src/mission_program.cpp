@@ -13,7 +13,7 @@ const char* opName(Op o) {
                               "FACE", "APPROACH", "EXPLORE", "RUN", "WAIT", "JUMP",
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
                               "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
-                              "TURN_REF", "CLIMB_BY"};
+                              "TURN_REF", "CLIMB_BY", "APPROACH_TO"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
@@ -106,6 +106,8 @@ std::vector<uint8_t> serialize(const Program& p) {
     for (const auto& st : p.states) { w.i32(st.name); w.i32(st.pc); w.i32(st.transStart); w.i32(st.transCount); }
     w.u32(uint32_t(p.transitions.size()));
     for (const auto& t : p.transitions) { w.i32(t.cond); w.i32(t.to); w.i32(t.line); }
+    w.u32(uint32_t(p.sizes.size()));
+    for (const auto& z : p.sizes) { w.i32(z.label); w.f32(z.heightM); w.u8(z.assumed); }
     w.u32(uint32_t(p.code.size()));
     for (const auto& in : p.code) {
         w.u8(uint8_t(in.op)); w.i32(in.line); w.i32(in.target); w.i32(in.jump);
@@ -144,6 +146,9 @@ bool verify(const Program& p, std::string* err) {
                 case CondOp::SEEN: case CondOp::TRACKING:
                     if (c.arg < 0 || c.arg >= nS) return fail("condition: bad label");
                     ++depth; break;
+                case CondOp::RANGE:
+                    if (c.arg < 0 || c.arg >= nS || c.cmp > CondOp::GE) return fail("condition: bad range");
+                    ++depth; break;
                 case CondOp::VAR:
                     if (c.var > CondOp::HEADING || c.cmp > CondOp::GE) return fail("condition: bad var");
                     ++depth; break;
@@ -159,6 +164,8 @@ bool verify(const Program& p, std::string* err) {
         }
         if (depth != 1) return fail("condition " + std::to_string(k) + ": does not reduce to one value");
     }
+    for (const ObjectSize& z : p.sizes)
+        if (z.label < 0 || z.label >= nS || !(z.heightM > 0.f)) return fail("object size out of range");
     const int nSt = int(p.states.size()), nTr = int(p.transitions.size());
     for (const State& st : p.states)
         if (st.name < 0 || st.name >= nS || st.pc < 0 || st.pc >= nI || st.transStart < 0 ||
@@ -193,12 +200,12 @@ bool verify(const Program& p, std::string* err) {
         if (in.op == Op::WAIT && in.cond < 0) return fail(at + "wait without condition");
         if ((in.op == Op::SEARCH || in.op == Op::FACE || in.op == Op::APPROACH ||
              in.op == Op::SAY || in.op == Op::RUN || in.op == Op::MARK_SEEN ||
-             in.op == Op::TRACK) && in.text < 0)
+             in.op == Op::TRACK || in.op == Op::APPROACH_TO) && in.text < 0)
             return fail(at + "missing text");
         // Every op that takes time has a bound: nothing waits for ever.
         const bool timed = in.op == Op::GOTO || in.op == Op::TURN_TO || in.op == Op::TURN_BY ||
                            in.op == Op::CLIMB || in.op == Op::APPROACH || in.op == Op::TURN_REF ||
-                           in.op == Op::CLIMB_BY;
+                           in.op == Op::CLIMB_BY || in.op == Op::APPROACH_TO;
         if (timed && !(in.b > 0.f)) return fail(at + "no timeout");
         if ((in.op == Op::HOLD || in.op == Op::EXPLORE || in.op == Op::RUN ||
              in.op == Op::SEARCH || in.op == Op::FACE || in.op == Op::WAIT ||
@@ -244,6 +251,9 @@ bool deserialize(const std::vector<uint8_t>& bytes, Program& out, std::string* e
     }
     for (uint32_t n = r.count(12), i = 0; i < n && !r.bad; ++i) {
         Transition t; t.cond = r.i32(); t.to = r.i32(); t.line = r.i32(); p.transitions.push_back(t);
+    }
+    for (uint32_t n = r.count(9), i = 0; i < n && !r.bad; ++i) {
+        ObjectSize z; z.label = r.i32(); z.heightM = r.f32(); z.assumed = r.u8(); p.sizes.push_back(z);
     }
     for (uint32_t n = r.count(29), i = 0; i < n && !r.bad; ++i) {
         Instr in;
@@ -315,6 +325,11 @@ std::string disassemble(const Program& p) {
                           KIND[t.kind < 6 ? t.kind : 0], t.x, t.y);
         o << buf;
     }
+    for (const ObjectSize& z : p.sizes) {
+        std::snprintf(buf, sizeof buf, "  size %-10s %.2f m tall%s\n", S(z.label).c_str(), z.heightM,
+                      z.assumed ? " (assumed: typical, not declared)" : "");
+        o << buf;
+    }
     for (const Handler& h : p.handlers) {
         std::snprintf(buf, sizeof buf, "  on cond#%d -> %d   (line %d)\n", h.cond, h.pc, h.line);
         o << buf;
@@ -342,6 +357,7 @@ std::string disassemble(const Program& p) {
             case Op::TRACK: arg = "\"" + S(in.text) + "\"" + cv_fmt(" %.0f s", in.a); break;
             case Op::MARK_SEEN: arg = T(in.target) + " = seen \"" + S(in.text) + "\""; break;
             case Op::SEARCH: case Op::FACE: case Op::APPROACH: case Op::RUN: case Op::SAY:
+            case Op::APPROACH_TO:
                 arg = "\"" + S(in.text) + "\"" + cv_fmt(" %.2f %.2f", in.a, in.b); break;
             case Op::SET_REG: case Op::LOOP: case Op::TIMER: case Op::JUMP_TIMEUP:
                 arg = cv_fmt("r%d %.2f", in.target, in.a); break;

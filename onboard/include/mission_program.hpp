@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 3;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -66,6 +66,7 @@ enum class Op : uint8_t {
     UNTRACK,      // release the tracker
     TURN_REF,     // target: turn back to that place's reference heading, b = timeout
     CLIMB_BY,     // a = metres up from where this starts, b = timeout, jump = on failure
+    APPROACH_TO,  // text = label, a = stop at this range m, b = timeout s, jump = lost
     COUNT_
 };
 
@@ -98,7 +99,8 @@ struct Target {
 // The loader checks every condition leaves exactly one value.
 struct CondOp {
     enum Kind : uint8_t { TRUE_ = 0, SEEN, VAR, DIST, POSITIONED, NOT, AND, OR,
-                          TRACKING };   // TRACKING: arg = label, the tracker locked on it
+                          TRACKING,     // arg = label: the tracker locked on it
+                          RANGE };      // arg = label: its estimated range vs value
     enum Var  : uint8_t { BATTERY = 0, ALT, TIME, SPEED, HEADING };
     enum Cmp  : uint8_t { LT = 0, LE, GT, GE };
     Kind    kind = TRUE_;
@@ -134,6 +136,13 @@ struct State {
     int32_t transStart = 0, transCount = 0;
 };
 
+// HOW BIG A THING IS, for range from its box: distance = f * height / box
+// height in pixels. Declared with `size door 2.0 m`; the compiler fills in
+// common labels it was not told about (mission_compile.cpp) and says so.
+// `assumed`: a typical height the compiler filled in, not one the mission
+// declared -- the runtime then prefers the ground plane over it.
+struct ObjectSize { int32_t label = -1; float heightM = 0.f; uint8_t assumed = 0; };
+
 struct Program {
     enum Cap : uint32_t {
         NEEDS_POSITION = 1u,   // goto/over/orbit/survey/dist/fence
@@ -155,6 +164,7 @@ struct Program {
     std::vector<Handler>     handlers;
     std::vector<State>       states;
     std::vector<Transition>  transitions;
+    std::vector<ObjectSize>  sizes;
     std::vector<Instr>       code;
 };
 

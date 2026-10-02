@@ -330,6 +330,21 @@ ShowSnap ShowSnap::of(const FlightShow& f, const ShowSnap* prev) {
     s.stats = f.stats();
     s.trail = f.trail();
     s.legs = f.legs();
+    if (const ScriptMode* sm = f.script()) {
+        const kms::Program& pr = sm->program();
+        for (size_t i = 1; i < pr.targets.size(); ++i) {
+            double e, n;
+            if (!sm->targetPos(int(i), e, n)) continue;
+            ShowSnap::Mark m;
+            m.e = float(e); m.n = float(n);
+            if (pr.targets[i].name >= 0) m.name = pr.strings[size_t(pr.targets[i].name)];
+            s.marks.push_back(m);
+        }
+        const WorldState w = f.state();
+        s.scriptLine = cv::format("script line %d%s%s: ", w.scriptLine,
+                                  w.scriptState.empty() ? "" : "  state ",
+                                  w.scriptState.c_str()) + sm->status();
+    }
     s.depth = f.lastDepth();          // a new Mat every frame; sharing is safe
     s.depthSeq = f.depthFrames();
     // THE FAN is the module's search at THIS stop: recomputed while the
@@ -765,6 +780,17 @@ cv::Mat FlightView::mission(const ShowSnap& s, int w, int h, bool compact) const
         cv::line(im, px(v.e, v.n), px(v.e + std::sin(br) * r.freeM, v.n + std::cos(br) * r.freeM),
                  {120, 200, 120}, 1, cv::LINE_AA);
     }
+    // The script's places: a ring and its name (anonymous orbit/survey
+    // points as small dots).
+    for (const ShowSnap::Mark& m : s.marks) {
+        const cv::Point2f q = px(m.e, m.n);
+        if (m.name.empty()) {
+            cv::circle(im, q, 2, {60, 170, 250}, cv::FILLED, cv::LINE_AA);
+        } else {
+            cv::circle(im, q, 7, {40, 110, 255}, 2, cv::LINE_AA);
+            label(im, m.name, {int(q.x) + 9, int(q.y) - 6}, 0.42, kInk, 1);
+        }
+    }
     // The aircraft: an arrowhead on its heading.
     const float yr = a.yawDeg * kPi / 180.f;
     const cv::Point2f c = px(a.e, a.n);
@@ -781,6 +807,7 @@ cv::Mat FlightView::mission(const ShowSnap& s, int w, int h, bool compact) const
     const FlightStats& st = s.stats;
     label(im, "from above, north up", {10, 22}, 0.5, kInk, 1);
     label(im, "blue: confirmed free   red: marked solid", {10, 42}, 0.42, kDim, 1);
+    if (!s.scriptLine.empty()) label(im, s.scriptLine, {10, 62}, 0.44, {255, 170, 90}, 1);
     int y = h - 64;
     label(im, cv::format("flown %.0f m   %d m from start   %d cells", st.travelM, int(st.netM),
                          st.cells), {10, y}, 0.48, kInk, 1);

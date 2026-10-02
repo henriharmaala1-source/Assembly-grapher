@@ -1,5 +1,6 @@
 #include "mission_compile.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -105,6 +106,12 @@ struct Place {
 
 struct ParseError {};
 
+std::string cv_like(const char* f, const char* a, double b) {
+    char buf[200];
+    std::snprintf(buf, sizeof buf, f, a, b);
+    return buf;
+}
+
 class Compiler {
 public:
     Compiler(const std::string& src, const std::string& name, CompileResult& r)
@@ -171,6 +178,33 @@ public:
             p.states[i].transCount = int(stateTrans_[i].size());
             for (const Transition& t : stateTrans_[i]) p.transitions.push_back(t);
         }
+        // SIZES: what the program declared, then -- for labels it uses but
+        // did not size -- typical heights, stated as warnings so a range read
+        // off a 1.7 m guess is never mistaken for a measurement.
+        static const std::pair<const char*, float> TYPICAL[] = {
+            {"person", 1.7f}, {"door", 2.0f}, {"chair", 0.9f}, {"car", 1.5f},
+            {"bicycle", 1.1f}, {"dog", 0.6f}, {"cat", 0.3f}, {"truck", 3.0f},
+            {"bus", 3.2f}, {"motorcycle", 1.1f}, {"bottle", 0.25f}, {"backpack", 0.5f}};
+        for (const auto& kv : sizes_) {
+            ObjectSize z; z.label = str(kv.first); z.heightM = kv.second; p.sizes.push_back(z);
+        }
+        for (const std::string& l : labelsUsed_) {
+            if (sizes_.count(l)) continue;
+            bool known = false;
+            for (const auto& t : TYPICAL)
+                if (l == t.first) {
+                    ObjectSize z; z.label = str(l); z.heightM = t.second; z.assumed = 1;
+                    p.sizes.push_back(z);
+                    known = true;
+                    if (p.caps & Program::NEEDS_RANGE)
+                        warn(1, 1, cv_like("no `size %s`: its range falls back to a typical %.2f m height when "
+                                           "there is no depth and no ground plane",
+                                           l.c_str(), t.second));
+                }
+            if (!known && (p.caps & Program::NEEDS_RANGE))
+                warn(1, 1, "no `size " + l + "`: its range needs depth or the ground plane "
+                           "(declare e.g. `size " + l + " 1.0 m`)");
+        }
         p.registers = regs_;
         if (p.code.size() > 20000) err(1, 1, "program too large (over 20000 instructions)");
         bool anyErr = false;
@@ -196,6 +230,8 @@ private:
     std::vector<std::vector<Transition>> stateTrans_;
     std::vector<int> stateRefLine_;
     int curState_ = -1;                             // the state being compiled
+    std::map<std::string, float> sizes_;            // `size LABEL N m`
+    std::vector<std::string> labelsUsed_;           // every object label the program names
     std::map<std::string, Place> places_;
     std::map<std::string, int> strIdx_;
     int regs_ = 0;
@@ -298,8 +334,10 @@ private:
         return v;
     }
     std::string label() {
-        if (at(Tk::STRING)) return next().text;
-        return ident("an object label (e.g. person)");
+        const std::string l = at(Tk::STRING) ? next().text : ident("an object label (e.g. person)");
+        if (std::find(labelsUsed_.begin(), labelsUsed_.end(), l) == labelsUsed_.end())
+            labelsUsed_.push_back(l);
+        return l;
     }
 
     // ---- emission
@@ -433,6 +471,15 @@ private:
         if (isSym("(")) { next(); condOr(); expectSym(")", "to close the condition"); return; }
         if (acceptWord("true")) { pushOp(CondOp::TRUE_); return; }
         if (acceptWord("positioned")) { pushOp(CondOp::POSITIONED); return; }
+        if (acceptWord("range")) {
+            acceptWord("to");
+            CondOp c; c.kind = CondOp::RANGE; c.arg = str(label());
+            c.cmp = uint8_t(cmp());
+            c.value = float(number(Unit::LEN, "a range"));
+            prog().condOps.push_back(c);
+            prog().caps |= Program::NEEDS_DETECTOR | Program::NEEDS_RANGE;
+            return;
+        }
         if (acceptWord("tracking")) {
             CondOp c; c.kind = CondOp::TRACKING; c.arg = str(label());
             prog().condOps.push_back(c);
@@ -472,7 +519,7 @@ private:
                 prog().condOps.push_back(c);
                 return;
             }
-        fail(t, "expected a condition: seen LABEL, tracking LABEL, positioned, battery/alt/time/speed/heading "
+        fail(t, "expected a condition: seen LABEL, tracking LABEL, range to LABEL < N, positioned, battery/alt/time/speed/heading "
                 "< N, distance to PLACE < N, not/and/or");
     }
 
@@ -530,6 +577,15 @@ private:
             if (!topLevel) fail(t, "'mission' belongs at the top of the file");
             if (!at(Tk::STRING)) fail(peek(), "expected the mission's name in quotes");
             prog().name = next().text;
+            endStatement(); return false;
+        }
+        if (w == "size") {
+            // `size door 2.0 m`: how TALL the thing is, so its range can be
+            // read off its box (f * height / pixels) with no depth camera.
+            next();
+            if (!topLevel) fail(t, "'size' belongs at the top level");
+            const std::string lab = label();
+            sizes_[lab] = float(positive(Unit::LEN, "the object's height", 0.02, 100));
             endStatement(); return false;
         }
         if (w == "fence") {
@@ -609,6 +665,36 @@ private:
                          "gps(lat, lon) or another place");
             }
             places_[name] = p;
+            endStatement(); return false;
+        }
+        if (w == "set") {
+            // RE-MARK a place declared with `let NAME = here` (or seen): in a
+            // state that loops, or anywhere after its first definition.
+            next();
+            const Token nt = peek();
+            const std::string name = ident("a place to set");
+            auto it = places_.find(name);
+            if (it == places_.end()) fail(nt, "unknown place '" + name + "' (declare it with let first)");
+            if (prog().targets[size_t(it->second.index)].kind != Target::RUNTIME)
+                fail(nt, "'" + name + "' is a fixed place; only places marked in flight "
+                             "(let NAME = here / seen LABEL) can be set again");
+            expectSym("=", "after the place's name");
+            if (acceptWord("here")) {
+                const int pc = emit(Op::MARK, L);
+                at_(pc).target = it->second.index;
+                prog().caps |= Program::NEEDS_POSITION;
+            } else if (acceptWord("seen")) {
+                const std::string lab = label();
+                const int pc = emit(Op::MARK_SEEN, L);
+                at_(pc).target = it->second.index;
+                at_(pc).text = str(lab);
+                prog().caps |= Program::NEEDS_POSITION | Program::NEEDS_DETECTOR |
+                               Program::NEEDS_RANGE;
+                elseBranch(pc);
+                return false;
+            } else {
+                fail(peek(), "expected here or seen LABEL");
+            }
             endStatement(); return false;
         }
         if (w == "goto" || w == "over") {
@@ -724,7 +810,15 @@ private:
             next();
             const std::string lab = label();
             prog().caps |= Program::NEEDS_DETECTOR;
-            const Op op = w == "search" ? Op::SEARCH : w == "face" ? Op::FACE : Op::APPROACH;
+            Op op = w == "search" ? Op::SEARCH : w == "face" ? Op::FACE : Op::APPROACH;
+            // `approach door to 2 m`: stop at a RANGE (from its size, or depth),
+            // rather than when it fills a fraction of the frame.
+            double stopAt = -1;
+            if (op == Op::APPROACH && acceptWord("to")) {
+                stopAt = positive(Unit::LEN, "the stopping range", 0.5, 100);
+                op = Op::APPROACH_TO;
+                prog().caps |= Program::NEEDS_RANGE;
+            }
             const int pc = emit(op, L);
             at_(pc).text = str(lab);
             double timeout = w == "search" ? 30 : w == "face" ? 15 : 90, fill = 0.4, dir = 1;
@@ -732,11 +826,12 @@ private:
                 if (acceptWord("timeout")) timeout = positive(Unit::TIME, "the timeout", 1, 600);
                 else if (w == "search" && acceptWord("left")) dir = -1;
                 else if (w == "search" && acceptWord("right")) dir = 1;
-                else if (w == "approach" && acceptWord("fill"))
+                else if (op == Op::APPROACH && acceptWord("fill"))
                     fill = positive(Unit::NONE, "the fill fraction", 0.05, 0.95);
                 else break;
             }
-            if (op == Op::APPROACH) { at_(pc).a = float(fill); at_(pc).b = float(timeout); }
+            if (op == Op::APPROACH_TO) { at_(pc).a = float(stopAt); at_(pc).b = float(timeout); }
+            else if (op == Op::APPROACH) { at_(pc).a = float(fill); at_(pc).b = float(timeout); }
             else { at_(pc).a = float(timeout); at_(pc).b = float(dir); }
             elseBranch(pc);
             endStatement(); return false;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "control_types.hpp"
@@ -170,6 +171,18 @@ private:
     // A certified leg is worth flying if it is at least voxMinLegM -- or if
     // it is as long as the cap someone set on purpose (a script's `move left
     // 0.5 m` is short because it was asked to be, not because the way is shut).
+    // GOING SOMEWHERE, a leg that points more than 100 deg off the goal flies
+    // AWAY from it. Taken only once a scan has looked for half its time and
+    // found nothing better (awayOk_) -- otherwise the first certified leg in a
+    // sweep that started the wrong way won, and a goto 3 m south-east ended
+    // boxed in to the north-west.
+    bool legTowardGoal_(const WorldState& s) const {
+        if (!s.missionGoalValid || awayOk_) return true;
+        float d = s.voxLegBearingDeg - s.missionGoalBearing;
+        while (d > 180.f) d -= 360.f;
+        while (d <= -180.f) d += 360.f;
+        return std::fabs(d) <= 100.f;
+    }
     bool legWorthIt_(const WorldState& s, float len) const {
         if (len >= p_.voxMinLegM) return true;
         return s.missionLegCapM > 0.f && len > 0.2f && len >= s.missionLegCapM - 1e-3f;
@@ -205,4 +218,5 @@ private:
     bool   haveWp_  = false;
     float  legBearing_ = 0.f;           // voxel leg: certified bearing (deg, 0=N)
     float  legLenM_    = 0.f;           // voxel leg: certified length (m)
+    bool   awayOk_     = false;         // this scan may take a leg away from the goal
 };

@@ -105,6 +105,7 @@ void ScriptMode::start_(const WorldState& s) {
     st.e = s.estValid ? s.estPe : 0.0;
     st.n = s.estValid ? s.estPn : 0.0;
     st.refYaw = s.vehYawDeg;
+    st.u = s.vehAltM;
     for (size_t i = 1; i < prog_.targets.size(); ++i) {
         const Target& t = prog_.targets[i];
         Place& p = places_[i];
@@ -201,7 +202,8 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
                 float d = -1.f;
                 // Unseen, or seen with no range: FALSE either way -- a range
                 // nobody can measure is not below anything.
-                const bool vis = seen_(s, prog_.strings[size_t(o.arg)], ctx_, nullptr, &d, nullptr);
+                const bool vis = seen_(s, prog_.strings[size_t(o.arg)], ctx_, nullptr, nullptr, nullptr,
+                                       false, nullptr, &d);
                 st[sp++] = vis && d > 0.f && (o.cmp == CondOp::LT ? d < o.value
                                             : o.cmp == CondOp::LE ? d <= o.value
                                             : o.cmp == CondOp::GT ? d > o.value : d >= o.value);
@@ -218,7 +220,7 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
 // ------------------------------------------------------------ detections
 bool ScriptMode::seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
                        float* offDeg, float* distM, float* fill, bool onlyNew,
-                       cv::Rect* boxOut) const {
+                       cv::Rect* boxOut, float* losM) const {
     if (ctx.frameW <= 0 || ctx.frameH <= 0) return false;
     const bool detFresh = s.tickMonoS - s.detStampS <= p_.detStaleSec;
     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
@@ -239,6 +241,7 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
         }
         return -1.0;
     };
+    float usedLos = -1.f;
     // Bearing off the nose, horizontal distance (< 0 unknown) and fill, for a
     // box with a known line-of-sight range or none.
     auto measure = [&](const cv::Rect& box, const Detection* det, double los, float& off,
@@ -249,7 +252,9 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
         dist = -1.f;
         const double cy = box.y + box.height * 0.5 - ctx.frameH * 0.5;
         const double elCentre = p_.detTiltDeg - std::atan(cy / f) / kD2R;
-        if (los > 0.0) { dist = float(los * std::cos(elCentre * kD2R)); return; }
+        // RANGE is straight-line, to the box's centre -- what "4 m from it"
+        // means from above; dist is its horizontal part, for positions.
+        if (los > 0.0) { dist = float(los * std::cos(elCentre * kD2R)); usedLos = float(los); return; }
         // THE GROUND PLANE, for something standing on it: the box's bottom
         // edge is where it meets the ground, so its depression below the
         // horizon and the altitude give the distance. Refused near the
@@ -264,10 +269,12 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
             const double la = losOf(*det, true);
             if (la > 0.0) dist = float(la * std::cos(elCentre * kD2R));
         }
+        usedLos = dist > 0.f ? float(dist / std::max(0.05, std::cos(elCentre * kD2R))) : -1.f;
     };
     cv::Rect used;
     auto give = [&](float off, float dist, float fl) {
         if (boxOut) *boxOut = used;
+        if (losM) *losM = usedLos;
         if (offDeg) *offDeg = off;
         if (distM) *distM = dist;
         if (fill) *fill = fl;
@@ -333,13 +340,31 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
 
 bool ScriptMode::measureObject_(const WorldState& s, const std::string& label,
                                 const ControlCtx& ctx, double& e, double& n,
-                                double& bearing) const {
+                                double& bearing, double* topU) const {
     float off = 0, d = -1;
-    if (!s.estValid || !seen_(s, label, ctx, &off, &d, nullptr) || !(d > 0.f)) return false;
+    cv::Rect box;
+    if (!s.estValid || !seen_(s, label, ctx, &off, &d, nullptr, false, &box) || !(d > 0.f))
+        return false;
     bearing = wrap360(s.vehYawDeg + off);
     e = s.estPe + d * std::sin(bearing * kD2R);
     n = s.estPn + d * std::cos(bearing * kD2R);
+    if (topU) *topU = topHeight_(s, ctx, box, d);
     return true;
+}
+
+double ScriptMode::topHeight_(const WorldState& s, const ControlCtx& ctx, const cv::Rect& box,
+                              double distM) const {
+    const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
+    const double elTop = p_.detTiltDeg - std::atan((box.y - ctx.frameH * 0.5) / f) / kD2R;
+    return std::max(0.0, double(s.vehAltM) + distM * std::tan(elTop * kD2R));
+}
+
+float ScriptMode::vertTo_(const WorldState& s, double heightM) const {
+    const double target = std::max(double(p_.minAltM), heightM);
+    float v = float(p_.altKp * (target - s.vehAltM));
+    v = std::max(-p_.maxVert, std::min(p_.maxVert, v));
+    if (v < 0.f && s.vehAltM <= p_.minAltM) v = 0.f;      // the floor
+    return v;
 }
 
 float ScriptMode::sizeOf_(const std::string& label, bool* assumed) const {
@@ -406,6 +431,7 @@ void ScriptMode::endOp_(WorldState& s) {
     if (delegate_) { delegate_->onExit(s); delegate_ = nullptr; }
     s.missionGoalValid = false;
     s.missionLegCapM = 0.f;
+    s.missionGlideDeg = 0.f;
 }
 
 void ScriptMode::next_(int pc) {
@@ -510,11 +536,12 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
     // object is measured moves the anchor toward the new measurement -- and
     // with it every point of the path. Its reference heading does not move.
     if (anchorT_ >= 0) {
-        double e, n, b;
-        if (measureObject_(s, anchorLabel_, ctx, e, n, b)) {
+        double e, n, b, u = 0;
+        if (measureObject_(s, anchorLabel_, ctx, e, n, b, &u)) {
             Place& a = places_[size_t(anchorT_)];
             a.e += p_.anchorGain * (e - a.e);
             a.n += p_.anchorGain * (n - a.n);
+            a.u += p_.anchorGain * (u - a.u);
         }
     }
 
@@ -555,7 +582,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             case Op::MARK: {
                 if (!s.estValid) { if (!fail(in, "no position to mark")) return out(hover_()); continue; }
                 Place& p = places_[size_t(in.target)];
-                p.set = true; p.e = s.estPe; p.n = s.estPn; p.refYaw = s.vehYawDeg;
+                p.set = true; p.e = s.estPe; p.n = s.estPn; p.refYaw = s.vehYawDeg; p.u = s.vehAltM;
                 next_(pc_ + 1);
                 continue;
             }
@@ -563,7 +590,8 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 float off = 0, d = -1;
                 if (!s.estValid) { if (!fail(in, "no position to place it from")) return out(hover_()); continue; }
                 const bool onlyNew = (in.flags & kms::FLAG_NEW) != 0;
-                if (!seen_(s, text, ctx, &off, &d, nullptr, onlyNew)) {
+                cv::Rect mbox;
+                if (!seen_(s, text, ctx, &off, &d, nullptr, onlyNew, &mbox)) {
                     if (!fail(in, onlyNew ? "no NEW '" + text + "' in view" : "'" + text + "' is not in view"))
                         return out(hover_());
                     continue;
@@ -581,6 +609,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 p.e = s.estPe + d * std::sin(brg * kD2R);
                 p.n = s.estPn + d * std::cos(brg * kD2R);
                 p.refYaw = brg;
+                p.u = topHeight_(s, ctx, mbox, d);             // its top
                 visited_.push_back({text, p.e, p.n});         // for `new` from now on
                 status_ = fmt("marked it %.1f m away on %03.0f", d, brg);
                 next_(pc_ + 1);
@@ -614,6 +643,15 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                     const double ax = box.x + box.width * (0.5 + double(in.a)) - ctx.frameW * 0.5;
                     const float aimDeg = float(std::atan(ax / f) / kD2R);
                     ControlCmd c = hover_();
+                    if (in.flags & kms::FLAG_DIVE) {
+                        // DOWN THE LINE OF SIGHT: keep the aim point centred
+                        // vertically too, so flying forward also descends
+                        // toward it (or climbs). The floor still holds.
+                        const double ay = box.y + box.height * 0.5 - ctx.frameH * 0.5;
+                        const float below = float(std::atan(ay / f) / kD2R);   // + = below centre
+                        c.throttle = std::max(-p_.maxVert, std::min(p_.maxVert, -p_.diveKp * below));
+                        if (c.throttle < 0.f && s.vehAltM <= p_.minAltM) c.throttle = 0.f;
+                    }
                     const float fwd = std::min(1.f, in.b / std::max(0.1f, p_.mpsPerStick));
                     if (in.flags & kms::FLAG_STRAFE) {
                         c.roll = std::max(-0.5f, std::min(0.5f, p_.strafeKp * aimDeg));
@@ -634,15 +672,74 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 }
                 return out(hover_());                    // a moment out of view: hold still
             }
+            case Op::FOLLOW: {
+                const bool forT = (in.flags & kms::FLAG_FOR) != 0;
+                if (forT && opT_ >= in.c) { status_ = "followed for the time asked"; next_(pc_ + 1); continue; }
+                if (!forT && in.cond >= 0 && cond_(in.cond, s)) { status_ = "follow: done"; next_(pc_ + 1); continue; }
+                if (!forT && opT_ > in.c) {
+                    if (!fail(in, "follow: its until never came true")) return out(hover_());
+                    continue;
+                }
+                float off = 0, d = -1, dh = -1;
+                cv::Rect box;
+                if (first) { lastRange_ = -1; rangeRate_ = 0; }
+                if (seen_(s, text, ctx, &off, &dh, nullptr, false, &box, &d)) {
+                    opAux_ = opT_;
+                    const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
+                    const double ax = box.x + box.width * (0.5 + double(in.d)) - ctx.frameW * 0.5;
+                    const float aimDeg = float(std::atan(ax / f) / kD2R);
+                    ControlCmd c = hover_();
+                    // Range error -> forward speed, BOTH ways: it backs off
+                    // when the object comes closer. No range: hold the
+                    // distance, keep it centred.
+                    if (d > 0.f) {
+                        // How fast the range itself is changing, minus our own
+                        // part in it: the OBJECT's speed away, fed forward so
+                        // a walking target is not trailed by a fixed lag.
+                        const double ub = (s.vehYawDeg + off) * kD2R;
+                        if (lastRange_ > 0.0 && dt > 0.0) {
+                            // Our own motion toward it, from the estimate.
+                            const double own = ((s.estPe - lastE_) * std::sin(ub) +
+                                                (s.estPn - lastN_) * std::cos(ub)) / dt;
+                            const double objRate = (d - lastRange_) / dt + own;
+                            rangeRate_ += 0.15 * (objRate - rangeRate_);
+                        }
+                        lastRange_ = d; lastE_ = s.estPe; lastN_ = s.estPn;
+                        const float vWant = std::max(-in.b, std::min(in.b,
+                            float(rangeRate_) + 0.8f * (d - in.a)));
+                        c.pitch = std::max(-1.f, std::min(1.f, vWant / std::max(0.1f, p_.mpsPerStick)));
+                        if (std::fabs(aimDeg) > 30.f) c.pitch *= 0.3f;   // turn first
+                    }
+                    if (in.flags & kms::FLAG_STRAFE)
+                        c.roll = std::max(-0.5f, std::min(0.5f, p_.strafeKp * aimDeg));
+                    else
+                        c.yaw = yawTo_(aimDeg);
+                    if (in.flags & (kms::FLAG_ALT_ABS | kms::FLAG_ALT_REL)) {
+                        const double top = dh > 0.f ? topHeight_(s, ctx, box, dh) : double(s.vehAltM);
+                        c.throttle = vertTo_(s, (in.flags & kms::FLAG_ALT_ABS) ? double(in.e)
+                                                                                : top + in.e);
+                    }
+                    s.missionActive = true;
+                    s.missionPhase = "DIRECT";
+                    status_ = "following '" + text + "'" +
+                              (d > 0.f ? fmt(" at %.1f m (want %.1f)", d, in.a) : std::string(" (no range)"));
+                    return out(c);
+                }
+                if (opT_ - opAux_ > 2.0) {
+                    if (!fail(in, "follow: lost '" + text + "'")) return out(hover_());
+                    continue;
+                }
+                return out(hover_());
+            }
             case Op::ANCHOR: {
-                double e, n, b;
-                if (!measureObject_(s, text, ctx, e, n, b)) {
+                double e, n, b, u = 0;
+                if (!measureObject_(s, text, ctx, e, n, b, &u)) {
                     if (!fail(in, "'" + text + "' not in view with a range to anchor the path on"))
                         return out(hover_());
                     continue;
                 }
                 Place& p = places_[size_t(in.target)];
-                p.set = true; p.e = e; p.n = n; p.refYaw = b;   // line of sight: the path's frame
+                p.set = true; p.e = e; p.n = n; p.refYaw = b; p.u = u;   // line of sight: the path's frame
                 anchorT_ = in.target; anchorLabel_ = text;
                 visited_.push_back({text, e, n});
                 status_ = "path anchored on '" + text + "'";
@@ -722,12 +819,13 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             }
 
             case Op::CLIMB_BY: {
-                if (first) opAux_ = s.vehAltM + in.a;
-                if (s.vehAltM >= opAux_ - 0.15) { next_(pc_ + 1); continue; }
-                if (opT_ > in.b) { if (!fail(in, "climb timed out")) return out(hover_()); continue; }
+                if (first) opAux_ = std::max(double(p_.minAltM), double(s.vehAltM) + in.a);
+                if (std::fabs(s.vehAltM - opAux_) < 0.15) { next_(pc_ + 1); continue; }
+                if (opT_ > in.b) { if (!fail(in, "height not reached in time")) return out(hover_()); continue; }
                 ControlCmd c = hover_();
-                c.throttle = p_.climbThrottle;
-                status_ = fmt("up to %.1f m (%.1f)", opAux_, s.vehAltM);
+                c.throttle = vertTo_(s, opAux_);
+                status_ = std::string(in.a >= 0 ? "up" : "down") +
+                          fmt(" to %.1f m (%.1f)", opAux_, s.vehAltM);
                 s.missionPhase = "CLIMB";
                 return out(c);
             }
@@ -764,11 +862,13 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             }
 
             case Op::CLIMB: {
-                if (s.vehAltM >= in.a - 0.2f) { next_(pc_ + 1); continue; }
-                if (opT_ > in.b) { if (!fail(in, "climb timed out")) return out(hover_()); continue; }
+                // To a height, up or down -- never below the floor.
+                const double want = std::max(double(p_.minAltM), double(in.a));
+                if (std::fabs(s.vehAltM - want) < 0.2) { next_(pc_ + 1); continue; }
+                if (opT_ > in.b) { if (!fail(in, "height not reached in time")) return out(hover_()); continue; }
                 ControlCmd c = hover_();
-                c.throttle = p_.climbThrottle;
-                status_ = fmt("climbing to %.1f m (%.1f)", in.a, s.vehAltM);
+                c.throttle = vertTo_(s, want);
+                status_ = fmt("to %.1f m (%.1f)", want, s.vehAltM);
                 s.missionPhase = "CLIMB";
                 return out(c);
             }
@@ -795,7 +895,24 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 noPosT_ = 0;
                 const double de = tg.e - s.estPe, dn = tg.n - s.estPn;
                 const double dist = std::hypot(de, dn);
-                if (dist <= in.a) { endOp_(s); next_(pc_ + 1); continue; }
+                // A HEIGHT too: above the ground, or above the place's own.
+                const bool hasAlt = (in.flags & (kms::FLAG_ALT_ABS | kms::FLAG_ALT_REL)) != 0;
+                const double wantU = !hasAlt ? 0.0
+                    : std::max(double(p_.minAltM), (in.flags & kms::FLAG_ALT_ABS) ? double(in.c)
+                                                                                    : tg.u + in.c);
+                const double ev = hasAlt ? wantU - s.vehAltM : 0.0;
+                if (dist <= in.a && std::fabs(ev) < 0.3) { endOp_(s); next_(pc_ + 1); continue; }
+                if (dist <= in.a) {
+                    // There across, not yet at height: the rest of the way is
+                    // VERTICAL -- in certified mode, what the glide could not
+                    // cover, and nothing checks it (the floor still holds).
+                    if (missionOn_) { mission_.enable(false); missionOn_ = false; }
+                    ControlCmd c = hover_();
+                    c.throttle = vertTo_(s, wantU);
+                    status_ = fmt("at it; height %.1f -> %.1f m (vertical, unchecked)", s.vehAltM, wantU);
+                    s.missionPhase = "CLIMB";
+                    return out(c);
+                }
                 if (!direct_ && mission_.phase() == MissionController::Phase::STUCK) {
                     if (!fail(in, "boxed in on the way (STUCK)")) return out(hover_());
                     continue;
@@ -808,7 +925,17 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 // it first (rotation keeps the map honest) -- between legs only.
                 ControlCmd turn;
                 if (faceFirst_(s, float(brg), turn)) { s.missionPhase = "SCAN"; return out(turn); }
-                return out(fly_(s, float(dt), true, float(brg), float(dist)));
+                if (hasAlt && !direct_) {
+                    // CERTIFIED: a glide toward the height, no steeper than
+                    // maxGlideDeg -- certified along its slope by the map.
+                    const double g = std::atan2(ev, dist) / kD2R;
+                    s.missionGlideDeg = float(std::max(-double(p_.maxGlideDeg),
+                                                       std::min(double(p_.maxGlideDeg), g)));
+                }
+                ControlCmd c = fly_(s, float(dt), true, float(brg), float(dist));
+                if (hasAlt && direct_) c.throttle = vertTo_(s, wantU);   // DIRECT: together
+                if (hasAlt) status_ += fmt(", height %.1f -> %.1f m", s.vehAltM, wantU);
+                return out(c);
             }
 
             case Op::EXPLORE:
@@ -883,7 +1010,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             case Op::APPROACH_TO: {
                 float off = 0, d = -1;
                 if (opT_ > in.b) { if (!fail(in, "approach timed out")) return out(hover_()); continue; }
-                if (seen_(s, text, ctx, &off, &d, nullptr)) {
+                if (seen_(s, text, ctx, &off, nullptr, nullptr, false, nullptr, &d)) {
                     opAux_ = opT_;
                     if (d > 0.f && d <= in.a + 0.15f) {
                         endOp_(s);

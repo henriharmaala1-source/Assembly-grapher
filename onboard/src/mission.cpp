@@ -301,7 +301,10 @@ void MissionController::thinkVoxel_(const WorldState& s) {
         return;
     }
     if (s.voxFrames < p_.voxMinFrames) return;     // still filling: hover, wait
-    const float len = std::min(stepFor_(s), s.voxLegFreeM - p_.voxStopMarginM);
+    // On a glide the certificate is ALONG the slope; legs, caps and the
+    // waypoint are horizontal, so convert at the boundary.
+    const float ce = std::cos(s.missionGlideDeg * kPi / 180.f);
+    const float len = std::min(stepFor_(s), (s.voxLegFreeM - p_.voxStopMarginM) * ce);
     // The certificate alone decides. It is independent evidence: a straight
     // leg the map confirms free is flyable even when no curved primitive at
     // the planner's speeds survived, and `blocked` with no leg means no leg.
@@ -310,6 +313,8 @@ void MissionController::thinkVoxel_(const WorldState& s) {
         legBearing_ = s.voxLegBearingDeg;
         legLenM_    = len;
         legE_ = s.estPe; legN_ = s.estPn;
+        legGlideDeg_ = s.missionGlideDeg;
+        legAlt0_ = s.vehAltM;
         const float b = legBearing_ * kPi / 180.f;
         wpE_ = s.estPe + legLenM_ * std::sin(b);
         wpN_ = s.estPn + legLenM_ * std::cos(b);
@@ -329,7 +334,8 @@ void MissionController::scanVoxel_(const WorldState& s, ControlCmd& c) {
         phase_ = Phase::SETTLE; tPhase_ = 0.f; scanDir_ = 0.f;
         return;
     }
-    const float len = std::min(stepFor_(s), s.voxLegFreeM - p_.voxStopMarginM);
+    const float len = std::min(stepFor_(s), (s.voxLegFreeM - p_.voxStopMarginM) *
+                                            std::cos(s.missionGlideDeg * kPi / 180.f));
     if (s.missionGoalValid && tPhase_ >= 0.5f * p_.scanTimeoutSec) awayOk_ = true;
     if (s.voxFrames >= p_.voxMinFrames && legWorthIt_(s, len) && legTowardGoal_(s)) {
         phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f;   // commit next tick
@@ -371,4 +377,10 @@ void MissionController::moveVoxel_(const WorldState& s, ControlCmd& c) {
     const float err = wrap180(legBearing_ - s.vehYawDeg);
     c.yaw = clampf(p_.kpYaw * (err / 90.f), -p_.maxYawStick, p_.maxYawStick);
     if (std::fabs(err) <= p_.voxAlignDeg) c.pitch = p_.cruise;
+    // ON A GLIDE, the height follows the certified slope: where the leg is
+    // along it, that far down (or up) from where it began.
+    if (legGlideDeg_ != 0.f) {
+        const float want = legAlt0_ + legDist * std::tan(legGlideDeg_ * kPi / 180.f);
+        c.throttle = clampf(0.8f * (want - s.vehAltM), -0.6f, 0.6f);
+    }
 }

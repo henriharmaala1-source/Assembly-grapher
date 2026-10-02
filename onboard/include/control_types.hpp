@@ -6,14 +6,19 @@
 // model, and (P-FC) the flight-controller backends. Kept dependency-free so
 // neither the perception layer nor the FC layer has to include the other.
 
-// Normalised control command. All axes in [-1, 1] except throttle in [0, 1].
+// Normalised control command. All axes in [-1, 1].
 // A backend maps these to RC microseconds (MSP) or attitude/velocity setpoints
 // (MAVLink). valid=false means "do not override" — the pilot keeps control.
 struct ControlCmd {
     float roll     = 0.f;   // + = right
     float pitch    = 0.f;   // + = forward / nose-down translate
     float yaw      = 0.f;   // + = clockwise (turn right)
-    float throttle = 0.f;   // 0 = idle/hover-bias, 1 = full
+    // VERTICAL, around hover-hold: 0 = hold altitude (the FC's ALT_HOLD /
+    // LOITER), +1 = full climb, -1 = full DESCENT. In those modes a stick
+    // below mid IS a commanded descent rate on ArduPilot and iNAV alike. It
+    // used to stop at 0, so nothing above the FC could ever bring the
+    // aircraft down except LAND.
+    float throttle = 0.f;
     bool  valid    = false;
 };
 

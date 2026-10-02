@@ -176,6 +176,12 @@ struct WorldState {
     // is longer than missionLegCapM (0 = no cap). Cleared by whoever set it.
     bool        missionGoalValid = false;
     float       missionLegCapM   = 0.f;
+    // A GLIDE: legs on this elevation, deg (- = descending), certified along
+    // the slope by the voxel map (straightFreeM's elDeg) and flown with the
+    // throttle following it. 0 = level, as always. Set by a script going to
+    // a place at another height; the camera's field of view limits how steep
+    // a slope can certify, because steeper runs through what it never saw.
+    float       missionGlideDeg  = 0.f;
 
     // --- Mission script (SCRIPT mode; mission_program.hpp) ---
     bool        scriptActive = false;

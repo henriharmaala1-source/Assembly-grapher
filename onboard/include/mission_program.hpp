@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 6;
+constexpr uint32_t kVersion = 7;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -85,6 +85,13 @@ enum class Op : uint8_t {
     // point centred by rolling sideways instead of yawing. Unchecked by any
     // planner, like `nav direct`. jump = lost it.
     STEER,
+    // FOLLOW THE LOCK: keep a = metres away (backing off when it comes
+    // closer), b = top speed m/s, centred on d box widths right of it (yaw,
+    // or roll with FLAG_STRAFE); e = a height (FLAG_ALT_ABS: above the
+    // ground; FLAG_ALT_REL: above the object's top). FLAG_FOR: c is how long
+    // to follow (then it succeeds); otherwise until `cond`, c the timeout.
+    // jump = lost it.
+    FOLLOW,
     COUNT_
 };
 
@@ -135,14 +142,20 @@ struct Instr {
     int32_t jump = -1;       // pc to go to (JUMP, failures); -1 = none
     int32_t cond = -1;       // condition index
     int32_t text = -1;       // strings index
-    float   a = 0.f, b = 0.f, c = 0.f;
+    float   a = 0.f, b = 0.f, c = 0.f, d = 0.f, e = 0.f;
     // FLAG_NEW (search / seen / mark): only objects NOT already visited --
     // whose ground position is not within newRadiusM of a place this mission
     // already marked for that label. "The next one", for any chain of them.
     uint8_t flags = 0;
 };
 constexpr uint8_t FLAG_NEW = 1;
-constexpr uint8_t FLAG_STRAFE = 2;    // STEER: roll to it, do not yaw
+constexpr uint8_t FLAG_STRAFE = 2;    // STEER/FOLLOW: roll to it, do not yaw
+// HEIGHT for GOTO (c) and FOLLOW (e): above the ground, or above the place's
+// own height (an object's top). Neither: the height is left alone.
+constexpr uint8_t FLAG_ALT_ABS = 4;
+constexpr uint8_t FLAG_ALT_REL = 8;
+constexpr uint8_t FLAG_DIVE = 16;     // STEER: centre it vertically too -- down the line of sight
+constexpr uint8_t FLAG_FOR = 32;      // FOLLOW: c is a duration, not a timeout
 
 // `on COND { ... }`: checked every tick while the main program runs; fires
 // once. Its body ends in LAND/RTL/END, or RESUME back to what it interrupted.

@@ -41,7 +41,7 @@ static kms::Program compileOk(const std::string& src) {
 // corridor is always open, the estimate is the truth.
 struct Sim {
     WorldState s;
-    float v = 0.f;
+    float v = 0.f, vr = 0.f;       // forward and rightward speed
     double t = 0;
     void init() {
         s.estValid = true; s.estEphM = 0.5f;
@@ -60,12 +60,14 @@ struct Sim {
             while (s.vehYawDeg >= 360.f) s.vehYawDeg -= 360.f;
             while (s.vehYawDeg < 0.f) s.vehYawDeg += 360.f;
             v += (cmd.pitch * 4.f - v) * dt / 0.35f;
-            s.vehAltM += cmd.throttle * 1.f * dt;
+            vr += (cmd.roll * 4.f - vr) * dt / 0.35f;
+            s.vehAltM = std::max(0.f, s.vehAltM + cmd.throttle * 1.5f * dt);   // 1.5 m/s at full
         } else {
-            v *= 0.9f;
+            v *= 0.9f; vr *= 0.9f;
         }
         const float a = s.vehYawDeg * 3.14159265f / 180.f;
-        s.estPe += std::sin(a) * v * dt; s.estPn += std::cos(a) * v * dt;
+        s.estPe += std::sin(a) * v * dt + std::cos(a) * vr * dt;
+        s.estPn += std::cos(a) * v * dt - std::sin(a) * vr * dt;
         s.estSpeed = std::fabs(v); s.vehGroundspeed = std::fabs(v);
     }
 };
@@ -606,6 +608,130 @@ int main() {
                                    r.e, 10.0 - r.n, r.st.c_str());
         check("aim 1.5 box-widths RIGHT of it: it ends up passing on its right",
               r.done && r.e > 0.5, b);
+    }
+
+    // ================================================================ HEIGHT
+    // A camera 30 deg down; an object at (e, n) with its top `top` m up
+    // gives a box from the geometry, and a true line-of-sight range.
+    auto boxFor = [](const WorldState& s, double oe, double on, double top, double wM,
+                     Detection& out) {
+        const double f = 554.256, tilt = 30.0, W = 640, H = 480;
+        const double de = oe - s.estPe, dn = on - s.estPn, d = std::hypot(de, dn);
+        double off = std::atan2(de, dn) * 57.2958 - s.vehYawDeg;
+        while (off > 180) off -= 360;
+        while (off <= -180) off += 360;
+        if (d < 0.3 || std::fabs(off) > 40.0) return false;
+        auto row = [&](double z) {                    // image row of height z at range d
+            const double dep = std::atan2(s.vehAltM - z, d) * 57.2958;    // below horizon
+            return H / 2 + f * std::tan((dep - tilt) / 57.2958);
+        };
+        const double yTop = row(top), yFoot = row(0.0);
+        if (yFoot < 0 || yTop > H - 1) return false;
+        const double cx = W / 2 + f * std::tan(off / 57.2958);
+        const double w = std::max(4.0, f * wM / d);
+        out.box = cv::Rect(int(cx - w / 2), int(std::max(0.0, yTop)), int(w),
+                           std::max(4, int(std::min(H - 1, yFoot) - std::max(0.0, yTop))));
+        out.rangeM = float(std::hypot(d, s.vehAltM - top * 0.5));
+        out.confidence = 0.9f;
+        return true;
+    };
+    {
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk("altitude 3 m\nhold 1 s\ndown 10 m else { say \"floor\" }\nend\n"), &err);
+        Sim sim; sim.init();
+        double after1 = -1;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 60 && !m.finished(); ++i) {
+            sim.step(m);
+            if (after1 < 0 && m.status().find("hold") != std::string::npos) after1 = sim.s.vehAltM;
+        }
+        char b[128]; std::snprintf(b, sizeof b, "altitude 3 m -> %.2f; down 10 m -> %.2f (floor 1.0); %s",
+                                   after1, sim.s.vehAltM, m.status().c_str());
+        check("`altitude 3 m` descends to 3 m; `down 10 m` stops at the 1 m floor",
+              std::fabs(after1 - 3.0) < 0.25 && std::fabs(sim.s.vehAltM - 1.0) < 0.25, b);
+    }
+    {
+        // FROM HIGH DOWN TO AN OBJECT: 12 m up, a 0.8 m crate on the ground
+        // 15 m ahead. Marked from the camera (its top from the box's top
+        // edge), then `over crate above 1.5 m`: across and down to 2.3 m.
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk("nav direct\nlet crate = here\n"
+                         "set crate = seen crate else { end }\n"
+                         "over crate above 1.5 m hold 1 s\nend\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehAltM = 12.f;
+        double markedTop = -1;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 120 && !m.finished(); ++i) {
+            sim.s.detections.clear();
+            Detection d; d.label = "crate";
+            if (boxFor(sim.s, 0.0, 15.0, 0.8, 1.0, d)) sim.s.detections.push_back(d);
+            sim.s.detStampS = sim.t;
+            sim.step(m, 640, 480);
+        }
+        const double off = std::hypot(sim.s.estPe, sim.s.estPn - 15.0);
+        char b[160]; std::snprintf(b, sizeof b, "ended %.2f m across from it at %.2f m up (want 2.3); %s",
+                                   off, sim.s.vehAltM, m.status().c_str());
+        (void)markedTop;
+        check("from 12 m up: across to the crate and DOWN to 1.5 m above its top",
+              m.finished() && !m.failed() && off < 1.1 && std::fabs(sim.s.vehAltM - 2.3) < 0.5, b);
+    }
+    {
+        // STEER ... DIVE: down the line of sight to it, stop at 4 m.
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk("steer crate aim centre speed 1.5 m/s dive until range to crate < 4 m "
+                         "timeout 60 s else { end }\nend\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehAltM = 10.f;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        double lowest = 1e9;
+        for (int i = 0; i < 20 * 60 && !m.finished(); ++i) {
+            sim.s.detections.clear();
+            Detection d; d.label = "crate";
+            if (boxFor(sim.s, 0.0, 22.0, 0.8, 1.0, d)) sim.s.detections.push_back(d);
+            sim.s.detStampS = sim.t;
+            sim.step(m, 640, 480);
+            lowest = std::min(lowest, double(sim.s.vehAltM));
+        }
+        const double rng = std::hypot(22.0 - sim.s.estPn, sim.s.vehAltM - 0.4);
+        char b[160]; std::snprintf(b, sizeof b, "from 10 m up to %.2f m, %.2f m from it; lowest %.2f; %s",
+                                   sim.s.vehAltM, rng, lowest, m.status().c_str());
+        check("`steer ... dive` flies down the line of sight and stops at its range",
+              m.finished() && !m.failed() && sim.s.vehAltM < 6.0 && lowest >= 0.99 && rng < 5.0, b);
+    }
+    {
+        // FOLLOW: a person walks away at 0.8 m/s, then turns back toward the
+        // aircraft. It keeps 4 m: closing while they walk away, BACKING OFF
+        // while they come toward it.
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk("follow person at 4 m max 2 m/s height 3 m for 30 s else { end }\nend\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehAltM = 3.f;
+        double pn = 8.0, errSum = 0; int errN = 0; bool backed = false; double minRange = 1e9;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 32 && !m.finished(); ++i) {
+            const double t = i * 0.05;
+            pn += (t < 15.0 ? 0.8 : -0.8) * 0.05;
+            sim.s.detections.clear();
+            Detection d; d.label = "person";
+            if (boxFor(sim.s, 0.0, pn, 1.7, 0.5, d)) sim.s.detections.push_back(d);
+            sim.s.detStampS = sim.t;
+            const double before = sim.s.estPn;
+            sim.step(m, 640, 480);
+            if (t > 18.0 && sim.s.estPn < before - 1e-4) backed = true;
+            const double r = std::hypot(pn - sim.s.estPn, sim.s.vehAltM - 0.85);   // straight-line
+            minRange = std::min(minRange, r);
+            if (t > 6.0) { errSum += std::fabs(r - 4.0); ++errN; }
+        }
+        char b[160]; std::snprintf(b, sizeof b, "mean |range - 4| %.2f m, closest %.2f m, backed off: %s; %s",
+                                   errSum / std::max(1, errN), minRange, backed ? "yes" : "no",
+                                   m.status().c_str());
+        check("`follow person at 4 m`: keeps the distance, backs off when they come back",
+              m.finished() && !m.failed() && errSum / std::max(1, errN) < 0.8 && backed && minRange > 2.5, b);
     }
 
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);

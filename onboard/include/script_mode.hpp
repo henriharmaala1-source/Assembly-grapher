@@ -67,6 +67,15 @@ public:
         // error when strafing.
         float mpsPerStick  = 4.f;
         float strafeKp     = 0.02f;
+        // HEIGHT. Never commanded below minAltM (only `land` goes lower --
+        // the forward camera cannot see what is under the aircraft); a
+        // certified glide no steeper than maxGlideDeg; vertical stick per
+        // metre of height error, capped at maxVert.
+        float minAltM      = 1.0f;
+        float maxGlideDeg  = 25.f;
+        float altKp        = 0.8f;
+        float maxVert      = 0.6f;
+        float diveKp       = 0.08f;  // vertical stick per degree the aim sits below centre
     };
     using ModeLookup = std::function<IControlMode*(const std::string&)>;
 
@@ -106,7 +115,9 @@ public:
     bool targetPos(int i, double& e, double& n) const;
 
 private:
-    struct Place { bool set = false; double e = 0, n = 0, refYaw = 0; };
+    // u: HEIGHT above the ground (the vehAltM frame) -- for a place marked
+    // from the camera, the top of the object; for `here`, where it was flown.
+    struct Place { bool set = false; double e = 0, n = 0, refYaw = 0, u = 0; };
 
     void reset_();
     void start_(const WorldState& s);
@@ -124,7 +135,7 @@ private:
     // place already marked for this label (`new`).
     bool seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
                float* offDeg, float* distM, float* fill, bool onlyNew = false,
-               cv::Rect* boxOut = nullptr) const;
+               cv::Rect* boxOut = nullptr, float* losM = nullptr) const;
     bool tracking_(const WorldState& s, const std::string& label) const;
     // Metres tall, or -1; *assumed says the compiler filled it in.
     float sizeOf_(const std::string& label, bool* assumed = nullptr) const;
@@ -171,11 +182,18 @@ private:
     // Where the anchor's object is now (e/n), measured from the camera: for
     // re-grounding, and for a path's first point.
     bool measureObject_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
-                        double& e, double& n, double& bearing) const;
+                        double& e, double& n, double& bearing, double* topU = nullptr) const;
+    // Height of a box's top edge above the ground, `distM` away.
+    double topHeight_(const WorldState& s, const ControlCtx& ctx, const cv::Rect& box,
+                      double distM) const;
+    // Vertical stick toward a height, the floor applied.
+    float vertTo_(const WorldState& s, double heightM) const;
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction
     double opAux_ = 0;       // per-op scratch (a turn's goal heading, last-seen time)
     double opAux2_ = 0;      // ...and a second (last time a range was had)
+    double lastRange_ = -1, rangeRate_ = 0;   // FOLLOW: the object's own closing speed
+    double lastE_ = 0, lastN_ = 0;
     bool opBegun_ = false;
     bool facing_ = false;     // turning onto a goal, until within 5 deg
     bool direct_ = false;     // `nav direct`: no certified legs

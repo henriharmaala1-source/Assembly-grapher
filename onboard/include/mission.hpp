@@ -219,4 +219,6 @@ private:
     float  legBearing_ = 0.f;           // voxel leg: certified bearing (deg, 0=N)
     float  legLenM_    = 0.f;           // voxel leg: certified length (m)
     bool   awayOk_     = false;         // this scan may take a leg away from the goal
+    float  legGlideDeg_ = 0.f;          // the leg's certified slope (0 = level)
+    float  legAlt0_     = 0.f;          // height where it began
 };

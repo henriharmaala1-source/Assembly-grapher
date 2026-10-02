@@ -186,6 +186,17 @@ int main() {
         }
         std::printf("  RC override: AETR order, channels 5-8 released to the pilot\n");
     }
+    // --- a DESCENT is below mid, not clamped to it ---------------------------
+    {
+        ControlCmd c;
+        c.valid = true; c.throttle = -0.6f;
+        CHECK(fc.sendControl(c));
+        auto msgs = decodeAll(drainMaster(mfd));
+        const mav::Msg* o = findMsg(msgs, mav::MSG_RC_CHANNELS_OVERRIDE);
+        CHECK(o != nullptr);
+        if (o) CHECK(o->u16(4) == 1200);           // throttle -0.6 -> 1500 - 300: descend
+        std::printf("  RC override: throttle below zero is a descent (1200 us)\n");
+    }
 
     // --- assist mode trims from the latched baseline ------------------------
     {

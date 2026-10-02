@@ -224,7 +224,9 @@ uint16_t MavlinkBackend::axisToUs(float v) {
     return uint16_t(std::max(1000, std::min(2000, 1500 + int(v * 500.f))));
 }
 uint16_t MavlinkBackend::thrToUs(float v) {
-    v = std::max(0.f, std::min(1.f, v));
+    // Around hover-hold, both ways: below mid is a descent rate in ALT_HOLD /
+    // LOITER (ControlCmd::throttle).
+    v = std::max(-1.f, std::min(1.f, v));
     return uint16_t(std::max(1000, std::min(2000, 1500 + int(v * 500.f))));
 }
 uint16_t MavlinkBackend::addDelta(uint16_t base, float v) {
@@ -272,7 +274,7 @@ bool MavlinkBackend::sendAttitudeTarget(const ControlCmd& cmd) {
     const float q2 = cr*sp*cy + sr*cp*sy;
     const float q3 = cr*cp*sy - sr*sp*cy;
 
-    // ControlCmd.throttle is 0 = hover-bias, 1 = full -- the same convention the
+    // ControlCmd.throttle is -1..1 around hover (0) -- the same convention the
     // MSP path uses when it writes 1500 us for 0. SET_ATTITUDE_TARGET's thrust
     // is 0..1 with 0.5 as hover, so the mapping is a half-scale offset, not an
     // identity. Getting this wrong is a climb or a drop, not a wobble.

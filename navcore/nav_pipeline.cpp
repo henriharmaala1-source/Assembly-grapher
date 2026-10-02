@@ -100,7 +100,7 @@ void NavPipeline::reset(const CamPose& origin) {
 }
 
 float NavPipeline::straightFreeM(const CamPose& from, float azDeg,
-                                 float maxM) const {
+                                 float maxM, float elDeg) const {
     if (!cam_) return 0.f;
     // NOTHING PAST THE MARKING RANGE. Returns beyond maxIntegM are never
     // marked OCCUPIED -- that is what the honest range means -- but the rays
@@ -112,11 +112,13 @@ float NavPipeline::straightFreeM(const CamPose& from, float azDeg,
     // evidence where every cell it touches COULD have been marked.
     maxM = std::min(maxM, mp_.maxIntegM - p_.robotR);
     const float a = azDeg * 3.14159265f / 180.f;
-    const float de = std::sin(a), dn = std::cos(a);
+    const float el = elDeg * 3.14159265f / 180.f;
+    const float de = std::sin(a) * std::cos(el), dn = std::cos(a) * std::cos(el);
+    const float du = std::sin(el);
     const float step = mp_.cell * 0.5f;     // no sample skips a whole cell
     float d = 0.f;
     for (float t = step; t <= maxM + 1e-4f; t += step) {
-        const float x = from.e + de * t, y = from.n + dn * t, z = from.u;
+        const float x = from.e + de * t, y = from.n + dn * t, z = from.u + du * t;
         if (!map_.sphereClear(x, y, z, p_.robotR, p_.coreFrac)) break;
         if (map_.stateAt(x, y, z) != VoxelMap::FREE) break;
         if (p_.legCoreM > 0.f &&

@@ -51,9 +51,9 @@ uint16_t MspBackend::axisToUs(float v) {
 }
 
 uint16_t MspBackend::thrToUs(float v) {
-    // Throttle is a climb bias around hover-hold: 0 → mid (FC in ALT_HOLD holds
-    // altitude), 1 → full climb. Descent is left to the FC's altitude mode.
-    v = std::max(0.f, std::min(1.f, v));
+    // Throttle around hover-hold: 0 → mid (FC in ALT_HOLD holds altitude),
+    // +1 → full climb, -1 → full descent (below mid is a descent rate there).
+    v = std::max(-1.f, std::min(1.f, v));
     int us = 1500 + (int)(v * 500.f);
     return (uint16_t)std::max(1000, std::min(2000, us));
 }

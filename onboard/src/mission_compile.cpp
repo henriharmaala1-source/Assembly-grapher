@@ -232,6 +232,7 @@ private:
     int curState_ = -1;                             // the state being compiled
     std::map<std::string, float> sizes_;            // `size LABEL N m`
     bool warnedDirect_ = false;
+    bool warnedDown_ = false;
     std::vector<std::string> labelsUsed_;           // every object label the program names
     std::map<std::string, Place> places_;
     std::map<std::string, int> strIdx_;
@@ -416,6 +417,24 @@ private:
         return addTarget(tg);
     }
 
+    // ---- heights
+    // `height H m` (above the ground) or `above H m` (above the place's own
+    // height -- an object's top). Returns false if neither is next.
+    bool heightOpt(uint8_t& flag, double& v, int line, int col) {
+        if (acceptWord("height")) { flag = FLAG_ALT_ABS; v = positive(Unit::LEN, "the height", 0, 200); }
+        else if (acceptWord("above")) { flag = FLAG_ALT_REL; v = number(Unit::LEN, "the height above it"); }
+        else return false;
+        warnDown(line, col);
+        return true;
+    }
+    void warnDown(int line, int col) {
+        if (warnedDown_) return;
+        warnedDown_ = true;
+        warn(line, col, "changing height: the forward camera checks a glide no steeper than it has "
+                        "seen; a steeper rest is a vertical move NOTHING checks (never below the "
+                        "runtime's floor, except land)");
+    }
+
     // ---- states
     int stateRef(const std::string& name, int line) {
         auto it = stateIdx_.find(name);
@@ -582,6 +601,50 @@ private:
             prog().name = next().text;
             endStatement(); return false;
         }
+        if (w == "follow") {
+            // FOLLOW THE LOCK at a distance: closer than that and it backs
+            // off, farther and it closes, centred on an aim point; optionally
+            // at a height. Ends after `for T`, or `until COND` (timeout T).
+            next();
+            const std::string lab = label();
+            double dist = -1, speed = 2.0, aim = 0, tm = -1;
+            bool strafe = false, forT = false;
+            uint8_t altFlag = 0; double altV = 0;
+            int until = -1;
+            for (;;) {
+                if (acceptWord("at")) dist = positive(Unit::LEN, "the following distance", 0.5, 100);
+                else if (acceptWord("max")) speed = positive(Unit::SPEED, "the top speed", 0.1, 15);
+                else if (acceptWord("aim")) {
+                    double sign = 1;
+                    if (acceptWord("left")) sign = -1;
+                    else if (!acceptWord("right")) acceptWord("centre");
+                    if (at(Tk::NUMBER)) aim = sign * positive(Unit::NONE, "the aim (box widths)", 0, 20);
+                }
+                else if (acceptWord("strafe")) strafe = true;
+                else if (heightOpt(altFlag, altV, L, t.col)) {}
+                else if (acceptWord("for")) { tm = positive(Unit::TIME, "how long", 0.5, 3600); forT = true; }
+                else if (acceptWord("until")) until = condition();
+                else if (acceptWord("timeout")) tm = positive(Unit::TIME, "the timeout", 0.5, 3600);
+                else break;
+            }
+            if (dist < 0) fail(t, "follow needs a distance: follow person at 4 m");
+            if (!forT && until < 0) fail(t, "follow needs an end: `for 60 s` or `until CONDITION`");
+            if (tm < 0) tm = 120;
+            prog().caps |= Program::NEEDS_DETECTOR | Program::NEEDS_RANGE;
+            if (!warnedDirect_) {
+                warnedDirect_ = true;
+                warn(L, t.col, "follow flies at the object with NOTHING checking the way for "
+                               "obstacles -- keep the fence tight");
+            }
+            const int pc = emit(Op::FOLLOW, L);
+            at_(pc).text = str(lab);
+            at_(pc).a = float(dist); at_(pc).b = float(speed); at_(pc).c = float(tm);
+            at_(pc).d = float(aim); at_(pc).e = float(altV);
+            at_(pc).cond = until;
+            at_(pc).flags = uint8_t((strafe ? FLAG_STRAFE : 0) | altFlag | (forT ? FLAG_FOR : 0));
+            elseBranch(pc);
+            endStatement(); return false;
+        }
         if (w == "steer") {
             // STEER ON THE LOCK: aim at a point on the object's box, in box
             // widths so it holds still as the box grows; a speed; a way to
@@ -589,7 +652,7 @@ private:
             next();
             const std::string lab = label();
             double aim = 0, speed = 1.0, timeout = 30;
-            bool strafe = false;
+            bool strafe = false, dive = false;
             int until = -1;
             for (;;) {
                 if (acceptWord("aim")) {
@@ -601,6 +664,9 @@ private:
                     speed = positive(Unit::SPEED, "the speed", 0, 15);
                 } else if (acceptWord("strafe")) {
                     strafe = true;
+                } else if (acceptWord("dive")) {
+                    dive = true;
+                    warnDown(L, t.col);
                 } else if (acceptWord("until")) {
                     until = condition();
                 } else if (acceptWord("timeout")) {
@@ -617,7 +683,7 @@ private:
             at_(pc).text = str(lab);
             at_(pc).a = float(aim); at_(pc).b = float(speed); at_(pc).c = float(timeout);
             at_(pc).cond = until;
-            if (strafe) at_(pc).flags = FLAG_STRAFE;
+            at_(pc).flags = uint8_t((strafe ? FLAG_STRAFE : 0) | (dive ? FLAG_DIVE : 0));
             elseBranch(pc);
             endStatement(); return false;
         }
@@ -658,18 +724,24 @@ private:
                         double sign = 1, *slot = nullptr;
                         if (d == "ahead" || d == "behind") { slot = &a; sign = d == "behind" ? -1 : 1; }
                         else if (d == "right" || d == "left") { slot = &r; sign = d == "left" ? -1 : 1; }
-                        else if (d == "radius" || d == "timeout") break;
+                        else if (d == "radius" || d == "timeout" || d == "above" || d == "height") break;
                         else fail(dt, "'" + d + "': a path point is `to ahead A right R`");
                         next();
                         *slot += sign * number(Unit::LEN, "a distance");
                         if (isSym(",")) next();
                     }
                     double pr = radius;
-                    if (acceptWord("radius")) pr = positive(Unit::LEN, "the arrival radius", 0.3, 20);
+                    uint8_t altFlag = 0; double altV = 0;
+                    for (;;) {
+                        if (heightOpt(altFlag, altV, st.line, st.col)) continue;
+                        if (acceptWord("radius")) { pr = positive(Unit::LEN, "the arrival radius", 0.3, 20); continue; }
+                        break;
+                    }
                     Target off; off.kind = Target::REL; off.base = ai; off.x = a; off.y = r;
                     const int ti = addTarget(off);
                     const int g = emit(Op::GOTO, st.line);
                     at_(g).target = ti; at_(g).a = float(pr); at_(g).b = float(timeout);
+                    at_(g).flags = altFlag; at_(g).c = float(altV);
                     if (facing) {
                         const int fc = emit(Op::TURN_TO_PLACE, st.line);
                         at_(fc).target = ai; at_(fc).b = 20.f;
@@ -831,7 +903,9 @@ private:
             const Place p = placeExpr("a place to fly to");
             prog().caps |= Program::NEEDS_POSITION;
             double radius = w == "over" ? 1.0 : 1.5, timeout = 120, hold = w == "over" ? 3 : 0;
+            uint8_t altFlag = 0; double altV = 0;
             for (;;) {
+                if (heightOpt(altFlag, altV, L, t.col)) continue;
                 if (acceptWord("radius")) radius = positive(Unit::LEN, "the arrival radius", 0.3, 20);
                 else if (acceptWord("timeout")) timeout = positive(Unit::TIME, "the timeout", 1, 3600);
                 else if (w == "over" && acceptWord("hold")) hold = positive(Unit::TIME, "the hold", 0, 600);
@@ -839,6 +913,7 @@ private:
             }
             const int pc = emit(Op::GOTO, L);
             at_(pc).target = p.index; at_(pc).a = float(radius); at_(pc).b = float(timeout);
+            at_(pc).flags = altFlag; at_(pc).c = float(altV);
             elseBranch(pc);
             if (hold > 0) { const int h = emit(Op::HOLD, L); at_(h).a = float(hold); }
             endStatement(); return false;
@@ -1187,7 +1262,28 @@ private:
             elseBranch(pc);
             endStatement(); return false;
         }
-        if (w == "down") fail(t, "descending is the flight controller's job: use `land`");
+        if (w == "down") {
+            next();
+            const int pc = emit(Op::CLIMB_BY, L);
+            at_(pc).a = -float(positive(Unit::LEN, "how far down", 0.1, 100));
+            at_(pc).b = 30.f;
+            if (acceptWord("timeout")) at_(pc).b = float(positive(Unit::TIME, "the timeout", 1, 300));
+            warnDown(L, t.col);
+            elseBranch(pc);
+            endStatement(); return false;
+        }
+        if (w == "altitude") {
+            // To a height above the ground, up or down.
+            next();
+            acceptWord("to");
+            const int pc = emit(Op::CLIMB, L);
+            at_(pc).a = float(positive(Unit::LEN, "the height", 0.3, 200));
+            at_(pc).b = 30.f;
+            if (acceptWord("timeout")) at_(pc).b = float(positive(Unit::TIME, "the timeout", 1, 300));
+            warnDown(L, t.col);
+            elseBranch(pc);
+            endStatement(); return false;
+        }
         if (w == "track") {
             next();
             const std::string lab = label();

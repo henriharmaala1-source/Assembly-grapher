@@ -158,7 +158,7 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
     struct Cand { float brg, len, far, dev; };
     std::vector<Cand> cands;
     auto add = [&](float brg) {
-        const float len = nav_.straightFreeM(pose, brg, p_.legMaxM);
+        const float len = nav_.straightFreeM(pose, brg, p_.legMaxM, s.missionGlideDeg);
         if (len <= 0.f) return;
         float d = brg - r.azDeg;
         while (d > 180.f) d -= 360.f;

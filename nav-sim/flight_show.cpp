@@ -193,7 +193,9 @@ void FlightShow::tick() {
     while (truth_.yawDeg >= 360.f) truth_.yawDeg -= 360.f;
     while (truth_.yawDeg < 0.f) truth_.yawDeg += 360.f;
     v_ += (c.pitch * vPerPitch - v_) * dt / tau;
-    truth_.u += c.throttle * 0.8f * dt;               // a script's climb: 0.8 m/s at full
+    // A script's height changes: 0.8 m/s at full stick, up or down -- never
+    // into the floor slab.
+    truth_.u = std::max(floorZ_ + 0.2f, truth_.u + c.throttle * 0.8f * dt);
     const float a = truth_.yawDeg * kPi / 180.f;
     const float stepE = std::sin(a) * v_ * dt, stepN = std::cos(a) * v_ * dt;
     truth_.e += stepE; truth_.n += stepN;

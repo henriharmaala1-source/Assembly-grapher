@@ -166,7 +166,11 @@ public:
     //
     // Capped at maxIntegM - robotR: past the marking range an obstacle can
     // never become OCCUPIED, so a clear ball there proves nothing.
-    float straightFreeM(const CamPose& from, float azDeg, float maxM) const;
+    // elDeg: the line's elevation, + up / - down -- a GLIDE. Returns the
+    // length ALONG the slope. A slope steeper than the camera has looked
+    // down runs through UNKNOWN cells and so certifies nothing: the field of
+    // view limits it without a rule of its own.
+    float straightFreeM(const CamPose& from, float azDeg, float maxM, float elDeg = 0.f) const;
     // Is every cell of the altitude layer within `r` of (x,y) confirmed FREE?
     // Cells within `r` of (sx,sy) -- the footprint the airframe is standing
     // in at the start of the leg -- are exempt: the aircraft is there, so it

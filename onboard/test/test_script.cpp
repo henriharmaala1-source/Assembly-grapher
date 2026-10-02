@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "control_mode.hpp"
 #include "mission_compile.hpp"
@@ -251,6 +252,119 @@ int main() {
         for (int i = 0; i < 100; ++i) sim.step(m);
         check("before GO it only hovers", std::hypot(sim.s.estPe, sim.s.estPn) < 0.01 && !m.finished(),
               m.status());
+    }
+
+    // ------------------------------------------------- move left, keep heading
+    {
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk("move right 2 m\nmove forward 3 m\nend\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehYawDeg = 0.f;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 120 && !m.finished(); ++i) sim.step(m);
+        char b[128];
+        std::snprintf(b, sizeof b, "at (%.2f, %.2f) heading %.0f, %s", sim.s.estPe, sim.s.estPn,
+                      sim.s.vehYawDeg, m.status().c_str());
+        const double hd = std::fabs(std::remainder(sim.s.vehYawDeg, 360.0));
+        check("`move right 2 m; move forward 3 m` ends 2 E 3 N, facing north again",
+              m.finished() && !m.failed() && std::hypot(sim.s.estPe - 2, sim.s.estPn - 3) < 0.9 &&
+                  hd < 6, b);
+    }
+
+    // ------------------------------- THE DOOR: detect -> track -> state -> behaviour
+    // The detector (YOLO) runs every 10th tick; the tracker every tick once a
+    // script hands it a box. A state machine patrols, a `when` trigger fires
+    // on the door, the tracker takes over, and the behaviour flies.
+    {
+        const char* src =
+            "mission \"door\"\n"
+            "state patrol {\n"
+            "  when seen door -> acquire\n"
+            "  yaw right 90\n"
+            "  hold 1 s\n"
+            "  -> patrol\n"
+            "}\n"
+            "state acquire {\n"
+            "  track door timeout 5 s else { -> patrol }\n"
+            "  -> go_through\n"
+            "}\n"
+            // A trigger belongs to the state where it MATTERS: losing the
+            // door while approaching it means start again; losing it while
+            // stepping aside (which turns the camera away) is the plan.
+            "state go_through {\n"
+            "  when not tracking door -> patrol\n"
+            "  approach door fill 0.5 timeout 60 s\n"
+            "  -> step_aside\n"
+            "}\n"
+            "state step_aside {\n"
+            "  untrack\n"
+            "  move left 1 m\n"
+            "  land\n"
+            "}\n";
+        kms::CompileResult cr = kms::compile(src, "door.kms");
+        check("the door state machine compiles", cr.ok, cr.report("door.kms"));
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk(src), &err);
+        Sim sim; sim.init();
+        sim.s.vehYawDeg = 0.f;
+        const double doorE = 8.0, doorN = 0.5;     // east of the start: patrol must turn to it
+        const int W = 640, H = 480;
+        const double f = 320.0 / std::tan(30.0 * 3.14159265 / 180.0);
+        int detTicks = 0, trackerLocks = 0, lastReq = 0;
+        bool locked = false, sawTracking = false;
+        std::vector<std::string> states;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 180 && !m.finished(); ++i) {
+            // Where the door is in the image, if at all.
+            const double de = doorE - sim.s.estPe, dn = doorN - sim.s.estPn;
+            const double dist = std::hypot(de, dn);
+            double off = std::atan2(de, dn) * 180.0 / 3.14159265 - sim.s.vehYawDeg;
+            while (off > 180) off -= 360;
+            while (off <= -180) off += 360;
+            const bool inView = std::fabs(off) < 28.0;
+            cv::Rect box;
+            if (inView) {
+                const int cx = int(W / 2 + f * std::tan(off * 3.14159265 / 180.0));
+                const int h = int(std::min(470.0, H / dist)), w = h / 2;
+                box = cv::Rect(cx - w / 2, H / 2 - h / 2, w, h);
+            }
+            // THE DETECTOR: slow.
+            if (i % 10 == 0) {
+                ++detTicks;
+                sim.s.detections.clear();
+                if (inView) {
+                    Detection d; d.label = "door"; d.confidence = 0.8f; d.box = box;
+                    sim.s.detections.push_back(d);
+                }
+                sim.s.detStampS = sim.t;
+            }
+            // THE TRACKER: locks on a handed box, then follows every tick.
+            if (sim.s.trackRequestSeq != lastReq) { lastReq = sim.s.trackRequestSeq; locked = true; ++trackerLocks; }
+            sim.s.targetValid = sim.s.targetLocked = locked && inView;
+            if (locked && inView) {
+                sim.s.targetBox = box;
+                sim.s.targetStampS = sim.t;
+                sim.s.targetFixAgeS = 0.f;
+            }
+            sawTracking |= m.stateName() == "go_through";
+            if ((states.empty() || states.back() != m.stateName()) && states.size() < 12)
+                states.push_back(m.stateName());
+            sim.step(m, W, H);
+        }
+        std::string path;
+        for (const auto& st : states) path += (path.empty() ? "" : " > ") + st;
+        check("patrol -> acquire -> go_through -> step_aside, once",
+              path == "patrol > acquire > go_through > step_aside", path);
+        check("the detector handed off ONCE; the tracker did the rest",
+              trackerLocks == 1 && sawTracking, std::to_string(trackerLocks) + " lock(s)");
+        const double dE = doorE - sim.s.estPe, dN = doorN - sim.s.estPn;
+        char b[160];
+        std::snprintf(b, sizeof b, "%.2f m from the door, %s", std::hypot(dE, dN), m.status().c_str());
+        check("it approached to fill 0.5 (2 m), stepped left, and handed LAND to the FC",
+              m.finished() && sim.s.fcRequest == WorldState::FcRequest::LAND &&
+                  std::hypot(dE, dN) > 1.4 && std::hypot(dE, dN) < 3.2, b);
     }
 
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);

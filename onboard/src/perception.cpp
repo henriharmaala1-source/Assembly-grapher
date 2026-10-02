@@ -31,6 +31,13 @@ TrackModule::TrackModule(Backend backend, int boxSize)
 
 void TrackModule::requestLock(cv::Point center) {
     pendingPt_   = center;
+    pendingSize_ = boxSize_;
+    pendingLock_ = true;
+}
+
+void TrackModule::requestLock(cv::Point center, int boxSize) {
+    pendingPt_   = center;
+    pendingSize_ = std::max(16, boxSize);
     pendingLock_ = true;
 }
 
@@ -60,7 +67,7 @@ void TrackModule::run(const cv::Mat& frame, WorldModel& wm) {
     const double tNow = monoNowS();
     if (pendingLock_) {
         pendingLock_ = false;
-        core_->designate(frame, pendingPt_, boxSize_);
+        core_->designate(frame, pendingPt_, pendingSize_ > 0 ? pendingSize_ : boxSize_);
     }
     const track::TrackObs o = core_->update(frame, tNow);
 

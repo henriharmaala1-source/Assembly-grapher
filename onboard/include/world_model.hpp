@@ -187,6 +187,16 @@ struct WorldState {
     // in a ControlCmd.
     enum class FcRequest { NONE, LAND, RTL };
     FcRequest   fcRequest = FcRequest::NONE;
+    std::string scriptState;               // the state machine's current state
+    // HANDING A DETECTION TO THE TRACKER. The detector is slow and heavy; the
+    // lock tracker is cheap and runs every frame. A script's `track door`
+    // puts the detector's box here and bumps the sequence; the runtime
+    // designates the tracker on it. From then on targetBox (above) is the
+    // object, and trackLabel says what it is. A release bumps its own counter.
+    int         trackRequestSeq = 0;
+    cv::Rect    trackRequestBox;
+    int         trackReleaseSeq = 0;
+    std::string trackLabel;
 
     // --- Shadow: what AUTONOMY *would* command, computed but NOT sent (SHADOW
     // mode — operator flies; the overlay is drawn on the feed for validation) ---

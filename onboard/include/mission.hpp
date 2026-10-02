@@ -167,6 +167,13 @@ private:
     float stepFor_(const WorldState& s) const {
         return s.missionLegCapM > 0.f ? std::min(p_.stepM, s.missionLegCapM) : p_.stepM;
     }
+    // A certified leg is worth flying if it is at least voxMinLegM -- or if
+    // it is as long as the cap someone set on purpose (a script's `move left
+    // 0.5 m` is short because it was asked to be, not because the way is shut).
+    bool legWorthIt_(const WorldState& s, float len) const {
+        if (len >= p_.voxMinLegM) return true;
+        return s.missionLegCapM > 0.f && len > 0.2f && len >= s.missionLegCapM - 1e-3f;
+    }
     void  commitWaypoint_(const WorldState& s);
     bool  tallyStuck_(float e, float n);   // net-displacement stuck detector
 

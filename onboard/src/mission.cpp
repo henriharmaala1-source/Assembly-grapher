@@ -305,7 +305,7 @@ void MissionController::thinkVoxel_(const WorldState& s) {
     // The certificate alone decides. It is independent evidence: a straight
     // leg the map confirms free is flyable even when no curved primitive at
     // the planner's speeds survived, and `blocked` with no leg means no leg.
-    if (len >= p_.voxMinLegM) {
+    if (legWorthIt_(s, len)) {
         legBearing_ = s.voxLegBearingDeg;
         legLenM_    = len;
         legE_ = s.estPe; legN_ = s.estPn;
@@ -329,7 +329,7 @@ void MissionController::scanVoxel_(const WorldState& s, ControlCmd& c) {
         return;
     }
     const float len = std::min(stepFor_(s), s.voxLegFreeM - p_.voxStopMarginM);
-    if (s.voxFrames >= p_.voxMinFrames && len >= p_.voxMinLegM) {
+    if (s.voxFrames >= p_.voxMinFrames && legWorthIt_(s, len)) {
         phase_ = Phase::THINK; tPhase_ = 0.f; scanDir_ = 0.f;   // commit next tick
         return;
     }

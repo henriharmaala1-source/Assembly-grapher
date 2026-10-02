@@ -621,6 +621,20 @@ int main(int argc, char** argv) {
         cctx.frameW = frame.cols; cctx.frameH = frame.rows; cctx.dt = (float)dt;
         wm.with([&](WorldState& s) { cmd = modes.tick(s, cctx, rthTrigger); });
 
+        // A SCRIPT HANDING A DETECTION TO THE TRACKER (`track door`): the
+        // detector's box becomes the lock -- its centre, its size.
+        {
+            static int lastReq = 0, lastRel = 0;
+            const WorldState ts = wm.snapshot();
+            if (ts.trackRequestSeq != lastReq) {
+                lastReq = ts.trackRequestSeq;
+                const cv::Rect& b = ts.trackRequestBox;
+                track.requestLock({b.x + b.width / 2, b.y + b.height / 2},
+                                  std::max(b.width, b.height));
+            }
+            if (ts.trackReleaseSeq != lastRel) { lastRel = ts.trackReleaseSeq; track.reset(); }
+        }
+
         // On the dry→live engage edge, latch the operator's current channels. In
         // assist this makes the stick takeover bumpless; in TOTAL autonomy it is
         // the AUX (arm/mode switch) fallback if live MSP_RC ever drops out — so

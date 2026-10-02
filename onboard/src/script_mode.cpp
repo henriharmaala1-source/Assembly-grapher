@@ -65,6 +65,7 @@ bool ScriptMode::loadFile(const std::string& path, std::string* err) {
 void ScriptMode::reset_() {
     started_ = finished_ = failed_ = false;
     pc_ = 0; savedPc_ = -1; inHandler_ = false;
+    state_ = -1; trackReqT_ = -1;
     fired_.assign(prog_.handlers.size(), false);
     regs_.assign(size_t(std::max(0, prog_.registers)), 0.0);
     places_.assign(prog_.targets.size(), Place());
@@ -189,6 +190,7 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
                            cmp(o.cmp, std::hypot(p.e - s.estPe, p.n - s.estPn), o.value);
                 break;
             }
+            case CondOp::TRACKING: st[sp++] = tracking_(s, prog_.strings[size_t(o.arg)]); break;
             case CondOp::NOT: st[sp - 1] = !st[sp - 1]; break;
             case CondOp::AND: --sp; st[sp - 1] = st[sp - 1] && st[sp]; break;
             case CondOp::OR:  --sp; st[sp - 1] = st[sp - 1] || st[sp]; break;
@@ -200,11 +202,22 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
 // ------------------------------------------------------------ detections
 bool ScriptMode::seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
                        float* offDeg, float* distM, float* fill) const {
-    if (s.tickMonoS - s.detStampS > p_.detStaleSec || ctx.frameW <= 0 || ctx.frameH <= 0)
-        return false;
+    if (ctx.frameW <= 0 || ctx.frameH <= 0) return false;
+    const bool detFresh = s.tickMonoS - s.detStampS <= p_.detStaleSec;
     const Detection* best = nullptr;
-    for (const Detection& d : s.detections)
-        if (d.label == label && (!best || d.confidence > best->confidence)) best = &d;
+    if (detFresh)
+        for (const Detection& d : s.detections)
+            if (d.label == label && (!best || d.confidence > best->confidence)) best = &d;
+    Detection fromTracker;
+    if (tracking_(s, label)) {
+        // THE TRACKER'S BOX, which is fresh every frame. Range is not
+        // something a tracker measures: borrow it from a detection of the
+        // same thing that overlaps, if there is one this moment.
+        fromTracker.label = label;
+        fromTracker.box = s.targetBox;
+        if (best && (best->box & s.targetBox).area() > 0) fromTracker.rangeM = best->rangeM;
+        best = &fromTracker;
+    }
     if (!best) return false;
     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
     const double cx = best->box.x + best->box.width * 0.5 - ctx.frameW * 0.5;
@@ -231,6 +244,12 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
         }
     }
     return true;
+}
+
+bool ScriptMode::tracking_(const WorldState& s, const std::string& label) const {
+    return s.trackLabel == label && s.targetValid && s.targetLocked &&
+           s.tickMonoS - s.targetStampS <= p_.detStaleSec &&
+           s.targetFixAgeS >= 0.f && s.targetFixAgeS < 1.0f;
 }
 
 float ScriptMode::yawTo_(float errDeg) const {
@@ -275,6 +294,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
     auto out = [&](ControlCmd c) {
         s.scriptStatus = status_;
         s.scriptLine = (pc_ >= 0 && pc_ < int(prog_.code.size())) ? prog_.code[size_t(pc_)].line : 0;
+        s.scriptState = stateName();
         return c;
     };
     if (finished_) {
@@ -330,6 +350,24 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 status_ = "handler (line " + std::to_string(prog_.handlers[h].line) + ") fired";
                 break;
             }
+
+    // THE STATE'S TRIGGERS: the first that holds switches state, abandoning
+    // whatever the state was in the middle of. Not while a handler runs, and
+    // never into the state it is already in (that would restart it each tick).
+    if (!inHandler_ && state_ >= 0) {
+        const kms::State& st = prog_.states[size_t(state_)];
+        for (int k = st.transStart; k < st.transStart + st.transCount; ++k) {
+            const kms::Transition& tr = prog_.transitions[size_t(k)];
+            if (tr.to != state_ && cond_(tr.cond, s)) {
+                endOp_(s);
+                state_ = tr.to;
+                next_(prog_.states[size_t(tr.to)].pc);
+                status_ = "-> state " + stateName() + " (line " + std::to_string(tr.line) + ")";
+                std::printf("[script] %s\n", status_.c_str());
+                break;
+            }
+        }
+    }
 
     auto fail = [&](const Instr& in, const std::string& why) -> bool {
         endOp_(s);
@@ -396,6 +434,18 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 next_(pc_ + 1);
                 continue;
             }
+            case Op::GO_STATE:
+                endOp_(s);
+                inHandler_ = false;              // a handler that goes somewhere is done
+                state_ = in.target;
+                next_(prog_.states[size_t(state_)].pc);
+                status_ = "-> state " + stateName();
+                continue;
+            case Op::UNTRACK:
+                ++s.trackReleaseSeq;
+                s.trackLabel.clear();
+                next_(pc_ + 1);
+                continue;
             case Op::RESUME:
                 inHandler_ = false;
                 next_(savedPc_ >= 0 ? savedPc_ : pc_ + 1);
@@ -430,6 +480,60 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 status_ = fmt("turning to %03.0f", opAux_);
                 s.missionPhase = "SCAN";
                 return out(c);
+            }
+
+            case Op::TURN_REF: {
+                Place ref;
+                if (!resolve_(in.target, ref)) { next_(pc_ + 1); continue; }
+                const double err = wrap180(ref.refYaw - s.vehYawDeg);
+                if (std::fabs(err) < 4.0) { next_(pc_ + 1); continue; }
+                if (opT_ > in.b) { if (!fail(in, "turn timed out")) return out(hover_()); continue; }
+                ControlCmd c = hover_();
+                c.yaw = yawTo_(float(err));
+                status_ = fmt("turning back to %03.0f", ref.refYaw);
+                s.missionPhase = "SCAN";
+                return out(c);
+            }
+
+            case Op::CLIMB_BY: {
+                if (first) opAux_ = s.vehAltM + in.a;
+                if (s.vehAltM >= opAux_ - 0.15) { next_(pc_ + 1); continue; }
+                if (opT_ > in.b) { if (!fail(in, "climb timed out")) return out(hover_()); continue; }
+                ControlCmd c = hover_();
+                c.throttle = p_.climbThrottle;
+                status_ = fmt("up to %.1f m (%.1f)", opAux_, s.vehAltM);
+                s.missionPhase = "CLIMB";
+                return out(c);
+            }
+
+            case Op::TRACK: {
+                if (first) trackReqT_ = -1;
+                // Locked on it since the request: the tracker has it.
+                if (trackReqT_ >= 0 && tracking_(s, text) && s.targetStampS >= trackReqT_) {
+                    status_ = "tracking '" + text + "'";
+                    next_(pc_ + 1); continue;
+                }
+                if (opT_ > in.a) {
+                    if (!fail(in, trackReqT_ < 0 ? "'" + text + "' never seen to track"
+                                                 : "the tracker did not lock on '" + text + "'"))
+                        return out(hover_());
+                    continue;
+                }
+                if (trackReqT_ < 0 && s.tickMonoS - s.detStampS <= p_.detStaleSec) {
+                    const Detection* best = nullptr;
+                    for (const Detection& d : s.detections)
+                        if (d.label == text && (!best || d.confidence > best->confidence)) best = &d;
+                    if (best) {
+                        s.trackRequestBox = best->box;
+                        ++s.trackRequestSeq;
+                        s.trackLabel = text;
+                        trackReqT_ = s.tickMonoS;
+                    }
+                }
+                status_ = trackReqT_ < 0 ? "waiting to see '" + text + "' to track it"
+                                         : "handing '" + text + "' to the tracker";
+                s.missionPhase = "SCAN";
+                return out(hover_());
             }
 
             case Op::CLIMB: {

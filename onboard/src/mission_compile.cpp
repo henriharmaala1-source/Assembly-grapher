@@ -65,6 +65,9 @@ std::vector<Token> lex(const std::string& src, std::vector<Diagnostic>& diags) {
             col += int(j + 1 - i); i = j + 1;
             continue;
         }
+        if (ch == '-' && i + 1 < src.size() && src[i + 1] == '>') {
+            push(Tk::SYM, "->", 0, l, c); i += 2; col += 2; continue;
+        }
         if ((ch == '<' || ch == '>') && i + 1 < src.size() && src[i + 1] == '=') {
             push(Tk::SYM, std::string(1, ch) + "=", 0, l, c); i += 2; col += 2; continue;
         }
@@ -127,10 +130,23 @@ public:
                 recover();
             }
         }
-        if (!lastTerminal)
-            warn(peek().line, 1, "the program ends without land or rtl: when it finishes "
-                                 "the aircraft hovers where it is (an `end`)");
-        emit(Op::END, peek().line);
+        if (!prog().states.empty()) {
+            // With states, the top level is SETUP: it runs once and then the
+            // first state begins.
+            if (!lastTerminal) {
+                const int g = emit(Op::GO_STATE, peek().line);
+                at_(g).target = 0;
+            }
+        } else {
+            if (!lastTerminal)
+                warn(peek().line, 1, "the program ends without land or rtl: when it finishes "
+                                     "the aircraft hovers where it is (an `end`)");
+            emit(Op::END, peek().line);
+        }
+        for (size_t i = 0; i < prog().states.size(); ++i)
+            if (stateLine_[i] == 0)
+                err(stateRefLine_[i], 1, "no state called '" +
+                                             prog().strings[size_t(prog().states[i].name)] + "'");
         // Handlers after the main program, their jumps relocated.
         Program& p = prog();
         p.code = main_.code;
@@ -141,6 +157,19 @@ public:
                 p.code.push_back(in);
             }
             p.handlers[size_t(h.first)].pc = off;
+        }
+        for (auto& st : stateSecs_) {
+            const int off = int(p.code.size());
+            for (Instr in : st.second.code) {
+                if (in.jump >= 0) in.jump += off;
+                p.code.push_back(in);
+            }
+            p.states[size_t(st.first)].pc = off;
+        }
+        for (size_t i = 0; i < p.states.size(); ++i) {
+            p.states[i].transStart = int(p.transitions.size());
+            p.states[i].transCount = int(stateTrans_[i].size());
+            for (const Transition& t : stateTrans_[i]) p.transitions.push_back(t);
         }
         p.registers = regs_;
         if (p.code.size() > 20000) err(1, 1, "program too large (over 20000 instructions)");
@@ -161,6 +190,12 @@ private:
     Section main_;
     Section* sec_ = nullptr;
     std::vector<std::pair<int, Section>> handlerSecs_;
+    std::vector<std::pair<int, Section>> stateSecs_;
+    std::map<std::string, int> stateIdx_;           // name -> states index
+    std::vector<int> stateLine_;                    // where each was defined (0 = only referenced)
+    std::vector<std::vector<Transition>> stateTrans_;
+    std::vector<int> stateRefLine_;
+    int curState_ = -1;                             // the state being compiled
     std::map<std::string, Place> places_;
     std::map<std::string, int> strIdx_;
     int regs_ = 0;
@@ -342,6 +377,27 @@ private:
         return addTarget(tg);
     }
 
+    // ---- states
+    int stateRef(const std::string& name, int line) {
+        auto it = stateIdx_.find(name);
+        if (it != stateIdx_.end()) return it->second;
+        State st; st.name = str(name);
+        prog().states.push_back(st);
+        const int i = int(prog().states.size()) - 1;
+        stateIdx_[name] = i;
+        stateLine_.push_back(0);
+        stateRefLine_.push_back(line);
+        stateTrans_.emplace_back();
+        return i;
+    }
+    // `-> NAME`, `go NAME` or `go to NAME`.
+    int stateTarget() {
+        acceptWord("to");
+        acceptWord("state");
+        const Token& t = peek();
+        return stateRef(ident("a state name"), t.line);
+    }
+
     // ---- conditions (postfix)
     int condition() {
         CondRange r;
@@ -377,6 +433,12 @@ private:
         if (isSym("(")) { next(); condOr(); expectSym(")", "to close the condition"); return; }
         if (acceptWord("true")) { pushOp(CondOp::TRUE_); return; }
         if (acceptWord("positioned")) { pushOp(CondOp::POSITIONED); return; }
+        if (acceptWord("tracking")) {
+            CondOp c; c.kind = CondOp::TRACKING; c.arg = str(label());
+            prog().condOps.push_back(c);
+            prog().caps |= Program::NEEDS_DETECTOR;
+            return;
+        }
         if (acceptWord("seen")) {
             CondOp c; c.kind = CondOp::SEEN; c.arg = str(label());
             prog().condOps.push_back(c);
@@ -410,7 +472,7 @@ private:
                 prog().condOps.push_back(c);
                 return;
             }
-        fail(t, "expected a condition: seen LABEL, positioned, battery/alt/time/speed/heading "
+        fail(t, "expected a condition: seen LABEL, tracking LABEL, positioned, battery/alt/time/speed/heading "
                 "< N, distance to PLACE < N, not/and/or");
     }
 
@@ -453,6 +515,12 @@ private:
     // ---- statements. Returns true if it ends the program (land/rtl/end).
     bool statement(bool topLevel) {
         const Token t = peek();
+        if (isSym("->")) {                     // `-> STATE`: go there
+            next();
+            const int g = emit(Op::GO_STATE, t.line);
+            at_(g).target = stateTarget();
+            endStatement(); return true;
+        }
         if (t.kind != Tk::IDENT) fail(t, "expected a statement");
         const std::string w = t.text;
         const int L = t.line;
@@ -549,7 +617,7 @@ private:
             prog().caps |= Program::NEEDS_POSITION;
             double radius = w == "over" ? 1.0 : 1.5, timeout = 120, hold = w == "over" ? 3 : 0;
             for (;;) {
-                if (acceptWord("radius")) radius = positive(Unit::LEN, "the arrival radius", 0.75, 20);
+                if (acceptWord("radius")) radius = positive(Unit::LEN, "the arrival radius", 0.3, 20);
                 else if (acceptWord("timeout")) timeout = positive(Unit::TIME, "the timeout", 1, 3600);
                 else if (w == "over" && acceptWord("hold")) hold = positive(Unit::TIME, "the hold", 0, 600);
                 else break;
@@ -781,6 +849,134 @@ private:
             inHandler_ = false;
             sec_ = saved;
             return false;
+        }
+        if (w == "state") {
+            next();
+            if (!topLevel) fail(t, "a 'state' belongs at the top level, not inside a block");
+            const Token nt = peek();
+            const std::string name = ident("the state's name");
+            const int si = stateRef(name, nt.line);
+            if (stateLine_[size_t(si)] != 0)
+                fail(nt, "state '" + name + "' is already defined (line " +
+                             std::to_string(stateLine_[size_t(si)]) + ")");
+            stateLine_[size_t(si)] = L;
+            stateSecs_.emplace_back(si, Section());
+            Section* saved = sec_;
+            sec_ = &stateSecs_.back().second;
+            curState_ = si;
+            bool term = false;
+            try { term = block(); } catch (...) { curState_ = -1; sec_ = saved; throw; }
+            const bool loops = !sec_->code.empty() && sec_->code.back().op == Op::GO_STATE;
+            if (!term && !loops) {
+                warn(L, t.col, "state '" + name + "' ends without going to another state, land "
+                               "or rtl: when its steps run out the aircraft hovers there "
+                               "(its `when` triggers stay live)");
+                emit(Op::END, L);
+            }
+            curState_ = -1;
+            sec_ = saved;
+            return false;
+        }
+        if (w == "when") {
+            next();
+            if (curState_ < 0)
+                fail(t, "'when' is a state's trigger -- put it inside a state { } "
+                        "(for the whole mission use 'on')");
+            const int c = condition();
+            if (!isSym("->") && !isWord("go"))
+                fail(peek(), "expected '-> STATE' after the condition");
+            next();
+            Transition tr; tr.cond = c; tr.line = L; tr.to = stateTarget();
+            stateTrans_[size_t(curState_)].push_back(tr);
+            endStatement(); return false;
+        }
+        if (w == "go") {
+            next();
+            const int g = emit(Op::GO_STATE, L);
+            at_(g).target = stateTarget();
+            endStatement(); return true;
+        }
+        if (w == "move") {
+            next();
+            const Token dt = peek();
+            const std::string d = ident("forward, back, left or right");
+            double ahead = 0, right = 0;
+            const double m = positive(Unit::LEN, "the distance", 0.2, 200);
+            if (d == "forward" || d == "ahead") ahead = m;
+            else if (d == "back" || d == "backward") ahead = -m;
+            else if (d == "right") right = m;
+            else if (d == "left") right = -m;
+            else if (d == "up" || d == "down")
+                fail(dt, "up/down are not moves: use `up 1 m` (climb); descending is the FC's job (land)");
+            else fail(dt, "'" + d + "' is not a direction (forward, back, left, right)");
+            double radius = 0.4, timeout = 60;
+            for (;;) {
+                if (acceptWord("radius")) radius = positive(Unit::LEN, "the arrival radius", 0.3, 20);
+                else if (acceptWord("timeout")) timeout = positive(Unit::TIME, "the timeout", 1, 600);
+                else break;
+            }
+            prog().caps |= Program::NEEDS_POSITION;
+            if (m > prog().fenceM) fail(dt, "that move is longer than the fence");
+            // TRANSLATED: mark here (with the heading it has now), fly to the
+            // point offset from it, turn back to that heading. Every leg on the
+            // way is certified like any other -- a sideways move turns to face
+            // its way first, because the camera only clears what it can see.
+            Target base; base.kind = Target::RUNTIME;
+            const int bi = addTarget(base);
+            const int mk = emit(Op::MARK, L);
+            at_(mk).target = bi;
+            Target off; off.kind = Target::REL; off.base = bi; off.x = ahead; off.y = right;
+            const int oi = addTarget(off);
+            const int g = emit(Op::GOTO, L);
+            at_(g).target = oi; at_(g).a = float(radius); at_(g).b = float(timeout);
+            elseBranch(g);
+            const int tb = emit(Op::TURN_REF, L);
+            at_(tb).target = bi; at_(tb).b = 20.f;
+            endStatement(); return false;
+        }
+        if (w == "yaw") {
+            next();
+            int pc;
+            if (acceptWord("to")) {
+                pc = emit(Op::TURN_TO, L);
+                double h = number(Unit::ANGLE, "a heading");
+                at_(pc).a = float(std::fmod(std::fmod(h, 360.0) + 360.0, 360.0));
+            } else {
+                double sign = 1;
+                if (acceptWord("left")) sign = -1;
+                else if (!acceptWord("right")) fail(peek(), "expected left, right or to");
+                pc = emit(Op::TURN_BY, L);
+                at_(pc).a = float(sign * positive(Unit::ANGLE, "the yaw", 0, 720));
+            }
+            at_(pc).b = 20.f;
+            if (acceptWord("timeout")) at_(pc).b = float(positive(Unit::TIME, "the timeout", 1, 120));
+            endStatement(); return false;
+        }
+        if (w == "up") {
+            next();
+            const int pc = emit(Op::CLIMB_BY, L);
+            at_(pc).a = float(positive(Unit::LEN, "how far up", 0.1, 50));
+            at_(pc).b = 30.f;
+            if (acceptWord("timeout")) at_(pc).b = float(positive(Unit::TIME, "the timeout", 1, 300));
+            elseBranch(pc);
+            endStatement(); return false;
+        }
+        if (w == "down") fail(t, "descending is the flight controller's job: use `land`");
+        if (w == "track") {
+            next();
+            const std::string lab = label();
+            prog().caps |= Program::NEEDS_DETECTOR;
+            const int pc = emit(Op::TRACK, L);
+            at_(pc).text = str(lab);
+            at_(pc).a = 10.f;
+            if (acceptWord("timeout")) at_(pc).a = float(positive(Unit::TIME, "the timeout", 0.5, 120));
+            elseBranch(pc);
+            endStatement(); return false;
+        }
+        if (w == "untrack" || w == "release") {
+            next();
+            emit(Op::UNTRACK, L);
+            endStatement(); return false;
         }
         if (w == "say") {
             next();

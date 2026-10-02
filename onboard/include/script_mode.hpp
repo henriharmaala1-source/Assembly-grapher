@@ -84,6 +84,10 @@ public:
     bool finished() const { return finished_; }
     bool failed() const { return failed_; }
     int  pc() const { return pc_; }
+    // The current state's name, or "" outside the state machine.
+    std::string stateName() const {
+        return state_ >= 0 ? prog_.strings[size_t(prog_.states[size_t(state_)].name)] : std::string();
+    }
     const std::string& status() const { return status_; }
     // Where a target is now, if it can be said (the sim draws them).
     bool targetPos(int i, double& e, double& n) const;
@@ -101,8 +105,11 @@ private:
     void endOp_(WorldState& s);
     // The best fresh detection of `label`, its bearing off the nose (deg, +
     // right) and, if it can be had, its horizontal distance.
+    // The tracker's box is preferred when it is locked on `label` (every
+    // frame, cheap); the detector's otherwise.
     bool seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
                float* offDeg, float* distM, float* fill) const;
+    bool tracking_(const WorldState& s, const std::string& label) const;
     float yawTo_(float errDeg) const;
     // One tick of a mission-cycle leg toward `bearing` capped at `capM`
     // (capM <= 0, goal off: explore).
@@ -118,6 +125,8 @@ private:
 
     bool started_ = false, finished_ = false, failed_ = false;
     int pc_ = 0, savedPc_ = -1;
+    int state_ = -1;          // current state, -1 = none (top level)
+    double trackReqT_ = -1;   // when this TRACK asked for a lock
     bool inHandler_ = false;
     std::vector<bool> fired_;
     std::vector<double> regs_;

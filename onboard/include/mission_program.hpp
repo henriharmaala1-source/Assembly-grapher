@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -58,6 +58,14 @@ enum class Op : uint8_t {
     LAND,         // hand the FC its LAND; the program ends
     RTL,          // hand the FC its return-to-launch; the program ends
     RESUME,       // end of an `on` handler: go back to what was interrupted
+    GO_STATE,     // target = state: enter it (its transitions become live)
+    TRACK,        // text = label, a = timeout s, jump = never locked: hand the
+                  // best detection's box to the lightweight tracker and wait
+                  // for it to lock -- from then on the tracker, not the
+                  // detector, says where the object is, every frame
+    UNTRACK,      // release the tracker
+    TURN_REF,     // target: turn back to that place's reference heading, b = timeout
+    CLIMB_BY,     // a = metres up from where this starts, b = timeout, jump = on failure
     COUNT_
 };
 
@@ -89,7 +97,8 @@ struct Target {
 // Conditions are postfix: atoms push a truth value, AND/OR/NOT combine them.
 // The loader checks every condition leaves exactly one value.
 struct CondOp {
-    enum Kind : uint8_t { TRUE_ = 0, SEEN, VAR, DIST, POSITIONED, NOT, AND, OR };
+    enum Kind : uint8_t { TRUE_ = 0, SEEN, VAR, DIST, POSITIONED, NOT, AND, OR,
+                          TRACKING };   // TRACKING: arg = label, the tracker locked on it
     enum Var  : uint8_t { BATTERY = 0, ALT, TIME, SPEED, HEADING };
     enum Cmp  : uint8_t { LT = 0, LE, GT, GE };
     Kind    kind = TRUE_;
@@ -113,6 +122,18 @@ struct Instr {
 // once. Its body ends in LAND/RTL/END, or RESUME back to what it interrupted.
 struct Handler { int32_t cond = -1, pc = -1, line = 0; };
 
+// A STATE MACHINE on top of the instructions. A state is a named entry point;
+// while it is current its transitions are checked every tick, and the first
+// that holds switches state -- abandoning whatever the state was doing. That
+// is the "object seen -> behaviour" trigger: the behaviour is the state's
+// code, the trigger its `when` line.
+struct Transition { int32_t cond = -1, to = -1, line = 0; };
+struct State {
+    int32_t name = -1;               // strings index
+    int32_t pc = -1;                 // its first instruction
+    int32_t transStart = 0, transCount = 0;
+};
+
 struct Program {
     enum Cap : uint32_t {
         NEEDS_POSITION = 1u,   // goto/over/orbit/survey/dist/fence
@@ -132,6 +153,8 @@ struct Program {
     std::vector<CondOp>      condOps;
     std::vector<CondRange>   conds;
     std::vector<Handler>     handlers;
+    std::vector<State>       states;
+    std::vector<Transition>  transitions;
     std::vector<Instr>       code;
 };
 

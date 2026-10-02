@@ -23,7 +23,9 @@ public:
     float       costMs() const override { return 3.f; }
     void        run(const cv::Mat& frame, WorldModel& wm) override;
 
-    void requestLock(cv::Point center);   // operator / LLM designates a target
+    void requestLock(cv::Point center);
+    // ...with the box size too: a detector's box, handed over by a script.
+    void requestLock(cv::Point center, int boxSize);   // operator / LLM designates a target
     void setBackend(Backend b);
     void reset();
 
@@ -43,6 +45,7 @@ private:
     int           boxSize_;
     bool          pendingLock_ = false;
     cv::Point     pendingPt_;
+    int           pendingSize_ = 0;      // 0 = the configured boxSize_
 };
 
 // ---------------------------------------------------------------- navigate

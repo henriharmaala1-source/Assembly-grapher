@@ -12,7 +12,8 @@ const char* opName(Op o) {
     static const char* N[] = {"END", "HOLD", "GOTO", "TURN_TO", "TURN_BY", "CLIMB", "SEARCH",
                               "FACE", "APPROACH", "EXPLORE", "RUN", "WAIT", "JUMP",
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
-                              "SAY", "LAND", "RTL", "RESUME"};
+                              "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
+                              "TURN_REF", "CLIMB_BY"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
@@ -101,6 +102,10 @@ std::vector<uint8_t> serialize(const Program& p) {
     for (const auto& c : p.conds) { w.i32(c.start); w.i32(c.count); }
     w.u32(uint32_t(p.handlers.size()));
     for (const auto& h : p.handlers) { w.i32(h.cond); w.i32(h.pc); w.i32(h.line); }
+    w.u32(uint32_t(p.states.size()));
+    for (const auto& st : p.states) { w.i32(st.name); w.i32(st.pc); w.i32(st.transStart); w.i32(st.transCount); }
+    w.u32(uint32_t(p.transitions.size()));
+    for (const auto& t : p.transitions) { w.i32(t.cond); w.i32(t.to); w.i32(t.line); }
     w.u32(uint32_t(p.code.size()));
     for (const auto& in : p.code) {
         w.u8(uint8_t(in.op)); w.i32(in.line); w.i32(in.target); w.i32(in.jump);
@@ -136,7 +141,7 @@ bool verify(const Program& p, std::string* err) {
             const CondOp& c = p.condOps[size_t(j)];
             switch (c.kind) {
                 case CondOp::TRUE_: case CondOp::POSITIONED: ++depth; break;
-                case CondOp::SEEN:
+                case CondOp::SEEN: case CondOp::TRACKING:
                     if (c.arg < 0 || c.arg >= nS) return fail("condition: bad label");
                     ++depth; break;
                 case CondOp::VAR:
@@ -154,6 +159,13 @@ bool verify(const Program& p, std::string* err) {
         }
         if (depth != 1) return fail("condition " + std::to_string(k) + ": does not reduce to one value");
     }
+    const int nSt = int(p.states.size()), nTr = int(p.transitions.size());
+    for (const State& st : p.states)
+        if (st.name < 0 || st.name >= nS || st.pc < 0 || st.pc >= nI || st.transStart < 0 ||
+            st.transCount < 0 || st.transStart + st.transCount > nTr)
+            return fail("state out of range");
+    for (const Transition& t : p.transitions)
+        if (t.cond < 0 || t.cond >= nC || t.to < 0 || t.to >= nSt) return fail("transition out of range");
     for (const Handler& h : p.handlers)
         if (h.cond < 0 || h.cond >= nC || h.pc < 0 || h.pc >= nI) return fail("handler out of range");
     for (int i = 0; i < nI; ++i) {
@@ -164,7 +176,10 @@ bool verify(const Program& p, std::string* err) {
         if (in.cond < -1 || in.cond >= nC) return fail(at + "condition out of range");
         if (in.text < -1 || in.text >= nS) return fail(at + "text out of range");
         switch (in.op) {
-            case Op::GOTO: case Op::MARK: case Op::MARK_SEEN:
+            case Op::GO_STATE:
+                if (in.target < 0 || in.target >= int(p.states.size())) return fail(at + "state out of range");
+                break;
+            case Op::GOTO: case Op::MARK: case Op::MARK_SEEN: case Op::TURN_REF:
                 if (in.target < 0 || in.target >= nT) return fail(at + "target out of range");
                 break;
             case Op::SET_REG: case Op::LOOP: case Op::TIMER: case Op::JUMP_TIMEUP:
@@ -177,14 +192,17 @@ bool verify(const Program& p, std::string* err) {
         if (in.op == Op::JUMP_IFNOT && (in.cond < 0 || in.jump < 0)) return fail(at + "branch incomplete");
         if (in.op == Op::WAIT && in.cond < 0) return fail(at + "wait without condition");
         if ((in.op == Op::SEARCH || in.op == Op::FACE || in.op == Op::APPROACH ||
-             in.op == Op::SAY || in.op == Op::RUN || in.op == Op::MARK_SEEN) && in.text < 0)
+             in.op == Op::SAY || in.op == Op::RUN || in.op == Op::MARK_SEEN ||
+             in.op == Op::TRACK) && in.text < 0)
             return fail(at + "missing text");
         // Every op that takes time has a bound: nothing waits for ever.
         const bool timed = in.op == Op::GOTO || in.op == Op::TURN_TO || in.op == Op::TURN_BY ||
-                           in.op == Op::CLIMB || in.op == Op::APPROACH;
+                           in.op == Op::CLIMB || in.op == Op::APPROACH || in.op == Op::TURN_REF ||
+                           in.op == Op::CLIMB_BY;
         if (timed && !(in.b > 0.f)) return fail(at + "no timeout");
         if ((in.op == Op::HOLD || in.op == Op::EXPLORE || in.op == Op::RUN ||
-             in.op == Op::SEARCH || in.op == Op::FACE || in.op == Op::WAIT) && !(in.a > 0.f))
+             in.op == Op::SEARCH || in.op == Op::FACE || in.op == Op::WAIT ||
+             in.op == Op::TRACK) && !(in.a > 0.f))
             return fail(at + "no duration");
     }
     return true;
@@ -219,6 +237,13 @@ bool deserialize(const std::vector<uint8_t>& bytes, Program& out, std::string* e
     }
     for (uint32_t n = r.count(12), i = 0; i < n && !r.bad; ++i) {
         Handler h; h.cond = r.i32(); h.pc = r.i32(); h.line = r.i32(); p.handlers.push_back(h);
+    }
+    for (uint32_t n = r.count(16), i = 0; i < n && !r.bad; ++i) {
+        State st; st.name = r.i32(); st.pc = r.i32(); st.transStart = r.i32(); st.transCount = r.i32();
+        p.states.push_back(st);
+    }
+    for (uint32_t n = r.count(12), i = 0; i < n && !r.bad; ++i) {
+        Transition t; t.cond = r.i32(); t.to = r.i32(); t.line = r.i32(); p.transitions.push_back(t);
     }
     for (uint32_t n = r.count(29), i = 0; i < n && !r.bad; ++i) {
         Instr in;
@@ -294,12 +319,27 @@ std::string disassemble(const Program& p) {
         std::snprintf(buf, sizeof buf, "  on cond#%d -> %d   (line %d)\n", h.cond, h.pc, h.line);
         o << buf;
     }
+    for (const State& st : p.states) {
+        std::snprintf(buf, sizeof buf, "  state %-12s -> %d\n", S(st.name).c_str(), st.pc);
+        o << buf;
+        for (int k = st.transStart; k < st.transStart + st.transCount; ++k) {
+            const Transition& t = p.transitions[size_t(k)];
+            std::snprintf(buf, sizeof buf, "    when cond#%d -> state %s   (line %d)\n", t.cond,
+                          S(p.states[size_t(t.to)].name).c_str(), t.line);
+            o << buf;
+        }
+    }
     for (size_t i = 0; i < p.code.size(); ++i) {
         const Instr& in = p.code[i];
         std::string arg;
         switch (in.op) {
             case Op::GOTO: arg = T(in.target) + cv_fmt(" r=%.2f t=%.0f", in.a, in.b); break;
-            case Op::MARK: arg = T(in.target); break;
+            case Op::MARK: case Op::TURN_REF: arg = T(in.target); break;
+            case Op::GO_STATE:
+                arg = in.target >= 0 && in.target < int(p.states.size())
+                          ? S(p.states[size_t(in.target)].name) : "?";
+                break;
+            case Op::TRACK: arg = "\"" + S(in.text) + "\"" + cv_fmt(" %.0f s", in.a); break;
             case Op::MARK_SEEN: arg = T(in.target) + " = seen \"" + S(in.text) + "\""; break;
             case Op::SEARCH: case Op::FACE: case Op::APPROACH: case Op::RUN: case Op::SAY:
                 arg = "\"" + S(in.text) + "\"" + cv_fmt(" %.2f %.2f", in.a, in.b); break;

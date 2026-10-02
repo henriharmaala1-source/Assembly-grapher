@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 7;
+constexpr uint32_t kVersion = 8;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -92,6 +92,11 @@ enum class Op : uint8_t {
     // to follow (then it succeeds); otherwise until `cond`, c the timeout.
     // jump = lost it.
     FOLLOW,
+    // FLY AT THE CROSSHAIR: a fixed point in the camera image, a = x and
+    // d = y in -1..1 of the half-frame (+ right, + up); fly along the 3D ray
+    // through it at throttle b (0..1 of top speed); FLAG_FOR: for c seconds,
+    // else until `cond` (c the timeout). No detector needed.
+    FLY,
     COUNT_
 };
 
@@ -155,7 +160,11 @@ constexpr uint8_t FLAG_STRAFE = 2;    // STEER/FOLLOW: roll to it, do not yaw
 constexpr uint8_t FLAG_ALT_ABS = 4;
 constexpr uint8_t FLAG_ALT_REL = 8;
 constexpr uint8_t FLAG_DIVE = 16;     // STEER: centre it vertically too -- down the line of sight
-constexpr uint8_t FLAG_FOR = 32;      // FOLLOW: c is a duration, not a timeout
+constexpr uint8_t FLAG_FOR = 32;      // FOLLOW/FLY: c is a duration, not a timeout
+// STEER: the crosshair law -- fly along the 3D ray through the aim point
+// (a box widths right, d box heights up of the lock's centre) at throttle b
+// (0..1), rather than level at b m/s.
+constexpr uint8_t FLAG_RAY = 64;
 
 // `on COND { ... }`: checked every tick while the main program runs; fires
 // once. Its body ends in LAND/RTL/END, or RESUME back to what it interrupted.

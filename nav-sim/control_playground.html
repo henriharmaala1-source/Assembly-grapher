@@ -1,0 +1,522 @@
+<title>Kestrel Control Playground</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: the aircraft's camera on the left (where you put the crosshair),
+   the 3D world from behind it on the right, the stick inputs under them,
+   and the recorded program -- which becomes mission text -- at the bottom. */
+:root {
+  --bg: #eef2f4; --panel: #ffffff; --ink: #17222b; --muted: #5d6b76; --line: #d3dce2;
+  --accent: #2869e6; --trigger: #c97a0a; --ok: #2c8a52; --danger: #c2392f;
+  --code-bg: #f6f8f9; --chip: #e6ecf0;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
+    --accent: #6c9cff; --trigger: #f0a43a; --ok: #5fcf8c; --danger: #ff7a70;
+    --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
+  --accent: #6c9cff; --trigger: #f0a43a; --ok: #5fcf8c; --danger: #ff7a70;
+  --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--body); font-size: 14px; line-height: 1.45; padding-inline: 16px; padding-block: 14px 28px; }
+h1, h2 { font-family: var(--display); font-weight: 600; margin: 0; text-wrap: balance; }
+h1 { font-size: 26px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+button, select, input { font: inherit; color: var(--ink); }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sub { color: var(--muted); max-width: 78ch; margin: 4px 0 14px; }
+.views { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 860px) { .views { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-width: 0; }
+.view { position: relative; width: 100%; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; background: #8fa5b5; }
+.view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.view canvas.hud { cursor: crosshair; touch-action: none; }
+.cap { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.hint { font-size: 12px; color: var(--muted); }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row + .row { margin-top: 8px; }
+label.f { display: flex; flex-direction: column; gap: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+select, input[type="number"] { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; min-width: 0; }
+input[type="number"] { width: 76px; font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.big { font-family: var(--display); font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 6px 12px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.warn { color: var(--danger); }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-radius: 6px; background: var(--chip); font-size: 13px; }
+.seg.now { outline: 2px solid var(--accent); }
+.seg b { font-family: var(--mono); font-size: 12px; color: var(--accent); min-width: 18px; }
+.seg input[type="number"] { width: 64px; padding: 2px 5px; }
+.segs { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.prog { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 860px) { .prog { grid-template-columns: minmax(0, 1fr); } }
+pre.code { margin: 8px 0 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; line-height: 1.55; overflow: auto; max-height: 300px; white-space: pre; }
+.toast { font-size: 12px; color: var(--ok); min-height: 1em; }
+.icon { border: 0; background: transparent; color: var(--muted); padding: 1px 5px; border-radius: 4px; }
+.icon:hover { color: var(--danger); }
+.stat { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+#nogl { display: none; padding: 12px; color: var(--danger); }
+</style>
+
+<header>
+  <h1>Kestrel Control Playground</h1>
+  <p class="sub">Put the crosshair where the quad should go and set the throttle. It flies along the line through the crosshair, so a crosshair low in the view takes it down and one to the side turns it. Pin the crosshair to a lock to fly relative to an object, record the moves as segments, and copy the mission text to compile with kestrel.</p>
+</header>
+<div id="nogl" class="panel">3D could not start here (WebGL, or three.js from cdnjs, is unavailable). The control law and the mission export below still work.</div>
+
+<section class="views">
+  <div class="panel">
+    <div class="cap"><h2>The quad's camera</h2><span class="hint" id="fpvHint">Drag to place the crosshair</span></div>
+    <div class="view" id="fpvView"><canvas id="fpvGl"></canvas><canvas id="fpvHud" class="hud" aria-label="Camera view: drag to place the crosshair"></canvas></div>
+  </div>
+  <div class="panel">
+    <div class="cap"><h2>The world, from behind it</h2><span class="stat" id="stat"></span></div>
+    <div class="view" id="chaseView"><canvas id="chaseGl"></canvas></div>
+  </div>
+</section>
+
+<section class="controls">
+  <div class="panel">
+    <h2>Throttle</h2>
+    <div class="row" style="margin-top:6px"><span class="big" id="thrOut">0.40</span><span class="hint">of top speed, along the crosshair</span></div>
+    <input id="thr" type="range" min="0" max="1" step="0.05" value="0.4" aria-label="Throttle">
+    <div class="row"><button class="btn primary" id="play">Fly</button><button class="btn" id="reset">Back to start</button></div>
+  </div>
+  <div class="panel">
+    <h2>Crosshair</h2>
+    <div class="row" style="margin-top:6px">
+      <label class="f">Pinned to<select id="mode"><option value="screen">nothing: fixed in view</option><option value="lock">the lock on an object</option></select></label>
+      <label class="f">Object<select id="target"></select></label>
+    </div>
+    <div class="row"><span class="stat" id="xhOut"></span></div>
+  </div>
+  <div class="panel">
+    <h2>Camera and start</h2>
+    <div class="row" style="margin-top:6px">
+      <label class="f">Tilt down (deg)<input id="tilt" type="number" step="5" value="30"></label>
+      <label class="f">Field of view<input id="hfov" type="number" step="5" value="60"></label>
+      <label class="f">Start height (m)<input id="alt0" type="number" step="1" value="8"></label>
+    </div>
+    <p class="hint" style="margin:8px 0 0">The same numbers the aircraft's SCRIPT mode uses (`script.det_tilt_deg`, `script.det_hfov_deg`).</p>
+  </div>
+</section>
+
+<section class="prog">
+  <div class="panel">
+    <div class="row" style="justify-content:space-between"><h2>Program</h2>
+      <div class="row"><button class="btn" id="addSeg">Record this move</button><button class="btn primary" id="runProg">Run it from the start</button></div></div>
+    <div class="row" style="margin-top:8px">
+      <label class="f">Each move lasts<select id="endType"><option value="for">a time</option><option value="until">until close to the object</option></select></label>
+      <label class="f" id="endValL">Seconds<input id="endVal" type="number" step="0.5" value="3"></label>
+    </div>
+    <div class="segs" id="segs"></div>
+  </div>
+  <div class="panel">
+    <div class="row" style="justify-content:space-between"><h2>mission.kms</h2><button class="btn primary" id="copy">Copy</button></div>
+    <div class="toast" id="toast" aria-live="polite"></div>
+    <pre class="code" id="code"></pre>
+    <p class="hint">Check and compile on your computer: <span class="stat">kestrel mission check playground.kms</span>. On the quad this runs on the C++ interpreter; the flight here is a preview with a copy of the same control law.</p>
+  </div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+// LAW-BEGIN ---------------------------------------------------------------
+// THE CROSSHAIR LAW, a copy of ScriptMode::crosshair_ (onboard/src/
+// script_mode.cpp). Pinned to the same three cases as test_script.cpp by
+// nav-sim/test/crosshair_parity.js -- if one changes, both tests say so.
+const LAW = { hfov: 60, tilt: 30, mpsPerStick: 4, vertMpsPerStick: 1.5, yawKp: 1.2, maxYaw: 0.5, minAlt: 1.0 };
+// px, py: the crosshair in pixels from the image centre (+ right, + DOWN);
+// W: image width; throttle 0..1; alt: height now. -> sticks, each -1..1.
+function crosshairCmd(px, py, W, throttle, alt, law) {
+  const L = law || LAW, d2r = Math.PI / 180;
+  const f = (W * 0.5) / Math.tan(L.hfov * 0.5 * d2r);
+  const az = Math.atan(px / f) / d2r;
+  const el = -L.tilt - Math.atan(py / f) / d2r;
+  const t = Math.max(0, Math.min(1, throttle));
+  const yaw = Math.max(-L.maxYaw, Math.min(L.maxYaw, L.yawKp * az / 90));
+  const pitch = t * Math.cos(el * d2r) * Math.max(0, 1 - Math.abs(az) / 30);
+  let v = t * L.mpsPerStick * Math.sin(el * d2r) / Math.max(0.1, L.vertMpsPerStick);
+  v = Math.max(-1, Math.min(1, v));
+  if (v < 0 && alt <= L.minAlt) v = 0;
+  return { yaw, pitch, roll: 0, throttle: v };
+}
+// LAW-END -----------------------------------------------------------------
+if (typeof module !== "undefined") module.exports = { crosshairCmd, LAW };
+
+if (typeof document !== "undefined") (function () {
+  const $ = (id) => document.getElementById(id);
+  const d2r = Math.PI / 180;
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+  // ------------------------------------------------------------ the world
+  // ENU metres: e east, n north, u up. three.js: x = e, y = u, z = -n.
+  const OBJECTS = [
+    { label: "door", e: 0, n: 14, w: 1.0, h: 2.0, d: 0.15, color: 0x9a6a3a },
+    { label: "lightpole", e: 7, n: 26, w: 0.25, h: 6.0, d: 0.25, color: 0x8a9096 },
+    { label: "crate", e: -6, n: 20, w: 1.0, h: 0.8, d: 1.0, color: 0xb88a3c },
+    { label: "person", e: 3, n: 9, w: 0.5, h: 1.7, d: 0.3, color: 0x3d6fb5 },
+  ];
+  const WALLS = [
+    { e: -2.5, n: 14, w: 4, h: 3, d: 0.3 }, { e: 2.5, n: 14, w: 4, h: 3, d: 0.3 },
+    { e: -14, n: 30, w: 6, h: 8, d: 6 }, { e: 16, n: 12, w: 5, h: 5, d: 8 }, { e: -10, n: 4, w: 3, h: 2, d: 3 },
+  ];
+  for (const o of OBJECTS) { const opt = document.createElement("option"); opt.value = o.label; opt.textContent = o.label; $("target").append(opt); }
+
+  // ------------------------------------------------------------ state
+  const st = { e: 0, n: 0, u: 8, yaw: 0, v: 0, trail: [] };
+  const xh = { x: 0, y: -0.2, a: 0, d: 0 };     // screen x,y (-1..1, + up); lock a,d (box widths/heights)
+  let playing = false, prog = [], run = null;   // run: { i, t }
+  const ui = { mode: "screen", target: "door", thr: 0.4, endType: "for", endVal: 3 };
+
+  function reset() {
+    st.e = 0; st.n = 0; st.u = Number($("alt0").value) || 8; st.yaw = 0; st.v = 0; st.trail = [];
+  }
+  reset();
+
+  // ------------------------------------------------------------ three.js
+  let three = null;
+  try {
+    if (!window.THREE) throw new Error("no three");
+    const make = (canvas) => { const r = new THREE.WebGLRenderer({ canvas, antialias: true }); r.setPixelRatio(Math.min(2, devicePixelRatio || 1)); return r; };
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xb9cbd8);
+    scene.fog = new THREE.Fog(0xb9cbd8, 40, 140);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x556655, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(20, 40, 10); scene.add(sun);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0x9fb08f }));
+    ground.rotation.x = -Math.PI / 2; scene.add(ground);
+    const grid = new THREE.GridHelper(200, 100, 0x6f7f66, 0x86977c); grid.position.y = 0.01; scene.add(grid);
+    const box = (o, color) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(o.w, o.h, o.d), new THREE.MeshLambertMaterial({ color }));
+      m.position.set(o.e, o.h / 2, -o.n); scene.add(m); return m;
+    };
+    for (const wl of WALLS) box(wl, 0xc4c9cc);
+    for (const o of OBJECTS) box(o, o.color);
+    // The quad: a body and four arms.
+    const quad = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.35), new THREE.MeshLambertMaterial({ color: 0x222831 }));
+    quad.add(body);
+    for (const [x, z] of [[0.3, 0.3], [-0.3, 0.3], [0.3, -0.3], [-0.3, -0.3]]) {
+      const r = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.02, 16), new THREE.MeshLambertMaterial({ color: 0xe8edf0 }));
+      r.position.set(x, 0.07, z); quad.add(r);
+    }
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.2, 10), new THREE.MeshLambertMaterial({ color: 0xd2492a }));
+    nose.rotation.x = -Math.PI / 2; nose.position.set(0, 0, -0.28); quad.add(nose);
+    scene.add(quad);
+    const trailGeo = new THREE.BufferGeometry();
+    const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xf0a43a }));
+    scene.add(trail);
+    const rayGeo = new THREE.BufferGeometry();
+    const ray = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({ color: 0x2869e6 }));
+    scene.add(ray);
+    const fpvR = make($("fpvGl")), chaseR = make($("chaseGl"));
+    const fpvCam = new THREE.PerspectiveCamera(45, 1.6, 0.05, 400);
+    const chaseCam = new THREE.PerspectiveCamera(55, 1.6, 0.05, 400);
+    three = { scene, quad, trail, trailGeo, ray, rayGeo, fpvR, chaseR, fpvCam, chaseCam };
+  } catch (e) {
+    $("nogl").style.display = "block";
+  }
+
+  // ------------------------------------------------------------ geometry
+  function law() { return Object.assign({}, LAW, { hfov: Number($("hfov").value) || 60, tilt: Number($("tilt").value) || 0 }); }
+  function size(canvas) {
+    const r = canvas.getBoundingClientRect();
+    return { W: Math.max(100, Math.round(r.width)), H: Math.max(60, Math.round(r.height)) };
+  }
+  // The camera's pose: at the quad, yawed, tilted down. three's camera looks
+  // along -z (north here); yaw is clockwise from north.
+  function placeFpv(cam, W, H) {
+    const L = law();
+    cam.aspect = W / H;
+    cam.fov = 2 * Math.atan(Math.tan(L.hfov * 0.5 * d2r) * H / W) / d2r;
+    cam.updateProjectionMatrix();
+    cam.position.set(st.e, st.u, -st.n);
+    cam.rotation.order = "YXZ";
+    cam.rotation.set(-L.tilt * d2r, -st.yaw * d2r, 0);
+    cam.updateMatrixWorld();
+  }
+  // Pixel offset from the image centre (+ right, + down) of a world point,
+  // or null behind the camera -- through the same pinhole as the law.
+  function project(L, W, H, e, n, u) {
+    const de = e - st.e, dn = n - st.n, du = u - st.u;
+    const cy = Math.cos(st.yaw * d2r), sy = Math.sin(st.yaw * d2r);
+    const fwd = de * sy + dn * cy, right = de * cy - dn * sy;   // level frame
+    const ct = Math.cos(L.tilt * d2r), stt = Math.sin(L.tilt * d2r);
+    const zc = fwd * ct - du * stt, yc = fwd * stt + du * ct;     // tilted down: + y is up
+    if (zc < 0.1) return null;
+    const f = (W * 0.5) / Math.tan(L.hfov * 0.5 * d2r);
+    return { px: f * right / zc, py: -f * yc / zc };
+  }
+  // The lock: the object's box in the image (its 8 corners projected).
+  function lockBox(L, W, H) {
+    const o = OBJECTS.find(o => o.label === ui.target);
+    if (!o) return null;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, n = 0;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const hz of [0, 1]) {
+      const p = project(L, W, H, o.e + sx * o.w / 2, o.n + sz * o.d / 2, hz * o.h);
+      if (!p) continue;
+      n++; x0 = Math.min(x0, p.px); x1 = Math.max(x1, p.px); y0 = Math.min(y0, p.py); y1 = Math.max(y1, p.py);
+    }
+    if (n < 8 || x1 < -W / 2 || x0 > W / 2 || y1 < -H / 2 || y0 > H / 2) return null;
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+  function rangeTo(label) {
+    const o = OBJECTS.find(o => o.label === label);
+    return o ? Math.hypot(o.e - st.e, o.n - st.n, o.h / 2 - st.u) : Infinity;
+  }
+  // The crosshair in pixels from centre, for the current mode; null if it
+  // is pinned to a lock that is not in view.
+  function crosshairPx(seg, L, W, H) {
+    const mode = seg ? seg.mode : ui.mode;
+    if (mode === "screen") {
+      const x = seg ? seg.x : xh.x, y = seg ? seg.y : xh.y;
+      return { px: x * W / 2, py: -y * H / 2, box: null };
+    }
+    const saved = ui.target;
+    if (seg) ui.target = seg.target;
+    const b = lockBox(L, W, H);
+    ui.target = saved;
+    if (!b) return null;
+    const a = seg ? seg.a : xh.a, d = seg ? seg.d : xh.d;
+    return { px: b.x + b.w * (0.5 + a), py: b.y + b.h * (0.5 - d), box: b };
+  }
+
+  // ------------------------------------------------------------ physics
+  // The test airframe of test_script.cpp: forward speed lags the stick
+  // (4 m/s at full, 0.35 s), yaw 90 deg/s at full, 1.5 m/s vertical.
+  function step(cmd, dt) {
+    st.yaw = (st.yaw + cmd.yaw * 90 * dt + 360) % 360;
+    st.v += (cmd.pitch * 4 - st.v) * dt / 0.35;
+    st.u = Math.max(0, st.u + cmd.throttle * 1.5 * dt);
+    st.e += Math.sin(st.yaw * d2r) * st.v * dt;
+    st.n += Math.cos(st.yaw * d2r) * st.v * dt;
+    const last = st.trail[st.trail.length - 1];
+    if (!last || Math.hypot(last[0] - st.e, last[1] - st.n, last[2] - st.u) > 0.15) st.trail.push([st.e, st.n, st.u]);
+    if (st.trail.length > 4000) st.trail.shift();
+  }
+  function hover() { return { yaw: 0, pitch: 0, roll: 0, throttle: 0 }; }
+
+  // One 20 Hz tick: the live crosshair, or the program's current segment.
+  let lastCmd = hover();
+  function tick(dt) {
+    const L = law(), { W, H } = size($("fpvHud"));
+    let seg = null;
+    if (run) {
+      seg = prog[run.i];
+      if (!seg) { run = null; playing = false; $("play").textContent = "Fly"; render(); return; }
+      run.t += dt;
+      const done = seg.endType === "for" ? run.t >= seg.endVal : rangeTo(seg.target) < seg.endVal || run.t > 30;
+      if (done) { run.i++; run.t = 0; renderSegs(); return; }
+    }
+    const c = crosshairPx(seg, L, W, H);
+    const thr = seg ? seg.thr : ui.thr;
+    lastCmd = c ? crosshairCmd(c.px, c.py, W, thr, st.u, L) : hover();   // lock out of view: hover
+    step(lastCmd, dt);
+  }
+
+  // ------------------------------------------------------------ drawing
+  function drawHud() {
+    const cv = $("fpvHud"), { W, H } = size(cv), dpr = devicePixelRatio || 1;
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    const g = cv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const L = law(), cx = W / 2, cy = H / 2;
+    const seg = run ? prog[run.i] : null;
+    const box = (seg ? seg.mode : ui.mode) === "lock" ? (() => { const s = ui.target; if (seg) ui.target = seg.target; const b = lockBox(L, W, H); ui.target = s; return b; })() : null;
+    if (box) {
+      g.strokeStyle = css("--trigger"); g.lineWidth = 2;
+      g.strokeRect(cx + box.x - 3, cy + box.y - 3, box.w + 6, box.h + 6);
+      g.fillStyle = css("--trigger"); g.font = "600 12px " + css("--body");
+      g.fillText("LOCK: " + (seg ? seg.target : ui.target), cx + box.x - 3, cy + box.y - 8);
+    }
+    const c = crosshairPx(seg, L, W, H);
+    g.strokeStyle = "rgba(255,255,255,.55)"; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(cx - 10, cy); g.lineTo(cx + 10, cy); g.moveTo(cx, cy - 10); g.lineTo(cx, cy + 10); g.stroke();
+    if (c) {
+      const x = cx + c.px, y = cy + c.py;
+      g.strokeStyle = "#ffffff"; g.lineWidth = 4; xhair(g, x, y);
+      g.strokeStyle = css("--accent"); g.lineWidth = 2; xhair(g, x, y);
+    } else {
+      g.fillStyle = css("--danger"); g.font = "600 14px " + css("--body");
+      g.fillText("lock out of view: hovering", 12, 24);
+    }
+    // Sticks, bottom left.
+    g.fillStyle = "rgba(10,16,20,.55)"; g.fillRect(8, H - 64, 210, 56);
+    g.fillStyle = "#fff"; g.font = "12px " + css("--mono");
+    g.fillText("yaw " + lastCmd.yaw.toFixed(2) + "  pitch " + lastCmd.pitch.toFixed(2), 16, H - 44);
+    g.fillText("throttle " + lastCmd.throttle.toFixed(2) + (lastCmd.throttle < 0 ? " (down)" : lastCmd.throttle > 0 ? " (up)" : ""), 16, H - 26);
+    g.fillText("height " + st.u.toFixed(1) + " m", 16, H - 12);
+  }
+  function xhair(g, x, y) {
+    g.beginPath(); g.arc(x, y, 10, 0, 7); g.stroke();
+    g.beginPath(); g.moveTo(x - 18, y); g.lineTo(x - 5, y); g.moveTo(x + 5, y); g.lineTo(x + 18, y);
+    g.moveTo(x, y - 18); g.lineTo(x, y - 5); g.moveTo(x, y + 5); g.lineTo(x, y + 18); g.stroke();
+  }
+  function render() {
+    if (three) {
+      const t = three;
+      t.quad.position.set(st.e, st.u, -st.n);
+      t.quad.rotation.set(0, -st.yaw * d2r, 0);
+      t.trailGeo.setFromPoints(st.trail.map(p => new THREE.Vector3(p[0], p[2], -p[1])));
+      // The crosshair's ray in the world, 25 m out.
+      const L = law(), fs = size($("fpvHud"));
+      const c = crosshairPx(run ? prog[run.i] : null, L, fs.W, fs.H);
+      if (c) {
+        const f = (fs.W * 0.5) / Math.tan(L.hfov * 0.5 * d2r);
+        const az = Math.atan(c.px / f), el = -L.tilt * d2r - Math.atan(c.py / f);
+        const h = (st.yaw * d2r) + az;
+        const end = [st.e + 25 * Math.cos(el) * Math.sin(h), st.n + 25 * Math.cos(el) * Math.cos(h), st.u + 25 * Math.sin(el)];
+        t.rayGeo.setFromPoints([new THREE.Vector3(st.e, st.u, -st.n), new THREE.Vector3(end[0], end[2], -end[1])]);
+        t.ray.visible = true;
+      } else t.ray.visible = false;
+      const a = size($("fpvGl")), b = size($("chaseGl"));
+      t.fpvR.setSize(a.W, a.H, false); placeFpv(t.fpvCam, a.W, a.H);
+      t.quad.visible = false; t.ray.visible && (t.ray.visible = false);
+      t.fpvR.render(t.scene, t.fpvCam);
+      t.quad.visible = true; t.ray.visible = !!c;
+      t.chaseR.setSize(b.W, b.H, false);
+      t.chaseCam.aspect = b.W / b.H; t.chaseCam.updateProjectionMatrix();
+      const back = 7, up = 3.5;
+      t.chaseCam.position.set(st.e - back * Math.sin(st.yaw * d2r), st.u + up, -(st.n - back * Math.cos(st.yaw * d2r)));
+      t.chaseCam.lookAt(st.e + 4 * Math.sin(st.yaw * d2r), st.u - 1, -(st.n + 4 * Math.cos(st.yaw * d2r)));
+      t.chaseR.render(t.scene, t.chaseCam);
+    }
+    drawHud();
+    $("stat").textContent = "height " + st.u.toFixed(1) + " m  ·  speed " + st.v.toFixed(1) + " m/s  ·  " + ui.target + " " + rangeTo(ui.target).toFixed(1) + " m";
+    $("xhOut").textContent = ui.mode === "screen"
+      ? "crosshair x " + xh.x.toFixed(2) + ", y " + xh.y.toFixed(2) + " of the frame"
+      : "crosshair " + xh.a.toFixed(2) + " box widths right, " + xh.d.toFixed(2) + " box heights up of the lock";
+  }
+
+  // ------------------------------------------------------------ input
+  const hud = $("fpvHud");
+  let dragging = false;
+  function setXh(e) {
+    const r = hud.getBoundingClientRect(), W = r.width, H = r.height;
+    const px = e.clientX - r.left - W / 2, py = e.clientY - r.top - H / 2;
+    if (ui.mode === "screen") {
+      xh.x = Math.max(-1, Math.min(1, Math.round(px / (W / 2) * 100) / 100));
+      xh.y = Math.max(-1, Math.min(1, Math.round(-py / (H / 2) * 100) / 100));
+    } else {
+      const b = lockBox(law(), W, H);
+      if (!b) return;
+      xh.a = Math.round(((px - b.x) / b.w - 0.5) * 20) / 20;
+      xh.d = Math.round((0.5 - (py - b.y) / b.h) * 20) / 20;
+    }
+    render(); renderOut();
+  }
+  hud.addEventListener("pointerdown", (e) => { dragging = true; hud.setPointerCapture(e.pointerId); setXh(e); });
+  hud.addEventListener("pointermove", (e) => { if (dragging) setXh(e); });
+  hud.addEventListener("pointerup", () => { dragging = false; });
+  $("thr").addEventListener("input", (e) => { ui.thr = Number(e.target.value); $("thrOut").textContent = ui.thr.toFixed(2); });
+  $("mode").addEventListener("change", (e) => { ui.mode = e.target.value; render(); });
+  $("target").addEventListener("change", (e) => { ui.target = e.target.value; render(); });
+  for (const id of ["tilt", "hfov"]) $(id).addEventListener("input", () => { render(); renderOut(); });
+  $("alt0").addEventListener("input", () => { if (!playing) { reset(); render(); } });
+  $("play").addEventListener("click", () => { playing = !playing; if (!playing) run = null; $("play").textContent = playing ? "Pause" : "Fly"; renderSegs(); });
+  $("reset").addEventListener("click", () => { reset(); run = null; playing = false; $("play").textContent = "Fly"; renderSegs(); render(); });
+  $("endType").addEventListener("change", (e) => {
+    ui.endType = e.target.value;
+    $("endValL").firstChild.textContent = ui.endType === "for" ? "Seconds" : "Metres from it";
+    $("endVal").value = ui.endType === "for" ? 3 : 3;
+  });
+  $("addSeg").addEventListener("click", () => {
+    prog.push({ mode: ui.mode, target: ui.target, x: xh.x, y: xh.y, a: xh.a, d: xh.d, thr: ui.thr,
+                endType: ui.endType, endVal: Number($("endVal").value) || 3 });
+    renderSegs(); renderOut();
+  });
+  $("runProg").addEventListener("click", () => {
+    if (!prog.length) { toast("Record a move first."); return; }
+    reset(); run = { i: 0, t: 0 }; playing = true; $("play").textContent = "Pause"; renderSegs();
+  });
+  $("copy").addEventListener("click", () => {
+    const text = generate();
+    try { navigator.clipboard.writeText(text).then(() => toast("Copied. Save it as playground.kms."), () => toast("Select the text and copy it.")); }
+    catch (e) { toast("Select the text and copy it."); }
+  });
+  function toast(m) { $("toast").textContent = m; setTimeout(() => { if ($("toast").textContent === m) $("toast").textContent = ""; }, 2500); }
+
+  // ------------------------------------------------------------ program
+  function renderSegs() {
+    const box = $("segs");
+    box.textContent = "";
+    if (!prog.length) { const p = document.createElement("p"); p.className = "hint"; p.textContent = "Place the crosshair, set the throttle, then Record this move. Each move becomes one line of the mission."; box.append(p); return; }
+    prog.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.className = "seg" + (run && run.i === i ? " now" : "");
+      const num = (v, step, on) => { const n = document.createElement("input"); n.type = "number"; n.step = step; n.value = v; n.addEventListener("input", (e) => { on(Number(e.target.value)); renderOut(); }); return n; };
+      const b = document.createElement("b"); b.textContent = String(i + 1);
+      const t = document.createElement("span");
+      t.textContent = s.mode === "screen" ? "crosshair " + s.x.toFixed(2) + ", " + s.y.toFixed(2) : "on the " + s.target + " lock " + s.a.toFixed(2) + " right, " + s.d.toFixed(2) + " up";
+      const del = document.createElement("button"); del.className = "icon"; del.textContent = "✕"; del.setAttribute("aria-label", "Remove move");
+      del.addEventListener("click", () => { prog.splice(i, 1); renderSegs(); renderOut(); });
+      row.append(b, t, document.createTextNode("throttle"), num(s.thr, "0.05", (v) => s.thr = Math.max(0, Math.min(1, v))),
+        document.createTextNode(s.endType === "for" ? "for" : "until within"), num(s.endVal, "0.5", (v) => s.endVal = v),
+        document.createTextNode(s.endType === "for" ? "s" : "m of the " + s.target), del);
+      box.append(row);
+    });
+  }
+  const fmt = (x) => String(Math.round(x * 100) / 100);
+  function generate() {
+    const L = [];
+    L.push("# Written by the Kestrel control playground: fly at the crosshair.");
+    L.push("#   kestrel mission check playground.kms   then   kestrel mission compile playground.kms");
+    L.push("# Camera on the aircraft must match: tilt " + fmt(law().tilt) + " deg down, field of view " + fmt(law().hfov) + " deg");
+    L.push("#   (script.det_tilt_deg = -" + fmt(law().tilt) + ", script.det_hfov_deg = " + fmt(law().hfov) + ")");
+    L.push('mission "playground"');
+    L.push("fence 60 m");
+    L.push("timeout 5 min");
+    L.push("on battery < 25% { rtl }");
+    const used = new Set(prog.filter(s => s.mode === "lock" || s.endType === "until").map(s => s.target));
+    for (const lbl of used) { const o = OBJECTS.find(o => o.label === lbl); if (o) L.push("size " + lbl + " " + fmt(o.h) + " m"); }
+    L.push("nav direct");
+    L.push("");
+    for (const s of prog) {
+      const end = s.endType === "for" ? "for " + fmt(s.endVal) + " s"
+                : "until range to " + s.target + " < " + fmt(s.endVal) + " m timeout 30 s";
+      if (s.mode === "screen") {
+        L.push("fly crosshair " + fmt(s.x) + " " + fmt(s.y) + " throttle " + fmt(s.thr) + " " + end + " else { hold 1 s }");
+      } else {
+        const a = s.a, d = s.d;
+        L.push("steer " + s.target + " aim " + (a < 0 ? "left " + fmt(-a) : "right " + fmt(a)) + " " +
+               (d < 0 ? "down " + fmt(-d) : "up " + fmt(d)) + " throttle " + fmt(s.thr) + " " + end + " else { hold 1 s }");
+      }
+    }
+    L.push("land");
+    return L.join("\n") + "\n";
+  }
+  function renderOut() { $("code").textContent = generate(); }
+
+  // ------------------------------------------------------------ loop
+  let last = performance.now(), acc = 0;
+  function frame(now) {
+    const dt = Math.min(0.2, (now - last) / 1000); last = now;
+    if (playing) { acc += dt; while (acc >= 0.05) { tick(0.05); acc -= 0.05; } }
+    render();
+    requestAnimationFrame(frame);
+  }
+  // A starting program, so the page shows what it does: down toward the
+  // door, then along its lock.
+  prog = [
+    { mode: "screen", target: "door", x: 0, y: -0.3, a: 0, d: 0, thr: 0.4, endType: "for", endVal: 2.5 },
+    { mode: "lock", target: "door", x: 0, y: 0, a: 0, d: 0.3, thr: 0.4, endType: "until", endVal: 4 },
+  ];
+  renderSegs(); renderOut(); render();
+  requestAnimationFrame(frame);
+})();
+</script>

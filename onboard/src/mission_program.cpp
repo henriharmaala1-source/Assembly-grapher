@@ -15,7 +15,7 @@ const char* opName(Op o) {
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
                               "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
                               "TURN_REF", "CLIMB_BY", "APPROACH_TO", "NAV",
-                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW"};
+                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW", "FLY"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
@@ -202,6 +202,9 @@ bool verify(const Program& p, std::string* err) {
             return fail(at + "jump missing");
         if (in.op == Op::JUMP_IFNOT && (in.cond < 0 || in.jump < 0)) return fail(at + "branch incomplete");
         if (in.op == Op::WAIT && in.cond < 0) return fail(at + "wait without condition");
+        if (in.op == Op::FLY && (std::fabs(in.a) > 1.f || std::fabs(in.d) > 1.f || !(in.b >= 0.f) ||
+                                 in.b > 1.f || !(in.c > 0.f)))
+            return fail(at + "fly needs a crosshair inside the frame, a throttle 0..1 and a time");
         if (in.op == Op::FOLLOW && (!(in.a > 0.f) || !(in.b > 0.f) || !(in.c > 0.f)))
             return fail(at + "follow needs a distance, a top speed and a time");
         if (in.op == Op::STEER && (!(in.c > 0.f) || !(in.b >= 0.f) || std::fabs(in.a) > 20.f))
@@ -364,6 +367,10 @@ std::string disassemble(const Program& p) {
                       ((in.flags & FLAG_ALT_ABS) ? cv_fmt(" height %.1f", in.c, 0) :
                        (in.flags & FLAG_ALT_REL) ? cv_fmt(" above it %.1f", in.c, 0) : std::string());
                 break;
+            case Op::FLY:
+                arg = cv_fmt("crosshair %+.2f %+.2f", in.a, in.d) + cv_fmt(" throttle %.2f ", in.b) +
+                      ((in.flags & FLAG_FOR) ? "for" : "timeout") + cv_fmt(" %.1f s", in.c);
+                break;
             case Op::FOLLOW:
                 arg = "\"" + S(in.text) + "\"" + cv_fmt(" at %.1f m, <= %.1f m/s", in.a, in.b) +
                       cv_fmt(", aim %+.1f, ", in.d) + ((in.flags & FLAG_FOR) ? "for" : "timeout") +
@@ -373,7 +380,9 @@ std::string disassemble(const Program& p) {
                 break;
             case Op::MARK: case Op::TURN_REF: case Op::TURN_TO_PLACE: arg = T(in.target); break;
             case Op::STEER:
-                arg = "\"" + S(in.text) + "\"" + cv_fmt(" aim %+.2f widths, %.2f m/s", in.a, in.b) +
+                arg = "\"" + S(in.text) + "\"" + ((in.flags & FLAG_RAY)
+                          ? cv_fmt(" crosshair %+.2f w %+.2f h on it, throttle %.2f", in.a, in.d, in.b)
+                          : cv_fmt(" aim %+.2f widths, %.2f m/s", in.a, in.b)) +
                       cv_fmt(", until cond#%d, %.0f s", in.cond, in.c) +
                       ((in.flags & FLAG_STRAFE) ? " strafe" : "");
                 break;

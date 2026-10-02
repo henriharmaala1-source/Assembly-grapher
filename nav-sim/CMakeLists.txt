@@ -398,6 +398,8 @@ target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 # `kestrel mission editor` and the window's mission list find them beside it.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mission_editor.html
                ${CMAKE_CURRENT_BINARY_DIR}/mission_editor.html COPYONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/control_playground.html
+               ${CMAKE_CURRENT_BINARY_DIR}/control_playground.html COPYONLY)
 file(GLOB KESTREL_MISSIONS ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/missions/*.kms)
 foreach(m ${KESTREL_MISSIONS})
   get_filename_component(mn ${m} NAME)
@@ -419,6 +421,13 @@ if(BUILD_TESTS)
   # on the Windows runner. Its own timeout, and alone -- run in parallel it
   # starved rl_env_check past ITS limit too.
   set_tests_properties(mission_sim_rooms PROPERTIES TIMEOUT 400 RUN_SERIAL TRUE)
+  # The control playground's copy of the crosshair law against the C++ one's
+  # numbers -- when there is a node to run it with.
+  find_program(NODE_EXE node)
+  if(NODE_EXE)
+    add_test(NAME crosshair_parity
+             COMMAND ${NODE_EXE} ${CMAKE_CURRENT_SOURCE_DIR}/test/crosshair_parity.js)
+  endif()
   add_executable(flight_show_check test/flight_show_check.cpp flight_show.cpp
                  ${KESTREL_AUTONOMY_SRC})
   target_include_directories(flight_show_check PRIVATE

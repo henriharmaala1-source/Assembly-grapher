@@ -136,6 +136,7 @@ jobs:
           # The visual mission editor and the example missions, beside the exe
           # where `kestrel mission` and the window's mission panel look.
           Copy-Item mission_editor.html dist/
+          Copy-Item control_playground.html dist/
           New-Item -ItemType Directory -Force dist/missions | Out-Null
           Copy-Item ../onboard/missions/*.kms dist/missions/
           # YOLOX-nano is compiled into kestrel.exe; Apache-2.0 asks that its

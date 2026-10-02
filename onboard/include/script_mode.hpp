@@ -76,6 +76,10 @@ public:
         float altKp        = 0.8f;
         float maxVert      = 0.6f;
         float diveKp       = 0.08f;  // vertical stick per degree the aim sits below centre
+        // THE CROSSHAIR LAW: vertical metres per second at full stick (the
+        // airframe's own; ArduPilot PILOT_SPEED_UP/DN), for turning the
+        // ray's climb into a stick.
+        float vertMpsPerStick = 1.5f;
     };
     using ModeLookup = std::function<IControlMode*(const std::string&)>;
 
@@ -188,6 +192,11 @@ private:
                       double distM) const;
     // Vertical stick toward a height, the floor applied.
     float vertTo_(const WorldState& s, double heightM) const;
+    // THE CROSSHAIR LAW, shared by `fly crosshair` and `steer ... aim up`:
+    // a point in the image at (px, py) pixels from the centre (+ right,
+    // + down) and a throttle 0..1 -> fly along the 3D ray through it.
+    ControlCmd crosshair_(const WorldState& s, const ControlCtx& ctx, double px, double py,
+                          float throttle) const;
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction
     double opAux_ = 0;       // per-op scratch (a turn's goal heading, last-seen time)

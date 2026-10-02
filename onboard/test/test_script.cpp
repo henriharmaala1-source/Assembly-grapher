@@ -734,6 +734,57 @@ int main() {
               m.finished() && !m.failed() && errSum / std::max(1, errN) < 0.8 && backed && minRange > 2.5, b);
     }
 
+    // ======================================================= THE CROSSHAIR LAW
+    // One tick, exact numbers: camera 30 deg down, 60 deg FoV, 640x480,
+    // 4 m/s and 1.5 m/s per full stick, 10 m up. These same cases pin the
+    // JavaScript copy in nav-sim/control_playground.html (test/crosshair_cases).
+    {
+        struct Case { double x, y, t, yaw, pitch, thr; };
+        const Case cases[] = {
+            // x, y (-1..1, + right/up), throttle -> yaw, pitch, throttle sticks
+            {0.0, 0.0, 0.5, 0.0, 0.4330, -0.6667},
+            // el = -30 + atan(120/554.26) = -17.78 deg: 0.5 cos, 0.5*4*sin/1.5
+            {0.0, 0.5, 0.5, 0.0, 0.4761, -0.4072},
+            // az = atan(160/554.26) = 16.10 deg: yaw 1.2*16.10/90; pitch eased
+            // by (1 - 16.10/30); el -42.2 deg saturates the vertical stick
+            {0.5, -0.5, 0.8, 0.2147, 0.2745, -1.0000},
+        };
+        bool all = true; std::string got;
+        for (const Case& k : cases) {
+            ScriptMode m(params());
+            std::string err;
+            char src[160];
+            std::snprintf(src, sizeof src, "fly crosshair %.2f %.2f throttle %.2f for 5 s\nend\n", k.x, k.y, k.t);
+            m.load(compileOk(src), &err);
+            WorldState w; w.estValid = true; w.vehAltM = 10.f; w.missionGo = true;
+            m.onEnter(w); w.missionGo = true;
+            ControlCtx c; c.dt = 0.05f; c.frameW = 640; c.frameH = 480;
+            const ControlCmd cmd = m.update(w, c);
+            const bool ok = std::fabs(cmd.yaw - k.yaw) < 2e-3 && std::fabs(cmd.pitch - k.pitch) < 2e-3 &&
+                            std::fabs(cmd.throttle - k.thr) < 2e-3;
+            char b[120]; std::snprintf(b, sizeof b, "[%.4f %.4f %.4f] ", cmd.yaw, cmd.pitch, cmd.throttle);
+            got += b;
+            all &= ok;
+        }
+        check("the crosshair law: exact sticks for three crosshairs", all, got);
+    }
+    {
+        // Fly 4 s at a crosshair half-way down the frame from 10 m up: it
+        // goes forward AND down along that ray (camera 30 deg down + 12 deg).
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk("fly crosshair 0 -0.5 throttle 0.5 for 4 s\nend\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehAltM = 10.f;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 6 && !m.finished(); ++i) sim.step(m);
+        const double fwd = sim.s.estPn, down = 10.0 - sim.s.vehAltM;
+        const double slope = std::atan2(down, fwd) * 57.2958;
+        char b[128]; std::snprintf(b, sizeof b, "%.2f m forward, %.2f m down: slope %.0f deg (ray 42)", fwd, down, slope);
+        check("`fly crosshair 0 -0.5`: forward and down along the ray", m.finished() && down > 1.0 &&
+              fwd > 1.0 && slope > 30.0 && slope < 55.0, b);
+    }
+
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

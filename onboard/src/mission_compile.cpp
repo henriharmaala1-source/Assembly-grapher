@@ -651,8 +651,8 @@ private:
             // turn; and what ends it.
             next();
             const std::string lab = label();
-            double aim = 0, speed = 1.0, timeout = 30;
-            bool strafe = false, dive = false;
+            double aim = 0, aimUp = 0, speed = 1.0, timeout = 30;
+            bool strafe = false, dive = false, ray = false, forT = false;
             int until = -1;
             for (;;) {
                 if (acceptWord("aim")) {
@@ -660,6 +660,16 @@ private:
                     if (acceptWord("left")) sign = -1;
                     else if (!acceptWord("right")) acceptWord("centre");
                     if (at(Tk::NUMBER)) aim = sign * positive(Unit::NONE, "the aim (box widths)", 0, 20);
+                    // ...and up/down of the box's centre, in box HEIGHTS: the
+                    // crosshair is then a point in 3D, and it flies at it.
+                    if (isWord("up") || isWord("down")) {
+                        const double vs = next().text == "up" ? 1 : -1;
+                        aimUp = vs * positive(Unit::NONE, "the aim (box heights)", 0, 20);
+                        ray = true;
+                    }
+                } else if (acceptWord("throttle")) {
+                    speed = positive(Unit::NONE, "the throttle (0..1)", 0, 1);
+                    ray = true;
                 } else if (acceptWord("speed")) {
                     speed = positive(Unit::SPEED, "the speed", 0, 15);
                 } else if (acceptWord("strafe")) {
@@ -669,6 +679,9 @@ private:
                     warnDown(L, t.col);
                 } else if (acceptWord("until")) {
                     until = condition();
+                } else if (acceptWord("for")) {
+                    timeout = positive(Unit::TIME, "how long", 0.1, 600);
+                    forT = true;
                 } else if (acceptWord("timeout")) {
                     timeout = positive(Unit::TIME, "the timeout", 0.5, 600);
                 } else break;
@@ -683,7 +696,47 @@ private:
             at_(pc).text = str(lab);
             at_(pc).a = float(aim); at_(pc).b = float(speed); at_(pc).c = float(timeout);
             at_(pc).cond = until;
-            at_(pc).flags = uint8_t((strafe ? FLAG_STRAFE : 0) | (dive ? FLAG_DIVE : 0));
+            at_(pc).flags = uint8_t((strafe ? FLAG_STRAFE : 0) | (dive ? FLAG_DIVE : 0) |
+                                    (ray ? FLAG_RAY : 0) | (forT ? FLAG_FOR : 0));
+            at_(pc).d = float(aimUp);
+            if (ray && !(speed <= 1.0))
+                fail(t, "with a crosshair, set `throttle 0..1` rather than a speed");
+            if (ray) warnDown(L, t.col);
+            elseBranch(pc);
+            endStatement(); return false;
+        }
+        if (w == "fly") {
+            // FLY AT THE CROSSHAIR: a fixed point in the camera image and a
+            // throttle; the aircraft flies along the ray through it. The
+            // simplest control there is, and the one the 3D playground draws.
+            next();
+            if (!acceptWord("crosshair")) fail(peek(), "expected `fly crosshair X Y throttle T for S s`");
+            const double x = number(Unit::NONE, "the crosshair x (-1..1, + right)");
+            if (isSym(",")) next();
+            const double y = number(Unit::NONE, "the crosshair y (-1..1, + up)");
+            if (std::fabs(x) > 1.0 || std::fabs(y) > 1.0) fail(t, "the crosshair must be inside the frame: -1..1");
+            double thr = 0.5, tm = -1;
+            bool forT = false;
+            int until = -1;
+            for (;;) {
+                if (acceptWord("throttle")) thr = positive(Unit::NONE, "the throttle (0..1)", 0, 1);
+                else if (acceptWord("for")) { tm = positive(Unit::TIME, "how long", 0.1, 600); forT = true; }
+                else if (acceptWord("until")) until = condition();
+                else if (acceptWord("timeout")) tm = positive(Unit::TIME, "the timeout", 0.1, 600);
+                else break;
+            }
+            if (!forT && until < 0) fail(t, "fly needs an end: `for 3 s` or `until CONDITION`");
+            if (tm < 0) tm = 30;
+            if (!warnedDirect_) {
+                warnedDirect_ = true;
+                warn(L, t.col, "fly flies where the crosshair points with NOTHING checking the way -- "
+                               "keep it short and the fence tight");
+            }
+            warnDown(L, t.col);
+            const int pc = emit(Op::FLY, L);
+            at_(pc).a = float(x); at_(pc).d = float(y); at_(pc).b = float(thr); at_(pc).c = float(tm);
+            at_(pc).cond = until;
+            at_(pc).flags = forT ? FLAG_FOR : 0;
             elseBranch(pc);
             endStatement(); return false;
         }

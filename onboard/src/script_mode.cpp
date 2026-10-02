@@ -359,6 +359,26 @@ double ScriptMode::topHeight_(const WorldState& s, const ControlCtx& ctx, const 
     return std::max(0.0, double(s.vehAltM) + distM * std::tan(elTop * kD2R));
 }
 
+ControlCmd ScriptMode::crosshair_(const WorldState& s, const ControlCtx& ctx, double px,
+                                  double py, float throttle) const {
+    // Horizontal angle of the crosshair off the nose, and the ELEVATION of
+    // the ray through it: the camera's tilt plus its angle above centre.
+    const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
+    const double az = std::atan(px / f) / kD2R;
+    const double el = p_.detTiltDeg - std::atan(py / f) / kD2R;
+    ControlCmd c = hover_();
+    c.yaw = yawTo_(float(az));
+    const float t = std::max(0.f, std::min(1.f, throttle));
+    // Along the ray: its horizontal part forward (eased while turning onto
+    // it), its vertical part up or down -- the floor still holds.
+    c.pitch = t * float(std::cos(el * kD2R)) * std::max(0.f, 1.f - float(std::fabs(az)) / 30.f);
+    float v = t * p_.mpsPerStick * float(std::sin(el * kD2R)) / std::max(0.1f, p_.vertMpsPerStick);
+    v = std::max(-1.f, std::min(1.f, v));
+    if (v < 0.f && s.vehAltM <= p_.minAltM) v = 0.f;
+    c.throttle = v;
+    return c;
+}
+
 float ScriptMode::vertTo_(const WorldState& s, double heightM) const {
     const double target = std::max(double(p_.minAltM), heightM);
     float v = float(p_.altKp * (target - s.vehAltM));
@@ -630,6 +650,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 continue;
             case Op::STEER: {
                 if (in.cond >= 0 && cond_(in.cond, s)) { status_ = "steer: done"; next_(pc_ + 1); continue; }
+                if ((in.flags & kms::FLAG_FOR) && opT_ >= in.c) { status_ = "steer: done"; next_(pc_ + 1); continue; }
                 if (opT_ > in.c) {
                     if (!fail(in, "steer: its until never came true")) return out(hover_());
                     continue;
@@ -642,6 +663,16 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
                     const double ax = box.x + box.width * (0.5 + double(in.a)) - ctx.frameW * 0.5;
                     const float aimDeg = float(std::atan(ax / f) / kD2R);
+                    if (in.flags & kms::FLAG_RAY) {
+                        // THE CROSSHAIR, PINNED TO THE LOCK: a box widths
+                        // right and d box heights up of its centre.
+                        const double ay = box.y + box.height * (0.5 - double(in.d)) - ctx.frameH * 0.5;
+                        ControlCmd c = crosshair_(s, ctx, ax, ay, in.b);
+                        s.missionActive = true;
+                        s.missionPhase = "DIRECT";
+                        status_ = "steer on '" + text + "' along the crosshair";
+                        return out(c);
+                    }
                     ControlCmd c = hover_();
                     if (in.flags & kms::FLAG_DIVE) {
                         // DOWN THE LINE OF SIGHT: keep the aim point centred
@@ -671,6 +702,22 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                     continue;
                 }
                 return out(hover_());                    // a moment out of view: hold still
+            }
+            case Op::FLY: {
+                const bool forT = (in.flags & kms::FLAG_FOR) != 0;
+                if (forT && opT_ >= in.c) { next_(pc_ + 1); continue; }
+                if (!forT && in.cond >= 0 && cond_(in.cond, s)) { next_(pc_ + 1); continue; }
+                if (!forT && opT_ > in.c) {
+                    if (!fail(in, "fly: its until never came true")) return out(hover_());
+                    continue;
+                }
+                const double px = double(in.a) * ctx.frameW * 0.5;
+                const double py = -double(in.d) * ctx.frameH * 0.5;
+                ControlCmd c = crosshair_(s, ctx, px, py, in.b);
+                s.missionActive = true;
+                s.missionPhase = "DIRECT";
+                status_ = fmt("fly at the crosshair, throttle %.2f", in.b);
+                return out(c);
             }
             case Op::FOLLOW: {
                 const bool forT = (in.flags & kms::FLAG_FOR) != 0;

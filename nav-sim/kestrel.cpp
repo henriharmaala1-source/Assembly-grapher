@@ -731,6 +731,8 @@ int main(int argc, char** argv) {
             "                        SCRIPT mode in gallery/hall (--world --seed\n"
             "                        --seconds --lowres --shot PREFIX)\n"
             "                      mission editor             the visual state-machine editor\n"
+            "                      mission playground         3D: fly at a crosshair with a\n"
+            "                        throttle, record the moves, export them\n"
             "                    States, triggers (`when seen door -> approach`), the\n"
             "                    tracker hand-off, moves: onboard/docs/mission-scripts.md\n"
             "  train --install   pip the RL stack into the interpreter that can\n"

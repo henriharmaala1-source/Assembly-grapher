@@ -626,16 +626,18 @@ struct Cfg {
     bool  rNoHome = false;
     bool  rStereo = false, rNoVeto = false, rVary = false;
     // mission: what to do with a behaviour script, and which one.
-    int   mAction = 0;          // 0 check, 1 compile, 2 fly it in the sim, 3 the editor
+    int   mAction = 0;          // 0 check, 1 compile, 2 fly it in the sim, 3 the editor, 4 the 3D playground
     int   mFile = 0;            // index into g_missions
     int   mWorld = 0;           // 0 gallery, 1 hall (sim)
     bool  mLowres = false;      // --lowres: 424x240, about twice as fast
     bool  mShot = true;         // --shot mission: the map from above, with its places
 };
 
-const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor"};
-const char* MISSION_ACTION_LABEL[] = {"Check it", "Compile for the Pi", "Fly it in the sim",
-                                      "Visual editor"};
+const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor", "playground"};
+const char* MISSION_ACTION_LABEL[] = {"Check", "Compile", "Fly in sim", "Editor",
+                                      "3D playground"};
+// Actions that open a page in the browser and take no mission file.
+bool missionOpensPage(int a) { return a == 3 || a == 4; }
 const char* MISSION_WORLD[] = {"gallery", "hall"};
 
 const int PANE_PX[] = {240, 320, 420, 520};
@@ -757,7 +759,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             break;
         case MISSION:
             a.push_back(MISSION_ACTION[c.mAction]);
-            if (c.mAction == 3) break;                    // the editor takes no file
+            if (missionOpensPage(c.mAction)) break;       // the pages take no file
             a.push_back(c.mFile >= 0 && c.mFile < int(g_missions.size())
                             ? g_missions[size_t(c.mFile)] : std::string("(no mission)"));
             if (c.mAction == 2) {
@@ -853,7 +855,7 @@ std::string blocker(const Cfg& c, const std::vector<TrackInput>& inputs,
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
     if (c.mode == DEMO && c.dSource == 2 && (c.replay < 0 || recs.empty()))
         return recs.empty() ? "no .kdr recordings found here" : "pick a recording";
-    if (c.mode == MISSION && c.mAction != 3 &&
+    if (c.mode == MISSION && !missionOpensPage(c.mAction) &&
         (c.mFile < 0 || c.mFile >= int(g_missions.size())))
         return g_missions.empty() ? "no .kms found: open the editor" : "pick a mission";
     return "";
@@ -917,7 +919,7 @@ enum {
     // clicks every button and fails one that changes nothing.
     ID_D_MODEL = 830,
     ID_D_POSE = 870,      // +0..2
-    ID_M_ACT = 900,       // +0..3, the order of MISSION_ACTION
+    ID_M_ACT = 900,       // +0..4, the order of MISSION_ACTION
     ID_M_FILE = 910,      // +index, up to 8
     ID_M_WORLD = 930, ID_M_LOWRES, ID_M_SHOT,
 };
@@ -1582,10 +1584,21 @@ void panelMission(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
             ".kmb and runs", x, 146, 0.44, DIM);
     txt(im, "it in SCRIPT mode, every leg still certified by its own planner.", x, 164, 0.44, DIM);
 
-    for (int i = 0; i < 4; ++i)
-        bs.push_back({cv::Rect(x + i * 190, 184, 180, 36), MISSION_ACTION_LABEL[i],
+    for (int i = 0; i < 5; ++i)
+        bs.push_back({cv::Rect(x + i * 154, 184, 148, 36), MISSION_ACTION_LABEL[i],
                       ID_M_ACT + i, c.mAction == i});
 
+    if (c.mAction == 4) {
+        txt(im, "A 3D world: put a crosshair in the quad's camera view, set the throttle,",
+            x, 252, 0.46, INK);
+        txt(im, "and it flies along the line through the crosshair -- low in the view takes",
+            x, 272, 0.46, INK);
+        txt(im, "it down. Pin it to a lock to fly relative to an object. Record the moves;",
+            x, 292, 0.46, INK);
+        txt(im, "they export as fly crosshair / steer lines. control_playground.html.",
+            x, 312, 0.46, INK);
+        return;
+    }
     if (c.mAction == 3) {
         txt(im, "Builds a mission from blocks -- states, triggers, move / yaw / track /",
             x, 252, 0.46, INK);
@@ -1731,7 +1744,7 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
 void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
            const std::vector<std::string>& recs) {
     if (id >= ID_MODE && id < ID_MODE + NMODES) { c.mode = id - ID_MODE; return; }
-    if (id >= ID_M_ACT && id < ID_M_ACT + 4) { c.mAction = id - ID_M_ACT; return; }
+    if (id >= ID_M_ACT && id < ID_M_ACT + 5) { c.mAction = id - ID_M_ACT; return; }
     if (id >= ID_M_FILE && id < ID_M_FILE + 8) { c.mFile = id - ID_M_FILE; return; }
     if (id == ID_M_WORLD)  { c.mWorld = (c.mWorld + 1) % 2; return; }
     if (id == ID_M_LOWRES) { c.mLowres = !c.mLowres; return; }
@@ -2025,7 +2038,7 @@ int run(const Actions& act, const std::string& exeDir) {
         // The listing is read in the terminal, so hold the window closed until
         // it has been: reopening instantly would put it back over the output.
         // A mission check or compile is read in the terminal too.
-        if (isPythons || (c.mode == MISSION && c.mAction != 3 && hit == ID_RUN)) {
+        if (isPythons || (c.mode == MISSION && !missionOpensPage(c.mAction) && hit == ID_RUN)) {
             std::printf("\n[kestrel] press Enter to return to the window ");
             std::fflush(stdout);
             int ch; while ((ch = std::getchar()) != '\n' && ch != EOF) {}
@@ -2114,7 +2127,8 @@ int check() {
             // options) in variant 0, where every button is clicked, and
             // compile with NO missions in variant 3, the refused state.
             {
-                const int act[4] = {2, 0, 3, 1};
+                // 0 is not laid out here: its panel is two short lines.
+                const int act[4] = {2, 4, 3, 1};
                 c.mAction = act[variant];
             }
             kpy::Py fake;

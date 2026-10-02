@@ -6,6 +6,7 @@
 //   kestrel mission sim     FILE.kms|.kmb [--world gallery|hall] [--seed N]
 //                           [--seconds S] [--lowres] [--shot PREFIX]
 //   kestrel mission editor  [--print]            the visual editor, in the browser
+//   kestrel mission playground [--print]         the 3D crosshair-and-throttle playground
 //
 // `sim` flies the program on the aircraft's own SCRIPT mode, MissionController
 // and VoxelNavModule (flight_show.hpp) against a simulated D435i -- the same
@@ -77,6 +78,7 @@ int usage() {
         "kestrel mission sim     FILE.kms|FILE.kmb [--world gallery|hall] [--seed N]\n"
         "                        [--seconds S] [--lowres] [--shot PREFIX]\n"
         "kestrel mission editor  [--print]\n"
+        "kestrel mission playground [--print]  (crosshair + throttle, in 3D)\n"
         "The language: onboard/docs/mission-scripts.md\n");
     return 2;
 }
@@ -185,21 +187,21 @@ int sim(const std::vector<std::string>& a) {
     return ok ? 0 : 1;
 }
 
-int editor(const std::vector<std::string>& a, const std::string& exeDir) {
+int openPage(const std::vector<std::string>& a, const std::string& exeDir, const std::string& file,
+             const char* what) {
     bool printOnly = false;
     for (const auto& s : a) printOnly |= s == "--print";
-    const std::vector<std::string> cand = {exeDir + "/mission_editor.html",
-                                           exeDir + "/../mission_editor.html",
-                                           "mission_editor.html", "nav-sim/mission_editor.html"};
+    const std::vector<std::string> cand = {exeDir + "/" + file, exeDir + "/../" + file, file,
+                                           "nav-sim/" + file};
     std::string path;
     for (const auto& c : cand)
         if (fileExists(c)) { path = c; break; }
     if (path.empty()) {
-        std::fprintf(stderr, "[mission] mission_editor.html is not next to kestrel. It is "
-                             "nav-sim/mission_editor.html in the source tree.\n");
+        std::fprintf(stderr, "[mission] %s is not next to kestrel. It is nav-sim/%s in the "
+                             "source tree.\n", file.c_str(), file.c_str());
         return 1;
     }
-    std::printf("[mission] the visual editor: %s\n", path.c_str());
+    std::printf("[mission] %s: %s\n", what, path.c_str());
     if (printOnly) return 0;
 #ifdef _WIN32
     const std::string cmd = "start \"\" \"" + path + "\"";
@@ -221,7 +223,11 @@ int run(const std::vector<std::string>& args, const std::string& exeDir) {
     if (sub == "check") return check(rest);
     if (sub == "compile") return compile(rest);
     if (sub == "sim") return sim(rest);
-    if (sub == "editor") return editor(rest, exeDir);
+    if (sub == "editor") return openPage(rest, exeDir, "mission_editor.html", "the visual editor");
+    // The 3D world where a crosshair and a throttle are the controls: fly
+    // it live, record the moves, copy them out as `fly crosshair` / `steer`.
+    if (sub == "playground")
+        return openPage(rest, exeDir, "control_playground.html", "the 3D control playground");
     std::fprintf(stderr, "[mission] unknown: %s\n", sub.c_str());
     return usage();
 }

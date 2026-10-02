@@ -18,6 +18,7 @@
   --ok: #2c8a52;
   --code-bg: #f6f8f9;
   --chip: #e6ecf0;
+  --sky: #dfe8ee; --ground: #c9d3c4; --grid: rgba(23, 34, 43, .18);
   --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -27,12 +28,14 @@
     --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
     --accent: #6c9cff; --trigger: #f0a43a; --danger: #ff7a70; --ok: #5fcf8c;
     --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+    --sky: #1b2730; --ground: #26302a; --grid: rgba(227, 234, 238, .14);
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
   --accent: #6c9cff; --trigger: #f0a43a; --danger: #ff7a70; --ok: #5fcf8c;
   --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+  --sky: #1b2730; --ground: #26302a; --grid: rgba(227, 234, 238, .14);
 }
 * { box-sizing: border-box; }
 html, body { background: var(--bg); color: var(--ink); }
@@ -120,6 +123,17 @@ svg.graph .end { font-size: 10px; fill: var(--muted); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
+/* the first-person pane */
+.fpv-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 10px; align-items: start; }
+@media (max-width: 720px) { .fpv-wrap { grid-template-columns: minmax(0, 1fr); } }
+canvas.fpv { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 8px; border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
+canvas.top { width: 100%; aspect-ratio: 1; display: block; border-radius: 8px; border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
+.pts { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.pt { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 13px; }
+.pt b { font-family: var(--mono); font-size: 12px; min-width: 18px; color: var(--accent); }
+#fpvPanel input.num { width: 64px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.pt input { width: 58px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; }
+
 /* places + safety */
 .side2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .place { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
@@ -167,6 +181,7 @@ textarea#importBox { width: 100%; min-height: 90px; font-family: var(--mono); fo
     <div class="hint">Click a step to add it to the selected state, or drag it onto any state.</div>
     <div class="group" id="palMove"><h2>Move</h2></div>
     <div class="group" id="palSee"><h2>See and track</h2></div>
+    <div class="group" id="palLock"><h2>Around the lock</h2></div>
     <div class="group" id="palPlace"><h2>Places</h2></div>
     <div class="group" id="palFlow"><h2>Flow</h2></div>
   </aside>
@@ -176,6 +191,10 @@ textarea#importBox { width: 100%; min-height: 90px; font-family: var(--mono); fo
       <div class="row" style="justify-content:space-between"><h2>State machine</h2><button class="add" id="addState">+ state</button></div>
       <div class="graph-wrap"><svg class="graph" id="graph" viewBox="0 0 640 300" role="img" aria-label="States and the triggers between them"></svg></div>
       <div class="legend"><span><i></i>trigger: switches as soon as it holds</span><span><i class="go"></i>step: go to another state</span></div>
+    </section>
+    <section class="panel" id="fpvPanel">
+      <div class="row" style="justify-content:space-between"><h2>In view: movement around the lock</h2><span class="hint" id="fpvWhat"></span></div>
+      <div id="fpvBody"></div>
     </section>
     <section class="states" id="states"></section>
     <section class="side2">
@@ -236,12 +255,15 @@ const STEP_TYPES = {
   up:       { group: "Move", label: "Up", hint: "climb", make: () => ({ m: 1 }) },
   hold:     { group: "Move", label: "Hold", hint: "hover", make: () => ({ s: 2 }) },
   explore:  { group: "Move", label: "Explore", hint: "safe travel", make: () => ({ s: 30 }) },
-  search:   { group: "See", label: "Search", hint: "spin until seen", make: () => ({ label: "person", s: 30, dir: "right", fail: "" }) },
+  nav:      { group: "Move", label: "Navigation", hint: "checked / direct", make: () => ({ mode: "direct" }) },
+  search:   { group: "See", label: "Search", hint: "spin until seen", make: () => ({ label: "person", s: 30, dir: "right", isNew: false, fail: "" }) },
   track:    { group: "See", label: "Track", hint: "hand to tracker", make: () => ({ label: "door", s: 5, fail: "" }) },
   face:     { group: "See", label: "Face", hint: "turn onto it", make: () => ({ label: "door", s: 15, fail: "" }) },
   approach: { group: "See", label: "Approach", hint: "to a range", make: () => ({ label: "door", by: "range", m: 2, fill: 0.5, s: 60, fail: "" }) },
   untrack:  { group: "See", label: "Release tracker", hint: "", make: () => ({}) },
-  mark:     { group: "Place", label: "Mark place", hint: "here / where seen", make: () => ({ place: "", from: "seen", label: "person", fail: "" }) },
+  path:     { group: "Lock", label: "Path around it", hint: "points, in view", make: () => ({ label: "door", facing: true, radius: 0.75, pts: [{ a: -3, r: -2, hold: 0 }, { a: -2, r: 2, hold: 2 }], fail: "" }) },
+  steer:    { group: "Lock", label: "Steer on it", hint: "aim + speed", make: () => ({ label: "door", aim: 0, speed: 1, strafe: false, until: 3, s: 30, fail: "" }) },
+  mark:     { group: "Place", label: "Mark place", hint: "here / where seen", make: () => ({ place: "", from: "seen", label: "person", isNew: false, fail: "" }) },
   goto:     { group: "Place", label: "Go to place", hint: "", make: () => ({ place: "" }) },
   over:     { group: "Place", label: "Fly over", hint: "and hover", make: () => ({ place: "", hold: 3 }) },
   orbit:    { group: "Place", label: "Circle", hint: "around a place", make: () => ({ place: "", r: 3, laps: 1 }) },
@@ -292,14 +314,33 @@ function stepText(s) {
     case "up": return "up " + fmt(num(s.m, 1)) + " m";
     case "hold": return "hold " + fmt(num(s.s, 2)) + " s";
     case "explore": return "explore " + fmt(num(s.s, 30)) + " s";
-    case "search": return "search " + lab(s.label) + " timeout " + fmt(num(s.s, 30)) + " s " + s.dir + elseText(s.fail);
+    case "nav": return "nav " + (s.mode === "certified" ? "certified" : "direct");
+    case "path": {
+      // Points AHEAD/RIGHT of the tracked object along the line of sight when
+      // the path starts; the object is re-measured all the way.
+      const L = ["path " + lab(s.label) + (s.facing ? " facing" : "") + " radius " + fmt(num(s.radius, 0.75)) + " m {"];
+      for (const p of s.pts || []) {
+        L.push("    to ahead " + fmt(num(p.a, 0)) + " m right " + fmt(num(p.r, 0)) + " m");
+        if (num(p.hold, 0) > 0) L.push("    hold " + fmt(num(p.hold, 0)) + " s");
+      }
+      L.push("  }" + elseText(s.fail));
+      return L.join("\n");
+    }
+    case "steer": {
+      const a = num(s.aim, 0);
+      return "steer " + lab(s.label) + " aim " + (a < 0 ? "left " + fmt(-a) : a > 0 ? "right " + fmt(a) : "centre") +
+        " speed " + fmt(num(s.speed, 1)) + " m/s" + (s.strafe ? " strafe" : "") +
+        (num(s.until, 0) > 0 ? " until range to " + lab(s.label) + " < " + fmt(num(s.until, 3)) + " m" : "") +
+        " timeout " + fmt(num(s.s, 30)) + " s" + elseText(s.fail);
+    }
+    case "search": return "search " + (s.isNew ? "new " : "") + lab(s.label) + " timeout " + fmt(num(s.s, 30)) + " s " + s.dir + elseText(s.fail);
     case "track": return "track " + lab(s.label) + " timeout " + fmt(num(s.s, 5)) + " s" + elseText(s.fail);
     case "face": return "face " + lab(s.label) + " timeout " + fmt(num(s.s, 15)) + " s" + elseText(s.fail);
     case "approach": return "approach " + lab(s.label) +
       (s.by === "fill" ? " fill " + fmt(num(s.fill, 0.5)) : " to " + fmt(num(s.m, 2)) + " m") +
       " timeout " + fmt(num(s.s, 60)) + " s" + elseText(s.fail);
     case "untrack": return "untrack";
-    case "mark": return "set " + s.place + " = " + (s.from === "here" ? "here" : "seen " + lab(s.label) + elseText(s.fail));
+    case "mark": return "set " + s.place + " = " + (s.from === "here" ? "here" : "seen " + (s.isNew ? "new " : "") + lab(s.label) + elseText(s.fail));
     case "goto": return "goto " + s.place;
     case "over": return "over " + s.place + " hold " + fmt(num(s.hold, 3)) + " s";
     case "orbit": return "orbit " + s.place + " radius " + fmt(num(s.r, 3)) + " m laps " + fmt(num(s.laps, 1));
@@ -385,6 +426,8 @@ function problems(m) {
       if (s.type === "mark" && places.has(s.place) && (m.places.find(p => p.name === s.place) || {}).kind !== "here")
         out.push(where + ': only places "marked in flight" can be marked again.');
       if (s.type === "go" && !states.has(s.state)) out.push(where + ": choose a state.");
+      if (s.type === "path" && !(s.pts || []).length) out.push(where + ": click points in the view.");
+      if (s.type === "steer" && !(num(s.until, 0) > 0)) out.push(where + ": with no stopping range it flies until its timeout and then FAILS -- give it a range.");
       if (s.fail && !states.has(s.fail)) out.push(where + ": the failure branch goes to a state that does not exist.");
       if ("label" in s && !String(s.label || "").trim()) out.push(where + ": name the object.");
       if (TERMINAL.has(s.type) && i < st.steps.length - 1) out.push(where + ": nothing after it will run.");
@@ -406,7 +449,9 @@ function tplDoor() {
       { name: "go_through", triggers: [{ kind: "nottracking", label: "door", to: "patrol" }],
         steps: [{ type: "approach", label: "door", by: "range", m: 2, fill: 0.5, s: 60, fail: "" }, { type: "go", state: "step_aside" }] },
       { name: "step_aside", triggers: [],
-        steps: [{ type: "untrack" }, { type: "move", dir: "left", m: 1 }, { type: "land" }] },
+        steps: [{ type: "path", label: "door", facing: true, radius: 0.75,
+                  pts: [{ a: -1.5, r: -1.5, hold: 0 }, { a: -1.5, r: 1.5, hold: 2 }], fail: "" },
+                { type: "untrack" }, { type: "land" }] },
     ],
   };
 }
@@ -452,6 +497,10 @@ if (typeof module !== "undefined") module.exports = { generate, problems, TEMPLA
 if (typeof document !== "undefined") (function () {
   const $ = (id) => document.getElementById(id);
   let model = null, sel = 0, dragStep = null, dragPal = null;
+  // The step the first-person pane is editing, and the preview's own
+  // settings (how far the object is, how high the camera, how tilted).
+  let fpvSel = null;
+  const view = { D: 8, h: 1.5, tilt: 10, hfov: 87 };
 
   function store() { try { localStorage.setItem("kestrel-mission-draft", JSON.stringify(model)); } catch (e) {} }
   function restore() {
@@ -486,6 +535,12 @@ if (typeof document !== "undefined") (function () {
                          oninput: (e) => onchange(e.target.value) });
   }
   const unit = (u) => el("span", { class: "unit" }, u);
+  // "new only": skip objects already visited (the next one in a chain).
+  function newBox(s) {
+    const cb = el("input", { type: "checkbox", "aria-label": "new only", onchange: (e) => { s.isNew = e.target.checked; changed(false); } });
+    cb.checked = !!s.isNew;
+    return el("label", { class: "unit" }, cb, " new only");
+  }
   const stateOpts = (blank) => (blank ? [["", blank]] : []).concat(model.states.map(s => [s.name, s.name]));
   const placeOpts = () => [["", "choose a place"]].concat(model.places.map(p => [p.name, p.name]));
 
@@ -497,7 +552,7 @@ if (typeof document !== "undefined") (function () {
 
   // ---------------------------------------------------------------- palette
   function renderPalette() {
-    const groups = { Move: $("palMove"), See: $("palSee"), Place: $("palPlace"), Flow: $("palFlow") };
+    const groups = { Move: $("palMove"), See: $("palSee"), Lock: $("palLock"), Place: $("palPlace"), Flow: $("palFlow") };
     for (const [type, def] of Object.entries(STEP_TYPES)) {
       const b = el("button", { class: "pal", draggable: "true", title: "Add to the selected state",
         onclick: () => addStep(sel, type),
@@ -517,6 +572,7 @@ if (typeof document !== "undefined") (function () {
     let i = at != null ? at : st.steps.length;
     if (at == null && st.steps.length && TERMINAL.has(st.steps[st.steps.length - 1].type) && !TERMINAL.has(type)) i = st.steps.length - 1;
     st.steps.splice(i, 0, s);
+    if (type === "path" || type === "steer") fpvSel = s;
     changed(true);
   }
 
@@ -537,7 +593,16 @@ if (typeof document !== "undefined") (function () {
       case "yaw": parts.push(select([["left", "left"], ["right", "right"]], s.dir, set("dir")), numIn(s.deg, set("deg"), "degrees", "5"), unit("deg")); break;
       case "up": parts.push(numIn(s.m, set("m"), "metres", "0.5"), unit("m")); break;
       case "hold": case "explore": parts.push(numIn(s.s, set("s"), "seconds", "1"), unit("s")); break;
-      case "search": parts.push(txtIn(s.label, set("label"), "object"), select([["right", "turning right"], ["left", "turning left"]], s.dir, set("dir")), unit("for"), numIn(s.s, set("s"), "seconds", "1"), unit("s"), ...failSel()); break;
+      case "nav": parts.push(select([["direct", "direct: straight at it, unchecked"], ["certified", "certified: every leg checked"]], s.mode, set("mode", true), "navigation")); break;
+      case "path": case "steer":
+        parts.push(txtIn(s.label, set("label"), "tracked object"),
+          el("span", { class: "unit" }, s.type === "path" ? (s.pts || []).length + " points" :
+             "aim " + fmt(num(s.aim, 0)) + " widths, " + fmt(num(s.speed, 1)) + " m/s"),
+          el("button", { class: "add", onclick: () => { fpvSel = s; renderFpv(); $("fpvPanel").scrollIntoView({ block: "nearest" }); } },
+             fpvSel === s ? "editing in view" : "Edit in view"),
+          ...failSel());
+        break;
+      case "search": parts.push(newBox(s), txtIn(s.label, set("label"), "object"), select([["right", "turning right"], ["left", "turning left"]], s.dir, set("dir")), unit("for"), numIn(s.s, set("s"), "seconds", "1"), unit("s"), ...failSel()); break;
       case "track": case "face": parts.push(txtIn(s.label, set("label"), "object"), unit("within"), numIn(s.s, set("s"), "seconds", "1"), unit("s"), ...failSel()); break;
       case "approach": parts.push(txtIn(s.label, set("label"), "object"),
           select([["range", "until it is"], ["fill", "until it fills"]], s.by || "range", set("by", true), "stop when"));
@@ -545,7 +610,7 @@ if (typeof document !== "undefined") (function () {
         else parts.push(numIn(s.fill, set("fill"), "fill", "0.05"), unit("of the frame"));
         parts.push(...failSel()); break;
       case "mark": parts.push(select(placeOpts(), s.place, set("place", true), "place"), unit("="), select([["seen", "where it sees"], ["here", "where it is now"]], s.from, set("from", true), "from"));
-        if (s.from === "seen") parts.push(txtIn(s.label, set("label"), "object"), ...failSel()); break;
+        if (s.from === "seen") parts.push(newBox(s), txtIn(s.label, set("label"), "object"), ...failSel()); break;
       case "goto": parts.push(select(placeOpts(), s.place, set("place"), "place")); break;
       case "over": parts.push(select(placeOpts(), s.place, set("place"), "place"), unit("hover"), numIn(s.hold, set("hold"), "seconds", "1"), unit("s")); break;
       case "orbit": parts.push(select(placeOpts(), s.place, set("place"), "place"), unit("radius"), numIn(s.r, set("r"), "radius", "0.5"), unit("m"), numIn(s.laps, set("laps"), "laps", "0.25"), unit("laps")); break;
@@ -718,6 +783,229 @@ if (typeof document !== "undefined") (function () {
     if (!model.sizes.length) box.append(el("div", { class: "hint" }, "None declared: typical heights are assumed for common objects."));
   }
 
+  // ------------------------------------------------------- first-person pane
+  // A pinhole camera at height view.h, tilted view.tilt deg down, looking
+  // along +y; the tracked object stands at (0, view.D). World: x right,
+  // y ahead, z up. "ahead"/"right" of the object are along that line of
+  // sight, exactly as the aircraft measures them when the step starts.
+  function cam(W, H) {
+    const th = view.tilt * Math.PI / 180, f = (W / 2) / Math.tan(view.hfov * Math.PI / 360);
+    return { W, H, f, cx: W / 2, cy: H / 2, s: Math.sin(th), c: Math.cos(th) };
+  }
+  function proj(k, x, y, z) {
+    const zz = z - view.h;
+    const ry = -y * k.s - zz * k.c, fz = y * k.c - zz * k.s;
+    if (fz < 0.15) return null;
+    return { u: k.cx + k.f * x / fz, v: k.cy + k.f * ry / fz, depth: fz };
+  }
+  function unprojGround(k, u, v) {
+    const rx = (u - k.cx) / k.f, ry = (v - k.cy) / k.f;
+    const dx = rx, dy = -ry * k.s + k.c, dz = -ry * k.c - k.s;
+    if (dz >= -1e-4) return null;
+    const t = view.h / -dz;
+    return { x: t * dx, y: t * dy };
+  }
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888"; }
+  function objHeight(label) {
+    const z = (model.sizes || []).find(z => z.label === label);
+    return z ? num(z.m, 2) : 2;
+  }
+  function fitCanvas(cv) {
+    const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const W = Math.max(200, Math.round(r.width)), H = Math.round(W * (cv.classList.contains("top") ? 1 : 9 / 16));
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    const g = cv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { g, W, H };
+  }
+  function stepAlive(s) { return !!s && model.states.some(st => st.steps.includes(s)); }
+
+  function drawFpv(cv, s) {
+    const { g, W, H } = fitCanvas(cv), k = cam(W, H);
+    const ink = css("--ink"), muted = css("--muted"), accent = css("--accent"), trig = css("--trigger");
+    // Sky and ground split at the horizon.
+    const hz = k.cy - k.f * Math.tan(view.tilt * Math.PI / 180);
+    g.fillStyle = css("--sky"); g.fillRect(0, 0, W, H);
+    g.fillStyle = css("--ground"); g.fillRect(0, Math.max(0, hz), W, H);
+    g.strokeStyle = css("--grid"); g.lineWidth = 1;
+    const line = (a, b) => { const p = proj(k, ...a), q = proj(k, ...b); if (p && q) { g.beginPath(); g.moveTo(p.u, p.v); g.lineTo(q.u, q.v); g.stroke(); } };
+    for (let x = -12; x <= 12; x += 1) line([x, 0.5, 0], [x, 40, 0]);
+    for (let y = 1; y <= 40; y += 1) line([-12, y, 0], [12, y, 0]);
+    // The object: a box standing on the ground, its lock drawn round it.
+    const D = view.D, Ho = objHeight(s.label), Wo = Math.max(0.3, Ho / 2);
+    const tl = proj(k, -Wo / 2, D, Ho), br = proj(k, Wo / 2, D, 0);
+    let box = null;
+    if (tl && br) {
+      box = { x: tl.u, y: tl.v, w: br.u - tl.u, h: br.v - tl.v };
+      g.fillStyle = muted; g.globalAlpha = 0.35; g.fillRect(box.x, box.y, box.w, box.h); g.globalAlpha = 1;
+      g.strokeStyle = trig; g.lineWidth = 2; g.strokeRect(box.x - 3, box.y - 3, box.w + 6, box.h + 6);
+      g.fillStyle = trig; g.font = "600 12px " + css("--body");
+      g.fillText("LOCK: " + (s.label || "?"), box.x - 3, box.y - 8);
+    }
+    g.font = "12px " + css("--body");
+    if (s.type === "path") {
+      // The path on the ground, from the aircraft through every point.
+      const pts = (s.pts || []).map(p => ({ x: num(p.r, 0), y: D + num(p.a, 0) }));
+      g.strokeStyle = accent; g.lineWidth = 3; g.beginPath();
+      let first = true;
+      for (const w of [{ x: 0, y: 1.0 }, ...pts]) {
+        const p = proj(k, w.x, w.y, 0);
+        if (!p) { first = true; continue; }
+        if (first) g.moveTo(p.u, p.v); else g.lineTo(p.u, p.v);
+        first = false;
+      }
+      g.stroke();
+      pts.forEach((w, i) => {
+        const p = proj(k, w.x, w.y, 0);
+        if (!p) return;
+        const r = Math.max(5, Math.min(14, 60 / p.depth));
+        g.fillStyle = accent; g.beginPath(); g.arc(p.u, p.v, r, 0, 7); g.fill();
+        g.fillStyle = "#fff"; g.textAlign = "center"; g.fillText(String(i + 1), p.u, p.v + 4); g.textAlign = "start";
+      });
+      g.fillStyle = ink;
+      g.fillText("Click the ground to add a point; drag one to move it.", 10, H - 12);
+    } else if (box) {
+      // The aim point: `aim` box widths right of the lock's centre.
+      const ax = box.x + box.w * (0.5 + num(s.aim, 0)), ay = box.y + box.h / 2;
+      g.strokeStyle = accent; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(W / 2, H - 4); g.lineTo(ax, ay); g.stroke();
+      g.beginPath(); g.arc(ax, ay, 9, 0, 7); g.stroke();
+      g.beginPath(); g.moveTo(ax - 14, ay); g.lineTo(ax + 14, ay); g.moveTo(ax, ay - 14); g.lineTo(ax, ay + 14); g.stroke();
+      g.fillStyle = ink;
+      g.fillText("Click where on the lock to aim. " + (s.strafe ? "Strafe: slides to keep it centred." : "Yaws to keep it centred."), 10, H - 12);
+    }
+    // The image centre: what "centred" means.
+    g.strokeStyle = muted; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(W / 2 - 8, H / 2); g.lineTo(W / 2 + 8, H / 2); g.moveTo(W / 2, H / 2 - 8); g.lineTo(W / 2, H / 2 + 8); g.stroke();
+    return { k, box };
+  }
+
+  function topScale(W) {
+    const span = Math.max(12, view.D + 8);
+    return { sc: W / span, x0: -span / 2, y1: view.D + 6 };
+  }
+  function drawTop(cv, s) {
+    const { g, W, H } = fitCanvas(cv), t = topScale(W);
+    const P = (x, y) => ({ u: (x - t.x0) * t.sc, v: (t.y1 - y) * t.sc });
+    g.fillStyle = css("--ground"); g.fillRect(0, 0, W, H);
+    g.strokeStyle = css("--grid"); g.lineWidth = 1;
+    for (let x = Math.ceil(t.x0); x <= -t.x0; x++) { const a = P(x, -10), b = P(x, 60); g.beginPath(); g.moveTo(a.u, 0); g.lineTo(a.u, H); g.stroke(); }
+    for (let y = -2; y <= t.y1; y++) { const a = P(0, y); g.beginPath(); g.moveTo(0, a.v); g.lineTo(W, a.v); g.stroke(); }
+    const o = P(0, view.D), me = P(0, 0);
+    g.fillStyle = css("--trigger"); g.fillRect(o.u - 6, o.v - 3, 12, 6);
+    g.fillStyle = css("--ink"); g.beginPath(); g.moveTo(me.u, me.v - 9); g.lineTo(me.u - 6, me.v + 6); g.lineTo(me.u + 6, me.v + 6); g.fill();
+    g.font = "11px " + css("--body"); g.fillText("from above", 6, 14);
+    if (s.type === "path") {
+      g.strokeStyle = css("--accent"); g.lineWidth = 2; g.beginPath(); g.moveTo(me.u, me.v);
+      const pts = (s.pts || []).map(p => P(num(p.r, 0), view.D + num(p.a, 0)));
+      for (const p of pts) g.lineTo(p.u, p.v);
+      g.stroke();
+      pts.forEach((p, i) => { g.fillStyle = css("--accent"); g.beginPath(); g.arc(p.u, p.v, 7, 0, 7); g.fill();
+        g.fillStyle = "#fff"; g.textAlign = "center"; g.fillText(String(i + 1), p.u, p.v + 4); g.textAlign = "start"; });
+    }
+    return { P, inv: (u, v) => ({ x: u / t.sc + t.x0, y: t.y1 - v / t.sc }) };
+  }
+
+  let fpvGeom = null, topGeom = null, dragPt = -1;
+  function renderFpv() {
+    const body = $("fpvBody");
+    if (fpvSel && !stepAlive(fpvSel)) fpvSel = null;
+    if (!fpvSel) {
+      // Default to the first path/steer step anywhere, so the pane is never empty when there is one.
+      for (const st of model.states) for (const s of st.steps) if (!fpvSel && (s.type === "path" || s.type === "steer")) fpvSel = s;
+    }
+    body.textContent = "";
+    if (!fpvSel) {
+      $("fpvWhat").textContent = "";
+      body.append(el("p", { class: "hint" }, 'Add "Path around it" or "Steer on it" from the palette: movement here is drawn in the camera view, around the object the tracker holds.'));
+      return;
+    }
+    const s = fpvSel;
+    const owner = model.states.find(st => st.steps.includes(s));
+    $("fpvWhat").textContent = (s.type === "path" ? "Path around " : "Steer on ") + (s.label || "?") + " in state " + owner.name;
+    const fpv = el("canvas", { class: "fpv", "aria-label": "Camera view" });
+    const top = el("canvas", { class: "top", "aria-label": "From above" });
+    const controls = el("div", {});
+    const pv = el("div", { class: "row", style: "margin-top:8px" },
+      el("span", { class: "unit" }, "preview: object at"), numIn(view.D, (v) => { view.D = Math.max(2, num(v, 8)); drawBoth(); }, "preview distance", "0.5"), unit("m, camera"),
+      numIn(view.h, (v) => { view.h = Math.max(0.3, num(v, 1.5)); drawBoth(); }, "camera height", "0.5"), unit("m up, tilted"),
+      numIn(view.tilt, (v) => { view.tilt = Math.max(-10, Math.min(60, num(v, 10))); drawBoth(); }, "tilt", "5"), unit("deg down"));
+    if (s.type === "path") {
+      const facing = el("input", { type: "checkbox", onchange: (e) => { s.facing = e.target.checked; changed(false); } });
+      facing.checked = !!s.facing;
+      controls.append(el("div", { class: "row" }, el("label", { class: "unit" }, facing, " face it at each point"),
+        unit("arrive within"), numIn(s.radius, (v) => { s.radius = v; changed(false); }, "radius", "0.25"), unit("m"),
+        el("button", { class: "btn", onclick: () => { s.pts.pop(); changed(true); } }, "Undo point"),
+        el("button", { class: "btn", onclick: () => { s.pts = []; changed(true); } }, "Clear")));
+      const list = el("div", { class: "pts" });
+      (s.pts || []).forEach((p, i) => list.append(el("div", { class: "pt" }, el("b", {}, String(i + 1)),
+        unit("ahead"), el("input", { type: "number", step: "0.5", value: p.a, "aria-label": "ahead", oninput: (e) => { p.a = e.target.value; drawBoth(); changed(false); } }),
+        unit("right"), el("input", { type: "number", step: "0.5", value: p.r, "aria-label": "right", oninput: (e) => { p.r = e.target.value; drawBoth(); changed(false); } }),
+        unit("m, hold"), el("input", { type: "number", step: "1", min: "0", value: p.hold || 0, "aria-label": "hold", oninput: (e) => { p.hold = e.target.value; changed(false); } }), unit("s"),
+        el("button", { class: "icon del", "aria-label": "Remove point", onclick: () => { s.pts.splice(i, 1); changed(true); } }, "✕"))));
+      controls.append(list);
+    } else {
+      const strafe = el("input", { type: "checkbox", onchange: (e) => { s.strafe = e.target.checked; changed(false); drawBoth(); } });
+      strafe.checked = !!s.strafe;
+      controls.append(el("div", { class: "row" },
+        unit("aim"), numIn(s.aim, (v) => { s.aim = v; changed(false); drawBoth(); }, "aim, box widths right", "0.1"), unit("box widths right (− = left)"),
+        unit("at"), numIn(s.speed, (v) => { s.speed = v; changed(false); }, "speed", "0.1"), unit("m/s,"),
+        el("label", { class: "unit" }, strafe, " strafe")),
+        el("div", { class: "row", style: "margin-top:6px" },
+          unit("until it is"), numIn(s.until, (v) => { s.until = v; changed(false); }, "stop range", "0.5"), unit("m away, at most"),
+          numIn(s.s, (v) => { s.s = v; changed(false); }, "timeout", "1"), unit("s")));
+    }
+    body.append(el("div", { class: "fpv-wrap" }, el("div", {}, fpv, pv), top), controls);
+    const drawBoth = () => { fpvGeom = drawFpv(fpv, s); topGeom = drawTop(top, s); };
+    requestAnimationFrame(drawBoth);
+
+    const at = (cv, e) => { const r = cv.getBoundingClientRect(); return { u: e.clientX - r.left, v: e.clientY - r.top }; };
+    const hitPoint = (fn, q) => (s.pts || []).findIndex(p => { const w = fn(p); return w && Math.hypot(w.u - q.u, w.v - q.v) < 12; });
+    const round = (x) => Math.round(x * 2) / 2;
+    // CAMERA VIEW: path points on the ground; or the steer aim on the lock.
+    fpv.addEventListener("pointerdown", (e) => {
+      if (!fpvGeom) return;
+      const q = at(fpv, e);
+      if (s.type === "steer") {
+        if (!fpvGeom.box) return;
+        s.aim = Math.round(((q.u - fpvGeom.box.x) / fpvGeom.box.w - 0.5) * 10) / 10;
+        changed(true); return;
+      }
+      const i = hitPoint((p) => proj(fpvGeom.k, num(p.r, 0), view.D + num(p.a, 0), 0), q);
+      if (i >= 0) { dragPt = i; fpv.setPointerCapture(e.pointerId); return; }
+      const w = unprojGround(fpvGeom.k, q.u, q.v);
+      if (!w || w.y > 60) return;
+      s.pts.push({ a: round(w.y - view.D), r: round(w.x), hold: 0 });
+      changed(true);
+    });
+    fpv.addEventListener("pointermove", (e) => {
+      if (dragPt < 0 || !fpvGeom) return;
+      const w = unprojGround(fpvGeom.k, ...Object.values(at(fpv, e)));
+      if (!w) return;
+      s.pts[dragPt].a = round(w.y - view.D); s.pts[dragPt].r = round(w.x);
+      drawBoth(); changed(false);
+    });
+    const endDrag = () => { if (dragPt >= 0) { dragPt = -1; changed(true); } };
+    fpv.addEventListener("pointerup", endDrag);
+    // FROM ABOVE: any point, including ones the camera cannot see.
+    top.addEventListener("pointerdown", (e) => {
+      if (s.type !== "path" || !topGeom) return;
+      const q = at(top, e);
+      const i = hitPoint((p) => topGeom.P(num(p.r, 0), view.D + num(p.a, 0)), q);
+      if (i >= 0) { dragPt = i; top.setPointerCapture(e.pointerId); return; }
+      const w = topGeom.inv(q.u, q.v);
+      s.pts.push({ a: round(w.y - view.D), r: round(w.x), hold: 0 });
+      changed(true);
+    });
+    top.addEventListener("pointermove", (e) => {
+      if (dragPt < 0 || !topGeom) return;
+      const q = at(top, e), w = topGeom.inv(q.u, q.v);
+      s.pts[dragPt].a = round(w.y - view.D); s.pts[dragPt].r = round(w.x);
+      drawBoth(); changed(false);
+    });
+    top.addEventListener("pointerup", endDrag);
+  }
+
   // ----------------------------------------------------------------- output
   function highlight(text) {
     const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -742,7 +1030,7 @@ if (typeof document !== "undefined") (function () {
     $("mName").value = model.name; $("mFence").value = model.fence; $("mTimeout").value = model.timeoutMin;
     $("battOn").checked = !!model.battery.on; $("battPct").value = model.battery.pct; $("battAct").value = model.battery.act;
   }
-  function render() { renderMeta(); renderStates(); renderPlaces(); renderSizes(); renderGraph(); renderOut(); }
+  function render() { renderMeta(); renderStates(); renderPlaces(); renderSizes(); renderGraph(); renderFpv(); renderOut(); }
 
   function load(m) { model = m; sel = 0; render(); store(); }
   function toast(id, msg) { const t = $(id); t.textContent = msg; setTimeout(() => { if (t.textContent === msg) t.textContent = ""; }, 2500); }
@@ -799,6 +1087,7 @@ if (typeof document !== "undefined") (function () {
     catch (e) { toast("importMsg", "The editor line is damaged, so it could not be opened."); }
   });
 
+  window.addEventListener("resize", () => renderFpv());
   load(restore() || tplDoor());
 })();
 </script>

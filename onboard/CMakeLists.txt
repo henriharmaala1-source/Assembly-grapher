@@ -177,6 +177,8 @@ if(BUILD_TESTS)
   kestrel_test(test_script src/mission_compile.cpp src/mission_program.cpp
                src/script_mode.cpp src/control_mode.cpp src/controller.cpp src/mission.cpp
                src/nav_map.cpp src/world_model.cpp)
+  target_compile_definitions(test_script PRIVATE
+    KESTREL_MISSIONS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/missions")
   kestrel_test(test_msp src/msp_backend.cpp src/serial_port.cpp)
   target_link_libraries(test_msp PRIVATE util)   # openpty
   # MAVLink codec against golden frames from pymavlink. No serial, no hardware:

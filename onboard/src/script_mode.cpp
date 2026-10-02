@@ -66,6 +66,8 @@ void ScriptMode::reset_() {
     started_ = finished_ = failed_ = false;
     pc_ = 0; savedPc_ = -1; inHandler_ = false;
     state_ = -1; trackReqT_ = -1;
+    direct_ = false;
+    visited_.clear();
     fired_.assign(prog_.handlers.size(), false);
     regs_.assign(size_t(std::max(0, prog_.registers)), 0.0);
     places_.assign(prog_.targets.size(), Place());
@@ -164,9 +166,12 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
             case CondOp::POSITIONED: st[sp++] = s.estValid; break;
             case CondOp::SEEN: {
                 bool any = false;
-                if (s.tickMonoS - s.detStampS <= p_.detStaleSec)
+                if (o.var & kms::FLAG_NEW) {
+                    any = seen_(s, prog_.strings[size_t(o.arg)], ctx_, nullptr, nullptr, nullptr, true);
+                } else if (s.tickMonoS - s.detStampS <= p_.detStaleSec) {
                     for (const Detection& d : s.detections)
                         any |= d.label == prog_.strings[size_t(o.arg)];
+                }
                 st[sp++] = any;
                 break;
             }
@@ -211,13 +216,9 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
 
 // ------------------------------------------------------------ detections
 bool ScriptMode::seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
-                       float* offDeg, float* distM, float* fill) const {
+                       float* offDeg, float* distM, float* fill, bool onlyNew) const {
     if (ctx.frameW <= 0 || ctx.frameH <= 0) return false;
     const bool detFresh = s.tickMonoS - s.detStampS <= p_.detStaleSec;
-    const Detection* best = nullptr;
-    if (detFresh)
-        for (const Detection& d : s.detections)
-            if (d.label == label && (!best || d.confidence > best->confidence)) best = &d;
     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
     // A detection's own line-of-sight range: MEASURED (depth in the box), else
     // its known height over its box height -- refused when the box is cut by
@@ -236,12 +237,72 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
         }
         return -1.0;
     };
-    double los = -1.0;
-    cv::Rect box;
+    // Bearing off the nose, horizontal distance (< 0 unknown) and fill, for a
+    // box with a known line-of-sight range or none.
+    auto measure = [&](const cv::Rect& box, const Detection* det, double los, float& off,
+                       float& dist, float& fl) {
+        const double cx = box.x + box.width * 0.5 - ctx.frameW * 0.5;
+        off = float(std::atan(cx / f) / kD2R);
+        fl = float(box.height) / float(ctx.frameH);
+        dist = -1.f;
+        const double cy = box.y + box.height * 0.5 - ctx.frameH * 0.5;
+        const double elCentre = p_.detTiltDeg - std::atan(cy / f) / kD2R;
+        if (los > 0.0) { dist = float(los * std::cos(elCentre * kD2R)); return; }
+        // THE GROUND PLANE, for something standing on it: the box's bottom
+        // edge is where it meets the ground, so its depression below the
+        // horizon and the altitude give the distance. Refused near the
+        // horizon, where it explodes, and without an altitude.
+        const double yb = box.y + box.height - ctx.frameH * 0.5;
+        const double dep = -(p_.detTiltDeg - std::atan(yb / f) / kD2R);   // + below
+        if (s.vehAltM > 0.5f && dep > 3.0) {
+            const double d = s.vehAltM / std::tan(dep * kD2R);
+            if (d <= p_.maxRangeM) dist = float(d);
+        }
+        if (dist < 0.f && det) {                       // 4: the typical size, last
+            const double la = losOf(*det, true);
+            if (la > 0.0) dist = float(la * std::cos(elCentre * kD2R));
+        }
+    };
+    auto give = [&](float off, float dist, float fl) {
+        if (offDeg) *offDeg = off;
+        if (distM) *distM = dist;
+        if (fill) *fill = fl;
+        return true;
+    };
+
+    if (onlyNew) {
+        // ONLY WHAT HAS NOT BEEN VISITED: every fresh detection of the label,
+        // most confident first, placed on the ground; the first whose place is
+        // not within newRadiusM of one already marked for this label. One
+        // whose place cannot be had counts as new -- nothing says otherwise.
+        if (!detFresh) return false;
+        std::vector<const Detection*> c;
+        for (const Detection& d : s.detections) if (d.label == label) c.push_back(&d);
+        std::sort(c.begin(), c.end(), [](const Detection* a, const Detection* b) {
+            return a->confidence > b->confidence; });
+        for (const Detection* d : c) {
+            float off, dist, fl;
+            measure(d->box, d, losOf(*d, false), off, dist, fl);
+            bool visited = false;
+            if (dist > 0.f && s.estValid) {
+                const double b = (s.vehYawDeg + off) * kD2R;
+                const double e = s.estPe + dist * std::sin(b), n = s.estPn + dist * std::cos(b);
+                for (const auto& v : visited_)
+                    if (v.label == label && std::hypot(v.e - e, v.n - n) < p_.newRadiusM) visited = true;
+            }
+            if (!visited) return give(off, dist, fl);
+        }
+        return false;
+    }
+
+    const Detection* best = nullptr;
+    if (detFresh)
+        for (const Detection& d : s.detections)
+            if (d.label == label && (!best || d.confidence > best->confidence)) best = &d;
+    float off, dist, fl;
     if (tracking_(s, label)) {
         // THE TRACKER'S BOX, fresh every frame, for the bearing. Range through
         // its scale change, anchored on the detector (TrackRef).
-        box = s.targetBox;
         const bool anchor = best && (best->box & s.targetBox).area() > 0;
         // The tracker has no ground contact point, so an assumed size is
         // better than nothing for anchoring it.
@@ -251,42 +312,16 @@ bool ScriptMode::seen_(const WorldState& s, const std::string& label, const Cont
         // a fixed-size box would freeze the range at its anchor, silently.
         const std::string core = s.targetCore ? s.targetCore : "";
         const bool scales = core == "fused" || core == "csrt";
+        double los = -1.0;
         if (dl > 0.0) los = dl;
         else if (tref_.valid && scales && s.targetBox.height > 0)
             los = tref_.losM * tref_.size0 / double(s.targetBox.height);
-    } else if (best) {
-        box = best->box;
-        los = losOf(*best, false);
-    } else {
-        return false;
+        measure(s.targetBox, anchor ? best : nullptr, los, off, dist, fl);
+        return give(off, dist, fl);
     }
-    const double cx = box.x + box.width * 0.5 - ctx.frameW * 0.5;
-    if (offDeg) *offDeg = float(std::atan(cx / f) / kD2R);
-    if (fill) *fill = float(box.height) / float(ctx.frameH);
-    if (distM) {
-        *distM = -1.f;
-        const double cy = box.y + box.height * 0.5 - ctx.frameH * 0.5;
-        const double elCentre = p_.detTiltDeg - std::atan(cy / f) / kD2R;
-        if (los > 0.0) {
-            *distM = float(los * std::cos(elCentre * kD2R));     // its horizontal part
-        } else {
-            // THE GROUND PLANE, for something standing on it: the box's
-            // bottom edge is where it meets the ground, so its depression
-            // below the horizon and the altitude give the distance. Refused
-            // near the horizon, where it explodes, and without an altitude.
-            const double yb = box.y + box.height - ctx.frameH * 0.5;
-            const double dep = -(p_.detTiltDeg - std::atan(yb / f) / kD2R);   // + below
-            if (s.vehAltM > 0.5f && dep > 3.0) {
-                const double d = s.vehAltM / std::tan(dep * kD2R);
-                if (d <= p_.maxRangeM) *distM = float(d);
-            }
-            if (*distM < 0.f && best) {               // 4: the typical size, last
-                const double la = losOf(*best, true);
-                if (la > 0.0) *distM = float(la * std::cos(elCentre * kD2R));
-            }
-        }
-    }
-    return true;
+    if (!best) return false;
+    measure(best->box, best, losOf(*best, false), off, dist, fl);
+    return give(off, dist, fl);
 }
 
 float ScriptMode::sizeOf_(const std::string& label, bool* assumed) const {
@@ -309,6 +344,23 @@ float ScriptMode::yawTo_(float errDeg) const {
 }
 
 ControlCmd ScriptMode::fly_(WorldState& s, float dt, bool goal, float bearing, float capM) {
+    if (direct_ && goal) {
+        // DIRECT: no cycle, no certificate -- turn onto the bearing and fly
+        // at it, slowing over the last directSlowM metres. Only the
+        // ModeManager's failsafes and the fence stand between this and
+        // whatever is in the way; the compiler said so when it was written.
+        if (missionOn_) { mission_.enable(false); missionOn_ = false; }
+        const float err = float(wrap180(bearing - s.vehYawDeg));
+        ControlCmd c = hover_();
+        c.yaw = yawTo_(err);
+        if (std::fabs(err) < 25.f) {
+            const float ease = capM > 0.f ? std::max(0.25f, std::min(1.f, capM / p_.directSlowM)) : 1.f;
+            c.pitch = p_.directPitch * ease * (1.f - std::fabs(err) / 25.f * 0.5f);
+        }
+        s.missionActive = true;
+        s.missionPhase = "DIRECT";
+        return c;
+    }
     if (!missionOn_) { mission_.enable(true); missionOn_ = true; }
     s.missionGoalValid = goal;
     s.missionGoalBearing = bearing;
@@ -318,6 +370,7 @@ ControlCmd ScriptMode::fly_(WorldState& s, float dt, bool goal, float bearing, f
 }
 
 bool ScriptMode::faceFirst_(const WorldState& s, float bearing, ControlCmd& c) {
+    if (direct_) return false;
     const double err = wrap180(bearing - s.vehYawDeg);
     const MissionController::Phase ph = mission_.phase();
     const bool between = !missionOn_ || ph == MissionController::Phase::SETTLE;
@@ -478,8 +531,10 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             case Op::MARK_SEEN: {
                 float off = 0, d = -1;
                 if (!s.estValid) { if (!fail(in, "no position to place it from")) return out(hover_()); continue; }
-                if (!seen_(s, text, ctx, &off, &d, nullptr)) {
-                    if (!fail(in, "'" + text + "' is not in view")) return out(hover_());
+                const bool onlyNew = (in.flags & kms::FLAG_NEW) != 0;
+                if (!seen_(s, text, ctx, &off, &d, nullptr, onlyNew)) {
+                    if (!fail(in, onlyNew ? "no NEW '" + text + "' in view" : "'" + text + "' is not in view"))
+                        return out(hover_());
                     continue;
                 }
                 if (!(d > 0.f)) {
@@ -495,6 +550,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 p.e = s.estPe + d * std::sin(brg * kD2R);
                 p.n = s.estPn + d * std::cos(brg * kD2R);
                 p.refYaw = brg;
+                visited_.push_back({text, p.e, p.n});         // for `new` from now on
                 status_ = fmt("marked it %.1f m away on %03.0f", d, brg);
                 next_(pc_ + 1);
                 continue;
@@ -505,6 +561,11 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 state_ = in.target;
                 next_(prog_.states[size_t(state_)].pc);
                 status_ = "-> state " + stateName();
+                continue;
+            case Op::NAV:
+                endOp_(s);
+                direct_ = in.a > 0.5f;
+                next_(pc_ + 1);
                 continue;
             case Op::UNTRACK:
                 ++s.trackReleaseSeq;
@@ -636,7 +697,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 const double de = tg.e - s.estPe, dn = tg.n - s.estPn;
                 const double dist = std::hypot(de, dn);
                 if (dist <= in.a) { endOp_(s); next_(pc_ + 1); continue; }
-                if (mission_.phase() == MissionController::Phase::STUCK) {
+                if (!direct_ && mission_.phase() == MissionController::Phase::STUCK) {
                     if (!fail(in, "boxed in on the way (STUCK)")) return out(hover_());
                     continue;
                 }
@@ -657,7 +718,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 return out(fly_(s, float(dt), false, s.vehYawDeg, 0.f));
 
             case Op::SEARCH: {
-                if (seen_(s, text, ctx, nullptr, nullptr, nullptr)) {
+                if (seen_(s, text, ctx, nullptr, nullptr, nullptr, (in.flags & kms::FLAG_NEW) != 0)) {
                     status_ = "found '" + text + "'";
                     next_(pc_ + 1); continue;
                 }

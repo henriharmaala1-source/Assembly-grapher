@@ -231,6 +231,7 @@ private:
     std::vector<int> stateRefLine_;
     int curState_ = -1;                             // the state being compiled
     std::map<std::string, float> sizes_;            // `size LABEL N m`
+    bool warnedDirect_ = false;
     std::vector<std::string> labelsUsed_;           // every object label the program names
     std::map<std::string, Place> places_;
     std::map<std::string, int> strIdx_;
@@ -487,7 +488,9 @@ private:
             return;
         }
         if (acceptWord("seen")) {
-            CondOp c; c.kind = CondOp::SEEN; c.arg = str(label());
+            CondOp c; c.kind = CondOp::SEEN;
+            if (acceptWord("new")) c.var = FLAG_NEW;
+            c.arg = str(label());
             prog().condOps.push_back(c);
             prog().caps |= Program::NEEDS_DETECTOR;
             return;
@@ -579,6 +582,22 @@ private:
             prog().name = next().text;
             endStatement(); return false;
         }
+        if (w == "nav") {
+            next();
+            const Token mt = peek();
+            const std::string m = ident("certified or direct");
+            if (m != "certified" && m != "direct")
+                fail(mt, "nav takes certified (every leg checked by the planner) or direct "
+                         "(straight at the target, unchecked)");
+            const int pc = emit(Op::NAV, L);
+            at_(pc).a = m == "direct" ? 1.f : 0.f;
+            if (m == "direct" && !warnedDirect_) {
+                warnedDirect_ = true;
+                warn(L, t.col, "nav direct: goto, over and approach fly straight lines that NOTHING "
+                               "checks for obstacles -- fly above them (climb) and keep the fence tight");
+            }
+            endStatement(); return false;
+        }
         if (w == "size") {
             // `size door 2.0 m`: how TALL the thing is, so its range can be
             // read off its box (f * height / pixels) with no depth camera.
@@ -620,12 +639,14 @@ private:
                 at_(pc).target = p.index;
                 prog().caps |= Program::NEEDS_POSITION;
             } else if (acceptWord("seen")) {
+                const bool isNew = acceptWord("new");
                 const std::string lab = label();
                 Target tg; tg.kind = Target::RUNTIME; tg.name = str(name);
                 p.index = addTarget(tg);
                 const int pc = emit(Op::MARK_SEEN, L);
                 at_(pc).target = p.index;
                 at_(pc).text = str(lab);
+                if (isNew) at_(pc).flags = FLAG_NEW;
                 prog().caps |= Program::NEEDS_POSITION | Program::NEEDS_DETECTOR |
                                Program::NEEDS_RANGE;
                 // Defined before its else so the else may still test it --
@@ -684,10 +705,12 @@ private:
                 at_(pc).target = it->second.index;
                 prog().caps |= Program::NEEDS_POSITION;
             } else if (acceptWord("seen")) {
+                const bool isNew = acceptWord("new");
                 const std::string lab = label();
                 const int pc = emit(Op::MARK_SEEN, L);
                 at_(pc).target = it->second.index;
                 at_(pc).text = str(lab);
+                if (isNew) at_(pc).flags = FLAG_NEW;
                 prog().caps |= Program::NEEDS_POSITION | Program::NEEDS_DETECTOR |
                                Program::NEEDS_RANGE;
                 elseBranch(pc);
@@ -808,6 +831,7 @@ private:
         }
         if (w == "search" || w == "face" || w == "approach") {
             next();
+            const bool isNew = w == "search" && acceptWord("new");
             const std::string lab = label();
             prog().caps |= Program::NEEDS_DETECTOR;
             Op op = w == "search" ? Op::SEARCH : w == "face" ? Op::FACE : Op::APPROACH;
@@ -821,6 +845,7 @@ private:
             }
             const int pc = emit(op, L);
             at_(pc).text = str(lab);
+            if (isNew) at_(pc).flags = FLAG_NEW;
             double timeout = w == "search" ? 30 : w == "face" ? 15 : 90, fill = 0.4, dir = 1;
             for (;;) {
                 if (acceptWord("timeout")) timeout = positive(Unit::TIME, "the timeout", 1, 600);

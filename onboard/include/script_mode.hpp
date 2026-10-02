@@ -54,6 +54,11 @@ public:
         float searchYaw    = 0.3f;
         float climbThrottle = 0.4f;
         float noPositionMaxS = 20.f;   // stop if the estimate is gone this long mid-goto
+        // `nav direct`: forward stick at full speed, eased off over the last
+        // few metres so it stops near the target rather than through it.
+        float directPitch  = 0.35f;
+        float directSlowM  = 4.f;
+        float newRadiusM   = 3.f;      // `new`: farther than this from anything visited
     };
     using ModeLookup = std::function<IControlMode*(const std::string&)>;
 
@@ -107,8 +112,10 @@ private:
     // right) and, if it can be had, its horizontal distance.
     // The tracker's box is preferred when it is locked on `label` (every
     // frame, cheap); the detector's otherwise.
+    // onlyNew: skip objects whose ground position is within newRadiusM of a
+    // place already marked for this label (`new`).
     bool seen_(const WorldState& s, const std::string& label, const ControlCtx& ctx,
-               float* offDeg, float* distM, float* fill) const;
+               float* offDeg, float* distM, float* fill, bool onlyNew = false) const;
     bool tracking_(const WorldState& s, const std::string& label) const;
     // Metres tall, or -1; *assumed says the compiler filled it in.
     float sizeOf_(const std::string& label, bool* assumed = nullptr) const;
@@ -147,12 +154,15 @@ private:
     std::vector<bool> fired_;
     std::vector<double> regs_;
     std::vector<Place> places_;
+    struct Visited { std::string label; double e, n; };
+    std::vector<Visited> visited_;   // every object a `seen` marked, for `new`
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction
     double opAux_ = 0;       // per-op scratch (a turn's goal heading, last-seen time)
     double opAux2_ = 0;      // ...and a second (last time a range was had)
     bool opBegun_ = false;
     bool facing_ = false;     // turning onto a goal, until within 5 deg
+    bool direct_ = false;     // `nav direct`: no certified legs
     double noPosT_ = 0;
     std::string status_;
 };

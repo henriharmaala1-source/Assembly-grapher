@@ -443,6 +443,62 @@ int main() {
                   m.finished() && sim.s.fcRequest == WorldState::FcRequest::NONE && dist > 3.4, b);
     }
 
+    // ------------------------------- LIGHTPOLES: no voxel map, pole after pole
+    // missions/lightpoles.kms against three poles in a line north of the
+    // start. The "detector" sees a pole only from the camera geometry: in
+    // front, inside the FoV, within 40 m, its box's foot where the ground
+    // is at that range from 12 m up with the camera 30 deg down.
+    {
+        ScriptMode m(params());
+        std::string err;
+        const kms::CompileResult cr = kms::compileFile(std::string(KESTREL_MISSIONS_DIR) + "/lightpoles.kms");
+        check("missions/lightpoles.kms compiles (with its `nav direct` warning)", cr.ok,
+              cr.report("lightpoles.kms"));
+        kms::Program pr;
+        kms::deserialize(kms::serialize(cr.program), pr, &err);
+        m.load(pr, &err);
+        Sim sim; sim.init();
+        sim.s.vehYawDeg = 0.f;
+        const double poles[3][2] = {{1.0, 15.0}, {-1.5, 32.0}, {0.5, 50.0}};
+        double best[3] = {1e9, 1e9, 1e9};
+        const double f = 554.256, tilt = 30.0, W = 640, H = 480;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 400 && !m.finished(); ++i) {
+            sim.s.detections.clear();
+            for (const auto& p : poles) {
+                const double de = p[0] - sim.s.estPe, dn = p[1] - sim.s.estPn;
+                const double d = std::hypot(de, dn);
+                double off = std::atan2(de, dn) * 57.2958 - sim.s.vehYawDeg;
+                while (off > 180) off -= 360;
+                while (off <= -180) off += 360;
+                if (d < 1.0 || d > 40.0 || std::fabs(off) > 28.0) continue;
+                const double alt = sim.s.vehAltM;
+                const double depFoot = std::atan2(alt, d) * 57.2958;          // below horizon
+                const double depTop  = std::atan2(alt - 6.0, d) * 57.2958;
+                const double yFoot = H / 2 + f * std::tan((depFoot - tilt) / 57.2958);
+                const double yTop  = H / 2 + f * std::tan((depTop - tilt) / 57.2958);
+                if (yFoot > H - 1 || yFoot < 0) continue;                  // foot out of view
+                const double cx = W / 2 + f * std::tan(off / 57.2958);
+                Detection dd; dd.label = "lightpole"; dd.confidence = 0.8f;
+                const int top = int(std::max(0.0, yTop));
+                dd.box = cv::Rect(int(cx) - 4, top, 8, std::max(4, int(yFoot) - top));
+                sim.s.detections.push_back(dd);
+            }
+            sim.s.detStampS = sim.t;
+            if (m.status().find("hold") != std::string::npos)
+                for (int k = 0; k < 3; ++k)
+                    best[k] = std::min(best[k], std::hypot(poles[k][0] - sim.s.estPe,
+                                                           poles[k][1] - sim.s.estPn));
+            sim.step(m, 640, 480);
+        }
+        char b[160];
+        std::snprintf(b, sizeof b, "hovered %.2f / %.2f / %.2f m from them; %s", best[0], best[1],
+                      best[2], m.status().c_str());
+        check("over each lightpole in turn, then home (no voxel map, no depth)",
+              best[0] < 1.6 && best[1] < 1.6 && best[2] < 1.6 &&
+                  sim.s.fcRequest == WorldState::FcRequest::RTL, b);
+    }
+
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

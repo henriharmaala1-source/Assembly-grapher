@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 3;
+constexpr uint32_t kVersion = 4;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -67,6 +67,9 @@ enum class Op : uint8_t {
     TURN_REF,     // target: turn back to that place's reference heading, b = timeout
     CLIMB_BY,     // a = metres up from where this starts, b = timeout, jump = on failure
     APPROACH_TO,  // text = label, a = stop at this range m, b = timeout s, jump = lost
+    NAV,          // a = 0 certified (every leg checked by the planner), 1 direct
+                  // (straight at the target on heading + pitch, NOTHING checked:
+                  // outdoors, above the obstacles, inside the fence)
     COUNT_
 };
 
@@ -104,7 +107,7 @@ struct CondOp {
     enum Var  : uint8_t { BATTERY = 0, ALT, TIME, SPEED, HEADING };
     enum Cmp  : uint8_t { LT = 0, LE, GT, GE };
     Kind    kind = TRUE_;
-    uint8_t var = 0, cmp = 0;
+    uint8_t var = 0, cmp = 0;   // SEEN: var = FLAG_NEW for `seen new LABEL`
     int32_t arg = -1;        // SEEN: label string; DIST: target
     float   value = 0.f;     // VAR/DIST: compared against
 };
@@ -118,7 +121,12 @@ struct Instr {
     int32_t cond = -1;       // condition index
     int32_t text = -1;       // strings index
     float   a = 0.f, b = 0.f;
+    // FLAG_NEW (search / seen / mark): only objects NOT already visited --
+    // whose ground position is not within newRadiusM of a place this mission
+    // already marked for that label. "The next one", for any chain of them.
+    uint8_t flags = 0;
 };
+constexpr uint8_t FLAG_NEW = 1;
 
 // `on COND { ... }`: checked every tick while the main program runs; fires
 // once. Its body ends in LAND/RTL/END, or RESUME back to what it interrupted.

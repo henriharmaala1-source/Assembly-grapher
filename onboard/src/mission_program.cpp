@@ -13,7 +13,7 @@ const char* opName(Op o) {
                               "FACE", "APPROACH", "EXPLORE", "RUN", "WAIT", "JUMP",
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
                               "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
-                              "TURN_REF", "CLIMB_BY", "APPROACH_TO"};
+                              "TURN_REF", "CLIMB_BY", "APPROACH_TO", "NAV"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
@@ -111,7 +111,7 @@ std::vector<uint8_t> serialize(const Program& p) {
     w.u32(uint32_t(p.code.size()));
     for (const auto& in : p.code) {
         w.u8(uint8_t(in.op)); w.i32(in.line); w.i32(in.target); w.i32(in.jump);
-        w.i32(in.cond); w.i32(in.text); w.f32(in.a); w.f32(in.b);
+        w.i32(in.cond); w.i32(in.text); w.f32(in.a); w.f32(in.b); w.u8(in.flags);
     }
     const uint32_t c = crc32(w.b.data() + 12, w.b.size() - 12);
     for (int i = 0; i < 4; ++i) w.b[8 + size_t(i)] = uint8_t(c >> (8 * i));
@@ -255,10 +255,10 @@ bool deserialize(const std::vector<uint8_t>& bytes, Program& out, std::string* e
     for (uint32_t n = r.count(9), i = 0; i < n && !r.bad; ++i) {
         ObjectSize z; z.label = r.i32(); z.heightM = r.f32(); z.assumed = r.u8(); p.sizes.push_back(z);
     }
-    for (uint32_t n = r.count(29), i = 0; i < n && !r.bad; ++i) {
+    for (uint32_t n = r.count(30), i = 0; i < n && !r.bad; ++i) {
         Instr in;
         in.op = Op(r.u8()); in.line = r.i32(); in.target = r.i32(); in.jump = r.i32();
-        in.cond = r.i32(); in.text = r.i32(); in.a = r.f32(); in.b = r.f32();
+        in.cond = r.i32(); in.text = r.i32(); in.a = r.f32(); in.b = r.f32(); in.flags = r.u8();
         p.code.push_back(in);
     }
     if (r.bad) return fail("truncated");
@@ -365,8 +365,9 @@ std::string disassemble(const Program& p) {
                 arg = cv_fmt("cond#%d %.2f", in.cond, in.a); break;
             default: arg = cv_fmt("%.2f %.2f", in.a, in.b); break;
         }
-        std::snprintf(buf, sizeof buf, "  %3zu  line %-4d %-11s %s%s\n", i, in.line, opName(in.op),
-                      arg.c_str(), in.jump >= 0 ? (" -> " + std::to_string(in.jump)).c_str() : "");
+        std::snprintf(buf, sizeof buf, "  %3zu  line %-4d %-11s %s%s%s\n", i, in.line, opName(in.op),
+                      arg.c_str(), (in.flags & FLAG_NEW) ? " (new only)" : "",
+                      in.jump >= 0 ? (" -> " + std::to_string(in.jump)).c_str() : "");
         o << buf;
     }
     return o.str();

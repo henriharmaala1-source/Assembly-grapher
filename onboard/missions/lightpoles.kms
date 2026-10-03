@@ -1,0 +1,28 @@
+# Outdoors, NO voxel map: find a lightpole, fly over it, find the next one.
+#
+# `nav direct` flies straight at each pole -- nothing checks the way for
+# obstacles, so it climbs above them first and keeps a tight fence. Each
+# pole's position comes from its box: bearing from where it is in the image,
+# range from where its foot meets the ground (altitude and camera tilt), so
+# no depth camera is needed. After passing over one, the next is the one in
+# front -- `new` skips the ones already flown over; when none is left, it comes home.
+mission "lightpoles"
+fence 120 m
+timeout 10 min
+
+on battery < 30% { rtl }
+
+nav direct
+let pole = here
+climb 12 m
+
+state find {
+  search new lightpole timeout 20 s else { rtl }
+  -> visit
+}
+
+state visit {
+  set pole = seen new lightpole else { -> find }
+  over pole radius 1.5 m hold 2 s
+  -> find
+}

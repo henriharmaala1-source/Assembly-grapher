@@ -1,0 +1,47 @@
+# kestrel.conf — runtime tuning (key = value). Copy, edit, run:
+#   ./build/kestrel --config=kestrel.conf ...   (CLI flags override these)
+# See the effective set any time with:  ./build/kestrel --dump-config
+# All keys below are shown at their DEFAULT value; uncomment/change to override.
+#
+# controller.kp_yaw_nav        = 1
+# controller.kp_yaw_road       = 1
+# controller.k_head_road       = 0.3
+# controller.cruise            = 0.25
+# controller.scan_yaw          = 0.15
+# controller.max_authority     = 0.35
+# mission.settle_sec           = 1.5
+# mission.settle_speed_ms      = 0.4
+# mission.step_m               = 4
+# mission.move_timeout_sec     = 12
+# mission.cruise               = 0.25
+# mission.kp_yaw               = 1.2
+# mission.hfov_deg             = 60
+# mission.corridor_stale_sec   = 0.8
+# mission.max_eph_m            = 3
+# mission.min_open_to_move     = 0.12
+# mission.min_open_to_keep     = 0.06
+# mission.scan_yaw_rate        = 0.4
+# mission.scan_timeout_sec     = 9
+# nav.use_map                  = true
+# nav.plan_berth_m             = 3.5
+# nav.grid_size_m              = 80
+# nav.grid_cell_m              = 0.5
+# safety.rtl_batt_pct          = 0.15
+# safety.blocked_open          = 0.3
+# safety.corridor_stale_sec    = 0.7
+# failsafe.rth_aux             = -1
+# failsafe.rth_aux_us          = 1800
+# camera.mount_tilt_deg        = 0
+# nav.scan_cam_up_max_deg      = 12
+# nav.scan_cam_down_max_deg    = 40
+# rc.mode_aux                  = -1
+# rc.go_aux                    = -1
+# rc.go_us                     = 1700
+# rc.steer_aux                 = -1
+# rc.steer_rate_dps            = 45
+# rc.steer_deadband_us         = 40
+# rc.mode_map                  = FLY,ASSIST,WAYPOINT,AUTONOMY,SHADOW,HOLD
+# rt.enable                    = true
+# rt.fly_prio                  = 10
+# rt.fclink_prio               = 20
+# rt.control_cpu               = -1

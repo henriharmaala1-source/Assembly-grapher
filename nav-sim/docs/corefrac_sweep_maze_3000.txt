@@ -1,0 +1,306 @@
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.30   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    maze     101   flew the whole budget     287.5     17.8    216   16.2x      0.70
+freeM    maze     102   flew the whole budget     167.7      1.6     57  105.1x      0.69
+freeM    maze     103   flew the whole budget     138.5      2.1     28   65.8x      0.69
+freeM    maze     104   flew the whole budget     162.0      2.5     58   65.0x      0.66
+freeM    maze     105   flew the whole budget     278.6      2.9    220   94.8x      0.64
+freeM    maze     106   flew the whole budget     173.2     14.0     82   12.3x      0.69
+freeM    maze     107   flew the whole budget     170.4      2.2     67   78.4x      0.74
+freeM    maze     108   flew the whole budget     287.4      8.4    128   34.2x      0.72
+freeM    maze     109   flew the whole budget     189.4      3.0     88   64.1x      0.67
+freeM    maze     110   flew the whole budget     135.7      7.6      9   18.0x      0.75
+  -> freeM    runs 10  collisions 0  mean travel 199.0 m  net 6.2 m  cells 95  loops 32.1x
+
+freeG    maze     101   COLLIDED             123.2     21.8    131    5.7x      0.60
+freeG    maze     102   COLLIDED              63.9     27.6     76    2.3x      0.59
+freeG    maze     103   flew the whole budget     154.5      1.8     56   88.2x      0.63
+freeG    maze     104   flew the whole budget     144.2     30.9     73    4.7x      0.60
+freeG    maze     105   flew the whole budget     212.2     29.4    194    7.2x      0.64
+freeG    maze     106   COLLIDED              71.1     14.1     83    5.0x      0.58
+freeG    maze     107   flew the whole budget     190.2     31.1    158    6.1x      0.74
+freeG    maze     108   flew the whole budget     260.4      8.9    126   29.1x      0.72
+freeG    maze     109   COLLIDED             113.7      1.9    102   60.3x      0.59
+freeG    maze     110   flew the whole budget     137.6      9.1     17   15.2x      0.78
+  -> freeG    runs 10  collisions 4  mean travel 147.1 m  net 17.7 m  cells 102  loops 8.3x
+
+novelG   maze     101   flew the whole budget     200.9     21.4    145    9.4x      0.70
+novelG   maze     102   COLLIDED              95.1     13.8    106    6.9x      0.60
+novelG   maze     103   COLLIDED              52.3      1.8     55   29.0x      0.59
+novelG   maze     104   flew the whole budget     144.2     30.9     73    4.7x      0.66
+novelG   maze     105   flew the whole budget     261.3     24.8    279   10.5x      0.64
+novelG   maze     106   COLLIDED              71.4     14.1     83    5.1x      0.58
+novelG   maze     107   flew the whole budget     219.9      3.5    195   62.0x      0.69
+novelG   maze     108   COLLIDED             230.7     22.8    240   10.1x      0.59
+novelG   maze     109   COLLIDED              93.3     23.2     97    4.0x      0.59
+novelG   maze     110   flew the whole budget     137.8     10.1     17   13.7x      0.80
+  -> novelG   runs 10  collisions 5  mean travel 150.7 m  net 16.6 m  cells 129  loops 9.1x
+
+cover    maze     101   flew the whole budget     192.7     29.9    129    6.4x      0.70
+cover    maze     102   flew the whole budget     150.1     19.5     46    7.7x      0.75
+cover    maze     103   COLLIDED              23.7      1.9     26   12.6x      0.57
+cover    maze     104   flew the whole budget     161.2     31.2     73    5.2x      0.67
+cover    maze     105   flew the whole budget     196.0     26.7    141    7.4x      0.61
+cover    maze     106   flew the whole budget     151.3     10.4     49   14.6x      0.70
+cover    maze     107   flew the whole budget     140.1     17.6     23    8.0x      0.77
+cover    maze     108   COLLIDED             175.3     13.1    156   13.4x      0.60
+cover    maze     109   COLLIDED              53.8      2.6     55   20.7x      0.57
+cover    maze     110   flew the whole budget     134.6      7.6      9   17.8x      0.79
+  -> cover    runs 10  collisions 3  mean travel 137.9 m  net 16.0 m  cells 71  loops 8.6x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.45   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    maze     101   flew the whole budget     171.9      2.2     70   78.9x      0.71
+freeM    maze     102   flew the whole budget     170.1     24.1     82    7.1x      0.73
+freeM    maze     103   flew the whole budget     145.2      1.5     24   95.3x      0.71
+freeM    maze     104   flew the whole budget     212.6      1.4    102  154.8x      0.66
+freeM    maze     105   flew the whole budget     164.4     20.8     66    7.9x      0.64
+freeM    maze     106   flew the whole budget     173.1     14.0     82   12.3x      0.69
+freeM    maze     107   flew the whole budget     258.3      8.1    203   31.7x      0.74
+freeM    maze     108   flew the whole budget     287.1     26.9    151   10.7x      0.72
+freeM    maze     109   flew the whole budget     287.1     23.2    247   12.4x      0.67
+freeM    maze     110   flew the whole budget     113.2      7.7      9   14.7x      0.81
+  -> freeM    runs 10  collisions 0  mean travel 198.3 m  net 13.0 m  cells 104  loops 15.3x
+
+freeG    maze     101   flew the whole budget     260.1     15.8    250   16.5x      0.70
+freeG    maze     102   flew the whole budget     140.9     19.4     26    7.3x      0.65
+freeG    maze     103   flew the whole budget     154.2      1.2     55  130.5x      0.65
+freeG    maze     104   flew the whole budget     122.6      1.6     31   75.8x      0.63
+freeG    maze     105   flew the whole budget     261.6     23.4    291   11.2x      0.64
+freeG    maze     106   flew the whole budget     148.8     14.1     83   10.6x      0.65
+freeG    maze     107   flew the whole budget     158.1     13.7     98   11.5x      0.66
+freeG    maze     108   flew the whole budget     261.0      8.4    127   30.9x      0.72
+freeG    maze     109   flew the whole budget     239.9     42.9    213    5.6x      0.65
+freeG    maze     110   flew the whole budget     112.1      7.6      9   14.7x      0.87
+  -> freeG    runs 10  collisions 0  mean travel 185.9 m  net 14.8 m  cells 118  loops 12.5x
+
+novelG   maze     101   flew the whole budget     213.6     26.1    181    8.2x      0.65
+novelG   maze     102   flew the whole budget     147.8     24.3     81    6.1x      0.75
+novelG   maze     103   COLLIDED              51.4      1.4     54   37.4x      0.60
+novelG   maze     104   flew the whole budget      27.3      2.1     31   12.8x      0.63
+novelG   maze     105   flew the whole budget     229.4     29.2    214    7.9x      0.64
+novelG   maze     106   flew the whole budget     172.3     13.9     86   12.4x      0.65
+novelG   maze     107   flew the whole budget     218.7      1.7    165  130.1x      0.65
+novelG   maze     108   flew the whole budget     176.4     32.5    130    5.4x      0.63
+novelG   maze     109   flew the whole budget     250.6     25.1    264   10.0x      0.63
+novelG   maze     110   flew the whole budget     112.5      7.6      9   14.7x      0.72
+  -> novelG   runs 10  collisions 1  mean travel 160.0 m  net 16.4 m  cells 122  loops 9.8x
+
+cover    maze     101   flew the whole budget     183.3     32.2    115    5.7x      0.70
+cover    maze     102   flew the whole budget     150.0     19.5     43    7.7x      0.75
+cover    maze     103   flew the whole budget      24.2      1.6     25   15.3x      0.63
+cover    maze     104   flew the whole budget     161.4     31.2     72    5.2x      0.66
+cover    maze     105   flew the whole budget     257.2     50.4    285    5.1x      0.62
+cover    maze     106   flew the whole budget      39.5      8.6     27    4.6x      0.69
+cover    maze     107   flew the whole budget     233.5     13.8    224   16.9x      0.71
+cover    maze     108   flew the whole budget     255.4      7.6    250   33.6x      0.72
+cover    maze     109   flew the whole budget     188.4      2.7    128   69.2x      0.67
+cover    maze     110   flew the whole budget     172.6     11.8     98   14.7x      0.61
+  -> cover    runs 10  collisions 0  mean travel 166.5 m  net 17.9 m  cells 127  loops 9.3x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.62   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    maze     101   flew the whole budget     156.7      1.5     60  103.0x      0.66
+freeM    maze     102   flew the whole budget     183.7     14.3    104   12.8x      0.75
+freeM    maze     103   flew the whole budget     124.2      1.3     23   92.8x      0.65
+freeM    maze     104   flew the whole budget     168.6      1.7     59   97.5x      0.65
+freeM    maze     105   flew the whole budget     286.8     12.9    195   22.3x      0.64
+freeM    maze     106   flew the whole budget     138.2     11.6     13   12.0x      0.81
+freeM    maze     107   flew the whole budget     170.2      1.9     61   87.8x      0.74
+freeM    maze     108   flew the whole budget     173.0     10.3     80   16.7x      0.72
+freeM    maze     109   flew the whole budget     179.0     26.5     87    6.8x      0.68
+freeM    maze     110   flew the whole budget     158.9      5.7     57   27.8x      0.64
+  -> freeM    runs 10  collisions 0  mean travel 173.9 m  net 8.8 m  cells 74  loops 19.8x
+
+freeG    maze     101   flew the whole budget     165.2      2.9     70   57.4x      0.67
+freeG    maze     102   flew the whole budget     146.2     24.2     78    6.0x      0.66
+freeG    maze     103   flew the whole budget     164.9      1.4     48  118.4x      0.63
+freeG    maze     104   flew the whole budget     124.5      2.0     31   63.2x      0.63
+freeG    maze     105   flew the whole budget     135.6     30.0     54    4.5x      0.64
+freeG    maze     106   flew the whole budget     179.5     14.2     83   12.7x      0.61
+freeG    maze     107   flew the whole budget     192.2      1.8    106  105.7x      0.74
+freeG    maze     108   flew the whole budget     176.9     30.9    133    5.7x      0.64
+freeG    maze     109   flew the whole budget     222.0     25.7    211    8.6x      0.67
+freeG    maze     110   flew the whole budget     144.8     18.2     71    7.9x      0.64
+  -> freeG    runs 10  collisions 0  mean travel 165.2 m  net 15.1 m  cells 88  loops 10.9x
+
+novelG   maze     101   flew the whole budget     260.3     15.1    267   17.2x      0.70
+novelG   maze     102   flew the whole budget     184.9     13.2    103   14.0x      0.63
+novelG   maze     103   COLLIDED              50.5      1.1     53   46.5x      0.59
+novelG   maze     104   flew the whole budget     124.1      2.0     31   62.5x      0.63
+novelG   maze     105   flew the whole budget     165.8     29.3     80    5.7x      0.64
+novelG   maze     106   flew the whole budget     161.9     14.0     86   11.6x      0.65
+novelG   maze     107   flew the whole budget     196.9     17.7     96   11.1x      0.65
+novelG   maze     108   flew the whole budget     140.0     30.9    156    4.5x      0.63
+novelG   maze     109   flew the whole budget     248.8     30.5    274    8.1x      0.67
+novelG   maze     110   flew the whole budget     144.2     23.3     32    6.2x      0.64
+  -> novelG   runs 10  collisions 1  mean travel 167.7 m  net 17.7 m  cells 118  loops 9.5x
+
+cover    maze     101   flew the whole budget     164.8      2.2     69   76.1x      0.70
+cover    maze     102   flew the whole budget     150.0     19.5     43    7.7x      0.75
+cover    maze     103   flew the whole budget     120.3      1.2     24  101.9x      0.66
+cover    maze     104   flew the whole budget     200.8     26.8    156    7.5x      0.66
+cover    maze     105   flew the whole budget     163.5     19.3     76    8.5x      0.70
+cover    maze     106   flew the whole budget     142.7      1.6     27   89.3x      0.69
+cover    maze     107   flew the whole budget     142.9     22.5     29    6.4x      0.77
+cover    maze     108   flew the whole budget     115.0     31.2    130    3.7x      0.63
+cover    maze     109   flew the whole budget     169.6     25.0     89    6.8x      0.67
+cover    maze     110   flew the whole budget     157.7     18.5     64    8.5x      0.63
+  -> cover    runs 10  collisions 0  mean travel 152.7 m  net 16.8 m  cells 71  loops 9.1x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.80   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    maze     101   flew the whole budget     150.8     29.8     40    5.1x      0.72
+freeM    maze     102   flew the whole budget     148.9     14.5     37   10.3x      0.75
+freeM    maze     103   flew the whole budget     145.1      1.3     23  109.3x      0.71
+freeM    maze     104   flew the whole budget     271.2     42.4    192    6.4x      0.66
+freeM    maze     105   flew the whole budget     191.4      2.2     81   86.3x      0.64
+freeM    maze     106   flew the whole budget     143.8     16.7     26    8.6x      0.73
+freeM    maze     107   flew the whole budget     200.4     13.9    121   14.4x      0.74
+freeM    maze     108   flew the whole budget     182.6     29.8     98    6.1x      0.72
+freeM    maze     109   flew the whole budget     230.8     29.3    142    7.9x      0.67
+freeM    maze     110   flew the whole budget     135.3      7.6      9   17.8x      0.78
+  -> freeM    runs 10  collisions 0  mean travel 180.0 m  net 18.7 m  cells 77  loops 9.6x
+
+freeG    maze     101   flew the whole budget     191.5      2.0     98   95.6x      0.65
+freeG    maze     102   flew the whole budget     160.1     14.2    102   11.3x      0.65
+freeG    maze     103   flew the whole budget     135.1      1.2     25  110.3x      0.65
+freeG    maze     104   flew the whole budget      25.9      1.1     30   24.2x      0.61
+freeG    maze     105   flew the whole budget     184.4     28.9    117    6.4x      0.64
+freeG    maze     106   flew the whole budget     146.6     21.9     40    6.7x      0.65
+freeG    maze     107   flew the whole budget     211.2     32.2    169    6.6x      0.74
+freeG    maze     108   flew the whole budget     214.8     30.8    153    7.0x      0.65
+freeG    maze     109   flew the whole budget     252.6     25.2    263   10.0x      0.65
+freeG    maze     110   flew the whole budget     156.0     23.1     31    6.7x      0.66
+  -> freeG    runs 10  collisions 0  mean travel 167.8 m  net 18.1 m  cells 103  loops 9.3x
+
+novelG   maze     101   flew the whole budget     181.0      2.7    105   68.3x      0.71
+novelG   maze     102   flew the whole budget     181.3     26.9    135    6.7x      0.65
+novelG   maze     103   flew the whole budget     139.4      0.9     24  153.8x      0.61
+novelG   maze     104   flew the whole budget      25.8      0.9     31   28.9x      0.60
+novelG   maze     105   flew the whole budget     150.0     19.3     72    7.8x      0.65
+novelG   maze     106   flew the whole budget     141.1     21.2     42    6.6x      0.65
+novelG   maze     107   flew the whole budget     183.9     17.6    118   10.4x      0.74
+novelG   maze     108   flew the whole budget     207.4     22.8    163    9.1x      0.65
+novelG   maze     109   flew the whole budget     190.4      4.2    133   45.0x      0.63
+novelG   maze     110   flew the whole budget     156.9     11.7     93   13.4x      0.64
+  -> novelG   runs 10  collisions 0  mean travel 155.7 m  net 12.8 m  cells 92  loops 12.1x
+
+cover    maze     101   flew the whole budget     177.7      3.1    107   58.1x      0.71
+cover    maze     102   flew the whole budget     150.0     19.5     43    7.7x      0.75
+cover    maze     103   flew the whole budget     174.3     19.9     86    8.8x      0.71
+cover    maze     104   flew the whole budget     143.2      5.1     30   27.8x      0.66
+cover    maze     105   flew the whole budget     204.2     26.7    162    7.6x      0.63
+cover    maze     106   flew the whole budget     142.7      1.6     27   89.3x      0.69
+cover    maze     107   flew the whole budget     142.9     22.5     29    6.4x      0.77
+cover    maze     108   flew the whole budget     138.2     31.0    156    4.5x      0.65
+cover    maze     109   flew the whole budget     214.8     18.3    187   11.7x      0.67
+cover    maze     110   COLLIDED              32.4      8.7     28    3.7x      0.60
+  -> cover    runs 10  collisions 1  mean travel 152.0 m  net 15.6 m  cells 86  loops 9.7x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    maze     101   flew the whole budget     287.5     17.8    216   16.2x      0.70
+freeM    maze     102   flew the whole budget     167.7      1.6     57  105.1x      0.69
+freeM    maze     103   flew the whole budget     138.5      2.1     28   65.8x      0.69
+freeM    maze     104   flew the whole budget     162.0      2.5     58   65.0x      0.66
+freeM    maze     105   flew the whole budget     278.6      2.9    220   94.8x      0.64
+freeM    maze     106   flew the whole budget     173.2     14.0     82   12.3x      0.69
+freeM    maze     107   flew the whole budget     170.4      2.2     67   78.4x      0.74
+freeM    maze     108   flew the whole budget     287.4      8.4    128   34.2x      0.72
+freeM    maze     109   flew the whole budget     189.4      3.0     88   64.1x      0.67
+freeM    maze     110   flew the whole budget     135.7      7.6      9   18.0x      0.75
+  -> freeM    runs 10  collisions 0  mean travel 199.0 m  net 6.2 m  cells 95  loops 32.1x
+
+freeG    maze     101   COLLIDED             123.2     21.8    131    5.7x      0.60
+freeG    maze     102   COLLIDED              63.9     27.6     76    2.3x      0.59
+freeG    maze     103   flew the whole budget     154.5      1.8     56   88.2x      0.63
+freeG    maze     104   flew the whole budget     144.2     30.9     73    4.7x      0.60
+freeG    maze     105   flew the whole budget     212.2     29.4    194    7.2x      0.64
+freeG    maze     106   COLLIDED              71.1     14.1     83    5.0x      0.58
+freeG    maze     107   flew the whole budget     190.2     31.1    158    6.1x      0.74
+freeG    maze     108   flew the whole budget     260.4      8.9    126   29.1x      0.72
+freeG    maze     109   COLLIDED             113.7      1.9    102   60.3x      0.59
+freeG    maze     110   flew the whole budget     137.6      9.1     17   15.2x      0.78
+  -> freeG    runs 10  collisions 4  mean travel 147.1 m  net 17.7 m  cells 102  loops 8.3x
+
+novelG   maze     101   flew the whole budget     200.9     21.4    145    9.4x      0.70
+novelG   maze     102   COLLIDED              95.1     13.8    106    6.9x      0.60
+novelG   maze     103   COLLIDED              52.3      1.8     55   29.0x      0.59
+novelG   maze     104   flew the whole budget     144.2     30.9     73    4.7x      0.66
+novelG   maze     105   flew the whole budget     261.3     24.8    279   10.5x      0.64
+novelG   maze     106   COLLIDED              71.4     14.1     83    5.1x      0.58
+novelG   maze     107   flew the whole budget     219.9      3.5    195   62.0x      0.69
+novelG   maze     108   COLLIDED             230.7     22.8    240   10.1x      0.59
+novelG   maze     109   COLLIDED              93.3     23.2     97    4.0x      0.59
+novelG   maze     110   flew the whole budget     137.8     10.1     17   13.7x      0.80
+  -> novelG   runs 10  collisions 5  mean travel 150.7 m  net 16.6 m  cells 129  loops 9.1x
+
+cover    maze     101   flew the whole budget     192.7     29.9    129    6.4x      0.70
+cover    maze     102   flew the whole budget     150.1     19.5     46    7.7x      0.75
+cover    maze     103   COLLIDED              23.7      1.9     26   12.6x      0.57
+cover    maze     104   flew the whole budget     161.2     31.2     73    5.2x      0.67
+cover    maze     105   flew the whole budget     196.0     26.7    141    7.4x      0.61
+cover    maze     106   flew the whole budget     151.3     10.4     49   14.6x      0.70
+cover    maze     107   flew the whole budget     140.1     17.6     23    8.0x      0.77
+cover    maze     108   COLLIDED             175.3     13.1    156   13.4x      0.60
+cover    maze     109   COLLIDED              53.8      2.6     55   20.7x      0.57
+cover    maze     110   flew the whole budget     134.6      7.6      9   17.8x      0.79
+  -> cover    runs 10  collisions 3  mean travel 137.9 m  net 16.0 m  cells 71  loops 8.6x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 1.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    maze     101   flew the whole budget       0.6      0.2      1    3.8x      1.20
+freeM    maze     102   flew the whole budget       0.6      0.1      1    4.4x      1.20
+freeM    maze     103   flew the whole budget       0.6      0.2      1    3.1x      1.20
+freeM    maze     104   flew the whole budget       0.4      0.2      1    2.6x      1.20
+freeM    maze     105   flew the whole budget       0.6      0.2      1    3.3x      1.20
+freeM    maze     106   flew the whole budget       0.6      0.2      1    3.1x      1.20
+freeM    maze     107   flew the whole budget       0.6      0.2      1    3.8x      1.20
+freeM    maze     108   flew the whole budget       0.6      0.2      1    3.7x      1.20
+freeM    maze     109   flew the whole budget       0.6      0.2      3    4.1x      1.20
+freeM    maze     110   flew the whole budget       0.6      0.1      1    4.4x      1.20
+  -> freeM    runs 10  collisions 0  mean travel 0.6 m  net 0.2 m  cells 1  loops 3.6x
+
+freeG    maze     101   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     102   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     103   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     104   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     105   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     106   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     107   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     108   flew the whole budget       0.2      0.2      1    1.0x      1.20
+freeG    maze     109   flew the whole budget       0.2      0.2      3    1.0x      1.20
+freeG    maze     110   flew the whole budget       0.2      0.2      1    1.0x      1.20
+  -> freeG    runs 10  collisions 0  mean travel 0.2 m  net 0.2 m  cells 1  loops 1.0x
+
+novelG   maze     101   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     102   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     103   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     104   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     105   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     106   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     107   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     108   flew the whole budget       0.2      0.2      1    1.0x      1.20
+novelG   maze     109   flew the whole budget       0.2      0.2      3    1.0x      1.20
+novelG   maze     110   flew the whole budget       0.2      0.2      1    1.0x      1.20
+  -> novelG   runs 10  collisions 0  mean travel 0.2 m  net 0.2 m  cells 1  loops 1.0x
+
+cover    maze     101   flew the whole budget       0.1      0.1      1    1.0x      1.20
+cover    maze     102   flew the whole budget       0.2      0.2      1    1.0x      1.20
+cover    maze     103   flew the whole budget       0.2      0.2      1    1.0x      1.20
+cover    maze     104   flew the whole budget       0.2      0.2      1    1.0x      1.20
+cover    maze     105   flew the whole budget       0.1      0.1      1    1.0x      1.20
+cover    maze     106   flew the whole budget       0.2      0.2      1    1.0x      1.20
+cover    maze     107   flew the whole budget       0.2      0.2      1    1.0x      1.20
+cover    maze     108   flew the whole budget       0.2      0.2      1    1.0x      1.20
+cover    maze     109   flew the whole budget       0.1      0.1      2    1.0x      1.20
+cover    maze     110   flew the whole budget       0.2      0.2      1    1.0x      1.20
+  -> cover    runs 10  collisions 0  mean travel 0.2 m  net 0.2 m  cells 1  loops 1.0x
+

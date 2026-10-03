@@ -1,0 +1,47 @@
+name: build + test onboard (flight software)
+
+# The code that flies had no CI at all. nav-sim's Windows job compiles a few of
+# onboard's tracker sources into kestrel.exe, which caught header breaks by
+# accident, but onboard's own executable and its seventeen tests -- the SITL
+# autonomy run, the MAVLink codec against golden frames, the mode safety
+# layers, the voxel layer's closed loop -- never ran anywhere but a desk.
+#
+# Ubuntu 24.04 is the Pi 5's OS family and ships OpenCV 4.6 with the contrib
+# modules onboard needs (tracking for CSRT/KCF, dnn). No RealSense SDK: the
+# D435i is loaded at run time, and test_voxel_nav drives the voxel layer from
+# the simulated camera instead.
+
+on:
+  push:
+    paths:
+      - 'onboard/**'
+      - 'navcore/**'
+      - '.github/workflows/onboard-linux.yml'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # The suite takes well under a minute on a desk. A ceiling so a hang is
+    # reported as a hang and not as a slow day.
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: onboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential cmake libopencv-dev
+
+      - name: Configure
+        run: cmake -B build -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Test
+        timeout-minutes: 10
+        run: ctest --test-dir build --output-on-failure --timeout 300 -j 4

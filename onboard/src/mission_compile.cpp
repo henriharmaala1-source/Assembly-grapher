@@ -705,6 +705,30 @@ private:
             elseBranch(pc);
             endStatement(); return false;
         }
+        if (w == "gains") {
+            // `gains yaw kp 1.2 kd 0.2` -- how hard each loop onto the target
+            // point pulls (P), damps (D) and trims (I), from here on. Put it
+            // at the top of a state to give that mode its own.
+            next();
+            const Token at0 = peek();
+            const std::string ax = ident("yaw, strafe, dive or range");
+            int axis = ax == "yaw" ? 0 : ax == "strafe" ? 1 : (ax == "dive" || ax == "vertical") ? 2
+                     : ax == "range" ? 3 : -1;
+            if (axis < 0) fail(at0, "'" + ax + "': gains are for yaw, strafe, dive or range");
+            const int pc = emit(Op::GAINS, L);
+            at_(pc).target = axis;
+            uint8_t which = 0;
+            for (;;) {
+                if (acceptWord("kp")) { at_(pc).a = float(positive(Unit::NONE, "kp", 0, 100)); which |= 1; }
+                else if (acceptWord("ki")) { at_(pc).b = float(positive(Unit::NONE, "ki", 0, 100)); which |= 2; }
+                else if (acceptWord("kd")) { at_(pc).c = float(positive(Unit::NONE, "kd", 0, 100)); which |= 4; }
+                else if (acceptWord("filter")) { at_(pc).d = float(positive(Unit::TIME, "the derivative filter", 0, 5)); which |= 8; }
+                else break;
+            }
+            if (!which) fail(peek(), "gains needs at least one of kp, ki, kd, filter");
+            at_(pc).flags = which;
+            endStatement(); return false;
+        }
         if (w == "fly") {
             // FLY AT THE CROSSHAIR: a fixed point in the camera image and a
             // throttle; the aircraft flies along the ray through it. The

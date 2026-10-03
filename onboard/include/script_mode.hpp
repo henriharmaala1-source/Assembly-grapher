@@ -37,6 +37,7 @@
 #include "control_mode.hpp"
 #include "mission.hpp"
 #include "mission_program.hpp"
+#include "pid.hpp"
 
 class ScriptMode : public IControlMode {
 public:
@@ -66,7 +67,19 @@ public:
         // own number; the sim's is 4), and the roll stick per degree of aim
         // error when strafing.
         float mpsPerStick  = 4.f;
-        float strafeKp     = 0.02f;
+        // FOLLOWING THE TARGET POINT: PD loops (pid.hpp), errors in
+        // fractions of 90 deg for angles and metres for range, outputs in
+        // stick. Defaults; a script's `gains AXIS kp .. ki .. kd ..` changes
+        // them from that point on.
+        //   yaw     aim point's horizontal angle -> yaw stick
+        //   strafe  the same angle -> roll stick (steer/follow ... strafe)
+        //   dive    the aim point's angle below centre -> throttle (dive)
+        //   range   follow's range error -> forward m/s (on top of the
+        //           object's own speed, fed forward)
+        PidGains yawPid    {1.2f, 0.f, 0.15f, 0.3f, 0.1f, 0.5f};
+        PidGains strafePid {1.8f, 0.f, 0.20f, 0.3f, 0.1f, 0.5f};
+        PidGains divePid   {7.2f, 0.f, 0.60f, 0.3f, 0.1f, 0.6f};
+        PidGains rangePid  {0.8f, 0.f, 0.30f, 1.0f, 0.2f, 15.f};
         // HEIGHT. Never commanded below minAltM (only `land` goes lower --
         // the forward camera cannot see what is under the aircraft); a
         // certified glide no steeper than maxGlideDeg; vertical stick per
@@ -75,7 +88,6 @@ public:
         float maxGlideDeg  = 25.f;
         float altKp        = 0.8f;
         float maxVert      = 0.6f;
-        float diveKp       = 0.08f;  // vertical stick per degree the aim sits below centre
         // THE CROSSHAIR LAW: vertical metres per second at full stick (the
         // airframe's own; ArduPilot PILOT_SPEED_UP/DN), for turning the
         // ray's climb into a stick.
@@ -196,7 +208,13 @@ private:
     // a point in the image at (px, py) pixels from the centre (+ right,
     // + down) and a throttle 0..1 -> fly along the 3D ray through it.
     ControlCmd crosshair_(const WorldState& s, const ControlCtx& ctx, double px, double py,
-                          float throttle) const;
+                          float throttle);
+    // The PD loops onto the target point (angles in degrees).
+    float aimYaw_(float errDeg, float dt)    { return pidYaw_.step(errDeg / 90.f, -errDeg / 90.f, dt, gYaw_); }
+    float aimStrafe_(float errDeg, float dt) { return pidStrafe_.step(errDeg / 90.f, -errDeg / 90.f, dt, gStrafe_); }
+    float aimVert_(float upDeg, float dt)    { return pidVert_.step(upDeg / 90.f, -upDeg / 90.f, dt, gVert_); }
+    Pid pidYaw_, pidStrafe_, pidVert_, pidRange_;
+    PidGains gYaw_, gStrafe_, gVert_, gRange_;   // the gains in force now
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction
     double opAux_ = 0;       // per-op scratch (a turn's goal heading, last-seen time)

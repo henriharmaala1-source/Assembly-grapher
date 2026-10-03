@@ -68,6 +68,7 @@ void ScriptMode::reset_() {
     state_ = -1; trackReqT_ = -1;
     direct_ = false;
     visited_.clear();
+    gYaw_ = p_.yawPid; gStrafe_ = p_.strafePid; gVert_ = p_.divePid; gRange_ = p_.rangePid;
     anchorT_ = -1; anchorLabel_.clear();
     fired_.assign(prog_.handlers.size(), false);
     regs_.assign(size_t(std::max(0, prog_.registers)), 0.0);
@@ -360,14 +361,14 @@ double ScriptMode::topHeight_(const WorldState& s, const ControlCtx& ctx, const 
 }
 
 ControlCmd ScriptMode::crosshair_(const WorldState& s, const ControlCtx& ctx, double px,
-                                  double py, float throttle) const {
+                                  double py, float throttle) {
     // Horizontal angle of the crosshair off the nose, and the ELEVATION of
     // the ray through it: the camera's tilt plus its angle above centre.
     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
     const double az = std::atan(px / f) / kD2R;
     const double el = p_.detTiltDeg - std::atan(py / f) / kD2R;
     ControlCmd c = hover_();
-    c.yaw = yawTo_(float(az));
+    c.yaw = aimYaw_(float(az), ctx.dt);
     const float t = std::max(0.f, std::min(1.f, throttle));
     // Along the ray: its horizontal part forward (eased while turning onto
     // it), its vertical part up or down -- the floor still holds.
@@ -457,6 +458,9 @@ void ScriptMode::endOp_(WorldState& s) {
 void ScriptMode::next_(int pc) {
     pc_ = pc;
     opT_ = 0; opAux_ = 0; opAux2_ = 0; opBegun_ = false; facing_ = false;
+    // Each step starts its loops from rest: no integral carried over, no
+    // derivative kick from where the last one left the target point.
+    pidYaw_.reset(); pidStrafe_.reset(); pidVert_.reset(); pidRange_.reset();
 }
 
 void ScriptMode::finish_(WorldState& s, bool failed, const std::string& why) {
@@ -680,15 +684,15 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                         // toward it (or climbs). The floor still holds.
                         const double ay = box.y + box.height * 0.5 - ctx.frameH * 0.5;
                         const float below = float(std::atan(ay / f) / kD2R);   // + = below centre
-                        c.throttle = std::max(-p_.maxVert, std::min(p_.maxVert, -p_.diveKp * below));
+                        c.throttle = std::max(-p_.maxVert, std::min(p_.maxVert, aimVert_(-below, ctx.dt)));
                         if (c.throttle < 0.f && s.vehAltM <= p_.minAltM) c.throttle = 0.f;
                     }
                     const float fwd = std::min(1.f, in.b / std::max(0.1f, p_.mpsPerStick));
                     if (in.flags & kms::FLAG_STRAFE) {
-                        c.roll = std::max(-0.5f, std::min(0.5f, p_.strafeKp * aimDeg));
+                        c.roll = aimStrafe_(aimDeg, ctx.dt);
                         c.pitch = fwd;
                     } else {
-                        c.yaw = yawTo_(aimDeg);
+                        c.yaw = aimYaw_(aimDeg, ctx.dt);
                         // Ease off while far off the aim: turn first, then go.
                         c.pitch = fwd * std::max(0.f, 1.f - std::fabs(aimDeg) / 30.f);
                     }
@@ -702,6 +706,16 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                     continue;
                 }
                 return out(hover_());                    // a moment out of view: hold still
+            }
+            case Op::GAINS: {
+                PidGains* g = in.target == 0 ? &gYaw_ : in.target == 1 ? &gStrafe_
+                            : in.target == 2 ? &gVert_ : &gRange_;
+                if (in.flags & 1) g->kp = in.a;
+                if (in.flags & 2) g->ki = in.b;
+                if (in.flags & 4) g->kd = in.c;
+                if (in.flags & 8) g->dTau = in.d;
+                next_(pc_ + 1);
+                continue;
             }
             case Op::FLY: {
                 const bool forT = (in.flags & kms::FLAG_FOR) != 0;
@@ -752,15 +766,19 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                             rangeRate_ += 0.15 * (objRate - rangeRate_);
                         }
                         lastRange_ = d; lastE_ = s.estPe; lastN_ = s.estPn;
+                        // PD on the range (derivative on it, so closing fast
+                        // brakes), on top of the object's own speed.
+                        PidGains rg = gRange_;
+                        rg.outMax = in.b;
                         const float vWant = std::max(-in.b, std::min(in.b,
-                            float(rangeRate_) + 0.8f * (d - in.a)));
+                            float(rangeRate_) + pidRange_.step(d - in.a, -d, float(dt), rg)));
                         c.pitch = std::max(-1.f, std::min(1.f, vWant / std::max(0.1f, p_.mpsPerStick)));
                         if (std::fabs(aimDeg) > 30.f) c.pitch *= 0.3f;   // turn first
                     }
                     if (in.flags & kms::FLAG_STRAFE)
-                        c.roll = std::max(-0.5f, std::min(0.5f, p_.strafeKp * aimDeg));
+                        c.roll = aimStrafe_(aimDeg, ctx.dt);
                     else
-                        c.yaw = yawTo_(aimDeg);
+                        c.yaw = aimYaw_(aimDeg, ctx.dt);
                     if (in.flags & (kms::FLAG_ALT_ABS | kms::FLAG_ALT_REL)) {
                         const double top = dh > 0.f ? topHeight_(s, ctx, box, dh) : double(s.vehAltM);
                         c.throttle = vertTo_(s, (in.flags & kms::FLAG_ALT_ABS) ? double(in.e)

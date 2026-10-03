@@ -15,7 +15,7 @@ const char* opName(Op o) {
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
                               "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
                               "TURN_REF", "CLIMB_BY", "APPROACH_TO", "NAV",
-                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW", "FLY"};
+                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW", "FLY", "GAINS"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
@@ -202,6 +202,9 @@ bool verify(const Program& p, std::string* err) {
             return fail(at + "jump missing");
         if (in.op == Op::JUMP_IFNOT && (in.cond < 0 || in.jump < 0)) return fail(at + "branch incomplete");
         if (in.op == Op::WAIT && in.cond < 0) return fail(at + "wait without condition");
+        if (in.op == Op::GAINS && (in.target < 0 || in.target > 3 || in.a < 0.f || in.b < 0.f ||
+                                   in.c < 0.f || in.d < 0.f))
+            return fail(at + "gains: bad axis or a negative gain");
         if (in.op == Op::FLY && (std::fabs(in.a) > 1.f || std::fabs(in.d) > 1.f || !(in.b >= 0.f) ||
                                  in.b > 1.f || !(in.c > 0.f)))
             return fail(at + "fly needs a crosshair inside the frame, a throttle 0..1 and a time");
@@ -367,6 +370,15 @@ std::string disassemble(const Program& p) {
                       ((in.flags & FLAG_ALT_ABS) ? cv_fmt(" height %.1f", in.c, 0) :
                        (in.flags & FLAG_ALT_REL) ? cv_fmt(" above it %.1f", in.c, 0) : std::string());
                 break;
+            case Op::GAINS: {
+                static const char* AX[] = {"yaw", "strafe", "dive", "range"};
+                arg = std::string(AX[in.target >= 0 && in.target < 4 ? in.target : 0]) +
+                      ((in.flags & 1) ? cv_fmt(" kp %.3f", in.a) : std::string()) +
+                      ((in.flags & 2) ? cv_fmt(" ki %.3f", in.b) : std::string()) +
+                      ((in.flags & 4) ? cv_fmt(" kd %.3f", in.c) : std::string()) +
+                      ((in.flags & 8) ? cv_fmt(" filter %.2f s", in.d) : std::string());
+                break;
+            }
             case Op::FLY:
                 arg = cv_fmt("crosshair %+.2f %+.2f", in.a, in.d) + cv_fmt(" throttle %.2f ", in.b) +
                       ((in.flags & FLAG_FOR) ? "for" : "timeout") + cv_fmt(" %.1f s", in.c);
@@ -403,7 +415,9 @@ std::string disassemble(const Program& p) {
             default: arg = cv_fmt("%.2f %.2f", in.a, in.b); break;
         }
         std::snprintf(buf, sizeof buf, "  %3zu  line %-4d %-11s %s%s%s\n", i, in.line, opName(in.op),
-                      arg.c_str(), (in.flags & FLAG_NEW) ? " (new only)" : "",
+                      arg.c_str(),
+                      ((in.flags & FLAG_NEW) && (in.op == Op::SEARCH || in.op == Op::MARK_SEEN))
+                          ? " (new only)" : "",
                       in.jump >= 0 ? (" -> " + std::to_string(in.jump)).c_str() : "");
         o << buf;
     }

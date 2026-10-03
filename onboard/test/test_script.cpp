@@ -785,6 +785,68 @@ int main() {
               fwd > 1.0 && slope > 30.0 && slope < 55.0, b);
     }
 
+    // ================================================== THE PID, PINNED
+    // Six steps of kp 1.2, ki 0.5, kd 0.15 (filter 0.1 s), 50 ms apart --
+    // the same numbers pin the JavaScript copy (nav-sim/test/crosshair_parity.js).
+    {
+        PidGains g{1.2f, 0.5f, 0.15f, 0.3f, 0.1f, 0.5f};
+        Pid p; p.reset();
+        const float errs[] = {0.2f, 0.15f, 0.08f, 0.02f, -0.01f, 0.f};
+        const float want[] = {0.245000f, 0.138750f, 0.003417f, -0.093639f, -0.116926f, -0.056284f};
+        bool ok = true; std::string got;
+        for (int i = 0; i < 6; ++i) {
+            const float o = p.step(errs[i], -errs[i], 0.05f, g);
+            ok &= std::fabs(o - want[i]) < 1e-4f;
+            char b[16]; std::snprintf(b, sizeof b, "%.4f ", o); got += b;
+        }
+        check("the PID: six steps match their pinned values", ok, got);
+    }
+
+    // ================================================ PD ONTO THE TARGET POINT
+    // A real airframe answers the yaw stick with a lag, and the image a
+    // tracker works on is late. Yaw-rate lag 0.3 s, the box 150 ms old; a
+    // target point 40 deg right, far away. Aggressive P alone overshoots and
+    // rings; the same P with D settles. `gains` sets them in the program.
+    auto yawRun = [&](const char* gainsLine, double& overshoot, double& settleS) {
+        ScriptMode m(params());
+        std::string err;
+        std::string src = std::string(gainsLine) + "\nsteer door aim centre speed 0 m/s for 8 s\nend\n";
+        m.load(compileOk(src), &err);
+        WorldState w; w.estValid = true; w.vehAltM = 5.f; w.missionGo = true;
+        m.onEnter(w); w.missionGo = true;
+        const double f = 554.256, target = 40.0, dt = 0.05;
+        double yaw = 0, rate = 0, t = 0;
+        std::vector<double> hist(3, 0.0);                    // headings 150 ms back
+        overshoot = 0; settleS = -1;
+        for (int i = 0; i < 160 && !m.finished(); ++i) {
+            t += dt;
+            const double seenYaw = hist.front();             // the image is late
+            double off = target - seenYaw;
+            Detection d; d.label = "door"; d.confidence = 0.9f;
+            const int cx = int(320 + f * std::tan(off / 57.2958));
+            d.box = cv::Rect(cx - 10, 200, 20, 40);
+            w.detections = {d};
+            w.detStampS = t; w.tickMonoS = t; w.vehYawDeg = float(yaw);
+            ControlCtx c; c.dt = float(dt); c.frameW = 640; c.frameH = 480;
+            const ControlCmd cmd = m.update(w, c);
+            rate += (cmd.yaw * 90.0 - rate) * dt / 0.3;      // the airframe's lag
+            yaw += rate * dt;
+            hist.erase(hist.begin()); hist.push_back(yaw);
+            overshoot = std::max(overshoot, yaw - target);
+            if (std::fabs(yaw - target) > 2.0) settleS = -1;
+            else if (settleS < 0) settleS = t;
+        }
+    };
+    {
+        double osP, stP, osPD, stPD;
+        yawRun("gains yaw kp 4 kd 0", osP, stP);
+        yawRun("gains yaw kp 4 kd 0.6", osPD, stPD);
+        char b[160]; std::snprintf(b, sizeof b, "P: overshoot %.1f deg, settled %.1f s;  PD: %.1f deg, %.1f s",
+                                   osP, stP, osPD, stPD);
+        check("PD onto the target point: D damps what aggressive P overshoots",
+              osP > 4.0 && osPD < 0.5 * osP && stPD > 0.0 && (stP < 0.0 || stPD < stP), b);
+    }
+
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

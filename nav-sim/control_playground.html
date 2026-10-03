@@ -103,6 +103,17 @@ pre.code { margin: 8px 0 0; background: var(--code-bg); border: 1px solid var(--
     <div class="row"><span class="stat" id="xhOut"></span></div>
   </div>
   <div class="panel">
+    <h2>Yaw loop onto the crosshair</h2>
+    <div class="row" style="margin-top:6px">
+      <label class="f">kp<input id="kp" type="number" step="0.1" min="0" value="1.2"></label>
+      <label class="f">kd<input id="kd" type="number" step="0.05" min="0" value="0.15"></label>
+      <label class="f">ki<input id="ki" type="number" step="0.05" min="0" value="0"></label>
+    </div>
+    <div class="row"><label class="hint"><input id="lag" type="checkbox" checked> real airframe lag (yaw 0.3 s, image 150 ms late)</label></div>
+    <canvas id="plot" style="width:100%;height:70px;display:block;margin-top:6px" aria-label="Aim error over time"></canvas>
+    <p class="hint" style="margin:4px 0 0">How far the crosshair sits off the nose, last 8 s. Raise kp until it overshoots, then add kd.</p>
+  </div>
+  <div class="panel">
     <h2>Camera and start</h2>
     <div class="row" style="margin-top:6px">
       <label class="f">Tilt down (deg)<input id="tilt" type="number" step="5" value="30"></label>
@@ -139,15 +150,41 @@ pre.code { margin: 8px 0 0; background: var(--code-bg); border: 1px solid var(--
 // script_mode.cpp). Pinned to the same three cases as test_script.cpp by
 // nav-sim/test/crosshair_parity.js -- if one changes, both tests say so.
 const LAW = { hfov: 60, tilt: 30, mpsPerStick: 4, vertMpsPerStick: 1.5, yawKp: 1.2, maxYaw: 0.5, minAlt: 1.0 };
+// THE PID (onboard/include/pid.hpp): D on the measurement, filtered; I
+// clamped and frozen while saturated. Pinned with the C++ one.
+class Pid {
+  constructor() { this.reset(); }
+  reset() { this.i = 0; this.d = 0; this.prev = 0; this.have = false; }
+  step(err, meas, dt, g) {
+    if (!(dt > 0)) dt = 1e-3;
+    let dMeas = 0;
+    if (this.have) dMeas = (meas - this.prev) / dt;
+    this.prev = meas;
+    const a = dt / (g.dTau + dt);
+    this.d = this.have ? this.d + a * (dMeas - this.d) : 0;
+    this.have = true;
+    const p = g.kp * err, d = -g.kd * this.d;
+    let out = p + this.i + d;
+    if (g.ki !== 0) {
+      const satHi = out >= g.outMax && err > 0, satLo = out <= -g.outMax && err < 0;
+      if (!satHi && !satLo) this.i = Math.max(-g.iMax, Math.min(g.iMax, this.i + g.ki * err * dt));
+      out = p + this.i + d;
+    }
+    return Math.max(-g.outMax, Math.min(g.outMax, out));
+  }
+}
+const YAW_GAINS = { kp: 1.2, ki: 0, kd: 0.15, iMax: 0.3, dTau: 0.1, outMax: 0.5 };
 // px, py: the crosshair in pixels from the image centre (+ right, + DOWN);
-// W: image width; throttle 0..1; alt: height now. -> sticks, each -1..1.
-function crosshairCmd(px, py, W, throttle, alt, law) {
+// W: image width; throttle 0..1; alt: height now; pid/gains/dt: the yaw
+// loop onto the crosshair (a fresh one if none -- its first step is P).
+// -> sticks, each -1..1.
+function crosshairCmd(px, py, W, throttle, alt, law, pid, gains, dt) {
   const L = law || LAW, d2r = Math.PI / 180;
   const f = (W * 0.5) / Math.tan(L.hfov * 0.5 * d2r);
   const az = Math.atan(px / f) / d2r;
   const el = -L.tilt - Math.atan(py / f) / d2r;
   const t = Math.max(0, Math.min(1, throttle));
-  const yaw = Math.max(-L.maxYaw, Math.min(L.maxYaw, L.yawKp * az / 90));
+  const yaw = (pid || new Pid()).step(az / 90, -az / 90, dt || 0.05, gains || YAW_GAINS);
   const pitch = t * Math.cos(el * d2r) * Math.max(0, 1 - Math.abs(az) / 30);
   let v = t * L.mpsPerStick * Math.sin(el * d2r) / Math.max(0.1, L.vertMpsPerStick);
   v = Math.max(-1, Math.min(1, v));
@@ -155,7 +192,7 @@ function crosshairCmd(px, py, W, throttle, alt, law) {
   return { yaw, pitch, roll: 0, throttle: v };
 }
 // LAW-END -----------------------------------------------------------------
-if (typeof module !== "undefined") module.exports = { crosshairCmd, LAW };
+if (typeof module !== "undefined") module.exports = { crosshairCmd, LAW, Pid };
 
 if (typeof document !== "undefined") (function () {
   const $ = (id) => document.getElementById(id);
@@ -177,13 +214,17 @@ if (typeof document !== "undefined") (function () {
   for (const o of OBJECTS) { const opt = document.createElement("option"); opt.value = o.label; opt.textContent = o.label; $("target").append(opt); }
 
   // ------------------------------------------------------------ state
-  const st = { e: 0, n: 0, u: 8, yaw: 0, v: 0, trail: [] };
+  const st = { e: 0, n: 0, u: 8, yaw: 0, v: 0, rate: 0, trail: [] };
+  const yawPid = new Pid();
+  let hist = [], errLog = [];   // past poses (the late image), aim error for the plot
+  const gains = () => Object.assign({}, YAW_GAINS, { kp: Number($("kp").value) || 0, kd: Number($("kd").value) || 0, ki: Number($("ki").value) || 0 });
   const xh = { x: 0, y: -0.2, a: 0, d: 0 };     // screen x,y (-1..1, + up); lock a,d (box widths/heights)
   let playing = false, prog = [], run = null;   // run: { i, t }
   const ui = { mode: "screen", target: "door", thr: 0.4, endType: "for", endVal: 3 };
 
   function reset() {
-    st.e = 0; st.n = 0; st.u = Number($("alt0").value) || 8; st.yaw = 0; st.v = 0; st.trail = [];
+    st.e = 0; st.n = 0; st.u = Number($("alt0").value) || 8; st.yaw = 0; st.v = 0; st.rate = 0; st.trail = [];
+    if (typeof yawPid !== "undefined") { yawPid.reset(); hist = []; errLog = []; }
   }
   reset();
 
@@ -299,7 +340,8 @@ if (typeof document !== "undefined") (function () {
   // The test airframe of test_script.cpp: forward speed lags the stick
   // (4 m/s at full, 0.35 s), yaw 90 deg/s at full, 1.5 m/s vertical.
   function step(cmd, dt) {
-    st.yaw = (st.yaw + cmd.yaw * 90 * dt + 360) % 360;
+    if ($("lag").checked) { st.rate += (cmd.yaw * 90 - st.rate) * dt / 0.3; st.yaw = (st.yaw + st.rate * dt + 360) % 360; }
+    else st.yaw = (st.yaw + cmd.yaw * 90 * dt + 360) % 360;
     st.v += (cmd.pitch * 4 - st.v) * dt / 0.35;
     st.u = Math.max(0, st.u + cmd.throttle * 1.5 * dt);
     st.e += Math.sin(st.yaw * d2r) * st.v * dt;
@@ -320,11 +362,23 @@ if (typeof document !== "undefined") (function () {
       if (!seg) { run = null; playing = false; $("play").textContent = "Fly"; render(); return; }
       run.t += dt;
       const done = seg.endType === "for" ? run.t >= seg.endVal : rangeTo(seg.target) < seg.endVal || run.t > 30;
-      if (done) { run.i++; run.t = 0; renderSegs(); return; }
+      if (done) { run.i++; run.t = 0; yawPid.reset(); renderSegs(); return; }
     }
+    // THE IMAGE IS LATE when the lag is on: the crosshair is placed on what
+    // the camera saw 150 ms ago, from where the quad was then.
+    hist.push({ e: st.e, n: st.n, u: st.u, yaw: st.yaw });
+    if (hist.length > 4) hist.shift();
+    const now = { e: st.e, n: st.n, u: st.u, yaw: st.yaw };
+    if ($("lag").checked && hist.length > 3) Object.assign(st, hist[0]);
     const c = crosshairPx(seg, L, W, H);
+    Object.assign(st, now);
     const thr = seg ? seg.thr : ui.thr;
-    lastCmd = c ? crosshairCmd(c.px, c.py, W, thr, st.u, L) : hover();   // lock out of view: hover
+    lastCmd = c ? crosshairCmd(c.px, c.py, W, thr, st.u, L, yawPid, gains(), dt) : hover();   // lock out of view: hover
+    if (c) {
+      const f = (W * 0.5) / Math.tan(L.hfov * 0.5 * d2r);
+      errLog.push(Math.atan(c.px / f) / d2r);
+      if (errLog.length > 160) errLog.shift();
+    }
     step(lastCmd, dt);
   }
 
@@ -362,6 +416,24 @@ if (typeof document !== "undefined") (function () {
     g.fillText("throttle " + lastCmd.throttle.toFixed(2) + (lastCmd.throttle < 0 ? " (down)" : lastCmd.throttle > 0 ? " (up)" : ""), 16, H - 26);
     g.fillText("height " + st.u.toFixed(1) + " m", 16, H - 12);
   }
+  function drawPlot() {
+    const cv = $("plot"), r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+    const W = Math.max(100, Math.round(r.width)), H = 70;
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    const g = cv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = css("--code-bg"); g.fillRect(0, 0, W, H);
+    const span = 30;                                   // +-30 deg
+    const y = (v) => H / 2 - Math.max(-span, Math.min(span, v)) / span * (H / 2 - 4);
+    g.strokeStyle = css("--line"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
+    g.strokeStyle = css("--accent"); g.lineWidth = 2; g.beginPath();
+    errLog.forEach((v, i) => { const x = W - (errLog.length - 1 - i) * (W / 160); i ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
+    g.stroke();
+    g.fillStyle = css("--muted"); g.font = "11px " + css("--mono");
+    g.fillText("+30 deg", 4, 11); g.fillText("-30", 4, H - 3);
+  }
   function xhair(g, x, y) {
     g.beginPath(); g.arc(x, y, 10, 0, 7); g.stroke();
     g.beginPath(); g.moveTo(x - 18, y); g.lineTo(x - 5, y); g.moveTo(x + 5, y); g.lineTo(x + 18, y);
@@ -397,6 +469,7 @@ if (typeof document !== "undefined") (function () {
       t.chaseR.render(t.scene, t.chaseCam);
     }
     drawHud();
+    drawPlot();
     $("stat").textContent = "height " + st.u.toFixed(1) + " m  ·  speed " + st.v.toFixed(1) + " m/s  ·  " + ui.target + " " + rangeTo(ui.target).toFixed(1) + " m";
     $("xhOut").textContent = ui.mode === "screen"
       ? "crosshair x " + xh.x.toFixed(2) + ", y " + xh.y.toFixed(2) + " of the frame"
@@ -426,9 +499,9 @@ if (typeof document !== "undefined") (function () {
   $("thr").addEventListener("input", (e) => { ui.thr = Number(e.target.value); $("thrOut").textContent = ui.thr.toFixed(2); });
   $("mode").addEventListener("change", (e) => { ui.mode = e.target.value; render(); });
   $("target").addEventListener("change", (e) => { ui.target = e.target.value; render(); });
-  for (const id of ["tilt", "hfov"]) $(id).addEventListener("input", () => { render(); renderOut(); });
+  for (const id of ["tilt", "hfov", "kp", "kd", "ki"]) $(id).addEventListener("input", () => { render(); renderOut(); });
   $("alt0").addEventListener("input", () => { if (!playing) { reset(); render(); } });
-  $("play").addEventListener("click", () => { playing = !playing; if (!playing) run = null; $("play").textContent = playing ? "Pause" : "Fly"; renderSegs(); });
+  $("play").addEventListener("click", () => { playing = !playing; if (!playing) run = null; yawPid.reset(); $("play").textContent = playing ? "Pause" : "Fly"; renderSegs(); });
   $("reset").addEventListener("click", () => { reset(); run = null; playing = false; $("play").textContent = "Fly"; renderSegs(); render(); });
   $("endType").addEventListener("change", (e) => {
     ui.endType = e.target.value;
@@ -485,6 +558,8 @@ if (typeof document !== "undefined") (function () {
     const used = new Set(prog.filter(s => s.mode === "lock" || s.endType === "until").map(s => s.target));
     for (const lbl of used) { const o = OBJECTS.find(o => o.label === lbl); if (o) L.push("size " + lbl + " " + fmt(o.h) + " m"); }
     L.push("nav direct");
+    const gg = gains();
+    L.push("gains yaw kp " + fmt(gg.kp) + " kd " + fmt(gg.kd) + (gg.ki ? " ki " + fmt(gg.ki) : ""));
     L.push("");
     for (const s of prog) {
       const end = s.endType === "for" ? "for " + fmt(s.endVal) + " s"

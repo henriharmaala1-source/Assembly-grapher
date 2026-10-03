@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 8;
+constexpr uint32_t kVersion = 9;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -97,6 +97,10 @@ enum class Op : uint8_t {
     // through it at throttle b (0..1 of top speed); FLAG_FOR: for c seconds,
     // else until `cond` (c the timeout). No detector needed.
     FLY,
+    // GAINS for a loop onto the target point, from here on: target = axis
+    // (0 yaw, 1 strafe, 2 dive, 3 range), a = kp, b = ki, c = kd, d = the
+    // derivative filter (s); flags say which were given (1, 2, 4, 8).
+    GAINS,
     COUNT_
 };
 

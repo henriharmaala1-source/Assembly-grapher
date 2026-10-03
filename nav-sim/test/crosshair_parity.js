@@ -7,7 +7,7 @@ const path = require("path");
 const page = fs.readFileSync(path.join(__dirname, "..", "control_playground.html"), "utf8");
 const a = page.indexOf("// LAW-BEGIN"), b = page.indexOf("// LAW-END");
 if (a < 0 || b < 0) { console.log("FAIL: no LAW-BEGIN/LAW-END in the page"); process.exit(1); }
-const law = new Function(page.slice(a, b) + "\nreturn { crosshairCmd, LAW };")();
+const law = new Function(page.slice(a, b) + "\nreturn { crosshairCmd, LAW, Pid };")();
 // x, y (-1..1, + right/up), throttle -> yaw, pitch, throttle; 640 px wide,
 // 480 tall, 10 m up, camera 30 deg down, 60 deg FoV.
 const cases = [
@@ -22,5 +22,16 @@ for (const [x, y, t, yw, p, th] of cases) {
   console.log(`  crosshair ${x} ${y} throttle ${t}: ${ok ? "ok  " : "FAIL"} [${c.yaw.toFixed(4)} ${c.pitch.toFixed(4)} ${c.throttle.toFixed(4)}]`);
   if (!ok) fails++;
 }
-console.log(fails ? `${fails} FAILED` : "the JavaScript law matches the C++ one");
+// THE PID: the same six steps as test_script.cpp's pinned sequence.
+{
+  const g = { kp: 1.2, ki: 0.5, kd: 0.15, iMax: 0.3, dTau: 0.1, outMax: 0.5 };
+  const p = new law.Pid();
+  const errs = [0.2, 0.15, 0.08, 0.02, -0.01, 0];
+  const want = [0.245000, 0.138750, 0.003417, -0.093639, -0.116926, -0.056284];
+  const got = errs.map(e => p.step(e, -e, 0.05, g));
+  const ok = got.every((o, i) => Math.abs(o - want[i]) < 1e-4);
+  console.log(`  pid six steps: ${ok ? "ok  " : "FAIL"} [${got.map(v => v.toFixed(4)).join(" ")}]`);
+  if (!ok) fails++;
+}
+console.log(fails ? `${fails} FAILED` : "the JavaScript law and PID match the C++ ones");
 process.exit(fails ? 1 : 0);

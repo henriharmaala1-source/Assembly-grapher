@@ -60,6 +60,34 @@ text menu rather than dying. A build without OpenCV highgui does the same.
         onboard/orbslam/README.md). In --sim the camera then moves (--move
         E N U, m/s) and the plan pane shows the estimate's drift and lag.
 
+  kestrel mission check|compile|sim|scenarios|editor|playground FILE.kms
+        BEHAVIOUR SCRIPTS for the aircraft: states and triggers ("when it sees
+        a door -> approach"), the tracker hand-off, moves around the lock,
+        heights, a crosshair-and-throttle law with PD gains. Written and
+        COMPILED here; the Pi only ever gets the .kmb (kestrel --script
+        FILE.kmb, then select SCRIPT and GO). Examples: missions\*.kms. The
+        window's Mission panel runs every one of these.
+          check      every error with line and column, then the listing
+          compile    FILE.kmb, read back as the Pi will
+          sim        fly it in gallery/hall on the aircraft's own stack
+                     (--world --seed --seconds --lowres --shot PREFIX)
+          scenarios  RANDOMISED ENCOUNTERS, AS FPV VIDEO: cruise from a
+                     random height (3-25 m) until a target -- door, person,
+                     crate, lightpole -- comes into view at a random point;
+                     the detector and the lock tracker simulated from its
+                     true geometry; the real SCRIPT mode flies. Per run:
+                     scenarios\run_NN.avi from the aircraft's camera (the
+                     detection, the lock, the aim point, state, sticks,
+                     height, range, a map) and run_NN.png, the moments that
+                     matter; report.csv for all of them. A run passes when
+                     it hits nothing and is not stopped.
+                     (--runs N --seed S --target KIND --no-video --show
+                      --tilt DEG --hfov DEG --det-hz HZ --noise PX)
+          editor     the visual state-machine editor (mission_editor.html)
+          playground 3D: put a crosshair in the camera view, set a throttle,
+                     tune the PD loop, record moves (control_playground.html,
+                     needs internet for three.js)
+
   kestrel train [args...]
         RL training. This is the one command that leaves the process, and
         that is not a packaging failure: the trainer is PyTorch and

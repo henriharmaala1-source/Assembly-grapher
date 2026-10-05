@@ -374,6 +374,8 @@ add_executable(kestrel
   kestrel_demo.cpp
   # `kestrel mission`: the mission COMPILER lives here, on the ground.
   kestrel_mission.cpp
+  # `kestrel mission scenarios`: randomised encounters, rendered as FPV video.
+  kestrel_scenarios.cpp
   ../onboard/src/mission_compile.cpp
   # People in the camera image: built-in YOLOX-nano, HOG, or an .onnx file.
   person_detector.cpp
@@ -421,6 +423,13 @@ if(BUILD_TESTS)
   # on the Windows runner. Its own timeout, and alone -- run in parallel it
   # starved rl_env_check past ITS limit too.
   set_tests_properties(mission_sim_rooms PROPERTIES TIMEOUT 400 RUN_SERIAL TRUE)
+  # Randomised encounters on the real SCRIPT mode: cruise from a random height
+  # until a door comes into view, then the behaviour -- no crash, not stopped.
+  add_test(NAME mission_scenarios_door
+           COMMAND kestrel mission scenarios
+                   ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/missions/cruise_door.kms
+                   --runs 4 --seed 3 --target door --no-video)
+  set_tests_properties(mission_scenarios_door PROPERTIES TIMEOUT 300)
   # The control playground's copy of the crosshair law against the C++ one's
   # numbers -- when there is a node to run it with.
   find_program(NODE_EXE node)

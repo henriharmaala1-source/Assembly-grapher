@@ -367,6 +367,7 @@ ControlCmd ScriptMode::crosshair_(const WorldState& s, const ControlCtx& ctx, do
     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
     const double az = std::atan(px / f) / kD2R;
     const double el = p_.detTiltDeg - std::atan(py / f) / kD2R;
+    aimValid_ = true; aimPx_ = px; aimPy_ = py;
     ControlCmd c = hover_();
     c.yaw = aimYaw_(float(az), ctx.dt);
     const float t = std::max(0.f, std::min(1.f, throttle));
@@ -472,6 +473,7 @@ void ScriptMode::finish_(WorldState& s, bool failed, const std::string& why) {
 
 ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
     ctx_ = ctx;
+    aimValid_ = false;
     s.scriptActive = loaded_;
     if (!loaded_) {
         s.scriptStatus = status_;
@@ -667,6 +669,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
                     const double ax = box.x + box.width * (0.5 + double(in.a)) - ctx.frameW * 0.5;
                     const float aimDeg = float(std::atan(ax / f) / kD2R);
+                    aimValid_ = true; aimPx_ = ax; aimPy_ = box.y + box.height * 0.5 - ctx.frameH * 0.5;
                     if (in.flags & kms::FLAG_RAY) {
                         // THE CROSSHAIR, PINNED TO THE LOCK: a box widths
                         // right and d box heights up of its centre.
@@ -717,6 +720,23 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                 next_(pc_ + 1);
                 continue;
             }
+            case Op::CRUISE: {
+                const bool forT = (in.flags & kms::FLAG_FOR) != 0;
+                if (first) opAux_ = s.vehAltM;              // the height to hold
+                if (forT && opT_ >= in.c) { next_(pc_ + 1); continue; }
+                if (!forT && in.cond >= 0 && cond_(in.cond, s)) { next_(pc_ + 1); continue; }
+                if (!forT && opT_ > in.c) {
+                    if (!fail(in, "cruise: its until never came true")) return out(hover_());
+                    continue;
+                }
+                ControlCmd c = hover_();
+                c.pitch = std::min(1.f, in.a / std::max(0.1f, p_.mpsPerStick));
+                c.throttle = vertTo_(s, opAux_);
+                s.missionActive = true;
+                s.missionPhase = "DIRECT";
+                status_ = fmt("cruising %.1f m/s at %.1f m", in.a, opAux_);
+                return out(c);
+            }
             case Op::FLY: {
                 const bool forT = (in.flags & kms::FLAG_FOR) != 0;
                 if (forT && opT_ >= in.c) { next_(pc_ + 1); continue; }
@@ -749,6 +769,7 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
                     const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
                     const double ax = box.x + box.width * (0.5 + double(in.d)) - ctx.frameW * 0.5;
                     const float aimDeg = float(std::atan(ax / f) / kD2R);
+                    aimValid_ = true; aimPx_ = ax; aimPy_ = box.y + box.height * 0.5 - ctx.frameH * 0.5;
                     ControlCmd c = hover_();
                     // Range error -> forward speed, BOTH ways: it backs off
                     // when the object comes closer. No range: hold the

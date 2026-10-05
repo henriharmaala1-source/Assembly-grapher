@@ -15,7 +15,7 @@ const char* opName(Op o) {
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
                               "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
                               "TURN_REF", "CLIMB_BY", "APPROACH_TO", "NAV",
-                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW", "FLY", "GAINS"};
+                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW", "FLY", "GAINS", "CRUISE"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
@@ -202,6 +202,8 @@ bool verify(const Program& p, std::string* err) {
             return fail(at + "jump missing");
         if (in.op == Op::JUMP_IFNOT && (in.cond < 0 || in.jump < 0)) return fail(at + "branch incomplete");
         if (in.op == Op::WAIT && in.cond < 0) return fail(at + "wait without condition");
+        if (in.op == Op::CRUISE && (!(in.a >= 0.f) || in.a > 20.f || !(in.c > 0.f)))
+            return fail(at + "cruise needs a speed 0..20 m/s and a time");
         if (in.op == Op::GAINS && (in.target < 0 || in.target > 3 || in.a < 0.f || in.b < 0.f ||
                                    in.c < 0.f || in.d < 0.f))
             return fail(at + "gains: bad axis or a negative gain");
@@ -379,6 +381,10 @@ std::string disassemble(const Program& p) {
                       ((in.flags & 8) ? cv_fmt(" filter %.2f s", in.d) : std::string());
                 break;
             }
+            case Op::CRUISE:
+                arg = cv_fmt("%.1f m/s level, ", in.a) + ((in.flags & FLAG_FOR) ? "for" : "timeout") +
+                      cv_fmt(" %.1f s", in.c);
+                break;
             case Op::FLY:
                 arg = cv_fmt("crosshair %+.2f %+.2f", in.a, in.d) + cv_fmt(" throttle %.2f ", in.b) +
                       ((in.flags & FLAG_FOR) ? "for" : "timeout") + cv_fmt(" %.1f s", in.c);

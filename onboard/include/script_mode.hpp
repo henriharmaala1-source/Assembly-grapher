@@ -120,6 +120,13 @@ public:
 
     // For tests and the sim.
     bool finished() const { return finished_; }
+    // WHERE IT IS STEERING, for drawing: the aim point it used this tick, in
+    // pixels from the image centre (+ right, + down), when a step had one.
+    bool aimPoint(double& px, double& py) const {
+        if (!aimValid_) return false;
+        px = aimPx_; py = aimPy_;
+        return true;
+    }
     bool failed() const { return failed_; }
     int  pc() const { return pc_; }
     // The current state's name, or "" outside the state machine.
@@ -214,6 +221,8 @@ private:
     float aimStrafe_(float errDeg, float dt) { return pidStrafe_.step(errDeg / 90.f, -errDeg / 90.f, dt, gStrafe_); }
     float aimVert_(float upDeg, float dt)    { return pidVert_.step(upDeg / 90.f, -upDeg / 90.f, dt, gVert_); }
     Pid pidYaw_, pidStrafe_, pidVert_, pidRange_;
+    bool aimValid_ = false;
+    double aimPx_ = 0, aimPy_ = 0;
     PidGains gYaw_, gStrafe_, gVert_, gRange_;   // the gains in force now
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction

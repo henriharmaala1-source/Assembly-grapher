@@ -729,6 +729,33 @@ private:
             at_(pc).flags = which;
             endStatement(); return false;
         }
+        if (w == "cruise") {
+            // CRUISE: straight ahead, level, at a speed, holding the height it
+            // has -- "just going forward", whatever the camera's tilt.
+            next();
+            double speed = 2.0, tm = -1;
+            bool forT = false;
+            int until = -1;
+            for (;;) {
+                if (acceptWord("speed")) speed = positive(Unit::SPEED, "the speed", 0, 20);
+                else if (acceptWord("for")) { tm = positive(Unit::TIME, "how long", 0.1, 3600); forT = true; }
+                else if (acceptWord("until")) until = condition();
+                else if (acceptWord("timeout")) tm = positive(Unit::TIME, "the timeout", 0.1, 3600);
+                else break;
+            }
+            if (!forT && until < 0) fail(t, "cruise needs an end: `for 60 s` or `until CONDITION`");
+            if (tm < 0) tm = 120;
+            if (!warnedDirect_) {
+                warnedDirect_ = true;
+                warn(L, t.col, "cruise flies straight ahead with NOTHING checking the way -- "
+                               "keep it above the obstacles and the fence tight");
+            }
+            const int pc = emit(Op::CRUISE, L);
+            at_(pc).a = float(speed); at_(pc).c = float(tm); at_(pc).cond = until;
+            at_(pc).flags = forT ? FLAG_FOR : 0;
+            elseBranch(pc);
+            endStatement(); return false;
+        }
         if (w == "fly") {
             // FLY AT THE CROSSHAIR: a fixed point in the camera image and a
             // throttle; the aircraft flies along the ray through it. The

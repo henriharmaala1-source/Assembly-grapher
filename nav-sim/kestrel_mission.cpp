@@ -13,6 +13,7 @@
 // interpreter and the same certified legs the Pi runs, not a model of them.
 // The language is documented in onboard/docs/mission-scripts.md.
 #include "kestrel_mission.hpp"
+#include "kestrel_scenarios.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -77,6 +78,8 @@ int usage() {
         "kestrel mission compile FILE.kms [-o OUT.kmb]\n"
         "kestrel mission sim     FILE.kms|FILE.kmb [--world gallery|hall] [--seed N]\n"
         "                        [--seconds S] [--lowres] [--shot PREFIX]\n"
+        "kestrel mission scenarios FILE.kms [--runs N] [--seed S] [--target KIND] [--out DIR]\n"
+        "                        [--no-video] [--show] [--tilt DEG] [--hfov DEG] [--det-hz HZ]\n"
         "kestrel mission editor  [--print]\n"
         "kestrel mission playground [--print]  (crosshair + throttle, in 3D)\n"
         "The language: onboard/docs/mission-scripts.md\n");
@@ -223,6 +226,8 @@ int run(const std::vector<std::string>& args, const std::string& exeDir) {
     if (sub == "check") return check(rest);
     if (sub == "compile") return compile(rest);
     if (sub == "sim") return sim(rest);
+    // Randomised encounters on the aircraft's own SCRIPT mode, as FPV video.
+    if (sub == "scenarios") return kscen::run(rest);
     if (sub == "editor") return openPage(rest, exeDir, "mission_editor.html", "the visual editor");
     // The 3D world where a crosshair and a throttle are the controls: fly
     // it live, record the moves, copy them out as `fly crosshair` / `steer`.

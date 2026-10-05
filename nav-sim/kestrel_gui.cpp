@@ -631,11 +631,16 @@ struct Cfg {
     int   mWorld = 0;           // 0 gallery, 1 hall (sim)
     bool  mLowres = false;      // --lowres: 424x240, about twice as fast
     bool  mShot = true;         // --shot mission: the map from above, with its places
+    // scenarios: randomised encounters as FPV video (kestrel_scenarios.cpp)
+    int   mRuns = 6, mSeed = 1, mTarget = 0;   // mTarget: index into SCEN_TARGET
+    bool  mVideo = true, mShow = false;
 };
 
-const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor", "playground"};
+const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor", "playground", "scenarios"};
 const char* MISSION_ACTION_LABEL[] = {"Check", "Compile", "Fly in sim", "Editor",
-                                      "3D playground"};
+                                      "Playground", "Scenarios"};
+const int NMISSION_ACTION = 6;
+const char* SCEN_TARGET[] = {"random", "door", "person", "crate", "lightpole"};
 // Actions that open a page in the browser and take no mission file.
 bool missionOpensPage(int a) { return a == 3 || a == 4; }
 const char* MISSION_WORLD[] = {"gallery", "hall"};
@@ -762,6 +767,13 @@ std::vector<std::string> buildArgs(const Cfg& c,
             if (missionOpensPage(c.mAction)) break;       // the pages take no file
             a.push_back(c.mFile >= 0 && c.mFile < int(g_missions.size())
                             ? g_missions[size_t(c.mFile)] : std::string("(no mission)"));
+            if (c.mAction == 5) {
+                a.push_back("--runs"); a.push_back(std::to_string(c.mRuns));
+                a.push_back("--seed"); a.push_back(std::to_string(c.mSeed));
+                if (c.mTarget > 0) { a.push_back("--target"); a.push_back(SCEN_TARGET[c.mTarget]); }
+                if (!c.mVideo) a.push_back("--no-video");
+                if (c.mShow) a.push_back("--show");
+            }
             if (c.mAction == 2) {
                 a.push_back("--world"); a.push_back(MISSION_WORLD[c.mWorld]);
                 if (c.mLowres) a.push_back("--lowres");
@@ -919,9 +931,10 @@ enum {
     // clicks every button and fails one that changes nothing.
     ID_D_MODEL = 830,
     ID_D_POSE = 870,      // +0..2
-    ID_M_ACT = 900,       // +0..4, the order of MISSION_ACTION
+    ID_M_ACT = 900,       // +0..5, the order of MISSION_ACTION
     ID_M_FILE = 910,      // +index, up to 8
     ID_M_WORLD = 930, ID_M_LOWRES, ID_M_SHOT,
+    ID_M_RUNS_M = 940, ID_M_RUNS_P, ID_M_SEED_M, ID_M_SEED_P, ID_M_TARGET, ID_M_VIDEO, ID_M_SHOW,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -1487,6 +1500,7 @@ const FlagBtn FLAG_BTNS[] = {
     {REPORT, ID_R_STEREO,   "--stereo"},
     {DEMO,  ID_D_MIRROR,    "--no-mirror"},
     {MISSION, ID_M_LOWRES,  "--lowres"},
+    {MISSION, ID_M_SHOW,    "--show"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
     {BENCH, ID_BENCH_STEREO, "--stereo"},
     // Three-state, so the table cannot name one flag: lit for --cuda AND for
@@ -1584,8 +1598,8 @@ void panelMission(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
             ".kmb and runs", x, 146, 0.44, DIM);
     txt(im, "it in SCRIPT mode, every leg still certified by its own planner.", x, 164, 0.44, DIM);
 
-    for (int i = 0; i < 5; ++i)
-        bs.push_back({cv::Rect(x + i * 154, 184, 148, 36), MISSION_ACTION_LABEL[i],
+    for (int i = 0; i < NMISSION_ACTION; ++i)
+        bs.push_back({cv::Rect(x + i * 127, 184, 120, 36), MISSION_ACTION_LABEL[i],
                       ID_M_ACT + i, c.mAction == i});
 
     if (c.mAction == 4) {
@@ -1622,7 +1636,21 @@ void panelMission(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     }
     const int rows = std::max(1, int(g_missions.size() + 1) / 2);
     const int y = 258 + rows * 42 + 14;
-    if (c.mAction == 2) {
+    if (c.mAction == 5) {
+        stepper(im, bs, x, y + 12, "runs", std::to_string(c.mRuns), ID_M_RUNS_M, ID_M_RUNS_P, nullptr, 90);
+        stepper(im, bs, x + 150, y + 12, "first seed", std::to_string(c.mSeed), ID_M_SEED_M,
+                ID_M_SEED_P, nullptr, 90);
+        bs.push_back({cv::Rect(x + 300, y + 12, 170, 34), std::string("target: ") + SCEN_TARGET[c.mTarget],
+                      ID_M_TARGET, c.mTarget != 0});
+        bs.push_back({cv::Rect(x + 480, y + 12, 150, 34), c.mVideo ? "FPV videos" : "no videos",
+                      ID_M_VIDEO, c.mVideo});
+        bs.push_back({cv::Rect(x + 640, y + 12, 120, 34), c.mShow ? "watch live" : "no window",
+                      ID_M_SHOW, c.mShow});
+        txt(im, "Cruise from a random height; a target comes into view at a random point. Flown",
+            x, y + 66, 0.42, DIM);
+        txt(im, "on the real SCRIPT mode; FPV video + contact sheet per run, report.csv in scenarios/.",
+            x, y + 84, 0.42, DIM);
+    } else if (c.mAction == 2) {
         bs.push_back({cv::Rect(x, y, 180, 36), std::string("world: ") + MISSION_WORLD[c.mWorld],
                       ID_M_WORLD, c.mWorld != 0});
         bs.push_back({cv::Rect(x + 190, y, 180, 36), c.mLowres ? "424x240 (sees less)" : "848x480 (as flown)",
@@ -1744,7 +1772,14 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
 void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
            const std::vector<std::string>& recs) {
     if (id >= ID_MODE && id < ID_MODE + NMODES) { c.mode = id - ID_MODE; return; }
-    if (id >= ID_M_ACT && id < ID_M_ACT + 5) { c.mAction = id - ID_M_ACT; return; }
+    if (id >= ID_M_ACT && id < ID_M_ACT + NMISSION_ACTION) { c.mAction = id - ID_M_ACT; return; }
+    if (id == ID_M_RUNS_M) { c.mRuns = std::max(1, c.mRuns - 1); return; }
+    if (id == ID_M_RUNS_P) { c.mRuns = std::min(50, c.mRuns + 1); return; }
+    if (id == ID_M_SEED_M) { c.mSeed = std::max(1, c.mSeed - 1); return; }
+    if (id == ID_M_SEED_P) { c.mSeed = std::min(999, c.mSeed + 1); return; }
+    if (id == ID_M_TARGET) { c.mTarget = (c.mTarget + 1) % 5; return; }
+    if (id == ID_M_VIDEO)  { c.mVideo = !c.mVideo; return; }
+    if (id == ID_M_SHOW)   { c.mShow = !c.mShow; return; }
     if (id >= ID_M_FILE && id < ID_M_FILE + 8) { c.mFile = id - ID_M_FILE; return; }
     if (id == ID_M_WORLD)  { c.mWorld = (c.mWorld + 1) % 2; return; }
     if (id == ID_M_LOWRES) { c.mLowres = !c.mLowres; return; }
@@ -2128,7 +2163,7 @@ int check() {
             // compile with NO missions in variant 3, the refused state.
             {
                 // 0 is not laid out here: its panel is two short lines.
-                const int act[4] = {2, 4, 3, 1};
+                const int act[4] = {5, 2, 4, 1};
                 c.mAction = act[variant];
             }
             kpy::Py fake;
@@ -2357,6 +2392,7 @@ int shot(const std::string& exeDir, const std::string& prefix) {
         if (!recs.empty())   c.replay = 0;
         if (m == SIM && !recs.empty()) c.simSource = 2;   // show the replay list
         if (m == DEMO && !g_models.empty()) c.dModel = 0; // and the policy list
+        if (m == MISSION) c.mAction = 5;                  // the richest mission panel: scenarios
         std::vector<Btn> bs;
         const cv::Mat im = compose(c, inputs, recs, bs);
         const std::string f = prefix + "_" + MODE_NAME[m] + ".png";

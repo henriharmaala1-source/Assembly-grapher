@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 9;
+constexpr uint32_t kVersion = 10;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -101,6 +101,10 @@ enum class Op : uint8_t {
     // (0 yaw, 1 strafe, 2 dive, 3 range), a = kp, b = ki, c = kd, d = the
     // derivative filter (s); flags say which were given (1, 2, 4, 8).
     GAINS,
+    // CRUISE: straight ahead, level, at a = m/s, holding the height it had
+    // when this began; FLAG_FOR: for c seconds, else until `cond` (c the
+    // timeout). Unchecked by any planner, like `fly`.
+    CRUISE,
     COUNT_
 };
 

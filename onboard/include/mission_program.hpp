@@ -29,7 +29,7 @@
 namespace kms {
 
 constexpr uint32_t kMagic   = 0x31424D4Bu;   // "KMB1"
-constexpr uint32_t kVersion = 10;
+constexpr uint32_t kVersion = 11;
 
 enum class Op : uint8_t {
     END = 0,      // finished: hover and report done
@@ -98,17 +98,42 @@ enum class Op : uint8_t {
     // else until `cond` (c the timeout). No detector needed.
     FLY,
     // GAINS for a loop onto the target point, from here on: target = axis
-    // (0 yaw, 1 strafe, 2 dive, 3 range), a = kp, b = ki, c = kd, d = the
+    // (0 yaw, 1 strafe, 2 dive, 3 range, 4 track), a = kp, b = ki, c = kd, d = the
     // derivative filter (s); flags say which were given (1, 2, 4, 8).
     GAINS,
     // CRUISE: straight ahead, level, at a = m/s, holding the height it had
     // when this began; FLAG_FOR: for c seconds, else until `cond` (c the
     // timeout). Unchecked by any planner, like `fly`.
     CRUISE,
+    // PASS OVER an object without stopping: steer at where it is remembered
+    // to be (seen, or last seen -- it leaves the view as it goes under),
+    // hold the heading once nearly over it, end `a` metres past it. text =
+    // label, b = m/s, c = timeout, e = a height (FLAG_ALT_ABS / FLAG_ALT_REL
+    // as GOTO's c). jump = never seen.
+    PASS_OVER,
+    // PARAM: a runtime knob, from here on: target = which (kms::ParamId),
+    // a = the value.
+    PARAM,
     COUNT_
 };
 
 const char* opName(Op o);
+
+// The knobs `param NAME value` can set (ScriptMode::Params of the same names).
+enum ParamId : int32_t {
+    P_MIN_ALT = 0,      // m: never commanded below, except land
+    P_MAX_VERT,         // stick: the vertical command's cap
+    P_MAX_GLIDE,        // deg: the steepest certified glide
+    P_TOP_SPEED,        // m/s at full forward stick (the airframe's)
+    P_CLIMB_RATE,       // m/s at full vertical stick (the airframe's)
+    P_DETECT_STALE,     // s: a detection older than this is not "seen"
+    P_NEW_RADIUS,       // m: `new` means farther than this from anything visited
+    P_ANCHOR_GAIN,      // 0..1: how fast a path's anchor follows a new measurement
+    P_MAX_YAW,          // stick: the yaw command's cap
+    P_MEMORY,           // s: how long a remembered object is trusted
+    P_COUNT
+};
+const char* paramName(int id);
 
 // A place. Positions are LOCAL ENU metres from where the mission started, the
 // frame WorldState::estPe/estPn are in -- whichever source is filling them
@@ -138,7 +163,9 @@ struct Target {
 struct CondOp {
     enum Kind : uint8_t { TRUE_ = 0, SEEN, VAR, DIST, POSITIONED, NOT, AND, OR,
                           TRACKING,     // arg = label: the tracker locked on it
-                          RANGE };      // arg = label: its estimated range vs value
+                          RANGE,        // arg = label: its estimated range vs value
+                          OBJDIST };    // arg = label: HORIZONTAL distance to where it is
+                                        // remembered to be -- goes to 0 right over it
     enum Var  : uint8_t { BATTERY = 0, ALT, TIME, SPEED, HEADING };
     enum Cmp  : uint8_t { LT = 0, LE, GT, GE };
     Kind    kind = TRUE_;

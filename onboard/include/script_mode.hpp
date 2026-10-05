@@ -63,6 +63,10 @@ public:
         // A path's anchor follows each new measurement of its object by this
         // fraction per tick it is in view (a smoothed re-grounding, not a jump).
         float anchorGain   = 0.15f;
+        // OBJECT MEMORY: how long a watched object's last measured position is
+        // trusted once it is out of view (it goes under the camera as the
+        // aircraft flies over it).
+        float memoryS      = 30.f;
         // STEER: metres per second for a full forward stick (the airframe's
         // own number; the sim's is 4), and the roll stick per degree of aim
         // error when strafing.
@@ -80,6 +84,11 @@ public:
         PidGains strafePid {1.8f, 0.f, 0.20f, 0.3f, 0.1f, 0.5f};
         PidGains divePid   {7.2f, 0.f, 0.60f, 0.3f, 0.1f, 0.6f};
         PidGains rangePid  {0.8f, 0.f, 0.30f, 1.0f, 0.2f, 15.f};
+        //   track   metres off the line through the object -> roll stick
+        //           (pass over): holds the ground track against a crosswind;
+        //           the one loop with I on by default -- a steady wind is a
+        //           steady error P and D alone leave behind
+        PidGains trackPid  {0.35f, 0.12f, 0.45f, 0.45f, 0.2f, 0.7f};
         // HEIGHT. Never commanded below minAltM (only `land` goes lower --
         // the forward camera cannot see what is under the aircraft); a
         // certified glide no steeper than maxGlideDeg; vertical stick per
@@ -120,6 +129,9 @@ public:
 
     // For tests and the sim.
     bool finished() const { return finished_; }
+    // Where a watched object is remembered to be (world e/n, its top's
+    // height), if it has been measured within Params::memoryS.
+    bool memory(const std::string& label, double& e, double& n, double& u) const;
     // WHERE IT IS STEERING, for drawing: the aim point it used this tick, in
     // pixels from the image centre (+ right, + down), when a step had one.
     bool aimPoint(double& px, double& py) const {
@@ -182,6 +194,9 @@ private:
     bool faceFirst_(const WorldState& s, float bearing, ControlCmd& c);
 
     Params p_;
+    Params p0_;               // as configured: `param` changes p_, a new run restores it
+    struct Memory { std::string label; bool valid = false; double e = 0, n = 0, u = 0, t = -1e9; };
+    std::vector<Memory> mem_;   // one per watched label
     ModeLookup lookup_;
     kms::Program prog_;
     bool loaded_ = false;
@@ -220,10 +235,10 @@ private:
     float aimYaw_(float errDeg, float dt)    { return pidYaw_.step(errDeg / 90.f, -errDeg / 90.f, dt, gYaw_); }
     float aimStrafe_(float errDeg, float dt) { return pidStrafe_.step(errDeg / 90.f, -errDeg / 90.f, dt, gStrafe_); }
     float aimVert_(float upDeg, float dt)    { return pidVert_.step(upDeg / 90.f, -upDeg / 90.f, dt, gVert_); }
-    Pid pidYaw_, pidStrafe_, pidVert_, pidRange_;
+    Pid pidYaw_, pidStrafe_, pidVert_, pidRange_, pidTrack_;
     bool aimValid_ = false;
     double aimPx_ = 0, aimPy_ = 0;
-    PidGains gYaw_, gStrafe_, gVert_, gRange_;   // the gains in force now
+    PidGains gYaw_, gStrafe_, gVert_, gRange_, gTrack_;   // the gains in force now
     double t_ = 0;           // mission seconds since GO (paused time excluded)
     double opT_ = 0;         // seconds in the current instruction
     double opAux_ = 0;       // per-op scratch (a turn's goal heading, last-seen time)

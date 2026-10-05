@@ -517,6 +517,17 @@ private:
         if (isWord("distance") || isWord("dist")) {
             next();
             acceptWord("to");
+            // A PLACE (let ...), or an OBJECT label: then the horizontal
+            // distance to where it is remembered to be -- which goes to 0
+            // right over it, out of the camera's view.
+            if ((at(Tk::IDENT) && !places_.count(peek().text)) || at(Tk::STRING)) {
+                CondOp c; c.kind = CondOp::OBJDIST; c.arg = str(label());
+                c.cmp = uint8_t(cmp());
+                c.value = float(number(Unit::LEN, "a distance"));
+                prog().condOps.push_back(c);
+                prog().caps |= Program::NEEDS_POSITION | Program::NEEDS_DETECTOR | Program::NEEDS_RANGE;
+                return;
+            }
             const Place p = placeRef("a place");
             CondOp c; c.kind = CondOp::DIST; c.arg = p.index;
             c.cmp = uint8_t(cmp());
@@ -713,8 +724,8 @@ private:
             const Token at0 = peek();
             const std::string ax = ident("yaw, strafe, dive or range");
             int axis = ax == "yaw" ? 0 : ax == "strafe" ? 1 : (ax == "dive" || ax == "vertical") ? 2
-                     : ax == "range" ? 3 : -1;
-            if (axis < 0) fail(at0, "'" + ax + "': gains are for yaw, strafe, dive or range");
+                     : ax == "range" ? 3 : ax == "track" ? 4 : -1;
+            if (axis < 0) fail(at0, "'" + ax + "': gains are for yaw, strafe, dive, range or track");
             const int pc = emit(Op::GAINS, L);
             at_(pc).target = axis;
             uint8_t which = 0;
@@ -727,6 +738,52 @@ private:
             }
             if (!which) fail(peek(), "gains needs at least one of kp, ki, kd, filter");
             at_(pc).flags = which;
+            endStatement(); return false;
+        }
+        if (w == "param") {
+            // `param min_alt 0.5 m`: a runtime knob, from here on.
+            next();
+            const Token nt = peek();
+            const std::string n = ident("a parameter name");
+            int id = -1;
+            for (int k = 0; k < P_COUNT; ++k) if (n == paramName(k)) id = k;
+            if (id < 0) {
+                std::string all;
+                for (int k = 0; k < P_COUNT; ++k) all += std::string(k ? ", " : "") + paramName(k);
+                fail(nt, "'" + n + "' is not a parameter: " + all);
+            }
+            static const Unit U[] = {Unit::LEN, Unit::NONE, Unit::ANGLE, Unit::SPEED, Unit::SPEED,
+                                     Unit::TIME, Unit::LEN, Unit::NONE, Unit::NONE, Unit::TIME};
+            const int pc = emit(Op::PARAM, L);
+            at_(pc).target = id;
+            at_(pc).a = float(positive(U[id], n.c_str(), 0, 1000));
+            endStatement(); return false;
+        }
+        if (w == "pass") {
+            // PASS OVER an object without stopping, at a height, out N m past.
+            next();
+            if (!acceptWord("over")) fail(peek(), "expected `pass over LABEL`");
+            const std::string lab = label();
+            double speed = 2.0, beyond = 3.0, tm = 60;
+            uint8_t altFlag = 0; double altV = 0;
+            for (;;) {
+                if (heightOpt(altFlag, altV, L, t.col)) continue;
+                if (acceptWord("speed")) speed = positive(Unit::SPEED, "the speed", 0.1, 20);
+                else if (acceptWord("beyond")) beyond = positive(Unit::LEN, "how far past it", 0, 100);
+                else if (acceptWord("timeout")) tm = positive(Unit::TIME, "the timeout", 1, 600);
+                else break;
+            }
+            prog().caps |= Program::NEEDS_POSITION | Program::NEEDS_DETECTOR | Program::NEEDS_RANGE;
+            if (!warnedDirect_) {
+                warnedDirect_ = true;
+                warn(L, t.col, "pass over flies straight at it with NOTHING checking the way -- "
+                               "keep it above the obstacles");
+            }
+            const int pc = emit(Op::PASS_OVER, L);
+            at_(pc).text = str(lab);
+            at_(pc).a = float(beyond); at_(pc).b = float(speed); at_(pc).c = float(tm);
+            at_(pc).e = float(altV); at_(pc).flags = altFlag;
+            elseBranch(pc);
             endStatement(); return false;
         }
         if (w == "cruise") {

@@ -83,6 +83,18 @@ text menu rather than dying. A build without OpenCV highgui does the same.
                      it hits nothing and is not stopped.
                      (--runs N --seed S --target KIND --no-video --show
                       --tilt DEG --hfov DEG --det-hz HZ --noise PX)
+                     The encounter, all drawn per run from the seed:
+                       --alt LO HI      start height (3 25)
+                       --dist LO HI     how far ahead the target stands (70 110)
+                       --side M         ... and up to how far to a side (25)
+                     and what goes wrong in the air:
+                       --dropout P      chance a detector run misses it
+                       --latency TICKS  its picture this many 50 ms late
+                       --wind M/S       a steady wind, random direction
+                     The video shows "distance (across)" -- horizontal, 0
+                     right over it -- beside range, and a "memory" mark
+                     where the runtime thinks the object is once it has
+                     gone under the aircraft.
           editor     the visual state-machine editor (mission_editor.html)
           playground 3D: put a crosshair in the camera view, set a throttle,
                      tune the PD loop, record moves (control_playground.html,

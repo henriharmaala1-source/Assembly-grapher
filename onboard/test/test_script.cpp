@@ -785,6 +785,63 @@ int main() {
               fwd > 1.0 && slope > 30.0 && slope < 55.0, b);
     }
 
+    // ========================================= OVER IT: DISTANCE GOES TO 0
+    // A crate 30 m ahead on the ground, 8 m up, camera 30 deg down: it
+    // leaves the view BELOW well before the aircraft is over it. The object
+    // memory keeps where it was seen, so `pass over` still goes right over
+    // it, and `distance to crate` (horizontal) reaches ~0 out of sight.
+    {
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk(
+            "nav direct\n"
+            "state go {\n"
+            "  when distance to crate < 1 m -> overhead\n"
+            "  cruise speed 2 m/s until seen crate timeout 30 s\n"
+            "  pass over crate above 3 m speed 2 m/s beyond 4 m else { end }\n"
+            "}\n"
+            "state overhead {\n"
+            "  pass over crate above 3 m speed 2 m/s beyond 4 m else { end }\n"
+            "  end\n"
+            "}\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehAltM = 8.f;
+        double minD = 1e9, overheadAt = -1, outOfViewAt = -1;
+        bool seenOnce = false;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 60 && !m.finished(); ++i) {
+            sim.s.detections.clear();
+            Detection d; d.label = "crate";
+            const bool inView = boxFor(sim.s, 0.0, 30.0, 0.75, 1.0, d);
+            if (inView) { sim.s.detections.push_back(d); seenOnce = true; }
+            else if (seenOnce && outOfViewAt < 0) outOfViewAt = std::hypot(sim.s.estPe, 30.0 - sim.s.estPn);
+            sim.s.detStampS = sim.t;
+            sim.step(m, 640, 480);
+            const double dh = std::hypot(sim.s.estPe, 30.0 - sim.s.estPn);
+            minD = std::min(minD, dh);
+            if (overheadAt < 0 && m.stateName() == "overhead") overheadAt = dh;
+        }
+        char b[200];
+        std::snprintf(b, sizeof b, "out of view %.1f m before it; `distance < 1 m` fired at %.2f m; "
+                      "closest %.2f m; ends %.1f m up (want 3.75); %s", outOfViewAt, overheadAt, minD,
+                      sim.s.vehAltM, m.status().c_str());
+        check("pass over: right over it although it left the view; distance goes to ~0",
+              m.finished() && !m.failed() && outOfViewAt > 1.5 && overheadAt >= 0 && overheadAt < 1.0 &&
+                  minD < 0.5 && std::fabs(sim.s.vehAltM - 3.75) < 0.6, b);
+    }
+    {
+        // `param` changes a knob from that line on: the 1 m floor lowered.
+        ScriptMode m(params());
+        std::string err;
+        m.load(compileOk("param min_alt 0.4 m\ndown 10 m else { end }\nend\n"), &err);
+        Sim sim; sim.init();
+        sim.s.vehAltM = 3.f;
+        m.onEnter(sim.s); sim.s.missionGo = true;
+        for (int i = 0; i < 20 * 20 && !m.finished(); ++i) sim.step(m);
+        char b[96]; std::snprintf(b, sizeof b, "down 10 m from 3 m stops at %.2f (floor set to 0.4)", sim.s.vehAltM);
+        check("`param min_alt 0.4 m` moves the floor", std::fabs(sim.s.vehAltM - 0.4) < 0.2, b);
+    }
+
     // ================================================== THE PID, PINNED
     // Six steps of kp 1.2, ki 0.5, kd 0.15 (filter 0.1 s), 50 ms apart --
     // the same numbers pin the JavaScript copy (nav-sim/test/crosshair_parity.js).

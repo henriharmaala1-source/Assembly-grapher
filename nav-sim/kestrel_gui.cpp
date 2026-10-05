@@ -634,6 +634,7 @@ struct Cfg {
     // scenarios: randomised encounters as FPV video (kestrel_scenarios.cpp)
     int   mRuns = 6, mSeed = 1, mTarget = 0;   // mTarget: index into SCEN_TARGET
     bool  mVideo = true, mShow = false;
+    int   mAlt = 0, mDist = 0, mWind = 0, mDrop = 0, mLat = 0;   // indices into the presets
 };
 
 const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor", "playground", "scenarios"};
@@ -641,6 +642,13 @@ const char* MISSION_ACTION_LABEL[] = {"Check", "Compile", "Fly in sim", "Editor"
                                       "Playground", "Scenarios"};
 const int NMISSION_ACTION = 6;
 const char* SCEN_TARGET[] = {"random", "door", "person", "crate", "lightpole"};
+// The encounter's knobs, as presets the window cycles through (index 0 is
+// kestrel's own default and emits nothing).
+const char* SCEN_ALT[][2]  = {{"3", "25"}, {"3", "8"}, {"10", "25"}, {"20", "30"}};
+const char* SCEN_DIST[][2] = {{"70", "110"}, {"40", "70"}, {"100", "130"}};
+const char* SCEN_WIND[]    = {"0", "1", "2", "3"};
+const char* SCEN_DROP[]    = {"0", "0.1", "0.3"};
+const char* SCEN_LAT[]     = {"0", "2", "4"};
 // Actions that open a page in the browser and take no mission file.
 bool missionOpensPage(int a) { return a == 3 || a == 4; }
 const char* MISSION_WORLD[] = {"gallery", "hall"};
@@ -773,6 +781,11 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 if (c.mTarget > 0) { a.push_back("--target"); a.push_back(SCEN_TARGET[c.mTarget]); }
                 if (!c.mVideo) a.push_back("--no-video");
                 if (c.mShow) a.push_back("--show");
+                if (c.mAlt)  { a.push_back("--alt"); a.push_back(SCEN_ALT[c.mAlt][0]); a.push_back(SCEN_ALT[c.mAlt][1]); }
+                if (c.mDist) { a.push_back("--dist"); a.push_back(SCEN_DIST[c.mDist][0]); a.push_back(SCEN_DIST[c.mDist][1]); }
+                if (c.mWind) { a.push_back("--wind"); a.push_back(SCEN_WIND[c.mWind]); }
+                if (c.mDrop) { a.push_back("--dropout"); a.push_back(SCEN_DROP[c.mDrop]); }
+                if (c.mLat)  { a.push_back("--latency"); a.push_back(SCEN_LAT[c.mLat]); }
             }
             if (c.mAction == 2) {
                 a.push_back("--world"); a.push_back(MISSION_WORLD[c.mWorld]);
@@ -935,6 +948,7 @@ enum {
     ID_M_FILE = 910,      // +index, up to 8
     ID_M_WORLD = 930, ID_M_LOWRES, ID_M_SHOT,
     ID_M_RUNS_M = 940, ID_M_RUNS_P, ID_M_SEED_M, ID_M_SEED_P, ID_M_TARGET, ID_M_VIDEO, ID_M_SHOW,
+    ID_M_ALT = 950, ID_M_DIST, ID_M_WIND, ID_M_DROP, ID_M_LAT,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -1646,10 +1660,20 @@ void panelMission(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                       ID_M_VIDEO, c.mVideo});
         bs.push_back({cv::Rect(x + 640, y + 12, 120, 34), c.mShow ? "watch live" : "no window",
                       ID_M_SHOW, c.mShow});
-        txt(im, "Cruise from a random height; a target comes into view at a random point. Flown",
-            x, y + 66, 0.42, DIM);
-        txt(im, "on the real SCRIPT mode; FPV video + contact sheet per run, report.csv in scenarios/.",
-            x, y + 84, 0.42, DIM);
+        bs.push_back({cv::Rect(x, y + 56, 146, 32),
+                      cv::format("height %s-%s m", SCEN_ALT[c.mAlt][0], SCEN_ALT[c.mAlt][1]), ID_M_ALT, c.mAlt != 0});
+        bs.push_back({cv::Rect(x + 152, y + 56, 146, 32),
+                      cv::format("at %s-%s m", SCEN_DIST[c.mDist][0], SCEN_DIST[c.mDist][1]), ID_M_DIST, c.mDist != 0});
+        bs.push_back({cv::Rect(x + 304, y + 56, 146, 32), cv::format("wind %s m/s", SCEN_WIND[c.mWind]),
+                      ID_M_WIND, c.mWind != 0});
+        bs.push_back({cv::Rect(x + 456, y + 56, 146, 32),
+                      cv::format("misses %d%%", int(std::lround(std::atof(SCEN_DROP[c.mDrop]) * 100))), ID_M_DROP, c.mDrop != 0});
+        bs.push_back({cv::Rect(x + 608, y + 56, 146, 32),
+                      cv::format("late %d ms", std::atoi(SCEN_LAT[c.mLat]) * 50), ID_M_LAT, c.mLat != 0});
+        txt(im, "Cruise from a random height; a target comes into view at a random point. Flown on the",
+            x, y + 108, 0.42, DIM);
+        txt(im, "real SCRIPT mode; FPV video + contact sheet per run, report.csv in scenarios/.",
+            x, y + 126, 0.42, DIM);
     } else if (c.mAction == 2) {
         bs.push_back({cv::Rect(x, y, 180, 36), std::string("world: ") + MISSION_WORLD[c.mWorld],
                       ID_M_WORLD, c.mWorld != 0});
@@ -1780,6 +1804,11 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     if (id == ID_M_TARGET) { c.mTarget = (c.mTarget + 1) % 5; return; }
     if (id == ID_M_VIDEO)  { c.mVideo = !c.mVideo; return; }
     if (id == ID_M_SHOW)   { c.mShow = !c.mShow; return; }
+    if (id == ID_M_ALT)    { c.mAlt = (c.mAlt + 1) % 4; return; }
+    if (id == ID_M_DIST)   { c.mDist = (c.mDist + 1) % 3; return; }
+    if (id == ID_M_WIND)   { c.mWind = (c.mWind + 1) % 4; return; }
+    if (id == ID_M_DROP)   { c.mDrop = (c.mDrop + 1) % 3; return; }
+    if (id == ID_M_LAT)    { c.mLat = (c.mLat + 1) % 3; return; }
     if (id >= ID_M_FILE && id < ID_M_FILE + 8) { c.mFile = id - ID_M_FILE; return; }
     if (id == ID_M_WORLD)  { c.mWorld = (c.mWorld + 1) % 2; return; }
     if (id == ID_M_LOWRES) { c.mLowres = !c.mLowres; return; }

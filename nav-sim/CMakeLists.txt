@@ -430,6 +430,14 @@ if(BUILD_TESTS)
                    ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/missions/cruise_door.kms
                    --runs 4 --seed 3 --target door --no-video)
   set_tests_properties(mission_scenarios_door PROPERTIES TIMEOUT 300)
+  # Pass right over a crate that leaves the view below, in a crosswind, with a
+  # late and lossy detector -- no crash, not stopped.
+  add_test(NAME mission_scenarios_passover
+           COMMAND kestrel mission scenarios
+                   ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/missions/cruise_passover.kms
+                   --runs 4 --seed 4 --target crate --dist 40 70 --wind 1.5
+                   --dropout 0.2 --latency 2 --no-video)
+  set_tests_properties(mission_scenarios_passover PROPERTIES TIMEOUT 300)
   # The control playground's copy of the crosshair law against the C++ one's
   # numbers -- when there is a node to run it with.
   find_program(NODE_EXE node)

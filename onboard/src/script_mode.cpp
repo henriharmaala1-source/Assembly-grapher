@@ -36,7 +36,7 @@ std::string fmt(const char* f, double a = 0, double b = 0) {
 ScriptMode::ScriptMode() : ScriptMode(Params()) {}
 
 ScriptMode::ScriptMode(Params p, ModeLookup lookup)
-    : p_(p), lookup_(std::move(lookup)), mission_(p.mission) {}
+    : p_(p), lookup_(std::move(lookup)), mission_(p.mission) { p0_ = p; }
 
 bool ScriptMode::load(const kms::Program& prog, std::string* err) {
     if (!kms::verify(prog, err)) return false;
@@ -51,6 +51,25 @@ bool ScriptMode::load(const kms::Program& prog, std::string* err) {
         }
     prog_ = prog;
     loaded_ = true;
+    // WATCHED LABELS: every object the program names, remembered once seen.
+    mem_.clear();
+    auto watch = [&](int si) {
+        if (si < 0) return;
+        const std::string& l = prog_.strings[size_t(si)];
+        for (const Memory& m : mem_) if (m.label == l) return;
+        Memory m; m.label = l; mem_.push_back(m);
+    };
+    for (const kms::CondOp& c : prog_.condOps)
+        if (c.kind == CondOp::SEEN || c.kind == CondOp::TRACKING || c.kind == CondOp::RANGE ||
+            c.kind == CondOp::OBJDIST)
+            watch(c.arg);
+    for (const Instr& in : prog_.code)
+        switch (in.op) {
+            case Op::SEARCH: case Op::FACE: case Op::APPROACH: case Op::APPROACH_TO: case Op::TRACK:
+            case Op::MARK_SEEN: case Op::ANCHOR: case Op::STEER: case Op::FOLLOW: case Op::PASS_OVER:
+                watch(in.text); break;
+            default: break;
+        }
     reset_();
     status_ = "loaded \"" + prog_.name + "\"";
     return true;
@@ -63,12 +82,15 @@ bool ScriptMode::loadFile(const std::string& path, std::string* err) {
 }
 
 void ScriptMode::reset_() {
+    p_ = p0_;
+    for (Memory& m : mem_) m.valid = false;
     started_ = finished_ = failed_ = false;
     pc_ = 0; savedPc_ = -1; inHandler_ = false;
     state_ = -1; trackReqT_ = -1;
     direct_ = false;
     visited_.clear();
     gYaw_ = p_.yawPid; gStrafe_ = p_.strafePid; gVert_ = p_.divePid; gRange_ = p_.rangePid;
+    gTrack_ = p_.trackPid;
     anchorT_ = -1; anchorLabel_.clear();
     fired_.assign(prog_.handlers.size(), false);
     regs_.assign(size_t(std::max(0, prog_.registers)), 0.0);
@@ -199,6 +221,12 @@ bool ScriptMode::cond_(int c, const WorldState& s) const {
                 break;
             }
             case CondOp::TRACKING: st[sp++] = tracking_(s, prog_.strings[size_t(o.arg)]); break;
+            case CondOp::OBJDIST: {
+                double e, n, u;
+                st[sp++] = s.estValid && memory(prog_.strings[size_t(o.arg)], e, n, u) &&
+                           cmp(o.cmp, std::hypot(e - s.estPe, n - s.estPn), o.value);
+                break;
+            }
             case CondOp::RANGE: {
                 float d = -1.f;
                 // Unseen, or seen with no range: FALSE either way -- a range
@@ -349,7 +377,18 @@ bool ScriptMode::measureObject_(const WorldState& s, const std::string& label,
     bearing = wrap360(s.vehYawDeg + off);
     e = s.estPe + d * std::sin(bearing * kD2R);
     n = s.estPn + d * std::cos(bearing * kD2R);
-    if (topU) *topU = topHeight_(s, ctx, box, d);
+    if (topU) {
+        *topU = topHeight_(s, ctx, box, d);
+        // STANDING ON THE GROUND, WITH A DECLARED HEIGHT: that height is its
+        // top. From high above the box's top edge is the far edge of its
+        // top face, not its top, and the geometric estimate runs high.
+        bool assumed = true;
+        const float hM = sizeOf_(label, &assumed);
+        const double f = (ctx.frameW * 0.5) / std::tan(p_.detHfovDeg * 0.5 * kD2R);
+        const double yb = box.y + box.height - ctx.frameH * 0.5;
+        const double depBottom = -(p_.detTiltDeg - std::atan(yb / f) / kD2R);   // + below the horizon
+        if (hM > 0.f && !assumed && depBottom > 3.0) *topU = hM;
+    }
     return true;
 }
 
@@ -387,6 +426,15 @@ float ScriptMode::vertTo_(const WorldState& s, double heightM) const {
     v = std::max(-p_.maxVert, std::min(p_.maxVert, v));
     if (v < 0.f && s.vehAltM <= p_.minAltM) v = 0.f;      // the floor
     return v;
+}
+
+bool ScriptMode::memory(const std::string& label, double& e, double& n, double& u) const {
+    for (const Memory& m : mem_)
+        if (m.label == label && m.valid && ctx_.dt >= 0.f) {
+            e = m.e; n = m.n; u = m.u;
+            return true;
+        }
+    return false;
 }
 
 float ScriptMode::sizeOf_(const std::string& label, bool* assumed) const {
@@ -461,7 +509,7 @@ void ScriptMode::next_(int pc) {
     opT_ = 0; opAux_ = 0; opAux2_ = 0; opBegun_ = false; facing_ = false;
     // Each step starts its loops from rest: no integral carried over, no
     // derivative kick from where the last one left the target point.
-    pidYaw_.reset(); pidStrafe_.reset(); pidVert_.reset(); pidRange_.reset();
+    pidYaw_.reset(); pidStrafe_.reset(); pidVert_.reset(); pidRange_.reset(); pidTrack_.reset();
 }
 
 void ScriptMode::finish_(WorldState& s, bool failed, const std::string& why) {
@@ -526,6 +574,20 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
         finish_(s, true, fmt("STOPPED: outside the %.0f m fence", prog_.fenceM));
         return out(hover_());
     }
+    // OBJECT MEMORY: every watched object measured this tick is remembered
+    // where it was seen -- and stays remembered, for memoryS, once it leaves
+    // the view (under the aircraft, behind it).
+    for (Memory& mm : mem_) {
+        double e, n, b, u = 0;
+        if (measureObject_(s, mm.label, ctx, e, n, b, &u)) {
+            if (!mm.valid) { mm.e = e; mm.n = n; mm.u = u; }
+            else { mm.e += 0.5 * (e - mm.e); mm.n += 0.5 * (n - mm.n); mm.u += 0.5 * (u - mm.u); }
+            mm.valid = true; mm.t = s.tickMonoS;
+        } else if (mm.valid && s.tickMonoS - mm.t > p_.memoryS) {
+            mm.valid = false;
+        }
+    }
+
     // HANDLERS: each fires once, and not while another is running.
     if (!inHandler_)
         for (size_t h = 0; h < prog_.handlers.size(); ++h)
@@ -712,13 +774,85 @@ ControlCmd ScriptMode::update(WorldState& s, const ControlCtx& ctx) {
             }
             case Op::GAINS: {
                 PidGains* g = in.target == 0 ? &gYaw_ : in.target == 1 ? &gStrafe_
-                            : in.target == 2 ? &gVert_ : &gRange_;
+                            : in.target == 2 ? &gVert_ : in.target == 3 ? &gRange_ : &gTrack_;
                 if (in.flags & 1) g->kp = in.a;
                 if (in.flags & 2) g->ki = in.b;
                 if (in.flags & 4) g->kd = in.c;
                 if (in.flags & 8) g->dTau = in.d;
                 next_(pc_ + 1);
                 continue;
+            }
+            case Op::PARAM: {
+                const float v = in.a;
+                switch (in.target) {
+                    case kms::P_MIN_ALT:      p_.minAltM = v; break;
+                    case kms::P_MAX_VERT:     p_.maxVert = v; break;
+                    case kms::P_MAX_GLIDE:    p_.maxGlideDeg = v; break;
+                    case kms::P_TOP_SPEED:    p_.mpsPerStick = v; break;
+                    case kms::P_CLIMB_RATE:   p_.vertMpsPerStick = v; break;
+                    case kms::P_DETECT_STALE: p_.detStaleSec = v; break;
+                    case kms::P_NEW_RADIUS:   p_.newRadiusM = v; break;
+                    case kms::P_ANCHOR_GAIN:  p_.anchorGain = std::min(1.f, v); break;
+                    case kms::P_MAX_YAW:      p_.maxYaw = v; gYaw_.outMax = v; break;
+                    case kms::P_MEMORY:       p_.memoryS = v; break;
+                    default: break;
+                }
+                next_(pc_ + 1);
+                continue;
+            }
+            case Op::PASS_OVER: {
+                double me, mn, mu;
+                if (!memory(text, me, mn, mu)) {
+                    if (!fail(in, "pass over: '" + text + "' was never seen")) return out(hover_());
+                    continue;
+                }
+                if (!s.estValid) { status_ = "pass over: no position -- hovering"; return out(hover_()); }
+                if (first) {
+                    // The line it flies: from here through the object.
+                    const double L = std::max(0.1, std::hypot(me - s.estPe, mn - s.estPn));
+                    opAux_ = (me - s.estPe) / L; opAux2_ = (mn - s.estPn) / L;
+                    lastE_ = s.vehAltM;                     // the height to hold if none is asked
+                }
+                if (opT_ > in.c) {
+                    if (!fail(in, "pass over timed out")) return out(hover_());
+                    continue;
+                }
+                const double de = me - s.estPe, dn = mn - s.estPn;
+                const double along = de * opAux_ + dn * opAux2_;   // still to go along the line
+                if (along < -in.a) { status_ = "passed over '" + text + "'"; next_(pc_ + 1); continue; }
+                ControlCmd c = hover_();
+                // Point along the line (its direction, not at the object, so
+                // nothing spins right above it) ...
+                const double lineBrg = std::atan2(opAux_, opAux2_) / kD2R;
+                c.yaw = aimYaw_(float(wrap180(lineBrg - s.vehYawDeg)), ctx.dt);
+                // ... and HOLD THE GROUND TRACK: metres off the line through
+                // the object (+ = right of it) -> roll back onto it. A crosswind
+                // the heading alone cannot see is what this exists for.
+                const double cross = -(de * opAux2_ - dn * opAux_);
+                {
+                    const double hr = (s.vehYawDeg - lineBrg) * kD2R;   // roll acts across the NOSE
+                    const float r = pidTrack_.step(float(-cross), float(cross), ctx.dt, gTrack_);
+                    c.roll = float(r * std::cos(hr));
+                }
+                // ARRIVE AT THE HEIGHT: if the descent (or climb) cannot be
+                // done by the time it is over the object at this speed, slow
+                // down until it can.
+                const bool hasAlt = (in.flags & (kms::FLAG_ALT_ABS | kms::FLAG_ALT_REL)) != 0;
+                const double wantU = hasAlt ? std::max(double(p_.minAltM), (in.flags & kms::FLAG_ALT_ABS)
+                                                           ? double(in.e) : mu + in.e)
+                                            : lastE_;
+                double v = in.b;
+                const double dz = std::fabs(wantU - s.vehAltM);
+                const double vertRate = std::max(0.05, double(p_.maxVert) * p_.vertMpsPerStick);
+                if (along > 0.5 && dz > 0.3 && dz / vertRate > along / v)
+                    v = std::max(0.3, along * vertRate / dz);
+                c.pitch = float(std::min(1.0, v / std::max(0.1f, p_.mpsPerStick)));
+                c.throttle = vertTo_(s, wantU);
+                s.missionActive = true;
+                s.missionPhase = "DIRECT";
+                status_ = "passing over '" + text + "'" +
+                          fmt(": %.1f m across, %.1f m to go", std::hypot(de, dn), along);
+                return out(c);
             }
             case Op::CRUISE: {
                 const bool forT = (in.flags & kms::FLAG_FOR) != 0;

@@ -75,6 +75,14 @@ struct Options {
     float tilt = 20.f, hfov = 87.f;      // the camera: deg down, horizontal FoV
     float detHz = 5.f, noisePx = 2.f;
     float seconds = 120.f;
+    // The encounter's ranges, all drawn per run from the seed.
+    float altLo = 3.f, altHi = 25.f;     // start height above the ground
+    float distLo = 70.f, distHi = 110.f; // how far ahead the target stands
+    float side = 25.f;                   // ... and up to this far to a side
+    // The detector's and the air's imperfections.
+    float dropout = 0.f;                 // chance a detector run misses it
+    int   latency = 0;                   // ticks (50 ms) its picture is late
+    float wind = 0.f;                    // m/s steady drift, random direction
     int W = 480, H = 270;
 };
 
@@ -193,6 +201,7 @@ struct Frame { cv::Mat im; std::string why; };
 // ------------------------------------------------------------ one run
 struct Result {
     Scenario sc;
+    double closestH = 1e9;             // horizontal: 0 is right over it
     bool crashed = false, failed = false, finished = false, timedOut = false;
     std::string end, crashOn;
     double firstSeenS = -1, firstSeenRange = -1, reactS = -1;
@@ -241,9 +250,16 @@ Result flyOne(const kms::Program& prog, const Scenario& sc, const Options& o, in
     const int ticks = int(o.seconds / kDt);
     ControlCmd cmd;
     std::vector<cv::Rect2d> lastDets;
+    std::uniform_real_distribution<double> u01(0.0, 1.0);
+    const double windDir = 2 * kPi * u01(rng);
+    const double windE = o.wind * std::sin(windDir), windN = o.wind * std::cos(windDir);
+    std::vector<Air> past;                       // for a late detector
     for (int t = 0; t < ticks; ++t) {
         const double now = t * kDt;
         const sim::CamPose cam = camOf(a, o);
+        past.push_back(a);
+        if (int(past.size()) > o.latency + 1) past.erase(past.begin());
+        const sim::CamPose camLate = camOf(past.front(), o);
         // ---- the detector: the target's true box, at its rate, jittered,
         // when it is in frame, close enough, big enough and not hidden.
         cv::Rect2d tb; double inFrac = 0;
@@ -261,7 +277,13 @@ Result flyOne(const kms::Program& prog, const Scenario& sc, const Options& o, in
         s.corridorValid = true; s.corridorOpen = 1.f; s.corridorOffset = 0.f;
         if (t % detEvery == 0) {
             s.detections.clear(); lastDets.clear();
-            if (visible) {
+            // A LATE picture: the box from where the camera was `latency`
+            // ticks ago, handed over now. A DROPOUT: it ran and missed.
+            cv::Rect2d lb = tb; double lf = inFrac;
+            const bool lateIn = o.latency > 0 ? targetBox(W, camLate, o, lb, lf) : inView;
+            const bool missed = u01(rng) < o.dropout;
+            if (visible && lateIn && lf > 0.5 && !missed) {
+                const cv::Rect2d tb = lb;
                 Detection d; d.label = sc.kind->label; d.confidence = 0.8f;
                 cv::Rect2d jb(tb.x + jit(rng), tb.y + jit(rng), tb.width + jit(rng), tb.height + jit(rng));
                 d.box = cv::Rect(int(jb.x), int(jb.y), std::max(3, int(jb.width)), std::max(3, int(jb.height)));
@@ -300,13 +322,14 @@ Result flyOne(const kms::Program& prog, const Scenario& sc, const Options& o, in
         a.vr += (cmd.roll * 4.0 - a.vr) * kDt / 0.35;
         a.u += cmd.throttle * 1.5 * kDt;
         const double yr = a.yaw * kD2R;
-        a.e += std::sin(yr) * a.v * kDt + std::cos(yr) * a.vr * kDt;
-        a.n += std::cos(yr) * a.v * kDt - std::sin(yr) * a.vr * kDt;
+        a.e += std::sin(yr) * a.v * kDt + std::cos(yr) * a.vr * kDt + windE * kDt;
+        a.n += std::cos(yr) * a.v * kDt - std::sin(yr) * a.vr * kDt + windN * kDt;
         trail.push_back({a.e, a.n});
 
         // ---- what happened
         const double dh = std::hypot(cx - a.e, cy - a.n);
         r.closest = std::min(r.closest, rng3);
+        r.closestH = std::min(r.closestH, dh);
         r.minAlt = std::min(r.minAlt, a.u - kGround);
         const std::string stNow = m.stateName().empty() ? "-" : m.stateName();
         const bool stateChanged = stNow != lastState;
@@ -353,8 +376,21 @@ Result flyOne(const kms::Program& prog, const Scenario& sc, const Options& o, in
             stickBar(im, 6, o.H - 34, "yaw", cmd.yaw);
             stickBar(im, 6, o.H - 22, "throttle", cmd.throttle);
             stickBar(im, 6, o.H - 10, "roll", cmd.roll);
-            label(im, cv::format("height %.1f m  speed %.1f m/s  %s %.1f m", a.u - kGround, a.v,
-                                 sc.kind->label, rng3), {130, o.H - 8}, 0.38, {255, 255, 255});
+            label(im, cv::format("height %.1f m  speed %.1f m/s", a.u - kGround, a.v), {130, o.H - 22},
+                  0.38, {255, 255, 255});
+            label(im, cv::format("%s: distance %.1f m (across)  range %.1f m", sc.kind->label, dh, rng3),
+                  {130, o.H - 8}, 0.38, {255, 255, 255});
+            // Where the RUNTIME remembers it to be -- what it flies by once
+            // the object is out of view (under the aircraft).
+            double me, mn, mu;
+            if (m.memory(sc.kind->label, me, mn, mu)) {
+                double pu, pv;
+                if (proj(cam, o, me, mn, kGround, pu, pv) && pu > 0 && pv > 0 && pu < o.W && pv < o.H) {
+                    const cv::Point p{int(pu), int(pv)};
+                    cv::drawMarker(im, p, {255, 120, 255}, cv::MARKER_DIAMOND, 14, 2, cv::LINE_AA);
+                    label(im, "memory", p + cv::Point(9, 4), 0.33, {255, 120, 255});
+                }
+            }
             // The map from above, top right: the course, the target, the trail.
             const int mw = 92, mh = 120, mx = o.W - mw - 4, my = 34;
             cv::rectangle(im, {mx, my, mw, mh}, {34, 34, 34}, cv::FILLED);
@@ -418,7 +454,8 @@ int usage() {
     std::fprintf(stderr,
         "kestrel mission scenarios FILE.kms|FILE.kmb [--runs N] [--seed S]\n"
         "    [--target random|door|person|crate|lightpole] [--out DIR] [--no-video]\n"
-        "    [--show] [--tilt DEG] [--hfov DEG] [--det-hz HZ] [--noise PX] [--seconds S]\n");
+        "    [--show] [--tilt DEG] [--hfov DEG] [--det-hz HZ] [--noise PX] [--seconds S]\n"
+        "    [--alt LO HI] [--dist LO HI] [--side M] [--dropout P] [--latency TICKS] [--wind M/S]\n");
     return 2;
 }
 
@@ -442,8 +479,18 @@ int run(const std::vector<std::string>& args) {
         else if (k == "--det-hz" && more) o.detHz = float(std::atof(args[++i].c_str()));
         else if (k == "--noise" && more) o.noisePx = float(std::atof(args[++i].c_str()));
         else if (k == "--seconds" && more) o.seconds = float(std::atof(args[++i].c_str()));
+        else if (k == "--alt" && i + 2 < args.size()) { o.altLo = float(std::atof(args[++i].c_str())); o.altHi = float(std::atof(args[++i].c_str())); }
+        else if (k == "--dist" && i + 2 < args.size()) { o.distLo = float(std::atof(args[++i].c_str())); o.distHi = float(std::atof(args[++i].c_str())); }
+        else if (k == "--side" && more) o.side = float(std::atof(args[++i].c_str()));
+        else if (k == "--dropout" && more) o.dropout = float(std::atof(args[++i].c_str()));
+        else if (k == "--latency" && more) o.latency = std::max(0, std::atoi(args[++i].c_str()));
+        else if (k == "--wind" && more) o.wind = float(std::atof(args[++i].c_str()));
         else { std::fprintf(stderr, "[scenarios] unknown argument: %s\n", k.c_str()); return usage(); }
     }
+    o.altLo = std::max(0.5f, o.altLo); o.altHi = std::min(30.f, std::max(o.altLo, o.altHi));
+    o.distLo = std::max(5.f, o.distLo); o.distHi = std::min(135.f, std::max(o.distLo, o.distHi));
+    o.side = std::min(35.f, std::max(0.f, o.side));
+    o.dropout = std::min(0.95f, std::max(0.f, o.dropout));
     kms::Program prog;
     if (o.kms.size() > 4 && o.kms.compare(o.kms.size() - 4, 4, ".kmb") == 0) {
         std::string err;
@@ -470,30 +517,31 @@ int run(const std::vector<std::string>& args) {
     if (wantFiles) {
         csv.open(o.outDir + "/report.csv");
         csv << "run,seed,target,start_alt_m,target_e,target_n,first_seen_s,first_seen_range_m,"
-               "reacted_s,closest_m,min_alt_m,end_range_m,end_alt_m,fc,result,end\n";
+               "reacted_s,closest_m,closest_across_m,min_alt_m,end_range_m,end_alt_m,fc,result,end\n";
     }
     int passed = 0;
     for (int i = 0; i < o.runs; ++i) {
         Scenario sc;
         sc.seed = o.seed * 1000u + unsigned(i);
-        sc.alt0 = 3.f + 22.f * u01(rng);
+        sc.alt0 = o.altLo + (o.altHi - o.altLo) * u01(rng);
         int kindIdx = int(u01(rng) * 4.f) % 4;
         for (int k = 0; k < 4; ++k) if (o.target == KINDS[k].label) kindIdx = k;
         sc.kind = &KINDS[kindIdx];
-        sc.tn = 70.f + 40.f * u01(rng);
-        sc.te = -25.f + 50.f * u01(rng);
+        sc.tn = o.distLo + (o.distHi - o.distLo) * u01(rng);
+        sc.te = -o.side + 2.f * o.side * u01(rng);
         std::vector<Frame> frames;
         const Result r = flyOne(prog, sc, o, i, wantFiles ? &frames : nullptr);
         const bool ok = !r.crashed && !r.failed && !r.timedOut;
         passed += ok;
         const std::string result = r.crashed ? "CRASH (" + r.crashOn + ")" : r.failed ? "STOPPED"
                                  : r.timedOut ? "TIMED OUT" : "ok";
-        std::printf("  run %d: %-9s from %4.1f m, %s at %.0f m %s %.0f m | seen %s | %s | closest %.1f m, "
+        std::printf("  run %d: %-9s from %4.1f m, %s at %.0f m %s %.0f m | seen %s | %s | closest %.1f m "
+                    "(%.1f across), "
                     "lowest %.1f m, ends %.1f m from it at %.1f m (%s)\n      %s\n",
                     i, sc.kind->label, sc.alt0, sc.kind->label, sc.tn, sc.te >= 0 ? "right" : "left",
                     std::fabs(sc.te),
                     r.firstSeenS >= 0 ? cv::format("at %.1f s, %.0f m", r.firstSeenS, r.firstSeenRange).c_str() : "never",
-                    result.c_str(), r.closest, r.minAlt, r.endRange, r.endAlt, r.fcEnd.c_str(), r.end.c_str());
+                    result.c_str(), r.closest, r.closestH, r.minAlt, r.endRange, r.endAlt, r.fcEnd.c_str(), r.end.c_str());
         if (wantFiles) {
             const cv::Mat sheet = contactSheet(frames, o.W, o.H);
             if (!sheet.empty()) cv::imwrite(o.outDir + cv::format("/run_%02d.png", i), sheet);
@@ -501,7 +549,7 @@ int run(const std::vector<std::string>& args) {
             for (char& c : endq) if (c == ',' || c == '"') c = ';';
             csv << i << ',' << sc.seed << ',' << sc.kind->label << ',' << sc.alt0 << ',' << sc.te << ','
                 << sc.tn << ',' << r.firstSeenS << ',' << r.firstSeenRange << ',' << r.reactS << ','
-                << r.closest << ',' << r.minAlt << ',' << r.endRange << ',' << r.endAlt << ','
+                << r.closest << ',' << r.closestH << ',' << r.minAlt << ',' << r.endRange << ',' << r.endAlt << ','
                 << r.fcEnd << ',' << result << ",\"" << endq << "\"\n";
         }
     }

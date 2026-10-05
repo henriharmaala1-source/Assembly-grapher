@@ -15,10 +15,18 @@ const char* opName(Op o) {
                               "JUMP_IFNOT", "SET_REG", "LOOP", "TIMER", "JUMP_TIMEUP", "MARK", "MARK_SEEN",
                               "SAY", "LAND", "RTL", "RESUME", "GO_STATE", "TRACK", "UNTRACK",
                               "TURN_REF", "CLIMB_BY", "APPROACH_TO", "NAV",
-                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW", "FLY", "GAINS", "CRUISE"};
+                              "ANCHOR", "UNANCHOR", "TURN_TO_PLACE", "STEER", "FOLLOW", "FLY", "GAINS", "CRUISE",
+                              "PASS_OVER", "PARAM"};
     static_assert(sizeof(N) / sizeof(N[0]) == size_t(Op::COUNT_), "opName table");
     const unsigned i = unsigned(o);
     return i < unsigned(Op::COUNT_) ? N[i] : "?";
+}
+
+const char* paramName(int id) {
+    static const char* N[] = {"min_alt", "max_vert", "max_glide", "top_speed", "climb_rate",
+                              "detect_stale", "new_radius", "anchor_gain", "max_yaw", "memory"};
+    static_assert(sizeof(N) / sizeof(N[0]) == size_t(P_COUNT), "paramName table");
+    return id >= 0 && id < P_COUNT ? N[id] : "?";
 }
 
 uint32_t crc32(const uint8_t* data, size_t n) {
@@ -149,7 +157,7 @@ bool verify(const Program& p, std::string* err) {
                 case CondOp::SEEN: case CondOp::TRACKING:
                     if (c.arg < 0 || c.arg >= nS) return fail("condition: bad label");
                     ++depth; break;
-                case CondOp::RANGE:
+                case CondOp::RANGE: case CondOp::OBJDIST:
                     if (c.arg < 0 || c.arg >= nS || c.cmp > CondOp::GE) return fail("condition: bad range");
                     ++depth; break;
                 case CondOp::VAR:
@@ -202,9 +210,13 @@ bool verify(const Program& p, std::string* err) {
             return fail(at + "jump missing");
         if (in.op == Op::JUMP_IFNOT && (in.cond < 0 || in.jump < 0)) return fail(at + "branch incomplete");
         if (in.op == Op::WAIT && in.cond < 0) return fail(at + "wait without condition");
+        if (in.op == Op::PARAM && (in.target < 0 || in.target >= P_COUNT || !(in.a >= 0.f)))
+            return fail(at + "param: unknown knob or a negative value");
+        if (in.op == Op::PASS_OVER && (in.text < 0 || !(in.b > 0.f) || !(in.c > 0.f) || in.a < 0.f))
+            return fail(at + "pass over needs an object, a speed and a timeout");
         if (in.op == Op::CRUISE && (!(in.a >= 0.f) || in.a > 20.f || !(in.c > 0.f)))
             return fail(at + "cruise needs a speed 0..20 m/s and a time");
-        if (in.op == Op::GAINS && (in.target < 0 || in.target > 3 || in.a < 0.f || in.b < 0.f ||
+        if (in.op == Op::GAINS && (in.target < 0 || in.target > 4 || in.a < 0.f || in.b < 0.f ||
                                    in.c < 0.f || in.d < 0.f))
             return fail(at + "gains: bad axis or a negative gain");
         if (in.op == Op::FLY && (std::fabs(in.a) > 1.f || std::fabs(in.d) > 1.f || !(in.b >= 0.f) ||
@@ -373,14 +385,20 @@ std::string disassemble(const Program& p) {
                        (in.flags & FLAG_ALT_REL) ? cv_fmt(" above it %.1f", in.c, 0) : std::string());
                 break;
             case Op::GAINS: {
-                static const char* AX[] = {"yaw", "strafe", "dive", "range"};
-                arg = std::string(AX[in.target >= 0 && in.target < 4 ? in.target : 0]) +
+                static const char* AX[] = {"yaw", "strafe", "dive", "range", "track"};
+                arg = std::string(AX[in.target >= 0 && in.target < 5 ? in.target : 0]) +
                       ((in.flags & 1) ? cv_fmt(" kp %.3f", in.a) : std::string()) +
                       ((in.flags & 2) ? cv_fmt(" ki %.3f", in.b) : std::string()) +
                       ((in.flags & 4) ? cv_fmt(" kd %.3f", in.c) : std::string()) +
                       ((in.flags & 8) ? cv_fmt(" filter %.2f s", in.d) : std::string());
                 break;
             }
+            case Op::PASS_OVER:
+                arg = "\"" + S(in.text) + "\"" + cv_fmt(" at %.1f m/s, out %.1f m past it", in.b, in.a) +
+                      ((in.flags & FLAG_ALT_ABS) ? cv_fmt(", height %.1f", in.e)
+                       : (in.flags & FLAG_ALT_REL) ? cv_fmt(", %.1f above it", in.e) : std::string());
+                break;
+            case Op::PARAM: arg = std::string(paramName(in.target)) + cv_fmt(" = %.3f", in.a); break;
             case Op::CRUISE:
                 arg = cv_fmt("%.1f m/s level, ", in.a) + ((in.flags & FLAG_FOR) ? "for" : "timeout") +
                       cv_fmt(" %.1f s", in.c);

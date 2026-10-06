@@ -49,6 +49,8 @@ namespace mav {
 enum : uint32_t {
     MSG_HEARTBEAT                     = 0,
     MSG_SYS_STATUS                    = 1,
+    MSG_PARAM_REQUEST_READ            = 20,
+    MSG_PARAM_VALUE                   = 22,
     MSG_GPS_RAW_INT                   = 24,
     MSG_ATTITUDE                      = 30,
     MSG_LOCAL_POSITION_NED            = 32,
@@ -82,6 +84,7 @@ enum : uint32_t {
     COPTER_AUTO      = 3,  COPTER_GUIDED = 4,  COPTER_LOITER   = 5,
     COPTER_RTL       = 6,  COPTER_LAND   = 9,  COPTER_POSHOLD  = 16,
     COPTER_BRAKE     = 17, COPTER_GUIDED_NOGPS = 20, COPTER_SMART_RTL = 21,
+    COPTER_FLOWHOLD  = 22,
 };
 
 enum : uint8_t {

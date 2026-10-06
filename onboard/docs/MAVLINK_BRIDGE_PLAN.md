@@ -90,23 +90,55 @@ opinion, and it should gate the speed budget.
 
 ### 3.2 Uplink — Pi to FC
 
-**v1: attitude, not velocity.** `SET_ATTITUDE_TARGET` (82), already in the enum.
+**As built: the FC's flight mode picks the uplink** (`fc.uplink=auto`, the
+default; `--fc-uplink` / `fc.uplink` can fix one). The pilot's mode switch is
+therefore also the uplink switch:
 
-This is the consequence most likely to bite on the field day, so it is stated
-here rather than discovered: **GUIDED velocity setpoints require a horizontal
-velocity estimate, and GNSS-denied there isn't one.** No GPS, no external nav,
-no optical flow means EKF3 has IMU and baro only — enough for attitude, not for
-velocity. So `SET_POSITION_TARGET_LOCAL_NED` in a velocity mask **will not work
-for v1**, and the planner's speed command has to be expressed as pitch angle.
+| FC mode | What the Pi sends | What a ControlCmd means there |
+|---|---|---|
+| `GUIDED` | `SET_POSITION_TARGET_LOCAL_NED`, BODY_NED, mask `0x05C7` | the velocity and yaw rate themselves |
+| `GUIDED_NOGPS` | `SET_ATTITUDE_TARGET` | lean angle; thrust is a **climb rate** (0.5 = hold) through `WPNAV_SPEED_UP/DN` |
+| `LOITER` | `RC_CHANNELS_OVERRIDE` | speed: ArduPilot's steady state is stick × `LOIT_SPEED` |
+| `ALT_HOLD` / `POSHOLD` / `FLOWHOLD` | `RC_CHANNELS_OVERRIDE` | lean angle; climb rate through `PILOT_SPEED_UP/DN` |
+| anything else (`STABILIZE`, `ACRO`, `RTL`, `LAND`, `AUTO`…) | **nothing**, and any override is released at once | — |
 
-Crude, and correct for the constraint.
+`ControlCmd` is a normalised **rate** command: a full stick is `fc.stick_mps`
+forward (4), `fc.stick_climb_mps` up (1.5), `fc.stick_yaw_dps` (90) — the
+nav-sim airframe every gain was tuned on, and SCRIPT mode's arithmetic uses the
+same numbers. The velocity uplink multiplies them out. The stick and attitude
+uplinks go through ArduPilot's own parameters, **read back at link-up**
+(`PARAM_REQUEST_READ`; no control is sent until they have answered or timed
+out): `RCn_MIN/TRIM/MAX/DZ/REVERSED`, `THR_DZ`, `PILOT_SPEED_UP/DN`,
+`LOIT_SPEED`, `PILOT_Y_RATE` (or `ACRO_YAW_P` before 4.3), `WPNAV_SPEED_UP/DN`.
+Each axis is the inverse of ArduCopter's own stick function, so the FC reads
+back the rate that was meant; the deadbands are jumped, not fallen into. The
+report it prints (also in `--bench-test`) flags with `!!` a GCS sysid that will
+get every command ignored, a remapped `RCMAP` (stick uplink refused), and
+`GUID_OPTIONS` bit 3 (thrust-as-thrust: attitude uplink refused).
 
-**v1.5: optical flow + downward rangefinder** → `EK3_SRC1_VELXY = OpticalFlow`,
-which unlocks velocity setpoints and a much better control interface for maybe
-€40 of hardware. This is probably the highest-value small purchase in the
-project and it is not currently on any list.
+Three mistakes this replaced, all in the encoding rather than the codec:
+* **Pitch was the wrong way round.** ArduPilot reads a *low* pitch pulse as
+  forward (its autotest flies north on RC2 = 1300); iNAV reads high. The stick
+  path copied iNAV, so "forward" flew backwards.
+* **The velocity mask was `0x0DC7`**, whose bit 11 is `YAW_RATE_IGNORE`: every
+  commanded turn was dropped. It is `0x05C7`.
+* **Clearing an RTL/LAND asked for "ANGLE"**, which on ArduPilot is
+  `STABILIZE` — mid stick half throttle, a script's descent a power cut. It now
+  RESUMEs the mode the aircraft was in before, unless the pilot has since
+  switched it themselves.
 
-**v2: external nav** → position control, the full GUIDED interface.
+**Still unproven: none of this has flown against ArduPilot.** The pulses are
+checked against a forward model of ArduCopter's stick handling written from its
+source, not against ArduCopter. ArduPilot SITL driving the real
+`MavlinkBackend` is the next proof; horizontal speed in the lean-angle modes
+(`ALT_HOLD`, `POSHOLD`, `GUIDED_NOGPS`) cannot be calibrated from parameters at
+all and needs a speed loop or a measured fit.
+
+**The hardware path, unchanged:** GNSS-denied with IMU and baro only, EKF3 has
+no horizontal velocity, so `GUIDED` is refused and the choice is `ALT_HOLD`
+sticks or `GUIDED_NOGPS` attitude. **Optical flow + a downward rangefinder**
+(`EK3_SRC1_VELXY = OpticalFlow`) or **VIO as ExternalNav** (`--voxel-vio-fc`)
+unlocks `LOITER` and `GUIDED` — the two modes where a speed means a speed.
 
 ### 3.3 The elegant one: `OBSTACLE_DISTANCE` (330)
 
@@ -127,8 +159,10 @@ that is close to free defence in depth.
 The four link states in `THESIS.md` §1.0.1 map onto ArduPilot mechanisms that
 already exist, and mostly onto ones we do not have to write:
 
-* **Pi stops sending** → ArduPilot times out the offboard setpoints and reverts
-  to the pilot's mode. A failsafe we get for free.
+* **Pi stops sending** → overrides time out after `RC_OVERRIDE_TIME` and the
+  sticks are the pilot's; a `GUIDED` velocity setpoint times out and the
+  aircraft stops and holds. A failsafe we get for free. (FcLink itself sends a
+  neutral hold, not the last command, if the fly loop stalls.)
 * **`SYSID_MYGCS` gating** — already implemented in `mavlink_backend.cpp`.
 * **Autonomy engaged** → mode change by `COMMAND_LONG`, gated on the RC switch.
 * **Pilot flying** → the Pi sends nothing, or `OBSTACLE_DISTANCE` only, so the

@@ -69,6 +69,19 @@ struct Tunables {
     // pack can be plugged in already depleted, where inference would guess low.
     int  battCells = 0;
 
+    // MAVLink uplink (mavlink_backend.hpp): auto|rc|attitude|velocity. auto
+    // lets the FC's flight mode choose -- GUIDED velocity, GUIDED_NOGPS
+    // attitude, ALT_HOLD/LOITER/POSHOLD sticks, anything else nothing.
+    std::string fcUplink = "auto";
+    // WHAT A FULL STICK MEANS, for every uplink and for SCRIPT mode's own
+    // arithmetic: forward/right m/s, climb m/s, yaw deg/s. The nav-sim
+    // airframe's numbers, which the gains were tuned on. The backend reads
+    // ArduPilot's LOIT_SPEED / PILOT_SPEED_UP / PILOT_Y_RATE and rescales to
+    // these, so they are the aircraft's behaviour, not a guess about it.
+    float stickMps      = 4.f;
+    float stickClimbMps = 1.5f;
+    float stickYawDps   = 90.f;
+
     // Camera geometry — FPV cameras are up-tilted; the monocular corridor/grid
     // scan is suppressed when the effective elevation leaves the usable window.
     float cameraMountTiltDeg = 0.f;   // + = up vs airframe forward axis

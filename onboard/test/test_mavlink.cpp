@@ -108,11 +108,23 @@ int main() {
         p.f32(1.5f); p.f32(-0.25f); p.f32(-0.5f);       // vx vy vz
         p.f32(0); p.f32(0); p.f32(0);                   // afx afy afz (masked)
         p.f32(0.f); p.f32(0.3f);                        // yaw, yaw_rate
-        p.u16(0x0DC7); p.u8(1); p.u8(1); p.u8(FRAME_BODY_NED);
+        // 0x05C7: bit 11 (YAW_RATE_IGNORE) CLEAR. 0x0DC7 had it set.
+        p.u16(0x05C7); p.u8(1); p.u8(1); p.u8(FRAME_BODY_NED);
         expectFrame("SET_POSITION_TARGET_LOCAL_NED vel+yawrate, BODY_NED",
                     c, MSG_SET_POSITION_TARGET_LOCAL_NED, p,
                     "fd350000072abf54000040e201000000000000000000000000000000c03f000080be000000bf00"
-                    "0000000000000000000000000000009a99993ec70d0101087ac9");
+                    "0000000000000000000000000000009a99993ec7050101085a93");
+    }
+    {
+        // Parameter readback: by name, index -1. 14 characters, so NUL-padded
+        // to 16 -- and the truncation strips the padding off the wire.
+        Codec c = fresh();
+        Payload p;
+        p.i16(-1); p.u8(1); p.u8(1);
+        const char id[16] = "PILOT_SPEED_UP";
+        for (char ch : id) p.u8(uint8_t(ch));
+        expectFrame("PARAM_REQUEST_READ PILOT_SPEED_UP", c, MSG_PARAM_REQUEST_READ, p,
+                    "fd120000072abf140000ffff010150494c4f545f53504545445f55504983");
     }
     {
         Codec c = fresh();
@@ -276,6 +288,15 @@ int main() {
         check(m.u16(4) == 1500 && m.u16(10) == 1400 && m.u16(18) == 1500,
               "  channels 1, 4 and 8 read back");
         check(m.u16(38) == 0, "  and offset 38 is chan18, which is what made it look right");
+    }
+    {
+        // ArduPilot's answer: value first, then count, index, the name, type.
+        Msg m;
+        check(decode("fd19000007010116000000409c44b0044d004c4f49545f535045454400000000000009fa37", m)
+              && m.id == MSG_PARAM_VALUE, "decode PARAM_VALUE LOIT_SPEED");
+        check(std::fabs(m.f32(0) - 1250.f) < 1e-3f, "  value 1250 (cm/s)");
+        check(m.u8(8) == 'L' && m.u8(17) == 'D' && m.u8(18) == 0, "  name at offset 8");
+        check(m.u8(24) == 9, "  type REAL32 at offset 24");
     }
     {
         // The heartbeat that tells us the pilot is in ACRO and the aircraft is

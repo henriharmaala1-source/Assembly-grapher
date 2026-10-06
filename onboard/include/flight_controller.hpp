@@ -15,7 +15,11 @@
 //     estimator. iNAV has no native vision-pose message, so the supported path
 //     is a synthetic GPS (MSP2_SENSOR_GPS, gps_provider=MSP). MAVLink backends
 //     map it to GPS_INPUT / VISION_POSITION_ESTIMATE.
-enum class FcMode { STABILIZE, ALT_HOLD, OFFBOARD, ANGLE, LOITER, RTL, LAND, UNKNOWN };
+// RESUME is not a flight mode: it hands the aircraft back to whatever it was
+// flying before this program's last RTL/LAND. Clearing a failsafe used to ask
+// for ANGLE, which is Betaflight/iNAV's normal mode -- and on ArduPilot maps to
+// STABILIZE, where mid stick is half throttle instead of "hold this height".
+enum class FcMode { STABILIZE, ALT_HOLD, OFFBOARD, ANGLE, LOITER, RTL, LAND, RESUME, UNKNOWN };
 
 class IFlightController {
 public:

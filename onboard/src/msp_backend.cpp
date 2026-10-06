@@ -145,7 +145,7 @@ bool MspBackend::setMode(FcMode m) {
         rthActive_ = true;
         return true;
     }
-    rthActive_ = false;                     // any other mode releases the latch
+    rthActive_ = false;                     // any other mode (RESUME too) releases the latch
     return true;
 }
 

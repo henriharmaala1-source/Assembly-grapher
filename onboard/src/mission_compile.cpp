@@ -757,6 +757,11 @@ private:
             const int pc = emit(Op::PARAM, L);
             at_(pc).target = id;
             at_(pc).a = float(positive(U[id], n.c_str(), 0, 1000));
+            if (id == P_TOP_SPEED || id == P_CLIMB_RATE)
+                warn(L, nt.col, "`" + n + "` is the AIRFRAME's calibration, not a mission "
+                     "setting: the aircraft's fc." + (id == P_TOP_SPEED ? "stick_mps" : "stick_climb_mps") +
+                     " says what a full stick does, and the FC uplink scales to that. A "
+                     "different number here makes every speed after this line wrong by the ratio");
             endStatement(); return false;
         }
         if (w == "pass") {

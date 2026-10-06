@@ -101,6 +101,10 @@ static void runBenchTest(IFlightController& fc) {
 
     auto tPrint = clock::now() - std::chrono::seconds(2);   // force immediate first print
     int  ticks  = 0;
+    // On MAVLink, the bench is also where ArduPilot's parameters get checked
+    // against what this program's sticks mean (the report prints once).
+    auto* mav = dynamic_cast<MavlinkBackend*>(&fc);
+    bool  reported = false;
 
     while (!g_benchQuit) {
         fc.tick();
@@ -124,6 +128,15 @@ static void runBenchTest(IFlightController& fc) {
         std::printf("link    : %-6s          armed   : %s\n",
                     t.linkUp ? "UP" : "DOWN",
                     t.armed  ? "ARMED (!!)" : "disarmed");
+
+        if (mav) {
+            std::printf("mavlink : FC mode %u -> control path: %s\n",
+                        unsigned(mav->copterMode()), mav->controlPath());
+            if (mav->paramsResolved() && !reported) {
+                std::printf("%s", mav->paramReport().c_str());
+                reported = true;
+            }
+        }
 
         // ---- attitude
         std::printf("roll    : %+7.1f °       pitch   : %+7.1f °       yaw : %+7.1f °\n",
@@ -206,6 +219,7 @@ int main(int argc, char** argv) {
         "{fc             | none  | flight controller: none|msp|mavlink|sim }"
         "{fc-port        | /dev/ttyAMA0 | FC serial device }"
         "{fc-baud        | 115200 | FC serial baud }"
+        "{fc-uplink      |       | MAVLink: auto|rc|attitude|velocity -- auto picks by the FC's mode (fc.uplink) }"
         "{auto           | false | autonomous move-stop-sense cycle (hover→think→plan→move) }"
         "{script         |       | a COMPILED mission (.kmb from `kestrel mission compile`) for SCRIPT mode; starts in SCRIPT, waiting for GO (script.file) }"
         "{allow-control  | false | actually SEND control to the FC (else dry-run) }"
@@ -349,7 +363,23 @@ int main(int argc, char** argv) {
     std::unique_ptr<IFlightController> fc;
     const std::string fcSel = parser.get<std::string>("fc");
     if (fcSel == "msp")     fc = std::make_unique<MspBackend>();
-    if (fcSel == "mavlink") fc = std::make_unique<MavlinkBackend>();
+    if (fcSel == "mavlink") {
+        auto mb = std::make_unique<MavlinkBackend>();
+        std::string up = parser.get<std::string>("fc-uplink");
+        if (up.empty()) up = tune.fcUplink;
+        MavlinkBackend::Uplink u;
+        if (!MavlinkBackend::parseUplink(up, u)) {
+            std::fprintf(stderr, "[fc] unknown uplink '%s' (auto|rc|attitude|velocity)\n",
+                         up.c_str());
+            return 1;
+        }
+        mb->setUplink(u);
+        mb->setStickScale({tune.stickMps, tune.stickClimbMps, tune.stickYawDps});
+        std::printf("[mavlink] uplink %s; full stick = %.1f m/s, %.1f m/s climb, %.0f deg/s\n",
+                    MavlinkBackend::uplinkName(u), double(tune.stickMps),
+                    double(tune.stickClimbMps), double(tune.stickYawDps));
+        fc = std::move(mb);
+    }
     if (fcSel == "sim")     fc = std::make_unique<SimFcBackend>();
     if (fc && !fc->connect(parser.get<std::string>("fc-port"),
                            parser.get<int>("fc-baud"))) {
@@ -389,6 +419,9 @@ int main(int argc, char** argv) {
     ScriptMode::Params scriptP;
     scriptP.detHfovDeg = tune.scriptDetHfovDeg;
     scriptP.detTiltDeg = tune.scriptDetTiltDeg;
+    // One meaning of a full stick for the script's arithmetic and the uplink.
+    scriptP.mpsPerStick     = tune.stickMps;
+    scriptP.vertMpsPerStick = tune.stickClimbMps;
     register_standard_modes(modes, tune.mission, scriptP);   // FLY ASSIST ... AUTONOMY ... SCRIPT
     // THE MISSION, compiled on the ground. Only the binary form is read here:
     // no text, no parser on the aircraft. A file that fails its checks stops

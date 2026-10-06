@@ -34,7 +34,16 @@ public:
     void advance(float dt);
 
     bool feedExternalGps(const ExtGps&) override { return connected_; }  // accept, no-op
-    bool setMode(FcMode m) override { mode_ = m; return connected_; }     // accept
+    bool setMode(FcMode m) override {                                      // accept
+        if (m == FcMode::RTL || m == FcMode::LAND) {
+            if (mode_ != FcMode::RTL && mode_ != FcMode::LAND) resume_ = mode_;
+            mode_ = m;
+        } else {
+            mode_ = m == FcMode::RESUME ? resume_ : m;
+        }
+        return connected_;
+    }
+    FcMode mode() const { return mode_; }
     void setAssistMode(bool) override {}
     void latchBaseline() override {}
 
@@ -54,6 +63,7 @@ private:
     float  velN_ = 0.f, velE_ = 0.f;
     float  battV_ = 16.8f;                     // 4S full
     FcMode mode_  = FcMode::ANGLE;             // last commanded FC mode
+    FcMode resume_ = FcMode::ANGLE;            // what RESUME goes back to
 
     FcTelemetry tel_{};
 };

@@ -83,7 +83,7 @@ switch. The four extension points:
 | ------ | --------- | --------------- | ---- |
 | **control mode** | `IControlMode` (`control_mode.hpp`) | `ModeManager::add()` (see `modes.hpp`) | `update(state,ctx)→ControlCmd`; `isMotion()` opts into the obstacle reflex |
 | **perception module** | `IPerceptionModule` (`perception.hpp`) | `Deliberator::scheduler().add()` (heavy) or run in the fly loop (cheap) | `run(frame,wm)` → writes findings into the world model |
-| **flight controller** | `IFlightController` (`flight_controller.hpp`) | `--fc=<name>` in `main.cpp` | `tick/poll/sendControl` — MSP, sim, MAVLink(stub) |
+| **flight controller** | `IFlightController` (`flight_controller.hpp`) | `--fc=<name>` in `main.cpp` | `tick/poll/sendControl` — MSP, sim, MAVLink |
 | **depth sensor** | `ITofSource` (`tof_source.hpp`) | into a `TofNavigateModule` | `read()→metric grid`; VL53L9/L5CX/MCU-hub/OAK/sim |
 
 Two tiers keep it real-time: the **fly loop** (fast, control-critical) and the
@@ -139,6 +139,13 @@ for partial override (`receiver_type = SERIAL` + `msp_override_channels`) so
 
 # bench-test: live MSP telemetry table + dry-run RC channel map, no camera
 ./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --bench-test
+
+# ArduPilot: the same, plus a check of ArduPilot's own parameters against what
+# this program's sticks mean (any line starting !! needs fixing first), and the
+# control path the FC's current mode selects. --fc-uplink=auto (default) follows
+# the mode switch: GUIDED -> velocity, GUIDED_NOGPS -> attitude, ALT_HOLD /
+# LOITER / POSHOLD -> sticks, anything else -> nothing (docs/MAVLINK_BRIDGE_PLAN.md 3.2)
+./build/kestrel --fc=mavlink --fc-port=/dev/ttyAMA0 --fc-baud=115200 --bench-test
 
 # NO HARDWARE: --fc=sim gives a software-in-the-loop FC that responds to control
 # (GPS/attitude/battery evolve like a real link). Works with --bench-test or the

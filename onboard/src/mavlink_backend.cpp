@@ -5,6 +5,8 @@
 #include <cmath>
 #include <limits>
 #include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
@@ -19,7 +21,78 @@ double nowS() {
 // or so a local NED frame is meant to cover -- and the EKF only ever sees
 // differences from the latched origin, so the datum itself does not matter.
 constexpr double kMetresPerDegLat = 111320.0;
+
+constexpr uint32_t kNoMode = 0xFFFFFFFF;
+
+// Every ArduPilot parameter that decides what one of our commands DOES, or
+// whether it is listened to at all. Read once at link-up (serviceParams).
+constexpr const char* kParamNames[] = {
+    "SYSID_MYGCS", "MAV_GCS_SYSID", "RC_OVERRIDE_TIME",
+    "RCMAP_ROLL", "RCMAP_PITCH", "RCMAP_THROTTLE", "RCMAP_YAW",
+    "RC1_MIN", "RC1_TRIM", "RC1_MAX", "RC1_DZ", "RC1_REVERSED",
+    "RC2_MIN", "RC2_TRIM", "RC2_MAX", "RC2_DZ", "RC2_REVERSED",
+    "RC3_MIN", "RC3_TRIM", "RC3_MAX", "RC3_DZ", "RC3_REVERSED",
+    "RC4_MIN", "RC4_TRIM", "RC4_MAX", "RC4_DZ", "RC4_REVERSED",
+    "LOIT_SPEED", "PILOT_SPEED_UP", "PILOT_SPEED_DN", "THR_DZ",
+    "PILOT_Y_RATE", "PILOT_Y_EXPO", "ACRO_YAW_P", "ANGLE_MAX",
+    "WPNAV_SPEED", "WPNAV_SPEED_UP", "WPNAV_SPEED_DN", "GUID_OPTIONS",
+};
+
+const char* copterModeName(uint32_t m) {
+    switch (m) {
+    case mav::COPTER_STABILIZE:    return "STABILIZE";
+    case mav::COPTER_ACRO:         return "ACRO";
+    case mav::COPTER_ALT_HOLD:     return "ALT_HOLD";
+    case mav::COPTER_AUTO:         return "AUTO";
+    case mav::COPTER_GUIDED:       return "GUIDED";
+    case mav::COPTER_LOITER:       return "LOITER";
+    case mav::COPTER_RTL:          return "RTL";
+    case mav::COPTER_LAND:         return "LAND";
+    case mav::COPTER_POSHOLD:      return "POSHOLD";
+    case mav::COPTER_BRAKE:        return "BRAKE";
+    case mav::COPTER_GUIDED_NOGPS: return "GUIDED_NOGPS";
+    case mav::COPTER_SMART_RTL:    return "SMART_RTL";
+    case mav::COPTER_FLOWHOLD:     return "FLOWHOLD";
+    case kNoMode:                  return "(no heartbeat yet)";
+    default:                       return "other";
+    }
+}
 }  // namespace
+
+MavlinkBackend::MavlinkBackend() {
+    static_assert(sizeof(kParamNames) / sizeof(kParamNames[0]) == kNParams,
+                  "kNParams must match the parameter table");
+    for (int i = 0; i < kNParams; ++i) params_[i] = {kParamNames[i], 0.f, false, 0};
+}
+
+bool MavlinkBackend::parseUplink(const std::string& s, Uplink& out) {
+    if (s == "auto")     { out = Uplink::AUTO;            return true; }
+    if (s == "rc")       { out = Uplink::RC_OVERRIDE;     return true; }
+    if (s == "attitude") { out = Uplink::ATTITUDE_TARGET; return true; }
+    if (s == "velocity") { out = Uplink::VELOCITY;        return true; }
+    return false;
+}
+
+const char* MavlinkBackend::uplinkName(Uplink u) {
+    switch (u) {
+    case Uplink::AUTO:            return "auto";
+    case Uplink::RC_OVERRIDE:     return "rc";
+    case Uplink::ATTITUDE_TARGET: return "attitude";
+    case Uplink::VELOCITY:        return "velocity";
+    }
+    return "?";
+}
+
+bool MavlinkBackend::param(const char* name, float& out) const {
+    for (const Param& q : params_)
+        if (q.have && std::strcmp(q.name, name) == 0) { out = q.v; return true; }
+    return false;
+}
+
+float MavlinkBackend::pv(const char* name, float def) const {
+    float v;
+    return param(name, v) ? v : def;
+}
 
 bool MavlinkBackend::connect(const std::string& port, int baud) {
     if (!serial_.open(port, baud)) {
@@ -108,6 +181,130 @@ void MavlinkBackend::tick() {
 
     linkUp_ = serial_.isOpen() && everRx_ && (t - lastRxS_) < 2.0;
     tel_.linkUp = linkUp_;
+
+    serviceParams(t);
+    // Say which uplink is live whenever the pilot's switch changes it: the
+    // single most useful line on a field day.
+    if (linkUp_ && copterMode_ != reportedMode_) {
+        reportedMode_ = copterMode_;
+        std::printf("[mavlink] FC in %s -> control: %s\n",
+                    copterModeName(copterMode_), controlPath());
+    }
+}
+
+// PARAMETER READBACK. PARAM_REQUEST_READ by name for every entry still
+// unanswered, every half second, until all have answered or the timeout says
+// the rest do not exist on this firmware (MAV_GCS_SYSID is 4.5+,
+// PILOT_Y_RATE 4.3+). Control is held off until then.
+void MavlinkBackend::serviceParams(double now) {
+    if (paramsDone_ || !linkUp_) return;
+    if (!paramsStarted_) { paramsStarted_ = true; paramsT0_ = now; }
+    bool all = true;
+    for (const Param& q : params_) all = all && q.have;
+    if (all || now - paramsT0_ >= paramTimeoutS_) {
+        paramsDone_ = true;
+        std::printf("%s", paramReport().c_str());
+        return;
+    }
+    if (now - lastParamReqS_ < 0.5) return;
+    lastParamReqS_ = now;
+    for (Param& q : params_) {
+        if (q.have) continue;
+        mav::Payload p;
+        p.i16(-1);                                 // by name, not index
+        p.u8(tgtSys_); p.u8(tgtComp_);
+        char id[16]{};
+        std::strncpy(id, q.name, sizeof(id));      // 16 bytes, NUL only if shorter
+        for (char c : id) p.u8(uint8_t(c));
+        send(mav::MSG_PARAM_REQUEST_READ, p);
+        ++q.tries;
+    }
+}
+
+void MavlinkBackend::onParamValue(const mav::Msg& m) {
+    char id[17]{};
+    for (int i = 0; i < 16; ++i) id[i] = char(m.u8(8 + i));
+    for (Param& q : params_)
+        if (std::strcmp(q.name, id) == 0) { q.v = m.f32(0); q.have = true; }
+}
+
+bool MavlinkBackend::rcMapOk() const {
+    // A remapped stick would put our roll on someone else's channel. Refuse
+    // rather than remap: the release-to-pilot rule assumes 1-4 are ours.
+    return pv("RCMAP_ROLL", 1) == 1 && pv("RCMAP_PITCH", 2) == 2 &&
+           pv("RCMAP_THROTTLE", 3) == 3 && pv("RCMAP_YAW", 4) == 4;
+}
+
+std::string MavlinkBackend::paramReport() const {
+    std::string r;
+    char b[256];
+    auto line = [&](const char* fmt, auto... a) {
+        if constexpr (sizeof...(a) == 0) {
+            r += fmt;
+        } else {
+            std::snprintf(b, sizeof(b), fmt, a...);
+            r += b;
+        }
+    };
+    int have = 0;
+    for (const Param& q : params_) have += q.have;
+    line("[mavlink] ArduPilot parameters: %d of %d answered\n", have, kNParams);
+
+    float v;
+    const float our = float(codec_.sysid());
+    if (param("MAV_GCS_SYSID", v) || param("SYSID_MYGCS", v)) {
+        if (v != our)
+            line("!! GCS sysid is %.0f, ours is %.0f: ArduPilot will IGNORE every "
+                 "override and mode change. Set %s = %.0f.\n", double(v), double(our),
+                 param("MAV_GCS_SYSID", v) ? "MAV_GCS_SYSID" : "SYSID_MYGCS", double(our));
+        else
+            line("  GCS sysid %.0f matches ours: overrides and mode changes accepted\n",
+                 double(our));
+    } else {
+        line("!! could not read SYSID_MYGCS / MAV_GCS_SYSID: is anything answering?\n");
+    }
+    if (param("RC_OVERRIDE_TIME", v))
+        line("  RC_OVERRIDE_TIME %.1f s%s\n", double(v),
+             v < 0 ? "  !! never times out: a stalled Pi leaves its sticks in" : "");
+    if (!rcMapOk())
+        line("!! RCMAP is not roll/pitch/throttle/yaw on 1-4: the stick uplink is REFUSED\n");
+
+    const StickScale& k = scale_;
+    line("  a full stick here means %.1f m/s, %.1f m/s climb, %.0f deg/s yaw "
+         "(fc.stick_mps / stick_climb_mps / stick_yaw_dps)\n",
+         double(k.mps), double(k.climbMps), double(k.yawDps));
+    if (param("LOIT_SPEED", v))
+        line("  LOITER: full stick = LOIT_SPEED %.1f m/s -> horizontal rescaled x%.2f%s\n",
+             double(v / 100.f), double(k.mps / std::max(0.01f, v / 100.f)),
+             k.mps > v / 100.f ? "  !! slower than stick_mps: capped" : "");
+    line("  ALT_HOLD / POSHOLD / FLOWHOLD / GUIDED_NOGPS: horizontal stick is a LEAN "
+         "ANGLE, not a speed -- uncalibrated\n");
+    float up, dz;
+    if (param("PILOT_SPEED_UP", up) && param("THR_DZ", dz)) {
+        const float dn = pv("PILOT_SPEED_DN", 0.f) > 0.f ? pv("PILOT_SPEED_DN", 0.f) : up;
+        line("  climb: PILOT_SPEED_UP %.1f / DN %.1f m/s, THR_DZ %.0f -> deadband "
+             "skipped, rescaled to %.1f m/s%s\n", double(up / 100.f), double(dn / 100.f),
+             double(dz), double(k.climbMps),
+             k.climbMps > std::min(up, dn) / 100.f ? "  !! faster than the FC allows: capped" : "");
+    } else {
+        line("!! PILOT_SPEED_UP / THR_DZ unknown: throttle sent unscaled\n");
+    }
+    float yr;
+    if (param("PILOT_Y_RATE", yr) || (param("ACRO_YAW_P", yr) && (yr *= 45.f, true)))
+        line("  yaw: full stick = %.0f deg/s -> rescaled x%.2f%s\n", double(yr),
+             double(k.yawDps / std::max(1.f, yr)),
+             pv("PILOT_Y_EXPO", 0.f) != 0.f ? "  !! PILOT_Y_EXPO is not 0: rate is not linear" : "");
+    else
+        line("!! yaw rate unknown: yaw sent unscaled\n");
+    if (param("WPNAV_SPEED_UP", v))
+        line("  GUIDED_NOGPS climb: WPNAV_SPEED_UP %.1f / DN %.1f m/s\n", double(v / 100.f),
+             double(pv("WPNAV_SPEED_DN", 150.f) / 100.f));
+    if (int(pv("GUID_OPTIONS", 0.f)) & 8)
+        line("!! GUID_OPTIONS bit 3 set: attitude thrust is raw thrust, not a climb rate -- "
+             "the attitude uplink is REFUSED\n");
+    if (param("WPNAV_SPEED", v) && k.mps > v / 100.f)
+        line("!! GUIDED caps speed at WPNAV_SPEED %.1f m/s, below stick_mps\n", double(v / 100.f));
+    return r;
 }
 
 void MavlinkBackend::drainRx() {
@@ -125,6 +322,9 @@ void MavlinkBackend::drainRx() {
 
 void MavlinkBackend::onMessage(const mav::Msg& m) {
     switch (m.id) {
+    case mav::MSG_PARAM_VALUE:
+        if (m.sysid == tgtSys_) onParamValue(m);
+        break;
     case mav::MSG_HEARTBEAT: {
         // Only the autopilot's own heartbeat, not another GCS's. Without this
         // check a ground station on the same link would set our idea of the
@@ -233,6 +433,58 @@ uint16_t MavlinkBackend::addDelta(uint16_t base, float v) {
     return uint16_t(std::max(1000, std::min(2000, int(base) + int(v * 500.f))));
 }
 
+// The inverse of ArduPilot's RC_Channel::pwm_to_angle_dz_trim: the pulse it
+// reads as `frac` of full deflection, past its deadzone, on its own calibrated
+// range. With nothing read this is 1500 +- 500, the old mapping.
+uint16_t MavlinkBackend::angleUs(int ch, float frac) const {
+    const char* n[4][5] = {
+        {"RC1_MIN", "RC1_TRIM", "RC1_MAX", "RC1_DZ", "RC1_REVERSED"},
+        {"RC2_MIN", "RC2_TRIM", "RC2_MAX", "RC2_DZ", "RC2_REVERSED"},
+        {"RC3_MIN", "RC3_TRIM", "RC3_MAX", "RC3_DZ", "RC3_REVERSED"},
+        {"RC4_MIN", "RC4_TRIM", "RC4_MAX", "RC4_DZ", "RC4_REVERSED"}};
+    frac = std::max(-1.f, std::min(1.f, frac));
+    if (pv(n[ch][4], 0.f) != 0.f) frac = -frac;
+    const float lo = pv(n[ch][0], 1000.f), trim = pv(n[ch][1], 1500.f);
+    const float hi = pv(n[ch][2], 2000.f), dz = pv(n[ch][3], 0.f);
+    float us = trim;
+    if (frac > 0.f)      us = trim + dz + frac * (hi - trim - dz);
+    else if (frac < 0.f) us = trim - dz + frac * (trim - dz - lo);
+    return uint16_t(std::lround(std::max(lo, std::min(hi, us))));
+}
+
+// A climb rate as a fraction of the FC's own full-stick rate, up or down.
+float MavlinkBackend::climbFrac(float climbMps, float upMps, float dnMps) const {
+    if (climbMps > 0.f) return  std::min(1.f, climbMps / std::max(0.01f, upMps));
+    if (climbMps < 0.f) return -std::min(1.f, -climbMps / std::max(0.01f, dnMps));
+    return 0.f;
+}
+
+// The inverse of ArduCopter's get_pilot_desired_climb_rate: the throttle pulse
+// that ALT_HOLD / LOITER / POSHOLD read as `climbMps`. Its deadband (THR_DZ,
+// +-100 of 1000 by default) is jumped, not fallen into -- a small correction
+// used to do nothing at all -- and full stick is PILOT_SPEED_UP / _DN, not
+// whatever this program assumed.
+uint16_t MavlinkBackend::throttleUs(float climbMps) const {
+    float up, dz;
+    if (!param("PILOT_SPEED_UP", up) || !param("THR_DZ", dz))
+        return thrToUs(climbMps / std::max(0.01f, scale_.climbMps));   // unknown: as before
+    up /= 100.f;
+    float dn = pv("PILOT_SPEED_DN", 0.f) / 100.f;
+    if (dn <= 0.f) dn = up;
+    dz = std::max(0.f, std::min(400.f, dz));
+    // Throttle is a RANGE channel: control 0..1000 from (MIN + RC3_DZ)..MAX.
+    const float lo = pv("RC3_MIN", 1000.f) + pv("RC3_DZ", 0.f), hi = pv("RC3_MAX", 2000.f);
+    const float span = std::max(1.f, hi - lo);
+    const float mid = 1000.f * ((pv("RC3_MIN", 1000.f) + hi) * 0.5f - lo) / span;
+    const float f = climbFrac(climbMps, up, dn);
+    float c = mid;
+    if (f > 0.f)      c = mid + dz + f * (1000.f - (mid + dz));
+    else if (f < 0.f) c = (mid - dz) * (1.f + f);
+    float us = lo + c * span / 1000.f;
+    if (pv("RC3_REVERSED", 0.f) != 0.f) us = pv("RC3_MIN", 1000.f) + hi - us;
+    return uint16_t(std::lround(std::max(lo - pv("RC3_DZ", 0.f), std::min(hi, us))));
+}
+
 void MavlinkBackend::latchBaseline() {
     if (tel_.rcCount < 4) { baselineValid_ = false; return; }
     for (int i = 0; i < 8 && i < tel_.rcCount; ++i) baseline_[i] = tel_.rc[i];
@@ -242,12 +494,10 @@ void MavlinkBackend::latchBaseline() {
 // SET_ATTITUDE_TARGET (82). The ArduPilot-shaped uplink: hand the autopilot an
 // attitude to hold and let its own rate loops fly it.
 //
-// WHY ATTITUDE AND NOT VELOCITY: GUIDED velocity setpoints require a horizontal
-// velocity estimate. GNSS-denied, with no optical flow and no external nav,
-// EKF3 has IMU and baro only -- enough for attitude, not for velocity. So
-// SET_POSITION_TARGET_LOCAL_NED in a velocity mask will NOT work for v1 and the
-// planner's speed command has to be expressed as a pitch angle. Crude, and
-// correct for the constraint.
+// It is the GUIDED_NOGPS path (pathFor): GUIDED velocity setpoints need a
+// horizontal position/velocity estimate, and GNSS-denied without external nav
+// EKF3 has IMU and baro only -- enough for attitude, not for velocity. With VIO
+// fed in as ExternalNav, GUIDED and the velocity path become available.
 //
 // YAW IS COMMANDED ABSOLUTELY, as current heading plus the requested increment,
 // which is why this depends on the ATTITUDE decoder above. Without a fresh
@@ -278,7 +528,16 @@ bool MavlinkBackend::sendAttitudeTarget(const ControlCmd& cmd) {
     // MSP path uses when it writes 1500 us for 0. SET_ATTITUDE_TARGET's thrust
     // is 0..1 with 0.5 as hover, so the mapping is a half-scale offset, not an
     // identity. Getting this wrong is a climb or a drop, not a wobble.
-    float thrust = 0.5f + cmd.throttle * 0.5f;
+    //
+    // And it is a CLIMB RATE, not thrust: ArduPilot reads (thrust - 0.5) x 2 as
+    // a fraction of WPNAV_SPEED_UP above 0.5 and of WPNAV_SPEED_DN below
+    // (unless GUID_OPTIONS bit 3, which pathFor refuses). So rescale through
+    // those, exactly as the stick path does through PILOT_SPEED_UP/DN.
+    float thrust = 0.5f + std::max(-1.f, std::min(1.f, cmd.throttle)) * 0.5f;
+    float wup;
+    if (param("WPNAV_SPEED_UP", wup))
+        thrust = 0.5f + 0.5f * climbFrac(std::max(-1.f, std::min(1.f, cmd.throttle)) * scale_.climbMps,
+                                         wup / 100.f, pv("WPNAV_SPEED_DN", 150.f) / 100.f);
     thrust = std::max(0.f, std::min(1.f, thrust));
 
     mav::Payload p;
@@ -329,26 +588,100 @@ bool MavlinkBackend::sendObstacleDistance(const float* distM, int n,
     return true;
 }
 
+bool MavlinkBackend::holdsHeight(uint32_t m) {
+    return m == mav::COPTER_ALT_HOLD || m == mav::COPTER_LOITER ||
+           m == mav::COPTER_POSHOLD  || m == mav::COPTER_FLOWHOLD;
+}
+
+MavlinkBackend::Path MavlinkBackend::pathFor(uint32_t m) const {
+    const bool guided = m == mav::COPTER_GUIDED, nogps = m == mav::COPTER_GUIDED_NOGPS;
+    // Thrust-as-thrust turns the attitude uplink's climb rate into raw
+    // collective, where 0.5 is not a hover: refuse it outright.
+    const bool attOk = !(int(pv("GUID_OPTIONS", 0.f)) & 8);
+    switch (uplink_) {
+    case Uplink::RC_OVERRIDE:     return holdsHeight(m) && rcMapOk() ? Path::RC : Path::NONE;
+    case Uplink::ATTITUDE_TARGET: return (guided || nogps) && attOk ? Path::ATTITUDE : Path::NONE;
+    case Uplink::VELOCITY:        return guided ? Path::VELOCITY : Path::NONE;
+    case Uplink::AUTO:
+        if (guided) return Path::VELOCITY;
+        if (nogps)  return attOk ? Path::ATTITUDE : Path::NONE;
+        return holdsHeight(m) && rcMapOk() ? Path::RC : Path::NONE;
+    }
+    return Path::NONE;
+}
+
+const char* MavlinkBackend::controlPath() const {
+    if (!paramsDone_) return "none (reading parameters)";
+    if (assist_) return "sticks (assist)";
+    switch (pathFor(copterMode_)) {
+    case Path::RC:       return copterMode_ == mav::COPTER_LOITER
+                                ? "sticks (speed-calibrated)" : "sticks (climb-calibrated; lean angle)";
+    case Path::ATTITUDE: return "attitude target";
+    case Path::VELOCITY: return "velocity setpoint";
+    case Path::NONE:     break;
+    }
+    return "none (not a mode this program flies in)";
+}
+
 bool MavlinkBackend::sendControl(const ControlCmd& cmd) {
     if (!serial_.isOpen() || !cmd.valid) return false;
-    if (uplink_ == Uplink::ATTITUDE_TARGET) return sendAttitudeTarget(cmd);
+    // Nothing until ArduPilot's own numbers are known (or known absent): the
+    // first frame is calibrated or there is no first frame.
+    if (!paramsDone_) return false;
+    // Assist trims the pilot's own sticks, so it goes the stick way in any mode.
+    if (assist_) return sendRc(cmd, copterMode_);
+    switch (pathFor(copterMode_)) {
+    case Path::RC:       return sendRc(cmd, copterMode_);
+    case Path::ATTITUDE: releaseRc(); return sendAttitudeTarget(cmd);
+    case Path::VELOCITY: releaseRc(); return sendVelocity(cmd);
+    case Path::NONE:     break;
+    }
+    // STABILIZE, ACRO, RTL, LAND...: mid stick is not "hold", so a stick
+    // command would mean something else. Send nothing, and hand back any
+    // override now rather than after RC_OVERRIDE_TIME.
+    releaseRc();
+    return false;
+}
 
+void MavlinkBackend::releaseRc() {
+    if (!rcActive_) return;
+    mav::Payload p;
+    for (int i = 0; i < 8; ++i) p.u16(0);         // 0 = release to the receiver
+    p.u8(tgtSys_); p.u8(tgtComp_);
+    for (int i = 0; i < 10; ++i) p.u16(0);
+    send(mav::MSG_RC_CHANNELS_OVERRIDE, p);
+    rcActive_ = false;
+}
+
+bool MavlinkBackend::sendRc(const ControlCmd& cmd, uint32_t mode) {
     uint16_t ch[8]{};
+    // PITCH IS REVERSED ON ARDUPILOT: stick forward is LOW pulse (its own
+    // autotest flies north with RC2 at 1300). iNAV is the other way round, and
+    // this used to copy iNAV -- so "forward" flew backwards.
     if (assist_) {
         if (!baselineValid_) return false;    // no baseline, no trim: refuse
         ch[0] = addDelta(baseline_[0], cmd.roll);
-        ch[1] = addDelta(baseline_[1], cmd.pitch);
-        ch[2] = addDelta(baseline_[2], cmd.throttle);
+        ch[1] = addDelta(baseline_[1], -cmd.pitch);
+        // A throttle delta is a climb rate only where mid stick holds height;
+        // anywhere else it would be raw collective on top of the pilot's.
+        ch[2] = holdsHeight(mode) ? addDelta(baseline_[2], cmd.throttle) : baseline_[2];
         ch[3] = addDelta(baseline_[3], cmd.yaw);
         for (int i = 4; i < 8; ++i) ch[i] = baseline_[i];
     } else {
-        // RCMAP defaults on ArduPilot are roll/pitch/throttle/yaw on 1-4, the
-        // same AETR order the MSP backend writes, so one ControlCmd maps
-        // identically onto both stacks.
-        ch[0] = axisToUs(cmd.roll);
-        ch[1] = axisToUs(cmd.pitch);
-        ch[2] = thrToUs(cmd.throttle);
-        ch[3] = axisToUs(cmd.yaw);
+        // RATES, through ArduPilot's own scaling (paramReport says which).
+        // LOITER: steady speed is stick x LOIT_SPEED (AC_Loiter's drag term
+        // makes it so); in the other height-hold modes the horizontal stick is
+        // a lean angle and there is nothing to calibrate it against.
+        float h = 1.f, loit;
+        if (mode == mav::COPTER_LOITER && param("LOIT_SPEED", loit) && loit > 1.f)
+            h = scale_.mps / (loit / 100.f);
+        float y = 1.f, yr;
+        if (param("PILOT_Y_RATE", yr) && yr > 1.f)       y = scale_.yawDps / yr;
+        else if (param("ACRO_YAW_P", yr) && yr > 0.01f)  y = scale_.yawDps / (yr * 45.f);
+        ch[0] = angleUs(0, cmd.roll * h);
+        ch[1] = angleUs(1, -cmd.pitch * h);
+        ch[2] = throttleUs(std::max(-1.f, std::min(1.f, cmd.throttle)) * scale_.climbMps);
+        ch[3] = angleUs(3, cmd.yaw * y);
         // 0 means RELEASE this channel back to the receiver, which is what we
         // want for every channel we are not driving -- notably the mode switch,
         // so the pilot can always take the aircraft back by flicking it. Writing
@@ -362,16 +695,27 @@ bool MavlinkBackend::sendControl(const ControlCmd& cmd) {
     p.u8(tgtSys_); p.u8(tgtComp_);
     for (int i = 0; i < 10; ++i) p.u16(0);        // chan9..18: untouched
     send(mav::MSG_RC_CHANNELS_OVERRIDE, p);
+    rcActive_ = true;
     return true;
+}
+
+// GUIDED: say the speed. ControlCmd is a rate command by definition
+// (StickScale), so this is a multiplication, and nothing about ArduPilot's
+// stick handling -- deadbands, expo, LOIT_SPEED -- is in the way.
+bool MavlinkBackend::sendVelocity(const ControlCmd& cmd) {
+    auto c = [](float v) { return std::max(-1.f, std::min(1.f, v)); };
+    return sendVelocityBody(c(cmd.pitch) * scale_.mps, c(cmd.roll) * scale_.mps,
+                            -c(cmd.throttle) * scale_.climbMps,
+                            c(cmd.yaw) * scale_.yawDps * kPi / 180.f);
 }
 
 bool MavlinkBackend::sendVelocityBody(float vFwd, float vRight, float vDown,
                                       float yawRateRadS) {
     if (!serial_.isOpen()) return false;
-    // type_mask 0x0DC7: ignore position (bits 0-2), ignore acceleration
-    // (bits 6-8), ignore the force bit (9) and the absolute-yaw bit (10); USE
-    // velocity (bits 3-5) and yaw rate (bit 11 clear).
-    constexpr uint16_t kVelYawRate = 0x0DC7;
+    // type_mask 0x05C7: ignore position (bits 0-2), acceleration (6-8) and
+    // absolute yaw (10); USE velocity (3-5) and yaw rate (11 CLEAR). It was
+    // 0x0DC7, whose bit 11 is YAW_RATE_IGNORE: every turn silently dropped.
+    constexpr uint16_t kVelYawRate = 0x05C7;
     mav::Payload p;
     p.u32(bootMs_);
     p.f32(0); p.f32(0); p.f32(0);                       // x y z, masked off
@@ -438,6 +782,19 @@ bool MavlinkBackend::feedExternalGps(const ExtGps& fix) {
 
 bool MavlinkBackend::setMode(FcMode m) {
     uint32_t cm;
+    if (m == FcMode::RESUME) {
+        // Back to what the aircraft was flying before our RTL/LAND -- but only
+        // if it is still where we put it (or already back). If the pilot has
+        // since flicked it somewhere else, that was their decision; leave it.
+        if (resumeMode_ == kNoMode || specialMode_ == kNoMode) return false;
+        const bool ours = copterMode_ == specialMode_ || copterMode_ == resumeMode_;
+        cm = resumeMode_;
+        resumeMode_ = specialMode_ = kNoMode;
+        if (!ours) return false;
+        std::printf("[mavlink] resuming %s\n", copterModeName(cm));
+        return commandLong(mav::CMD_DO_SET_MODE,
+                           float(mav::MODE_FLAG_CUSTOM_MODE_ENABLED), float(cm));
+    }
     switch (m) {
     case FcMode::STABILIZE: cm = mav::COPTER_STABILIZE; break;
     case FcMode::ALT_HOLD:  cm = mav::COPTER_ALT_HOLD;  break;
@@ -452,6 +809,14 @@ bool MavlinkBackend::setMode(FcMode m) {
     case FcMode::RTL:       cm = mav::COPTER_RTL;       break;
     case FcMode::LAND:      cm = mav::COPTER_LAND;      break;
     default: return false;
+    }
+    if (cm == mav::COPTER_RTL || cm == mav::COPTER_LAND) {
+        // Remember what to RESUME: the mode before the first of these, so
+        // RTL -> LAND -> clear still goes back to the pilot's own.
+        if (specialMode_ == kNoMode && copterMode_ != mav::COPTER_RTL &&
+            copterMode_ != mav::COPTER_LAND)
+            resumeMode_ = copterMode_;
+        specialMode_ = cm;
     }
     return commandLong(mav::CMD_DO_SET_MODE,
                        float(mav::MODE_FLAG_CUSTOM_MODE_ENABLED), float(cm));

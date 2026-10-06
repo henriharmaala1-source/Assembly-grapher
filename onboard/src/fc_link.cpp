@@ -132,11 +132,13 @@ void FcLink::loop_() {
         if (doLatch) fc_->latchBaseline();
         if (doGps)   fc_->feedExternalGps(g);
 
-        // Mode latch only on transition (some backends send on setMode).
+        // Mode latch only on transition (some backends send on setMode). When
+        // the request clears, RESUME: give back the mode the aircraft was in
+        // before, never a fixed one -- on ArduPilot "ANGLE" was STABILIZE.
         const FcMode special = rth ? FcMode::RTL : land ? FcMode::LAND : FcMode::UNKNOWN;
         if (special != lastSpecial) {
             const bool on = special != FcMode::UNKNOWN;
-            rthCmding = fc_->setMode(on ? special : FcMode::ANGLE) && on;
+            rthCmding = fc_->setMode(on ? special : FcMode::RESUME) && on;
             lastSpecial = special;
         }
         rth = rth || land;                 // both: the FC flies, RC kept alive

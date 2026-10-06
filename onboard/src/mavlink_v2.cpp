@@ -10,6 +10,8 @@ struct Row { uint32_t id; uint8_t crc; int len; };
 constexpr Row kMsgs[] = {
     { MSG_HEARTBEAT,                      50,   9 },
     { MSG_SYS_STATUS,                    124,  31 },
+    { MSG_PARAM_REQUEST_READ,            214,  20 },
+    { MSG_PARAM_VALUE,                   220,  25 },
     { MSG_GPS_RAW_INT,                    24,  52 },
     { MSG_ATTITUDE,                       39,  28 },
     { MSG_LOCAL_POSITION_NED,            185,  28 },

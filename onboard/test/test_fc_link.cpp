@@ -39,6 +39,8 @@ struct ProxFc : SimFcBackend {
 int main() {
     auto sim = std::make_unique<SimFcBackend>();
     sim->connect("sim", 0);
+    sim->setMode(FcMode::ALT_HOLD);      // the pilot's mode before any RTH
+    SimFcBackend* simRaw = sim.get();
     FcLink link(std::move(sim), 0.3f);   // 0.3 s command-staleness horizon
     link.start();
 
@@ -69,6 +71,15 @@ int main() {
     const long beforeRth = link.framesSent();
     sleep_ms(200);
     CHECK(link.framesSent() > beforeRth);            // frames flowing during RTH
+    CHECK(simRaw->mode() == FcMode::RTL);
+
+    // --- the RTH clears: the FC goes back to the PILOT'S mode ---
+    // It used to be told ANGLE, which ArduPilot maps to STABILIZE: mid stick
+    // half throttle, a script's "down" a power cut.
+    link.command([]{ ControlCmd c; c.valid = true; return c; }(), true);
+    sleep_ms(100);
+    CHECK(simRaw->mode() == FcMode::ALT_HOLD);
+    std::printf("  RTH cleared: FC resumed ALT_HOLD, not ANGLE/STABILIZE\n");
 
     link.stop();
 

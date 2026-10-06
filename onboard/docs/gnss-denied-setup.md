@@ -21,6 +21,15 @@ without a position solution it trusts, and GNSS-denied it does not have one.
 So: use **GUIDED_NOGPS**, not GUIDED. It exists precisely for attitude-only
 offboard control and it is the mode the `SET_ATTITUDE_TARGET` uplink targets.
 
+With `fc.uplink=auto` (the default) the Pi follows the mode switch: in
+GUIDED_NOGPS it sends `SET_ATTITUDE_TARGET`, in ALT_HOLD it sends sticks, and
+in GUIDED -- once VIO is the ExternalNav source and ArduPilot accepts the mode
+-- velocity setpoints. On connect it reads ArduPilot's parameters and prints a
+report; any line starting `!!` is something to fix before flying (above all a
+`MAV_GCS_SYSID` / `SYSID_MYGCS` that is not the Pi's 255, which makes ArduPilot
+ignore every command). `kestrel --fc=mavlink --bench-test` shows it on the
+bench, with the control path the current mode would use.
+
 ## 2. The EKF source set
 
 The point of this section is that the claim "no satellite information reaches

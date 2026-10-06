@@ -19,21 +19,29 @@
 // three as first-class messages, and the mode the pilot flies manually (ACRO,
 // custom_mode 1) sits next to them on the same mode switch.
 //
-// SO THIS BACKEND SUPPORTS TWO CONTROL PATHS, deliberately, because they fail
-// differently:
+// SO THIS BACKEND SUPPORTS THREE CONTROL PATHS, and the FC's flight mode
+// picks between them (Uplink::AUTO, below), because they fail differently:
 //
-//   RC OVERRIDE (RC_CHANNELS_OVERRIDE) is the common denominator with the MSP
-//     backend -- same ControlCmd, same stick semantics, same assist-mode trim.
-//     It works in any mode including ACRO, needs no EKF, and is the path to use
-//     for the first flights because it is the one whose failure mode the pilot
-//     already understands (let go, the override times out, sticks come back).
+//   RC OVERRIDE (RC_CHANNELS_OVERRIDE) in ALT_HOLD / LOITER / POSHOLD /
+//     FLOWHOLD -- the modes where mid throttle means "hold this height", which
+//     is what ControlCmd's throttle assumes. Needs no position estimate, and
+//     its failure mode is one the pilot already understands (flick the switch,
+//     the override is released, sticks come back). NOT the same mapping as the
+//     MSP backend: ArduPilot's pitch is reversed (forward = low pulse), and
+//     every axis goes through ArduPilot's own RC ranges, deadbands and speed
+//     parameters, read back at link-up.
 //
-//   VELOCITY SETPOINT (SET_POSITION_TARGET_LOCAL_NED, BODY_NED frame) is what
-//     the trajectory planner actually produces: a speed and a direction in the
-//     aircraft's own frame. It needs GUIDED and therefore a working position
-//     estimate, which we do not have yet. It is implemented and tested here so
-//     that the state estimator has something to plug into, NOT because it is
-//     ready to fly.
+//   ATTITUDE TARGET (SET_ATTITUDE_TARGET) in GUIDED_NOGPS -- a lean angle and
+//     a climb rate. The GNSS-denied path with no external nav.
+//
+//   VELOCITY SETPOINT (SET_POSITION_TARGET_LOCAL_NED, BODY_NED frame) in
+//     GUIDED -- a speed and a yaw rate, which is what every mode here actually
+//     computes. Needs a position estimate (GPS, or VIO into EKF3 as
+//     ExternalNav: --voxel-vio-fc) or ArduPilot refuses GUIDED.
+//
+// Every one of these is encoded and unit-tested against pymavlink. NONE has
+// yet been flown against ArduPilot itself, in SITL or in the air: that is the
+// next proof, and the parameter readback is what makes it measurable.
 //
 // TWO CONFIGURATION FACTS THAT WILL COST AN AFTERNOON IF MISSED:
 //
@@ -51,6 +59,7 @@
 
 class MavlinkBackend : public IFlightController {
 public:
+    MavlinkBackend();
     const char* name() const override { return "mavlink"; }
 
     bool connect(const std::string& port, int baud) override;
@@ -71,18 +80,59 @@ public:
 
     // CONTROL INTERFACE SELECTION -- see onboard/docs/MAVLINK_BRIDGE_PLAN.md.
     //
-    // RC_OVERRIDE is the iNAV-shaped path: pretend to be the pilot's sticks.
-    // ATTITUDE_TARGET is the ArduPilot-shaped one: tell the autopilot what
-    // attitude to hold and let IT run the rate loops, which it does far better
-    // than we would.
+    //   RC_OVERRIDE      pretend to be the pilot's sticks. Only in a mode where
+    //                    mid throttle means "hold this height" (ALT_HOLD,
+    //                    LOITER, POSHOLD, FLOWHOLD); ControlCmd's throttle is a
+    //                    climb rate around hover and means nothing else.
+    //   ATTITUDE_TARGET  a lean angle and a climb rate (GUIDED_NOGPS: no
+    //                    position estimate needed, ArduPilot's default reading
+    //                    of `thrust` is a climb rate, 0.5 = hold).
+    //   VELOCITY         a body-frame velocity and yaw rate (GUIDED). The one
+    //                    that says what the program means: metres per second.
+    //                    Needs a position estimate -- GPS, or VIO fed to EKF3
+    //                    as ExternalNav -- or ArduPilot refuses GUIDED.
+    //   AUTO             (default) choose from the mode the FC reports: GUIDED
+    //                    -> VELOCITY, GUIDED_NOGPS -> ATTITUDE, a height-hold
+    //                    mode -> RC. The pilot's mode switch picks the uplink.
     //
-    // NOT velocity. GUIDED velocity setpoints need a horizontal velocity
-    // estimate, and GNSS-denied with no optical flow there is not one -- EKF3
-    // has IMU and baro only. That is the single consequence most likely to bite
-    // on a field day, so it is stated here rather than discovered there.
-    enum class Uplink { RC_OVERRIDE, ATTITUDE_TARGET };
+    // In any other mode -- STABILIZE, ACRO, RTL, LAND, AUTO -- nothing is sent,
+    // and an override already in place is RELEASED at once rather than left to
+    // ArduPilot's RC_OVERRIDE_TIME, so the pilot's sticks are live immediately.
+    // A fixed uplink that does not match the mode is the same: nothing is sent.
+    enum class Uplink { AUTO, RC_OVERRIDE, ATTITUDE_TARGET, VELOCITY };
     void setUplink(Uplink u) { uplink_ = u; }
     Uplink uplink() const { return uplink_; }
+    static bool parseUplink(const std::string& s, Uplink& out);
+    static const char* uplinkName(Uplink u);
+    // What sendControl does in the mode the FC is in right now ("none" if it
+    // would send nothing) -- for the operator and the bench test.
+    const char* controlPath() const;
+
+    // WHAT A FULL STICK MEANS. ControlCmd is a normalised RATE command: pitch
+    // 1 = `mps` forward, throttle 1 = `climbMps` up, yaw 1 = `yawDps`
+    // clockwise. The velocity uplink multiplies these out; the stick and
+    // attitude uplinks rescale them through ArduPilot's own parameters (read
+    // at link-up, below) so the FC flies the same speed either way. Defaults
+    // are the nav-sim airframe's, which every gain in the tree was tuned on.
+    struct StickScale { float mps = 4.f, climbMps = 1.5f, yawDps = 90.f; };
+    void setStickScale(const StickScale& s) { scale_ = s; }
+    const StickScale& stickScale() const { return scale_; }
+
+    // ARDUPILOT'S OWN NUMBERS. On link-up the backend reads the parameters
+    // that decide what a stick or a setpoint does -- LOIT_SPEED,
+    // PILOT_SPEED_UP/DN, THR_DZ, PILOT_Y_RATE, the RC1-4 ranges, RCMAP,
+    // WPNAV_SPEED_UP/DN, GUID_OPTIONS -- and the ones that decide whether it is
+    // listened to at all (SYSID_MYGCS / MAV_GCS_SYSID). No control is sent
+    // until every one has answered or timed out (absent on this firmware), so
+    // the first frame is already calibrated.
+    bool paramsResolved() const { return paramsDone_; }
+    // The parameters as read, and what each one means for this program's
+    // commands; problems are lines starting "!!".
+    std::string paramReport() const;
+    // Value of a parameter read above; false if absent or not yet answered.
+    bool param(const char* name, float& out) const;
+    void setParamTimeoutS(double s) { paramTimeoutS_ = s; }
+
     // Full-scale tilt for a +-1 ControlCmd axis. ArduPilot's own ANGLE_MAX
     // defaults to 30 deg; staying under it means the command is never clipped
     // by a limit we cannot see.
@@ -132,7 +182,8 @@ public:
     void feedVisionSpeed(float vN, float vE, float vD);
 
     // Body-frame velocity setpoint, m/s, +x forward +y right +z DOWN, plus a
-    // yaw rate in rad/s. Requires the aircraft to be in GUIDED.
+    // yaw rate in rad/s. Requires the aircraft to be in GUIDED. sendControl's
+    // VELOCITY path is this, with ControlCmd scaled by the StickScale.
     bool sendVelocityBody(float vFwd, float vRight, float vDown, float yawRateRadS);
 
     // What the FC says it is doing right now. The pilot's ACRO and our GUIDED
@@ -154,8 +205,25 @@ private:
                      float p5 = 0, float p6 = 0, float p7 = 0);
 
     static uint16_t axisToUs(float v);            // [-1,1] -> [1000,2000]
-    static uint16_t thrToUs(float v);             // [0,1]  -> [1500,2000]
+    static uint16_t thrToUs(float v);             // [-1,1] -> [1000,2000]
     static uint16_t addDelta(uint16_t base, float v);
+
+    // The path for a mode; NONE sends nothing.
+    enum class Path { NONE, RC, ATTITUDE, VELOCITY };
+    Path pathFor(uint32_t mode) const;
+    static bool holdsHeight(uint32_t mode);      // mid throttle = hold
+    bool sendRc(const ControlCmd& cmd, uint32_t mode);
+    bool sendVelocity(const ControlCmd& cmd);
+    void releaseRc();
+    // ControlCmd axis -> the microseconds ArduPilot reads as that fraction of
+    // its own input range, through RCn_MIN/TRIM/MAX/DZ/REVERSED.
+    uint16_t angleUs(int ch, float frac) const;
+    uint16_t throttleUs(float climbMps) const;
+    float    climbFrac(float climbMps, float upMps, float dnMps) const;
+
+    void serviceParams(double now);
+    void onParamValue(const mav::Msg& m);
+    bool rcMapOk() const;
 
     // Default sysid 255 -- see the SYSID note above. compid 191 is
     // MAV_COMP_ID_ONBOARD_COMPUTER.
@@ -176,9 +244,25 @@ private:
     bool     baselineValid_ = false;
     uint16_t baseline_[8]{};
     int      battCells_     = 0;
-    Uplink   uplink_        = Uplink::RC_OVERRIDE;
+    Uplink   uplink_        = Uplink::AUTO;
     float    maxTiltDeg_    = 25.f;
+    StickScale scale_;
     bool     sendAttitudeTarget(const ControlCmd& cmd);
+    bool     rcActive_      = false;   // an override of ours is in force
+    uint32_t reportedMode_  = 0xFFFFFFFF;  // last mode announced on stdout
+
+    // RESUME: the mode before our RTL/LAND, and the one we asked for.
+    uint32_t resumeMode_  = 0xFFFFFFFF;
+    uint32_t specialMode_ = 0xFFFFFFFF;
+
+    // Parameter readback. Fixed table, no allocation on the link thread.
+    struct Param { const char* name; float v; bool have; int tries; };
+    static constexpr int kNParams = 39;
+    Param    params_[kNParams];
+    bool     paramsStarted_ = false, paramsDone_ = false;
+    double   paramsT0_ = 0, lastParamReqS_ = -1e9;
+    double   paramTimeoutS_ = 3.0;
+    float    pv(const char* name, float def) const;
 
     bool   originValid_ = false;
     double originLat_ = 0, originLon_ = 0;

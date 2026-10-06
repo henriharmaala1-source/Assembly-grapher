@@ -6,6 +6,7 @@
  "naca": "4412",
  "airfoil": "NACA 4412",
  "incidence": 2.0,
+ "layout": "twin",
  "details": {
   "nose_top_r": 0.0,
   "boattail": 0.0,

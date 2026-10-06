@@ -6,6 +6,7 @@
  "naca": "4412",
  "airfoil": "kipina-opt",
  "incidence": 2.0,
+ "layout": "twin",
  "details": {
   "nose_top_r": 8.0,
   "boattail": 30.0,
@@ -18,13 +19,13 @@
  "printed": 101,
  "printed_g": 100.97,
  "loading": 48.0,
- "stall": 9.0,
- "cruise": 13.0,
+ "stall": 8.9,
+ "cruise": 12.9,
  "top": 19.1,
  "pitch_speed": 23.9,
  "endurance": 10,
  "vh": 0.5,
- "cruise_a": 2.2,
+ "cruise_a": 2.1,
  "full_a": 9.5,
  "vv": 0.045,
  "x_le": 175.4,
@@ -53,83 +54,83 @@
  "prop_r": 50.8,
  "split_x": 138,
  "stall_limit": 9.0,
- "min_span": 480,
- "no_rudder_span": 460,
+ "min_span": 470,
+ "no_rudder_span": 450,
  "sweep": [
   {
    "span": 300,
    "auw": 171,
-   "stall": 12.67
+   "stall": 12.56
   },
   {
    "span": 320,
    "auw": 176,
-   "stall": 12.04
+   "stall": 11.94
   },
   {
    "span": 340,
    "auw": 181,
-   "stall": 11.49
+   "stall": 11.38
   },
   {
    "span": 360,
    "auw": 186,
-   "stall": 10.99
+   "stall": 10.89
   },
   {
    "span": 380,
    "auw": 191,
-   "stall": 10.55
+   "stall": 10.46
   },
   {
    "span": 400,
    "auw": 196,
-   "stall": 10.16
+   "stall": 10.07
   },
   {
    "span": 420,
    "auw": 201,
-   "stall": 9.81
+   "stall": 9.72
   },
   {
    "span": 440,
    "auw": 207,
-   "stall": 9.49
+   "stall": 9.41
   },
   {
    "span": 460,
    "auw": 213,
-   "stall": 9.2
+   "stall": 9.12
   },
   {
    "span": 480,
    "auw": 219,
-   "stall": 8.94
+   "stall": 8.86
   },
   {
    "span": 485,
    "auw": 220,
-   "stall": 8.88
+   "stall": 8.8
   },
   {
    "span": 500,
    "auw": 225,
-   "stall": 8.71
+   "stall": 8.63
   },
   {
    "span": 520,
    "auw": 232,
-   "stall": 8.51
+   "stall": 8.43
   },
   {
    "span": 540,
    "auw": 240,
-   "stall": 8.33
+   "stall": 8.26
   },
   {
    "span": 560,
    "auw": 249,
-   "stall": 8.18
+   "stall": 8.1
   }
  ],
  "fc": "Matek F405-WMN",

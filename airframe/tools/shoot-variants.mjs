@@ -4,6 +4,7 @@
 //   node airframe/tools/shoot-variants.mjs           # PNGs into airframe/variants/figures/
 //   node airframe/tools/shoot-variants.mjs --dark    # the dark theme too
 //   node airframe/tools/shoot-variants.mjs --page    # and the whole page
+//   node airframe/tools/shoot-variants.mjs --charts  # only the charts and the default 3D view
 //   node airframe/tools/shoot-variants.mjs --three path/to/node_modules/three
 //
 // Serves airframe/ on a local port (the page reaches ../viewer/airframe.glb),
@@ -49,8 +50,9 @@ async function open(theme, scale) {
   });
   await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
   page.on("pageerror", (e) => console.error("page error:", e.message));
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) console.error("console:", m.text()); });
   await page.goto(base);
-  await page.waitForFunction(() => window.__chartsReady === true && window.__modelsReady === true, null, { timeout: 60000 });
+  await page.waitForFunction(() => window.__chartsReady === true && window.__modelsReady === true, null, { timeout: 90000 });
   await page.waitForTimeout(1500);                     // first frames
   return page;
 }
@@ -62,27 +64,44 @@ async function shootStage(page, file) {
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(out, file), clip: await page.locator("#stage").boundingBox(), timeout: 90000 });
 }
+// file prefix, the pair button, the change cards to shoot close up
+const PAIRS = [
+  ["", "baseline,optimized", [[0, "airfoil"], [1, "hood"], [2, "boattail"], [4, "fairings"]]],
+  ["single-", "optimized,single", [[0, "boom"], [1, "centre"], [2, "fuselage"], [3, "servos"], [4, "tail"], [5, "motor"]]],
+];
+async function pick(page, pair) {
+  await page.locator(`#pairs button[data-pair="${pair}"]`).click();
+  await page.mouse.move(2, 2);                         // no tooltip left under the pointer
+  await page.waitForTimeout(600);
+}
 for (const theme of themes) {
   const suffix = theme === "dark" ? "-dark" : "";
   let page = await open(theme, 2);
-  if (process.argv.includes("--page")) await page.screenshot({ path: path.join(out, `page${suffix}.png`), fullPage: true, timeout: 120000 });
-  await shootStage(page, `models${suffix}.png`);
-  for (const id of ["summary", "f-mass", "f-cg", "f-split", "f-power", "f-sw-time", "f-sw-stall", "f-sw-climb", "f-sw-long"]) {
-    await page.locator(`#${id}`).screenshot({ path: path.join(out, `${id.replace(/^f-/, "")}${suffix}.png`) });
+  for (const [pre, pair] of PAIRS) {
+    await pick(page, pair);
+    if (process.argv.includes("--page")) await page.screenshot({ path: path.join(out, `${pre}page${suffix}.png`), fullPage: true, timeout: 120000 });
+    await shootStage(page, `${pre}models${suffix}.png`);
+    for (const id of ["summary", "f-mass", "f-cg", "f-split", "f-power", "f-sw-time", "f-sw-stall", "f-sw-climb", "f-sw-long"]) {
+      await page.locator(`#${id}`).screenshot({ path: path.join(out, `${pre}${id.replace(/^f-/, "")}${suffix}.png`) });
+    }
   }
   await page.close();
+  if (process.argv.includes("--charts")) continue;
   // The close-ups at 1x: every camera move redraws the whole canvas in software.
   page = await open(theme, 1);
-  for (const view of ["side", "top", "under"]) {
-    await page.locator(`.seg button[data-view="${view}"]`).click();
-    await page.waitForTimeout(900);
-    await shootStage(page, `models-${view}${suffix}.png`);
-  }
-  const changes = page.locator(".change");
-  for (const [i, name] of [[0, "airfoil"], [1, "hood"], [2, "boattail"], [4, "fairings"]]) {
-    await changes.nth(i).click();
-    await page.waitForTimeout(900);                    // the camera move
-    await shootStage(page, `models-${name}${suffix}.png`);
+  for (const [pre, pair, close] of PAIRS) {
+    await pick(page, pair);
+    for (const view of ["side", "top", "under"]) {
+      await page.locator(`.viewbar .seg button[data-view="${view}"]`).click();
+      await page.waitForTimeout(900);
+      await shootStage(page, `${pre}models-${view}${suffix}.png`);
+    }
+    const changes = page.locator(".change");
+    for (const [i, name] of close) {
+      await changes.nth(i).click();
+      await page.waitForTimeout(900);                    // the camera move
+      await shootStage(page, `${pre}models-${name}${suffix}.png`);
+    }
   }
   console.log("wrote", theme);
   await page.close();

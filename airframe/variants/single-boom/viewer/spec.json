@@ -1,0 +1,482 @@
+{
+ "span": 485.0,
+ "chord": 97.0,
+ "area_dm2": 4.7,
+ "length": 541,
+ "naca": "4412",
+ "airfoil": "kipina-opt",
+ "incidence": 2.0,
+ "layout": "single",
+ "details": {
+  "nose_top_r": 8.0,
+  "boattail": 0.0,
+  "antenna_lean": 60.0,
+  "fairings": true,
+  "joiner_sleeves": false
+ },
+ "auw": 227,
+ "auw_g": 227.32,
+ "printed": 100,
+ "printed_g": 100.27,
+ "loading": 48.3,
+ "stall": 8.9,
+ "cruise": 13.0,
+ "top": 19.7,
+ "pitch_speed": 23.9,
+ "endurance": 10,
+ "vh": 0.5,
+ "cruise_a": 2.2,
+ "full_a": 9.6,
+ "vv": 0.045,
+ "x_le": 188.7,
+ "x_te": 285.7,
+ "pod_len": 277.2,
+ "x_stab": 472.5,
+ "c_h": 48.00510204081633,
+ "cg_x": 215.9,
+ "cg_pct": 28,
+ "np_pct": 41,
+ "np_x": 228.8,
+ "battery_x": 91.1,
+ "battery_len": 58.0,
+ "batt_range": [
+  83,
+  99
+ ],
+ "tube": "6x5",
+ "tube_len": 323,
+ "tube_spacing": 140.0,
+ "b_h": 175.0,
+ "fin_h": 79,
+ "tube_x0": 198.4,
+ "tube_x1": 521.2,
+ "x_prop": 538.4,
+ "prop_r": 50.8,
+ "split_x": 118,
+ "stall_limit": 9.0,
+ "min_span": 490,
+ "no_rudder_span": 490,
+ "sweep": [
+  {
+   "span": 300,
+   "auw": 184,
+   "stall": 13.02
+  },
+  {
+   "span": 320,
+   "auw": 188,
+   "stall": 12.32
+  },
+  {
+   "span": 340,
+   "auw": 192,
+   "stall": 11.71
+  },
+  {
+   "span": 360,
+   "auw": 195,
+   "stall": 11.17
+  },
+  {
+   "span": 380,
+   "auw": 199,
+   "stall": 10.69
+  },
+  {
+   "span": 400,
+   "auw": 204,
+   "stall": 10.27
+  },
+  {
+   "span": 420,
+   "auw": 209,
+   "stall": 9.9
+  },
+  {
+   "span": 440,
+   "auw": 214,
+   "stall": 9.58
+  },
+  {
+   "span": 460,
+   "auw": 221,
+   "stall": 9.29
+  },
+  {
+   "span": 480,
+   "auw": 227,
+   "stall": 9.03
+  },
+  {
+   "span": 485,
+   "auw": 228,
+   "stall": 8.97
+  },
+  {
+   "span": 500,
+   "auw": 233,
+   "stall": 8.79
+  },
+  {
+   "span": 520,
+   "auw": 240,
+   "stall": 8.58
+  },
+  {
+   "span": 540,
+   "auw": 248,
+   "stall": 8.39
+  },
+  {
+   "span": 560,
+   "auw": 255,
+   "stall": 8.21
+  }
+ ],
+ "fc": "Matek F405-WMN",
+ "esc": "Hobbywing XRotor Micro 30A",
+ "variant": "single-boom",
+ "bed": [
+  180.0,
+  180.0,
+  180.0
+ ],
+ "centre_w": 135.0,
+ "parts": [
+  {
+   "name": "wing_centre",
+   "material": "LW-PLA",
+   "grams": 15.9,
+   "bed": "97 x 12 x 135",
+   "fits": true,
+   "note": "On its side, spar holes vertical. 0.5 mm walls, 5 % infill."
+  },
+  {
+   "name": "wing_R",
+   "material": "LW-PLA",
+   "grams": 11.2,
+   "bed": "97 x 12 x 175",
+   "fits": true,
+   "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
+  },
+  {
+   "name": "wing_L",
+   "material": "LW-PLA",
+   "grams": 11.2,
+   "bed": "97 x 12 x 175",
+   "fits": true,
+   "note": "Standing on the root rib, brim. 1 wall, 0 % infill."
+  },
+  {
+   "name": "aileron_R",
+   "material": "LW-PLA",
+   "grams": 2.9,
+   "bed": "24 x 158 x 6",
+   "fits": true,
+   "note": "Flat on the lower surface. 1 wall, 0 % infill."
+  },
+  {
+   "name": "aileron_L",
+   "material": "LW-PLA",
+   "grams": 2.9,
+   "bed": "24 x 158 x 6",
+   "fits": true,
+   "note": "Flat on the lower surface. 1 wall, 0 % infill."
+  },
+  {
+   "name": "tail_mount",
+   "material": "PLA/PETG",
+   "grams": 3.9,
+   "bed": "24 x 13 x 30",
+   "fits": true,
+   "note": "Pads face down."
+  },
+  {
+   "name": "stab",
+   "material": "LW-PLA",
+   "grams": 4.1,
+   "bed": "31 x 174 x 2",
+   "fits": true,
+   "note": "Flat. 2 top / 2 bottom layers, 15 % infill."
+  },
+  {
+   "name": "elevator",
+   "material": "LW-PLA",
+   "grams": 2.1,
+   "bed": "17 x 174 x 7",
+   "fits": true,
+   "note": "Top face down, horn up."
+  },
+  {
+   "name": "fin",
+   "material": "LW-PLA",
+   "grams": 1.9,
+   "bed": "30 x 79 x 2",
+   "fits": true,
+   "note": "Flat. 2 top / 2 bottom layers, 15 % infill. Root into the tail mount's socket."
+  },
+  {
+   "name": "rudder",
+   "material": "PLA/PETG",
+   "grams": 1.7,
+   "bed": "17 x 78 x 10",
+   "fits": true,
+   "note": "Flat, horn up. 2 top / 2 bottom layers, 15 % infill."
+  },
+  {
+   "name": "motor_mount",
+   "material": "PLA/PETG",
+   "grams": 2.5,
+   "bed": "20 x 20 x 14",
+   "fits": true,
+   "note": "Plate down. 4 walls, 40 % infill. Glue on the boom's end."
+  },
+  {
+   "name": "fairing_ail_R",
+   "material": "LW-PLA",
+   "grams": 1.0,
+   "bed": "54 x 36 x 20",
+   "fits": true,
+   "note": "Rim down on the bed, brim. 1 wall, 0 % infill. Glue under the wing over the servo."
+  },
+  {
+   "name": "fairing_ail_L",
+   "material": "LW-PLA",
+   "grams": 1.0,
+   "bed": "54 x 36 x 20",
+   "fits": true,
+   "note": "Rim down on the bed, brim. 1 wall, 0 % infill. Glue under the wing over the servo."
+  },
+  {
+   "name": "fuselage_front",
+   "material": "PLA/PETG",
+   "grams": 9.8,
+   "bed": "126 x 38 x 24",
+   "fits": true,
+   "note": "Upright, open top up, wall strips aft. 2 walls, 15 % infill."
+  },
+  {
+   "name": "fuselage_rear",
+   "material": "PLA/PETG",
+   "grams": 20.2,
+   "bed": "24 x 38 x 159",
+   "fits": true,
+   "note": "Standing on its front face. 2 walls, 15 % infill."
+  },
+  {
+   "name": "lid",
+   "material": "PLA/PETG",
+   "grams": 8.0,
+   "bed": "175 x 38 x 8",
+   "fits": true,
+   "note": "Flat."
+  }
+ ],
+ "mass": [
+  {
+   "name": "wing_centre",
+   "g": 15.9,
+   "x": 232
+  },
+  {
+   "name": "wing_R",
+   "g": 11.2,
+   "x": 228
+  },
+  {
+   "name": "wing_L",
+   "g": 11.2,
+   "x": 228
+  },
+  {
+   "name": "aileron_R",
+   "g": 2.9,
+   "x": 272
+  },
+  {
+   "name": "aileron_L",
+   "g": 2.9,
+   "x": 272
+  },
+  {
+   "name": "tail_mount",
+   "g": 3.9,
+   "x": 488
+  },
+  {
+   "name": "stab",
+   "g": 4.1,
+   "x": 488
+  },
+  {
+   "name": "elevator",
+   "g": 2.1,
+   "x": 512
+  },
+  {
+   "name": "fin",
+   "g": 1.9,
+   "x": 488
+  },
+  {
+   "name": "rudder",
+   "g": 1.7,
+   "x": 511
+  },
+  {
+   "name": "motor_mount",
+   "g": 2.5,
+   "x": 518
+  },
+  {
+   "name": "fairing_ail_R",
+   "g": 1.0,
+   "x": 234
+  },
+  {
+   "name": "fairing_ail_L",
+   "g": 1.0,
+   "x": 234
+  },
+  {
+   "name": "fuselage_front",
+   "g": 9.8,
+   "x": 53
+  },
+  {
+   "name": "fuselage_rear",
+   "g": 20.2,
+   "x": 208
+  },
+  {
+   "name": "lid",
+   "g": 8.0,
+   "x": 96
+  },
+  {
+   "name": "boom",
+   "g": 7.5,
+   "x": 360
+  },
+  {
+   "name": "spar_main",
+   "g": 5.2,
+   "x": 213
+  },
+  {
+   "name": "spar_rear",
+   "g": 2.3,
+   "x": 257
+  },
+  {
+   "name": "motor",
+   "g": 9.0,
+   "x": 531
+  },
+  {
+   "name": "prop",
+   "g": 2.0,
+   "x": 538
+  },
+  {
+   "name": "camera",
+   "g": 3.3,
+   "x": 8
+  },
+  {
+   "name": "vtx",
+   "g": 2.7,
+   "x": 17
+  },
+  {
+   "name": "antenna",
+   "g": 1.5,
+   "x": 25
+  },
+  {
+   "name": "fc",
+   "g": 10.0,
+   "x": 34
+  },
+  {
+   "name": "receiver",
+   "g": 1.5,
+   "x": 42
+  },
+  {
+   "name": "esc",
+   "g": 6.0,
+   "x": 215
+  },
+  {
+   "name": "battery",
+   "g": 27.0,
+   "x": 91
+  },
+  {
+   "name": "servo_elev",
+   "g": 9.0,
+   "x": 146
+  },
+  {
+   "name": "servo_rud",
+   "g": 9.0,
+   "x": 181
+  },
+  {
+   "name": "pushrod_elev",
+   "g": 1.3,
+   "x": 332
+  },
+  {
+   "name": "pushrod_rud",
+   "g": 1.2,
+   "x": 347
+  },
+  {
+   "name": "servo_ail_R",
+   "g": 9.0,
+   "x": 235
+  },
+  {
+   "name": "horn_ail_R",
+   "g": 0.3,
+   "x": 265
+  },
+  {
+   "name": "pushrod_ail_R",
+   "g": 0.2,
+   "x": 252
+  },
+  {
+   "name": "servo_ail_L",
+   "g": 9.0,
+   "x": 235
+  },
+  {
+   "name": "horn_ail_L",
+   "g": 0.3,
+   "x": 265
+  },
+  {
+   "name": "pushrod_ail_L",
+   "g": 0.2,
+   "x": 252
+  },
+  {
+   "name": "wiring",
+   "g": 6.0,
+   "x": 139
+  },
+  {
+   "name": "hardware",
+   "g": 2.0,
+   "x": 260
+  },
+  {
+   "name": "motor_wires",
+   "g": 1.5,
+   "x": 363
+  }
+ ]
+}

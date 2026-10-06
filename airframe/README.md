@@ -440,6 +440,7 @@ pip install cadquery trimesh
 python3 airframe/design.py      # sizing sweep and layout, no CAD needed
 python3 airframe/build.py       # STLs, STEP, GLB, REPORT.md, sizing + interference checks
 python3 airframe/build.py --variant optimized   # the optimized variant in variants/optimized/ (--step for its STEP)
+python3 airframe/build.py --variant single-boom # the single-boom variant in variants/single-boom/
 
 python3 airframe/process.py     # BOP.md, DFMA.md, viewer/process.json (slices with prusa-slicer if installed)
 
@@ -447,6 +448,7 @@ python3 airframe/process.py     # BOP.md, DFMA.md, viewer/process.json (slices w
 npm install three@0.169.0 playwright
 node airframe/tools/render.mjs
 node airframe/tools/render.mjs --video --ffmpeg /path/to/ffmpeg
+node airframe/tools/shoot-variants.mjs   # the comparison page's figures (after aero/variants.py)
 ```
 
 The code is split into four files:
@@ -512,12 +514,12 @@ The optimized plane weighs 225.8 g against 223.2 g. The ESC moves forward
 and the fairings sit behind the centre of gravity, so the balance puts the
 wing 3 mm further aft. The build's interference check passes for both.
 
-`python3 aero/variants.py` flies both planes at their CAD weights. The 2.6 g
+`python3 aero/variants.py` flies the planes at their CAD weights. The 2.6 g
 cost 0.06 W at cruise, against the 2.56 W the aerodynamics save, and the
 flight time at 13 m/s goes from 13.3 to 16.8 min. The stall stays under the
-9 m/s limit. The page [variants/index.html](variants/index.html) shows the
-two CAD models side by side, with each change highlighted, next to the
-weight and flight charts. Serve `airframe/` over HTTP and open
+9 m/s limit. The page [variants/index.html](variants/index.html) shows any
+two of the three builds side by side, with each change highlighted, next to
+the weight and flight charts. Serve `airframe/` over HTTP and open
 `/variants/index.html`. The numbers are in
 [variants/COMPARE.md](variants/COMPARE.md).
 
@@ -529,6 +531,115 @@ right:
 | ![Both planes](variants/figures/models.png) | ![Side view](variants/figures/models-side.png) |
 | **Tapered pod tail** | **Servo fairings, from below** |
 | ![Tapered tail](variants/figures/models-boattail.png) | ![Fairings](variants/figures/models-fairings.png) |
+
+## The single-boom variant
+
+`python3 airframe/build.py --variant single-boom` rebuilds the optimized plane
+round one carbon tube, into `variants/single-boom/` (STLs, GLB, REPORT.md).
+It keeps the optimized airfoil, the nose hood, the laid-back antenna and the
+aileron servo fairings. Everything behind the battery changes:
+
+| Change | In the CAD |
+|---|---|
+| One boom | a 10 x 9 mm roll-wrapped carbon tube, 320 mm long. It starts in the fuselage behind the servos and ends behind the tail. 79 mm of it sits in a socket along the fuselage's top |
+| Fuselage | 38.4 mm wide, with a flat top and its top edges rounded to 8 mm. The section comes from `aero/section.py` (below). A 48 mm cone narrows the tail onto the boom; there is no blunt back wall |
+| Lid | it wraps round the rounded edges. It covers the nose to the servo bay and is held by tape or two magnets |
+| Servos | the elevator and rudder SG90s lie on their sides in the fuselage behind the battery, screwed to posts. Their pushrods run in PTFE sleeves inside the boom and leave it just ahead of the tail |
+| Wing centre | no boom sockets and no servo pockets. It is 135 mm wide (the narrowest that still lets a panel stand on the bed); the panels are 10 mm longer each |
+| Tail | one 79 mm fin with the area of both twin fins, in a socket on the tail mount. The stabiliser hangs on two wedge-nosed pylons, its top 11.7 mm under the boom's centre-line, so the elevator can swing 20 degrees up past the boom. No bellcrank, joiner wires or sleeves |
+| Motor | on a printed cap at the boom's end, 3 mm behind the tail's trailing edge. A 16 degree cone runs from the boom up to the motor plate. The ESC lies flat under the boom's mouth and the motor wires run inside the boom |
+
+The build's interference check passes, and every part fits the A1 mini.
+
+**The boom.** One tube carries the tail, the motor and the prop: 27 g on its
+end, 246 mm from the socket. The aim was to keep the first bending mode near
+the twin booms' (about 49 Hz with the tail alone) and far below the motor's
+377 rev/s. The 10 x 9 mm tube does that for less weight than the two
+booms it replaces (REPORT.md has the table):
+
+| tube, mm | g | first bending mode | end bends in a 30 g landing |
+|---|---|---|---|
+| 8 x 7 | 5.9 | 32 Hz | 6.8 mm |
+| **10 x 9** | **7.5** | **46 Hz** | **3.4 mm** |
+| 10 x 8 | 14.1 | 59 Hz | 2.0 mm |
+| 12 x 11 | 9.0 | 61 Hz | 1.9 mm |
+| twin booms, 2 x 6 x 5 | 8.0 | about 49 Hz | |
+
+Use roll-wrapped carbon. A pultruded tube is stiffer in bending, but weak in
+twist (the fin and the prop's torque twist the boom) and it splits in a
+crash. Running the tube on to the nose would add about 4 g and block the
+battery and FC bays, so it stops behind the servos.
+
+**The fuselage section.** `python3 aero/section.py` writes
+[variants/single-boom/SECTION.md](variants/single-boom/SECTION.md). It finds the
+smallest outline of each shape family that holds what goes inside: the
+battery with its strap slots, the FC, both servos on their sides, the boom
+socket and the ESC. Skin friction follows the perimeter:
+
+| Outline | Perimeter | Frontal area | Flat top for the wing |
+|---|---|---|---|
+| Flat-topped box, top edges rounded | 114 mm | 8.7 cm² | 19 mm |
+| Superellipse, n 4 | 120 mm (+6 %) | 10.7 cm² | 20 mm |
+| Ellipse | 120 mm (+6 %) | 11.4 cm² | 7 mm |
+| Circle | 122 mm (+8 %) | 11.9 cm² | 7 mm |
+
+![Section outlines](variants/single-boom/section.png)
+
+Round is the worst fit, because the contents are flat boxes. The best
+section rounds off the top corners, which the boom socket and the FC leave
+empty. A square-cornered box would be as poor as round. The whole difference
+is worth about 1 % of the plane's drag. The flat top also gives the wing a
+seat without a saddle. In side view the tail cone matters more than the
+section: it removes the blunt base.
+
+**Weight.** 227.3 g against 225.8 g for the optimized twin-boom:
+
+- **Heavier:** the fuselage and lid (+5.7 g), because they carry the boom socket and close their own top. The pushrods in their sleeves add 1.9 g, the motor wires the length of the boom 1.5 g, and the motor mount 2.5 g.
+- **Lighter:** the wing centre (−5.5 g), the boom (−0.5 g) and the tail mount (−1.0 g). The fairings, sleeves, joiners and bellcrank that are no longer needed save another 3.8 g.
+
+The motor moves 249 mm aft. The servos move 76 mm (elevator) and 41 mm
+(rudder) forward. So the balance puts the wing 13 mm further aft than on the
+optimized plane. The tail moves with
+the wing, so the tail arm and the tail volumes stay the same.
+
+**Flight.** From `aero/variants.py`, at 13 m/s:
+
+| | Optimized | Single boom |
+|---|---|---|
+| Weight | 225.8 g | 227.3 g |
+| Drag | 0.247 N | 0.232 N (−6.4 %) |
+| Power | 9.53 W | 9.02 W |
+| Flight time | 16.8 min | 17.7 min |
+| Best glide ratio | 9.2 | 9.7 |
+| Stall | 8.92 m/s | 8.95 m/s |
+
+Three things account for nearly all the saving:
+
+- no blunt pod base;
+- one boom instead of two, with no boom sockets;
+- no bellcrank, joiner wires or horns on the elevator and rudder servos.
+
+The tail mount's pylons give some back. The extra 1.5 g costs 0.03 W.
+The single boom could weigh 247 g before it needed the optimized plane's
+power, but the 9 m/s stall limit stops it at 230 g first.
+
+**What the numbers leave out:**
+- **Launch:** the tail is no longer in the prop's slipstream, so the elevator
+  and rudder have less grip at the start of a hand launch. Throw it a little
+  harder and level.
+- **Motor on the boom:** the motor and prop sit on the end of a 246 mm tube.
+  Balance the prop well, and check the tail for buzz at full throttle.
+- **Landing:** the prop reaches 33 mm below the belly, as on the twin booms,
+  but at the tail it touches first in a nose-high landing. Cut the throttle,
+  or use a folding prop.
+- **Prop efficiency:** the prop works in cleaner air than behind the pod and
+  wing. The model holds the efficiency the same, so this gain is not counted.
+
+| Optimized (left) and single boom (right) | Side view |
+|---|---|
+| ![Both planes](variants/figures/single-models.png) | ![Side view](variants/figures/single-models-side.png) |
+| **Servos and pushrods inside, from above** | **The tail** |
+| ![Servos](variants/figures/single-models-servos.png) | ![Tail](variants/figures/single-models-tail.png) |
 
 ## Known limitations
 

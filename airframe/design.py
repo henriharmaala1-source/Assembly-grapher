@@ -91,6 +91,18 @@ class Params:
     fairings: bool = False         # blisters over the servo horns and the aileron servo bumps
     joiner_sleeves: bool = False   # streamlined sleeves over the rudder joiner wires
 
+    # Single-boom layout (layout = "single"): one carbon boom from the servo bay
+    # behind the battery to the motor on its end, behind the tail. One fin on top
+    # of the boom, the stabiliser hanging under it, the elevator and rudder servos
+    # in the fuselage with their pushrods inside the boom.
+    layout: str = "twin"
+    boom_od: float = 10.0          # roll-wrapped carbon, 0.5 mm wall
+    boom_id: float = 9.0
+    top_r: float = 8.0             # radius on the fuselage's top long edges; the lid wraps round them
+    belly_ch: float = 2.0          # 45 deg chamfer on the fuselage's bottom long edges
+    cone: float = 48.0             # tail cone from the full section down to the boom socket
+    elevator_up: float = 20.0      # elevator travel the stabiliser's drop below the boom allows, degrees
+
     cg_target: float = 0.28        # fraction of chord, first flights
     bed: tuple = (180.0, 180.0, 180.0)   # printer build volume: Bambu Lab A1 mini
     bed_margin: float = 5.0
@@ -100,6 +112,8 @@ class Params:
         """Centre section width: wide enough to carry both boom sockets, and wide
         enough that a wing panel standing on its root rib fits the build height."""
         booms = self.tube_spacing + 2 * (self.tube_od / 2 + self.clearance / 2 + self.boss_wall + 3.0)
+        if self.layout == "single":
+            booms = 0.0
         return max(self.center_width, booms, self.span - 2 * (self.bed[2] - self.bed_margin))
     stall_limit: float = 9.0       # m/s, "as small as possible" criterion
 
@@ -167,6 +181,14 @@ class Kit:
     prop_pitch_in: float = 2.5
     v_loaded: float = 7.0          # 2S under load
     rpm_frac: float = 0.85         # motor rpm at top speed / (kv * v_loaded)
+
+
+def single_boom(p: "Params") -> "Params":
+    """The same plane on one carbon boom (build.py --variant single-boom). The
+    fuselage is 38.4 mm wide, just enough for the battery's strap slots, with the
+    section aero/section.py picks; there is no boattail (the tail cone replaces it)
+    and no joiner wires to sleeve."""
+    return replace(p, layout="single", pod_width=38.4, boattail=0.0, joiner_sleeves=False)
 
 
 def round_to(v: float, step: float) -> float:
@@ -323,6 +345,51 @@ class Layout:
         self.batt_min = p.front_bay + 0.5            # battery front limit
         self.batt_max = min(self.esc_bay_x - 0.5, self.batt_min + k.batt_len + p.batt_trim)
         self.length = self.x_stab + self.c_h         # nose to elevator trailing edge
+        self.single = p.layout == "single"
+        if self.single:
+            self._single(p, k)
+
+    def _single(self, p: Params, k: Kit):
+        """The single-boom layout: everything that differs from the twin booms."""
+        sv = k.servo
+        c_h = self.c_h
+        # one fin with the area of both, on top of the boom; the stabiliser hangs
+        # under the boom, low enough for the elevator to swing up past it
+        self.fin_area = p.vv * self.area * p.span / self.l_h
+        self.fin_h = round_to(self.fin_area / c_h, 1)
+        self.tube_y = 0.0
+        self.r_hole = p.boom_od / 2 + p.clearance / 2
+        self.r_boss = self.r_hole + p.boss_wall
+        self.z_top = self.r_boss                     # the wing seat is flush with the boom socket's top
+        self.tail_z = -(p.boom_od / 2 + 0.8 + self.c_e * math.sin(math.radians(p.elevator_up)))
+        self.fin_z0 = self.r_hole + 1.2              # top of the tail mount's collar
+        self.rudder_z0 = p.boom_od / 2 + 2.0         # rudder clears the boom behind the collar
+        self.fin_z1 = self.fin_z0 + self.fin_h
+        # servo bay right behind the battery: elevator servo, then rudder servo,
+        # lying on their sides against opposite walls, horns turned up to the boom's height
+        self.batt_max = self.batt_min + k.batt_len + p.batt_trim
+        wall_y = self.half_w - p.wall - 1.3          # servo base just inside the wall, clear of the belly chamfer
+        self.servo_zc = self.z_floor + 0.3 + sv.width / 2
+        self.link_z = -1.0                           # pushrods enter the boom just under its axis
+        self.horn_deg = math.degrees(math.asin((self.link_z - self.servo_zc) / sv.horn_hole))
+        self.horn_len = sv.horn_hole + 2.5           # cut 2.5 mm past the pushrod hole, like a faired horn
+        x0 = self.batt_max + 1.5
+        self.servo_elev = (x0 + sv.tab_span / 2 + 0.3, -wall_y)        # (body centre x, base y); shaft +y
+        self.servo_rud = (self.servo_elev[0] + sv.tab_span + 2.0, wall_y)   # shaft -y
+        self.horn_y = -wall_y + sv.horn_z            # elevator horn plane; the rudder's is its mirror
+        # the boom starts behind the rear servo's tabs and runs to the motor
+        self.boom_x0 = self.servo_rud[0] + sv.tab_span / 2 + 2.0
+        self.esc_x = self.boom_x0 + 5.0              # ESC lies flat under the boom's mouth, its leads clear of the servo
+        self.esc_bay_x = self.esc_x
+        self.cone_x0 = self.esc_x + k.esc_len + 2.0  # tail cone: full section to the boom socket
+        self.pod_len = self.cone_x0 + p.cone
+        self.x_mp = self.x_stab + c_h + 3.0          # motor plate's back face, behind the tail's trailing edge
+        self.boom_x1 = self.x_mp - 2.4
+        self.boom_len = self.boom_x1 - self.boom_x0
+        self.x_prop = self.x_mp + 14.8
+        self.tube_x0, self.tube_x1, self.tube_len = self.boom_x0, self.boom_x1, self.boom_len
+        self.pushrod_exit_x = self.x_stab - 12.0     # both pushrods leave the boom ahead of the tail mount
+        self.length = self.x_prop + 3.0
 
     def servo_slack(self) -> float:
         """Room left between the spars for the aileron servo's tabs (mm)."""
@@ -341,7 +408,13 @@ class Layout:
 
     @property
     def vv_actual(self):
-        return 2 * self.fin_h * self.c_h * self.l_h / (self.area * self.p.span)
+        fins = 1 if self.single else 2
+        return fins * self.fin_h * self.c_h * self.l_h / (self.area * self.p.span)
+
+    @property
+    def fin_plan(self):
+        """Fin area, both fins for the twin booms (mm^2)."""
+        return (1 if self.single else 2) * self.fin_h * self.c_h
 
 
 # --------------------------------------------------------------------------
@@ -352,12 +425,58 @@ def rod_mass(d: float, length: float, di: float = 0.0, rho: float = CARBON):
     return rho * math.pi / 4 * (d ** 2 - di ** 2) * length / 1000
 
 
+PTFE = 2.2
+
+
+def pushrod_mass(length: float) -> float:
+    """A 1 mm carbon pushrod in a 1.5 x 0.8 mm PTFE sleeve, as run inside the single boom."""
+    return rod_mass(1.0, length) + rod_mass(1.5, length - 30, 0.8, PTFE)
+
+
+def motor_wire_mass(length: float) -> float:
+    """Three 26 AWG silicone phase wires (about 1.6 g/m each) from the ESC to the motor."""
+    return 3 * 1.6 * length / 1000
+
+
+def boom_options(p: Params, L: Layout, tip_g: float, length: float):
+    """Candidate carbon tubes for the single boom: mass, bending stiffness, the
+    first bending mode with the tail, motor and prop on its end, and how far the
+    end bends in a 30 g landing. Roll-wrapped carbon, E 70 GPa."""
+    e, rows = 70e9, []
+    span = length / 1000                                   # cantilever from the socket's end
+    for od, di in ((6, 5), (8, 7), (8, 6), (10, 9), (10, 8), (12, 11)):
+        i = math.pi / 64 * (od ** 4 - di ** 4) * 1e-12
+        g = rod_mass(od, L.boom_len, di)
+        k = 3 * e * i / span ** 3
+        f1 = math.sqrt(k / (tip_g / 1000 + 0.24 * g / 1000 * span * 1000 / L.boom_len)) / (2 * math.pi)
+        defl = tip_g / 1000 * G * 30 * span ** 3 / (3 * e * i) * 1000
+        rows.append({"tube": f"{od}x{di}", "g": round(g, 1), "ei": round(e * i, 1), "f1": round(f1),
+                     "landing_mm": round(defl, 1), "chosen": (od, di) == (p.boom_od, p.boom_id)})
+    return rows
+
+
 def structure_estimate(p: Params, L: Layout):
     """(name, grams, x) for the printed parts, tubes and rods."""
     c, b = L.chord, p.span
     panels = b - p.centre_w                              # the centre section is counted separately
     wing_area = (2.06 * c + math.pi * (p.main_spar_d + p.rear_spar_d + 4)) * panels
-    tail_plan = L.b_h * L.c_h + 2 * L.fin_h * L.c_h
+    tail_plan = L.b_h * L.c_h + L.fin_plan
+    if L.single:
+        plate_equiv = 2 * 0.4 + 0.15 * (p.plate - 0.8)
+        perim = 2 * (2 * L.half_w + p.pod_depth + L.z_top) - (4 - math.pi) * p.top_r
+        fus_vol = (perim * p.wall * (L.cone_x0 + 0.6 * p.cone) + 2 * 2 * L.half_w * (p.pod_depth + L.z_top) * p.wall
+                   + math.pi * (L.r_boss ** 2 - L.r_hole ** 2) * (L.pod_len - L.boom_x0))
+        return [
+            ("wing panels", LW_PLA * p.skin * wing_area / 1000, L.x_le + 0.42 * c),
+            ("wing centre", 0.128 * p.centre_w * c / 90 + 0.3, L.x_le + 0.6 * c),
+            ("spar rods", rod_mass(p.main_spar_d, b - 10) + rod_mass(p.rear_spar_d, b - 10), L.x_le + 0.43 * c),
+            ("tail plates", LW_PLA * plate_equiv * tail_plan / 1000, L.x_stab + 0.45 * L.c_h),
+            ("tail mount", 3.0, L.x_stab + L.c_fix / 2),
+            ("motor mount", 1.2, L.x_mp - 4.0),
+            ("boom", rod_mass(p.boom_od, L.boom_len, p.boom_id, p.tube_density), (L.boom_x0 + L.boom_x1) / 2),
+            ("fuselage", PLA * fus_vol / 1000, 0.45 * L.pod_len),
+            ("lid", PLA * (L.x_le - p.front_wall) * (2 * L.half_w + 4) * 0.8 / 1000, (p.front_wall + L.x_le) / 2),
+        ]
     plate_equiv = 2 * 0.4 + 0.15 * (p.plate - 0.8)     # 2+2 solid layers, 15 % infill
     pod_vol = (L.pod_len * (2 * p.wall * (p.pod_depth + L.z_top) + p.wall * 2 * L.half_w)
                + (p.front_wall + p.rear_wall) * 2 * L.half_w * (p.pod_depth + L.z_top) + 26 * 13 * p.rear_wall)
@@ -381,6 +500,24 @@ def structure_estimate(p: Params, L: Layout):
 def components(p: Params, k: Kit, L: Layout):
     """(name, grams, x, z) for everything that isn't printed, battery excluded."""
     servo_x = L.x_le + (p.main_spar_pos + p.rear_spar_pos) / 2 * L.chord
+    if L.single:
+        return [
+            ("camera + VTX", k.cam_vtx, 11.0, -8.0),
+            ("antenna", k.antenna, L.ant_x, 10.0),
+            ("FC", k.fc, L.fc_x, -13.0),
+            ("receiver", k.rx, 42.0, -8.0),
+            ("ESC", k.esc, L.esc_x + k.esc_len / 2, -14.0),
+            ("motor", k.motor, L.x_mp + 7.0, 0.0),
+            ("prop", k.prop, L.x_prop, 0.0),
+            ("elevator servo", k.servo.mass, L.servo_elev[0], L.servo_zc),
+            ("rudder servo", k.servo.mass, L.servo_rud[0], L.servo_zc),
+            ("aileron servos", 2 * k.servo.mass, servo_x, 4.0),
+            ("pushrods and sleeves", 2 * pushrod_mass(L.x_hinge - L.servo_elev[0]), (L.boom_x0 + L.x_stab) / 2, 0.0),
+            ("motor wires", motor_wire_mass(L.x_mp - L.esc_x), (L.esc_x + L.x_mp) / 2, 0.0),
+            ("wiring", k.wiring, 0.5 * L.pod_len, -8.0),
+            ("hardware (fwd)", k.hardware / 2, L.x_le, 0.0),
+            ("hardware (tail)", k.hardware / 2, L.x_stab + L.c_h / 2, 0.0),
+        ]
     return [
         ("camera + VTX", k.cam_vtx, 11.0, -8.0),
         ("antenna", k.antenna, L.ant_x, 10.0),
@@ -447,11 +584,24 @@ def neutral_point(p: Params, L: Layout) -> float:
 def drag_area(p: Params, L: Layout, k: Kit):
     """Parasite drag area CdA (m^2) built up from the geometry, per item."""
     mm2 = 1e-6
-    tail = (L.b_h * L.c_h + 2 * L.fin_h * L.c_h) * mm2
+    tail = (L.b_h * L.c_h + L.fin_plan) * mm2
     w, h = 2 * L.half_w, p.pod_depth + L.z_top
     pod_front = w * h * mm2
     pod_wet = 2 * L.pod_len * (w + h) * mm2
     tubes_wet = 2 * math.pi * p.tube_od * L.tube_len * mm2
+    if L.single:                                            # one boom; the tail cone leaves no blunt base
+        d_h = 2 * w * h / (w + h)
+        rounded = min(1.0, p.nose_r / (0.2 * d_h))
+        items = {
+            "wing (Cd0 0.014, printed surface)": L.area * mm2 * 0.014,
+            "tail plates (Cd 0.02, flat 2 mm)": tail * 0.02,
+            "fuselage front": pod_front * (0.25 - 0.20 * rounded),
+            "fuselage skin friction": 2 * (L.cone_x0 + 0.5 * p.cone) * (w + h) * mm2 * 0.006,
+            "boom skin friction": math.pi * p.boom_od * (L.boom_x1 - L.pod_len) * mm2 * 0.006,
+            "motor on the boom end": math.pi * 9.0 ** 2 * mm2 * 0.15,
+            "aileron servo bumps, horns, antenna": 1.0e-4,
+        }
+        return {n: v * 1.15 for n, v in items.items()}
     # Front + base drag of the pod (Hoerner's forebody trend): a sharp-edged box
     # face ~0.5; rounding the edges to r/d ~ 0.2 of the hydraulic diameter
     # removes most of the forebody part, leaving ~0.25 (mostly the blunt base).

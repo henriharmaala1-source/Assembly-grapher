@@ -11,10 +11,11 @@ Four tools for this repository's aircraft:
   the whole plane through independent tools: XFOIL, 2D CFD in OpenFOAM, and
   AeroSandbox's drag build-up and vortex lattice
   ([Cross-checks](#cross-checks-do-other-tools-agree)).
-- **The variant comparison** (`variants.py`) flies the as-built and the
-  optimized CAD builds at their own weights, and splits every change into
-  aerodynamics and weight
+- **The variant comparison** (`variants.py`) flies the three CAD builds (as
+  built, optimized, single boom) at their own weights, and splits every
+  change into aerodynamics and weight
   ([As built against optimized](#as-built-against-optimized-the-weight-and-the-flight)).
+  `section.py` picks the single boom's fuselage section.
 - **The handbook optimizer** (`optimize.py`) searches design choices with a
   drag build-up of handbook formulas. It covers the Kipinä airframe
   (`airframe`), and a typical 5-inch (`quad`) and 7-inch (`quad7`) FPV quad.
@@ -120,10 +121,25 @@ It writes these files:
 ## As built against optimized: the weight and the flight
 
 ```sh
-python3 airframe/build.py                       # the as-built CAD
-python3 airframe/build.py --variant optimized   # the optimized CAD, in airframe/variants/optimized/
-python3 aero/variants.py                        # airframe/variants/compare.json and COMPARE.md
+python3 airframe/build.py                         # the as-built CAD
+python3 airframe/build.py --variant optimized     # the optimized CAD, in airframe/variants/optimized/
+python3 airframe/build.py --variant single-boom   # the single boom, in airframe/variants/single-boom/
+python3 aero/variants.py                          # airframe/variants/compare.json and COMPARE.md
 ```
+
+A third build, the single boom, is the optimized plane on one carbon tube with
+the motor behind the tail. It has its own section in the
+[airframe README](../airframe/README.md#the-single-boom-variant). In short, it
+is 1.5 g heavier, has 6.4 % less drag at 13 m/s, and flies 17.7 min against
+16.8 min. The drag model gives it its own terms (`_single_boom_items` in
+`models/airframe.py`):
+
+- a fuselage that cones onto the boom;
+- one boom;
+- the motor's base on the boom's end;
+- the tail mount's pylons.
+
+The drag optimizer does not search over the layout.
 
 The optimized variant is a full CAD build. It has the study's airfoil and
 every detail change the optimizer picked, each drawn as a printable part:

@@ -9,8 +9,10 @@
   electronics, sizing report). Every part prints on a Bambu Lab A1 mini. It
   also has a bill of process with its precedence graph, an assembly animation
   and a DFMA analysis. An optimized variant (`--variant optimized`) builds in
-  the efficiency study's airfoil and drag fixes. A comparison page shows both
-  planes side by side, with what the extra 2.6 g cost in flight
+  the efficiency study's airfoil and drag fixes. A single-boom variant
+  (`--variant single-boom`) puts that plane on one carbon tube with the motor
+  behind the tail. A comparison page shows any two of the three side by side,
+  with what their weight differences cost in flight
   ([airframe/variants/](airframe/variants/index.html)).
 - [`aero/`](aero/README.md): drag and efficiency tools. An efficiency study
   optimizes the Kipinä wing's airfoil with NeuralFoil (an XFOIL-trained model)

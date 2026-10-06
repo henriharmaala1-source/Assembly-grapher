@@ -106,6 +106,8 @@ def _induced(w: float, s: float, ar: float, v: float) -> float:
 def evaluate(x: dict, v: float) -> Result:
     p = replace(BASE, span=x["span"], aspect_ratio=x["aspect_ratio"], tail_arm=x["tail_arm"],
                 nose_r=x["nose_r"])
+    if x.get("single_boom"):                       # not searched: the single-boom CAD variant (aero/variants.py)
+        p = D.single_boom(p)
     try:
         L, auw, _ = D.evaluate(p, KIT)
     except ValueError as e:
@@ -121,7 +123,7 @@ def evaluate(x: dict, v: float) -> Result:
     # printed parts that grow with the layout (airframe/build.py: lid_end, pod_split_x)
     lid = L.x_le + 0.08 * L.chord - 0.5 - (p.front_wall + 0.5)
     rear_half = L.pod_len - round(L.batt_max + 10.0) + 8.0
-    for part, size in (("lid", lid), ("rear pod half", rear_half)):
+    for part, size in (("lid", lid), ("rear pod half", rear_half)) if not L.single else ():
         if size > p.bed[0]:
             bad.append(f"{part} is {size:.0f} mm, longer than the {p.bed[0]:.0f} mm bed")
 
@@ -135,10 +137,17 @@ def evaluate(x: dict, v: float) -> Result:
                         f"Re {K.reynolds(v, c) / 1e3:.0f}k, laminar over half the chord"))
     # tail: 2 mm plates with round leading edges
     ch = L.c_h * mm
-    tail_wet = 2 * (L.b_h * L.c_h + 2 * L.fin_h * L.c_h) * mm2
+    tail_wet = 2 * (L.b_h * L.c_h + L.fin_plan) * mm2
     k_tail = K.cf(K.reynolds(v, ch), LAMINAR_WING) * K.ff_wing(p.plate / L.c_h, 0.3)
     items.append(K.Item("tail plates, skin friction", k_tail * tail_wet, "friction",
-                        f"stabiliser {L.b_h:.0f} x {L.c_h:.0f} mm, fins {L.fin_h:.0f} mm tall"))
+                        f"stabiliser {L.b_h:.0f} x {L.c_h:.0f} mm, {'one fin' if L.single else 'fins'} "
+                        f"{L.fin_h:.0f} mm tall"))
+    if L.single:
+        items += _single_boom_items(p, L, x, v)
+        junction = 0.10 * sum(i.cda for i in items if i.group in ("friction", "pressure"))
+        items.append(K.Item("junctions (10 % of the above)", junction, "interference",
+                            "wing-fuselage and tail joints"))
+        return _result(p, L, items, w, s, v, auw, stall, bad)
     # pod front: pressure drag depends on how round each front edge is
     pw, ph = 2 * L.half_w, L.z_top - L.z_bottom
     a_front = pw * ph - BELLY_CH ** 2
@@ -194,6 +203,61 @@ def evaluate(x: dict, v: float) -> Result:
     items.append(K.Item("junctions (10 % of the above)", junction, "interference",
                         "wing-pod, boom-wing and tail joints"))
 
+    return _result(p, L, items, w, s, v, auw, stall, bad)
+
+
+def _single_boom_items(p, L, x: dict, v: float) -> list:
+    """Fuselage, boom, tail mount and protuberances for the single-boom layout:
+    a fuselage with rounded top edges that cones down onto one carbon boom, the
+    motor on the boom's end behind the tail, the elevator and rudder servos inside
+    with their pushrods in the boom."""
+    mm, mm2, items = 1e-3, 1e-6, []
+    pw, ph, r, ch = 2 * L.half_w, L.z_top - L.z_bottom, p.top_r, p.belly_ch
+    a_front = pw * ph - 2 * (1 - math.pi / 4) * r * r - ch * ch
+    dh = K.hydraulic_d(pw, ph)
+    edges = [(pw, x["nose_top_r"]), (pw, max(x["nose_r"], K.chamfer_radius(ch))), (2 * ph, x["nose_r"])]
+    cd_front = sum(n * K.cd_forebody(rr / dh, 0.75, 0.04) for n, rr in edges) / sum(n for n, _ in edges)
+    items.append(K.Item("fuselage front (pressure)", cd_front * a_front * mm2, "pressure",
+                        f"Cd {cd_front:.2f} on {a_front / 100:.1f} cm²"))
+    # skin: the full section to the cone, then the cone down to the boom socket; the
+    # wing covers the flat top strip over its chord
+    perim = 2 * (pw + ph) - (4 - math.pi) * r - 2 * (2 - math.sqrt(2)) * ch
+    slant = math.hypot(p.cone, max(L.half_w, -L.z_bottom) - L.r_boss)
+    wet = perim * L.cone_x0 + (perim + 2 * math.pi * L.r_boss) / 2 * slant
+    wet -= (pw - 2 * r) * (min(L.x_te, L.pod_len) - (L.x_le + 0.08 * L.chord))
+    k_f = K.cf(K.reynolds(v, L.pod_len * mm), LAMINAR_BODY) * K.ff_body(L.pod_len / dh)
+    items.append(K.Item("fuselage, skin friction", k_f * wet * mm2, "friction",
+                        f"{L.pod_len:.0f} mm long, tail cone {p.cone:.0f} mm"))
+    # the motor on the boom's end: its plate sits on a cone from the boom, the
+    # back of the motor is a small blunt base in the prop's suction
+    items.append(K.Item("motor on the boom's end (base)", K.CD_BASE * PROP_SUCTION * math.pi * 9.0 ** 2 * mm2,
+                        "pressure", "18 mm motor behind a coned plate"))
+    od = p.boom_od
+    exposed = L.boom_x1 - L.pod_len - L.c_fix - 14.0
+    k_b = K.cf(K.reynolds(v, exposed * mm), LAMINAR_BODY) * K.ff_body(exposed / od)
+    items.append(K.Item("boom, skin friction", k_b * math.pi * od * exposed * mm2, "friction",
+                        f"1 x {exposed:.0f} mm exposed, {od:.0f} mm"))
+    r_out = L.r_hole + 1.2
+    mount = (math.pi * (r_out ** 2 - (od / 2) ** 2) * 0.6 + 2 * 4.0 * (L.r_hole - 2.5 - L.tail_z) * 0.3
+             + 2 * 1.2 * 7.2 * 0.6)
+    items.append(K.Item("tail mount: collar, stabiliser pylons, fin socket", mount * mm2, "pressure",
+                        "wedge-nosed pylons"))
+    horns = 2 * K.CD_PLATE * HORN_T * HORN_LEN * (0.25 if x["fairings"] else 1)
+    bumps = 2 * K.CD_BUMP * 3.0 * D.Servo().width * (0.5 if x["fairings"] else 1)
+    items.append(K.Item("aileron servo horns and bumps", (horns + bumps) * mm2, "protuberances",
+                        "faired" if x["fairings"] else "2 horns edge-on below the wing, 3 mm servo bumps"))
+    links = 2 * (K.CD_PLATE * 1.0 * 9.0 + K.CD_CYLINDER * 0.8 * 8.0)
+    items.append(K.Item("aileron horns and links", links * mm2, "protuberances", ""))
+    tail_bits = 2 * K.CD_PLATE * 1.6 * 7.0 + 2 * K.CD_CYLINDER * 1.0 * 6.0
+    items.append(K.Item("elevator and rudder horns, pushrod ends", tail_bits * mm2, "protuberances",
+                        "the elevator and rudder servos are in the fuselage, their pushrods in the boom"))
+    items.append(K.Item("VTX antenna", K.cylinder_cda(ANTENNA_D * mm, ANTENNA_UP * mm, x["antenna_lean"]),
+                        "protuberances", f"whip {ANTENNA_UP:.0f} mm above the lid" +
+                        (f", laid back {x['antenna_lean']:.0f}°" if x["antenna_lean"] else "")))
+    return items
+
+
+def _result(p, L, items, w, s, v, auw, stall, bad) -> Result:
     cda = K.total(items)
     d_ind = _induced(w, s, p.aspect_ratio, v)
     drag = K.q(v) * cda + d_ind

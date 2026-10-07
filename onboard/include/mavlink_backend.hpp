@@ -107,6 +107,12 @@ public:
     // What sendControl does in the mode the FC is in right now ("none" if it
     // would send nothing) -- for the operator and the bench test.
     const char* controlPath() const;
+    // The same, in three letters for the OSD: VEL ATT RC AST (assist), OFF
+    // (this mode gets nothing), PAR (still reading parameters).
+    const char* controlTag() const override;
+    // STATUSTEXT, severity INFO, from this companion (sysid/compid as set).
+    // ArduPilot only LOGS a received STATUSTEXT; kestrel_osd.lua shows it.
+    bool sendStatusText(const char* text) override;
 
     // WHAT A FULL STICK MEANS. ControlCmd is a normalised RATE command: pitch
     // 1 = `mps` forward, throttle 1 = `climbMps` up, yaw 1 = `yawDps`
@@ -250,6 +256,7 @@ private:
     bool     sendAttitudeTarget(const ControlCmd& cmd);
     bool     rcActive_      = false;   // an override of ours is in force
     uint32_t reportedMode_  = 0xFFFFFFFF;  // last mode announced on stdout
+    const char* reportedPath_ = nullptr;   // ...and the control path with it
 
     // RESUME: the mode before our RTL/LAND, and the one we asked for.
     uint32_t resumeMode_  = 0xFFFFFFFF;

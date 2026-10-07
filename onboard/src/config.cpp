@@ -169,6 +169,8 @@ Tunables load_tunables(Config& c) {
 
     // --- RC command source (P2.2) ---
     t.rc.modeAux        = c.i("rc.mode_aux",         t.rc.modeAux);
+    t.rc.modeHystUs     = c.i("rc.mode_hyst_us",     t.rc.modeHystUs);
+    t.rc.modeDwellS     = c.f("rc.mode_dwell_s",     t.rc.modeDwellS);
     t.rc.goAux          = c.i("rc.go_aux",           t.rc.goAux);
     t.rc.goUs           = c.i("rc.go_us",            t.rc.goUs);
     t.rc.steerAux       = c.i("rc.steer_aux",        t.rc.steerAux);

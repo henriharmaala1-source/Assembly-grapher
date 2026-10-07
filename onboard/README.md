@@ -191,6 +191,16 @@ how a Pi running SLAM keeps the FC navigating GPS-denied. Injection is gated by
 ./build/kestrel --fc=msp --fc-port=/dev/ttyAMA0 --fc-baud=115200 --feed-gps
 ```
 
+## On the Pi 5, with ArduPilot
+
+`sudo deploy/install_pi5.sh --enable-uart` builds it, installs a systemd
+service (starts at boot, DRY-RUN until `--allow-control` is added to
+`/etc/kestrel/kestrel.env`) and a config for an EdgeTX radio: kestrel's mode on
+a wheel (CH8), GO on CH9. `ardupilot/kestrel_osd.lua`, on the FC's SD card,
+puts kestrel's state on the analog OSD -- `K SCRIPT LIVE RC GO DOOR`.
+The whole sequence, with the ArduPilot parameters and a bench checklist:
+[`docs/pi5-ardupilot-setup.md`](docs/pi5-ardupilot-setup.md).
+
 ## Build
 
 ```bash

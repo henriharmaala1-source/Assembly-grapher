@@ -116,6 +116,17 @@ int main() {
                     "0000000000000000000000000000009a99993ec7050101085a93");
     }
     {
+        // The OSD status line: severity INFO, 50-char text, NUL-padded and
+        // truncated off the wire.
+        Codec c = fresh();
+        Payload p;
+        p.u8(6);
+        const char text[50] = "SCRIPT LIVE VEL GO DOOR";
+        for (char ch : text) p.u8(uint8_t(ch));
+        expectFrame("STATUSTEXT (OSD line)", c, MSG_STATUSTEXT, p,
+                    "fd180000072abffd000006534352495054204c4956452056454c20474f20444f4f52f9d3");
+    }
+    {
         // Parameter readback: by name, index -1. 14 characters, so NUL-padded
         // to 16 -- and the truncation strips the padding off the wire.
         Codec c = fresh();

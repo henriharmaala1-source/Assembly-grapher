@@ -1,5 +1,8 @@
 #include "fc_link.hpp"
 
+#include <cstdio>
+#include <cstring>
+
 #include <algorithm>
 #include <chrono>
 
@@ -66,6 +69,12 @@ void FcLink::vision(const VisionOdom& v, double stampS) {
     visStampS_ = stampS;
 }
 
+void FcLink::status(const char* head, const char* tail) {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::snprintf(stHead_, sizeof(stHead_), "%s", head ? head : "");
+    std::snprintf(stTail_, sizeof(stTail_), "%s", tail ? tail : "");
+}
+
 void FcLink::loop_() {
     using namespace std::chrono;
     // Elevate this thread so inference on the Deliberator can't delay RC — the
@@ -128,6 +137,28 @@ void FcLink::loop_() {
             if (doVis && fc_->sendVisionOdometry(v)) visSent_.fetch_add(1);
         }
 
+        // Status line: the backend's control tag goes in the middle, so the
+        // OSD says how commands reach the FC in the mode it is in now.
+        {
+            char line[80]; bool doSt = false;          // cut to STATUSTEXT's 50 below
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                if (stHead_[0]) {
+                    const char* tag = fc_->controlTag();
+                    std::snprintf(line, sizeof(line), "%s%s%s%s", stHead_, tag[0] ? " " : "",
+                                  tag, stTail_);
+                    line[50] = '\0';
+                    const double now = monoNowS();
+                    if (std::strcmp(line, stSent_) != 0 || now - stLastTxS_ >= statusRepeatS_) {
+                        std::memcpy(stSent_, line, sizeof(stSent_));   // 51 incl. NUL
+                        stLastTxS_ = now;
+                        doSt = true;
+                    }
+                }
+            }
+            if (doSt && fc_->sendStatusText(line)) statusSent_.fetch_add(1);
+        }
+
         // Marshalled one-shots.
         if (doLatch) fc_->latchBaseline();
         if (doGps)   fc_->feedExternalGps(g);
@@ -135,7 +166,11 @@ void FcLink::loop_() {
         // Mode latch only on transition (some backends send on setMode). When
         // the request clears, RESUME: give back the mode the aircraft was in
         // before, never a fixed one -- on ArduPilot "ANGLE" was STABILIZE.
-        const FcMode special = rth ? FcMode::RTL : land ? FcMode::LAND : FcMode::UNKNOWN;
+        // DRY-RUN SENDS NOTHING -- that includes a mode change. A script's
+        // `land`, or the low-battery failsafe, in a dry run used to switch the
+        // real aircraft to LAND / RTL here, since only the sticks were gated.
+        const FcMode special = !live ? FcMode::UNKNOWN
+                             : rth ? FcMode::RTL : land ? FcMode::LAND : FcMode::UNKNOWN;
         if (special != lastSpecial) {
             const bool on = special != FcMode::UNKNOWN;
             rthCmding = fc_->setMode(on ? special : FcMode::RESUME) && on;

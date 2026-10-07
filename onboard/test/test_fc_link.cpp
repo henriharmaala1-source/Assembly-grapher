@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 
 #include "fc_link.hpp"
@@ -34,6 +36,14 @@ struct ProxFc : SimFcBackend {
     bool sendVisionOdometry(const VisionOdom& v) override {
         visN = v.n; ++visCalls; return true;
     }
+    std::atomic<int> stCalls{0};
+    std::mutex stMu;
+    std::string stLast;
+    bool sendStatusText(const char* t) override {
+        std::lock_guard<std::mutex> lk(stMu);
+        stLast = t; ++stCalls; return true;
+    }
+    const char* controlTag() const override { return "VEL"; }
 };
 
 int main() {
@@ -65,6 +75,15 @@ int main() {
     const long before = link.framesSent();
     sleep_ms(200);
     CHECK(link.framesSent() == before);              // nothing sent while dry
+
+    // --- DRY-RUN: an RTH request changes NOTHING on the FC, mode included ---
+    link.commandRth(false);
+    sleep_ms(100);
+    CHECK(simRaw->mode() == FcMode::ALT_HOLD);
+    link.command([]{ ControlCmd c; c.valid = true; return c; }(), false);
+    sleep_ms(60);
+    CHECK(simRaw->mode() == FcMode::ALT_HOLD);
+    std::printf("  dry-run RTH: FC mode untouched (ALT_HOLD)\n");
 
     // --- failsafe RTH keeps RC alive (live) ---
     link.commandRth(true);
@@ -111,6 +130,27 @@ int main() {
         pl.stop();
         std::printf("  proximity: %d sent for 25 offered in 0.5 s, none after the "
                     "producer stopped\n", sent);
+    }
+    {
+        // OSD STATUS LINE: tag spliced in, sent on change, not every tick.
+        auto pfc = std::make_unique<ProxFc>();
+        pfc->connect("sim", 0);
+        ProxFc* raw = pfc.get();
+        FcLink sl(std::move(pfc), 0.3f);
+        sl.setStatusRepeatS(0.5);
+        sl.start();
+        sl.status("SCRIPT LIVE", " GO DOOR");
+        sleep_ms(300);                                 // ~15 loop ticks
+        CHECK(raw->stCalls.load() == 1);
+        { std::lock_guard<std::mutex> lk(raw->stMu);
+          CHECK(raw->stLast == "SCRIPT LIVE VEL GO DOOR"); }
+        sl.status("SCRIPT LIVE", " GO LAND");
+        sleep_ms(60);
+        CHECK(raw->stCalls.load() == 2);               // a change goes at once
+        sleep_ms(600);
+        CHECK(raw->stCalls.load() == 3);               // and is repeated slowly
+        sl.stop();
+        std::printf("  status line: \"SCRIPT LIVE VEL GO DOOR\", on change + every 0.5 s\n");
     }
     {
         // VIO into the FC: the same contract as proximity, capped at 30 Hz.

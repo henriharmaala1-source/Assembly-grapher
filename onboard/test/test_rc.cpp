@@ -29,6 +29,7 @@ int main() {
     cfg.modeAux = 4; cfg.modeMap = {"FLY", "AUTONOMY", "HOLD"};   // 3 bands
     cfg.goAux = 5;   cfg.goUs = 1700;
     cfg.steerAux = 6; cfg.steerRateDps = 90.f; cfg.steerDeadbandUs = 40;
+    cfg.modeDwellS = 0.f;                    // immediate, for the band checks here
     RcCommandSource rc(cfg);
     CHECK(rc.enabled());
 
@@ -61,6 +62,42 @@ int main() {
     s.missionGoalBearing = 100.f;
     rc.update(rcFrame(1500, -1, 1000), modes, s, 0.10f);
     CHECK(std::fabs(s.missionGoalBearing - 91.f) < 0.5f);
+
+    // A WHEEL parked on the FLY|AUTONOMY edge (1334 us is the first AUTONOMY
+    // microsecond) with +-8 us of jitter must not chatter, and a real move
+    // must still go through -- after the dwell, not on the first frame.
+    {
+        RcConfig w;
+        w.modeAux = 4; w.modeMap = {"FLY", "AUTONOMY", "HOLD"};
+        w.modeHystUs = 30; w.modeDwellS = 0.3f;
+        RcCommandSource wheel(w);
+        ModeManager m2;
+        register_standard_modes(m2);
+        WorldState s2;
+        wheel.update(rcFrame(1100, -1, -1), m2, s2, 0.02f);
+        CHECK(std::string(m2.active()->name()) == "FLY");
+        int changes = 0;
+        std::string last = m2.active()->name();
+        for (int k = 0; k < 200; ++k) {
+            const int us = 1334 + ((k * 7) % 17) - 8;          // 1326..1342
+            wheel.update(rcFrame(us, -1, -1), m2, s2, 0.02f);
+            if (last != m2.active()->name()) { ++changes; last = m2.active()->name(); }
+        }
+        CHECK(changes == 0);
+        CHECK(std::string(m2.active()->name()) == "FLY");
+        // Rolled properly into AUTONOMY: held 0.2 s -- not yet; 0.4 s -- yes.
+        for (int k = 0; k < 10; ++k) wheel.update(rcFrame(1500, -1, -1), m2, s2, 0.02f);
+        CHECK(std::string(m2.active()->name()) == "FLY");
+        for (int k = 0; k < 10; ++k) wheel.update(rcFrame(1500, -1, -1), m2, s2, 0.02f);
+        CHECK(std::string(m2.active()->name()) == "AUTONOMY");
+        // A brush through HOLD shorter than the dwell changes nothing.
+        for (int k = 0; k < 5; ++k) wheel.update(rcFrame(1900, -1, -1), m2, s2, 0.02f);
+        wheel.update(rcFrame(1500, -1, -1), m2, s2, 0.02f);
+        for (int k = 0; k < 30; ++k) wheel.update(rcFrame(1500, -1, -1), m2, s2, 0.02f);
+        CHECK(std::string(m2.active()->name()) == "AUTONOMY");
+        std::printf("  wheel: 200 jittery frames on a band edge, 0 mode changes; "
+                    "a real move lands after 0.3 s\n");
+    }
 
     // Unset channels are ignored (rcCount too small / -1 values).
     RcConfig off; RcCommandSource none(off);

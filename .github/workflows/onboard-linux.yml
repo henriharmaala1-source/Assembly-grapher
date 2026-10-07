@@ -34,7 +34,8 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential cmake libopencv-dev
+          # lua5.3: ArduPilot's Lua, for the OSD script's test (kestrel_osd_lua)
+          sudo apt-get install -y -qq build-essential cmake libopencv-dev lua5.3
 
       - name: Configure
         run: cmake -B build -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
@@ -45,3 +46,18 @@ jobs:
       - name: Test
         timeout-minutes: 10
         run: ctest --test-dir build --output-on-failure --timeout 300 -j 4
+
+      # The Pi 5 installer, end to end except apt and systemd, into a scratch
+      # prefix: binary, /etc/kestrel, the unit, the UART line -- and a second
+      # run must keep the configuration it wrote the first time.
+      - name: Pi installer (scratch prefix)
+        run: |
+          T="$RUNNER_TEMP/pi"; mkdir -p "$T/boot"; echo "arm_64bit=1" > "$T/boot/config.txt"
+          export PREFIX="$T/usr" ETCDIR="$T/etc/kestrel" UNITDIR="$T/units" BOOTCFG="$T/boot/config.txt" BUILD="$PWD/build"
+          deploy/install_pi5.sh --no-deps --no-build --enable-uart --user runner
+          echo "# edited" >> "$T/etc/kestrel/kestrel.conf"
+          deploy/install_pi5.sh --no-deps --no-build --enable-uart --user runner
+          test "$(tail -1 "$T/etc/kestrel/kestrel.conf")" = "# edited"
+          test "$(grep -c '^dtparam=uart0=on' "$T/boot/config.txt")" = 1
+          grep -q "^User=runner" "$T/units/kestrel.service"
+          "$T/usr/bin/kestrel" --config="$T/etc/kestrel/kestrel.conf" --dump-config | grep -q "rc.mode_map *= FLY,SHADOW,SCRIPT,AUTONOMY"

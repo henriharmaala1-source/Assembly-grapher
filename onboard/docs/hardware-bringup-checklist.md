@@ -61,6 +61,8 @@ this is an experiment with pass/fail criteria, not a purchase.
 Goal: first contact between our MSP implementation and **real iNAV firmware** —
 everything before now was a PTY-simulated FC.
 
+- [ ] ArduPilot instead of iNAV: follow `pi5-ardupilot-setup.md` (install,
+      parameters, radio, OSD line, bench) -- it replaces the MSP items below.
 - [ ] `--fc=msp --bench-test`: telemetry decode matches the iNAV Configurator
       (attitude, battery, GPS fix, sats).
 - [ ] Dry-run RC map: `MSP_SET_RAW_RC` moves the **right** channels in the

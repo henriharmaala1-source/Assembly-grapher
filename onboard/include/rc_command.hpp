@@ -18,8 +18,15 @@
 // Purely a producer into WorldState + ModeManager (the same surfaces the
 // keyboard drives); it commands no motion itself. Any unset channel is ignored.
 struct RcConfig {
-    int         modeAux = -1;                 // channel index; <0 = off
+    int         modeAux = -1;                 // channel index (0-based: CH8 = 7); <0 = off
     std::vector<std::string> modeMap;         // mode names, low→high band order
+    // A WHEEL OR POT HAS NO DETENTS. Parked on a band edge, a few us of jitter
+    // would flip between two modes every frame. So a new band must be entered
+    // by more than modeHystUs past the current band's edge, and held there
+    // for modeDwellS, before the mode changes. A detented switch lands
+    // mid-band and pays only the dwell.
+    int         modeHystUs = 30;
+    float       modeDwellS = 0.3f;
     int         goAux   = -1;
     int         goUs    = 1700;               // ≥ this on goAux = GO
     int         steerAux = -1;
@@ -41,4 +48,7 @@ public:
 private:
     RcConfig    c_;
     std::string lastMode_;   // only re-select on a band change
+    int         band_     = -1;   // the band whose mode is selected
+    int         pendBand_ = -1;   // a band being entered, not yet held long enough
+    float       pendS_    = 0.f;
 };

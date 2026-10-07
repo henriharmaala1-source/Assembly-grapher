@@ -542,6 +542,29 @@ int main() {
         std::printf("  RESUME: RTL/LAND clear back to LOITER; a pilot's own switch is left alone\n");
     }
 
+    // --- the OSD line: STATUSTEXT, and the tag says which uplink is live ----
+    {
+        enterMode(mfd, fc, mav::COPTER_GUIDED);
+        CHECK(std::string(fc.controlTag()) == "VEL");
+        enterMode(mfd, fc, mav::COPTER_STABILIZE);
+        CHECK(std::string(fc.controlTag()) == "OFF");
+        enterMode(mfd, fc, mav::COPTER_ALT_HOLD);
+        CHECK(std::string(fc.controlTag()) == "RC");
+        drainMaster(mfd);
+        CHECK(fc.sendStatusText("SCRIPT LIVE RC GO DOOR"));
+        auto held = decodeAll(drainMaster(mfd));
+        const mav::Msg* st = findMsg(held, mav::MSG_STATUSTEXT);
+        CHECK(st != nullptr);
+        if (st) {
+            CHECK(st->sysid == 255 && st->compid == 191);   // what the Lua filters on
+            CHECK(st->u8(0) == 6);
+            char t[51]{};
+            for (int i = 0; i < 50; ++i) t[i] = char(st->u8(1 + i));
+            CHECK(std::string(t) == "SCRIPT LIVE RC GO DOOR");
+        }
+        std::printf("  OSD line: STATUSTEXT from 255/191; tags VEL / OFF / RC by mode\n");
+    }
+
     // --- a GCS sysid that is not ours is the loudest line in the report -----
     {
         fcParam(mfd, "MAV_GCS_SYSID", 254);

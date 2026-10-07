@@ -185,10 +185,12 @@ void MavlinkBackend::tick() {
     serviceParams(t);
     // Say which uplink is live whenever the pilot's switch changes it: the
     // single most useful line on a field day.
-    if (linkUp_ && copterMode_ != reportedMode_) {
+    const char* path = controlPath();     // string literals: compare by address
+    if (linkUp_ && (copterMode_ != reportedMode_ || path != reportedPath_)) {
         reportedMode_ = copterMode_;
+        reportedPath_ = path;
         std::printf("[mavlink] FC in %s -> control: %s\n",
-                    copterModeName(copterMode_), controlPath());
+                    copterModeName(copterMode_), path);
     }
 }
 
@@ -621,6 +623,29 @@ const char* MavlinkBackend::controlPath() const {
     case Path::NONE:     break;
     }
     return "none (not a mode this program flies in)";
+}
+
+const char* MavlinkBackend::controlTag() const {
+    if (!paramsDone_) return "PAR";
+    if (assist_) return "AST";
+    switch (pathFor(copterMode_)) {
+    case Path::RC:       return "RC";
+    case Path::ATTITUDE: return "ATT";
+    case Path::VELOCITY: return "VEL";
+    case Path::NONE:     break;
+    }
+    return "OFF";
+}
+
+bool MavlinkBackend::sendStatusText(const char* text) {
+    if (!serial_.isOpen() || !text) return false;
+    mav::Payload p;
+    p.u8(6);                                       // MAV_SEVERITY_INFO
+    char t[50]{};
+    std::strncpy(t, text, sizeof(t));              // 50 bytes, NUL only if shorter
+    for (char c : t) p.u8(uint8_t(c));
+    send(mav::MSG_STATUSTEXT, p);
+    return true;
 }
 
 bool MavlinkBackend::sendControl(const ControlCmd& cmd) {

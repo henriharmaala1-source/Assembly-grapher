@@ -151,6 +151,15 @@ static void runBenchTest(IFlightController& fc) {
             std::printf("battery : %5.2f V  [reading — verify cell count]\n", t.battV);
         }
 
+        // ---- live RC, as the FC reports it: the mode wheel and GO switch
+        // (rc.mode_aux / rc.go_aux, 0-based) should move here.
+        if (t.rcCount > 0) {
+            std::printf("rc in   :");
+            for (int i = 0; i < t.rcCount && i < 12; ++i)
+                std::printf(" %d:%u", i + 1, unsigned(t.rc[i]));
+            std::printf("   (CHn:us)\n");
+        }
+
         // ---- GPS
         const char* fixNames[] = {"NO FIX","NO FIX","2D","3D","DGPS","RTK"};
         const char* fixStr = (t.fixType < 6) ? fixNames[t.fixType] : "?";
@@ -688,6 +697,22 @@ int main(int argc, char** argv) {
             fcLink.command(cmd, allowControl && cmd.valid);
         }
         const bool sent = allowControl && fcLink.linkUp() && (rthTrigger || landReq || cmd.valid);
+
+        // THE PILOT'S OSD LINE (kestrel_osd.lua): our mode, whether commands
+        // are really sent (LIVE) or only computed (DRY), the uplink in force,
+        // the GO latch and a script's state -- "SCRIPT LIVE VEL GO DOOR".
+        if (fcLink.haveFc()) {
+            const WorldState os = wm.snapshot();
+            char head[32], tail[40];
+            std::snprintf(head, sizeof(head), "%s %s",
+                          rthTrigger ? "RTH" : landReq ? "LAND"
+                          : modes.active() ? modes.active()->name() : "-",
+                          allowControl ? "LIVE" : "DRY");
+            std::snprintf(tail, sizeof(tail), "%s%s%s", os.missionGo ? " GO" : "",
+                          os.scriptActive && !os.scriptState.empty() ? " " : "",
+                          os.scriptActive ? os.scriptState.c_str() : "");
+            fcLink.status(head, tail);
+        }
 
         wm.with([&](WorldState& s) {
             s.fps = fps; s.frameId = frameId;

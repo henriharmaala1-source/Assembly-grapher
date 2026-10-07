@@ -73,6 +73,13 @@ public:
     // source out and falls back, which is the correct failure.
     void vision(const VisionOdom& v, double stampS);
     long visionSent() const { return visSent_.load(); }
+    // STATUS LINE for the pilot's OSD: `head` and `tail` with the backend's
+    // control tag between them ("SCRIPT LIVE" + VEL + " GO DOOR"). Sent when
+    // it changes, and again every statusRepeatS so an FC (or its Lua script)
+    // that restarted catches up; liveness is the heartbeat, not this.
+    void status(const char* head, const char* tail);
+    long statusSent() const { return statusSent_.load(); }
+    void setStatusRepeatS(double s) { statusRepeatS_ = s; }
 
 private:
     void loop_();
@@ -98,10 +105,14 @@ private:
     double     visStampS_ = -1e9, visSentStampS_ = -1e9, visLastTxS_ = -1e9;
     float      visStaleSec_ = 0.2f;
     FcTelemetry tel_{};
+    char       stHead_[32] = {}, stTail_[40] = {};
+    char       stSent_[51] = {};
+    double     stLastTxS_ = -1e9, statusRepeatS_ = 10.0;
 
     std::atomic<bool> run_{false};
     std::atomic<long> framesSent_{0};
     std::atomic<long> proxSent_{0};
     std::atomic<long> visSent_{0};
+    std::atomic<long> statusSent_{0};
     std::thread       thr_;
 };

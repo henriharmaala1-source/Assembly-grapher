@@ -252,4 +252,15 @@ if(BUILD_TESTS)
   # one that actually flies. It had no test at all until a review found the
   # template scale-convention bug this pins.
   kestrel_test(test_lock_tracker_reacquire src/lock_tracker.cpp src/kalman_center.cpp)
+
+  # The FLIGHT CONTROLLER's half of the OSD line (ardupilot/kestrel_osd.lua),
+  # against a mock of ArduPilot's scripting bindings. ArduPilot embeds Lua 5.3.
+  find_program(KESTREL_LUA NAMES lua5.3 lua53 lua5.4 lua)
+  if(KESTREL_LUA)
+    add_test(NAME kestrel_osd_lua
+             COMMAND ${KESTREL_LUA} ${CMAKE_CURRENT_SOURCE_DIR}/test/kestrel_osd_test.lua
+                     ${CMAKE_CURRENT_SOURCE_DIR}/ardupilot/kestrel_osd.lua)
+  else()
+    message(STATUS "no Lua interpreter: kestrel_osd_lua test skipped")
+  endif()
 endif()

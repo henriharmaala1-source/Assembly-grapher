@@ -69,6 +69,13 @@ public:
     // EKF must be told about or it reads a jump as motion. False where the
     // backend cannot carry it.
     virtual bool sendVisionOdometry(const VisionOdom& /*v*/) { return false; }
+    // ONE LINE OF STATUS FOR THE PILOT'S SCREEN (STATUSTEXT on MAVLink;
+    // ardupilot/kestrel_osd.lua puts it on the analog OSD). Up to 50 chars.
+    // False where the backend has no way to carry it.
+    virtual bool sendStatusText(const char* /*text*/) { return false; }
+    // A few letters saying how a command would reach the FC right now ("VEL",
+    // "RC", "OFF" ...), for that status line; empty where there is no choice.
+    virtual const char* controlTag() const { return ""; }
 
     // Control blending:
     //   total autonomy (default) — sendControl() writes absolute sticks from

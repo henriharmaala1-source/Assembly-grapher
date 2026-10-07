@@ -1,0 +1,24 @@
+# CRUISE, SEE IT, PASS RIGHT OVER IT, CARRY ON. For any object: change the
+# label. The object goes out of view under the aircraft; the runtime keeps
+# where it saw it, so `distance to crate` (across) still falls to ~0 over it.
+#   kestrel mission scenarios onboard/missions/cruise_passover.kms --target crate
+mission "pass over the crate"
+fence 150 m
+timeout 4 min
+size crate 0.75 m
+
+on battery < 25% { rtl }
+nav direct
+
+state cruise {
+  when seen crate -> pass
+  cruise speed 3 m/s for 60 s
+  rtl
+}
+
+state pass {
+  gains yaw kp 1.4 kd 0.2
+  pass over crate above 4 m speed 3 m/s beyond 6 m else { -> cruise }
+  say "passed over it"
+  land
+}

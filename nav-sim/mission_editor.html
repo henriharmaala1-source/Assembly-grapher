@@ -1,0 +1,1170 @@
+<title>Kestrel Mission Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a ground-station bench. Palette of steps on the left, the state
+   machine in the middle (graph above, state cards below), the generated
+   .kms on the right. Stacks to one column on a phone. */
+:root {
+  --bg: #eef2f4;          /* bench: grey with a steel-blue bias */
+  --panel: #ffffff;
+  --ink: #17222b;
+  --muted: #5d6b76;
+  --line: #d3dce2;
+  --accent: #2869e6;      /* the planner ribbon's blue, as in the voxel view */
+  --trigger: #c97a0a;     /* amber: a trigger, the thing that switches state */
+  --danger: #c2392f;
+  --ok: #2c8a52;
+  --code-bg: #f6f8f9;
+  --chip: #e6ecf0;
+  --sky: #dfe8ee; --ground: #c9d3c4; --grid: rgba(23, 34, 43, .18);
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
+    --accent: #6c9cff; --trigger: #f0a43a; --danger: #ff7a70; --ok: #5fcf8c;
+    --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+    --sky: #1b2730; --ground: #26302a; --grid: rgba(227, 234, 238, .14);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1519; --panel: #172026; --ink: #e3eaee; --muted: #93a2ad; --line: #2a363e;
+  --accent: #6c9cff; --trigger: #f0a43a; --danger: #ff7a70; --ok: #5fcf8c;
+  --code-bg: #121a1f; --chip: #22303a; color-scheme: dark;
+  --sky: #1b2730; --ground: #26302a; --grid: rgba(227, 234, 238, .14);
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--body); font-size: 14px; line-height: 1.45; padding-inline: 16px; padding-block: 14px 28px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: .01em; margin: 0; text-wrap: balance; }
+h1 { font-size: 26px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+button, select, input { font: inherit; color: var(--ink); }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; }
+header.top .meta { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.field input, .field select { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+.field input.num { width: 76px; font-variant-numeric: tabular-nums; }
+.sub { color: var(--muted); max-width: 70ch; }
+
+.bench { display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(0, 380px); gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .bench { grid-template-columns: 180px minmax(0, 1fr); } .out { grid-column: 1 / -1; } }
+@media (max-width: 720px) {
+  .bench { grid-template-columns: minmax(0, 1fr); }
+  .palette { position: static; }
+  .palette .group { flex-direction: row; flex-wrap: wrap; }
+  .palette .group h2 { flex-basis: 100%; }
+  .pal small { display: none; }
+}
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+
+/* palette */
+.palette { display: flex; flex-direction: column; gap: 12px; position: sticky; top: env(safe-area-inset-top, 0px); }
+.palette .group { display: flex; flex-direction: column; gap: 5px; }
+.pal { display: flex; justify-content: space-between; align-items: center; gap: 6px; text-align: left; background: var(--chip); border: 1px solid transparent; border-radius: 6px; padding: 5px 9px; }
+.pal:hover { border-color: var(--accent); }
+.pal small { color: var(--muted); font-size: 11px; }
+.hint { font-size: 12px; color: var(--muted); }
+
+/* graph */
+.graph-wrap { overflow-x: auto; }
+svg.graph { display: block; width: 100%; min-width: 420px; height: auto; }
+svg.graph text { font-family: var(--body); fill: var(--ink); }
+svg.graph .node { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+svg.graph .node.sel { stroke: var(--accent); stroke-width: 2.5; }
+svg.graph .node.start { stroke: var(--ok); }
+svg.graph .tr { stroke: var(--trigger); fill: none; stroke-width: 1.8; }
+svg.graph .go { stroke: var(--accent); fill: none; stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg.graph .lbl { font-size: 11px; fill: var(--trigger); }
+svg.graph .end { font-size: 10px; fill: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.legend i { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--trigger); vertical-align: middle; margin-right: 5px; }
+.legend i.go { border-top: 2px dashed var(--accent); }
+
+/* states */
+.middle { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.states { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.state { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.state.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.state .head { display: flex; gap: 6px; align-items: center; }
+.state .head input { font-family: var(--display); font-size: 19px; font-weight: 600; border: 1px solid transparent; background: transparent; border-radius: 5px; padding: 1px 4px; flex: 1; min-width: 0; }
+.state .head input:hover, .state .head input:focus { border-color: var(--line); }
+.badge { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; padding: 2px 6px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+.badge.start { color: var(--ok); }
+.sect { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.trig, .step { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; border-radius: 6px; padding: 5px 6px; }
+.trig { background: color-mix(in srgb, var(--trigger) 10%, var(--panel)); border-left: 3px solid var(--trigger); }
+.step { background: var(--chip); }
+.step.dragging { opacity: .45; }
+.steps { display: flex; flex-direction: column; gap: 4px; min-height: 30px; border-radius: 6px; }
+.steps.over { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.kw { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.kw.t { color: var(--trigger); }
+.kw.s { color: var(--accent); }
+.trig select, .trig input, .step select, .step input { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; min-width: 0; }
+.trig input.num, .step input.num { width: 58px; font-variant-numeric: tabular-nums; }
+.trig input.txt, .step input.txt { width: 92px; }
+.unit { font-size: 12px; color: var(--muted); }
+.tools { margin-left: auto; display: flex; gap: 2px; }
+.icon { border: 0; background: transparent; color: var(--muted); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.icon:hover { background: var(--panel); color: var(--ink); }
+.icon.del:hover { color: var(--danger); }
+.add { border: 1px dashed var(--line); background: transparent; color: var(--muted); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+.add:hover { color: var(--accent); border-color: var(--accent); }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 5px 11px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* the first-person pane */
+.fpv-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 10px; align-items: start; }
+@media (max-width: 720px) { .fpv-wrap { grid-template-columns: minmax(0, 1fr); } }
+canvas.fpv { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 8px; border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
+canvas.side { width: 100%; aspect-ratio: 2 / 1; display: block; border-radius: 8px; border: 1px solid var(--line); margin-top: 8px; }
+canvas.top { width: 100%; aspect-ratio: 1; display: block; border-radius: 8px; border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
+.pts { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.pt { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 13px; }
+.pt b { font-family: var(--mono); font-size: 12px; min-width: 18px; color: var(--accent); }
+#fpvPanel input.num { width: 64px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.pt input { width: 58px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; }
+
+/* places + safety */
+.side2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.place { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.place:last-child { border-bottom: 0; }
+.place input, .place select, .safety input, .safety select { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font-size: 13px; min-width: 0; }
+.place input.num, .safety input.num { width: 58px; }
+.place input.name { width: 90px; font-family: var(--mono); font-size: 12px; }
+
+/* output */
+.out { display: flex; flex-direction: column; gap: 10px; position: sticky; top: env(safe-area-inset-top, 0px); }
+pre.code { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.55; overflow: auto; max-height: 58vh; white-space: pre; }
+pre.code .c { color: var(--muted); }
+pre.code .k { color: var(--accent); font-weight: 600; }
+pre.code .t { color: var(--trigger); font-weight: 600; }
+.problems { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.problems .p { color: var(--danger); }
+.problems .okmsg { color: var(--ok); }
+.cmd { font-family: var(--mono); font-size: 12px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; overflow-x: auto; white-space: nowrap; }
+textarea#importBox { width: 100%; min-height: 90px; font-family: var(--mono); font-size: 12px; background: var(--code-bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+.toast { font-size: 12px; color: var(--ok); min-height: 1em; }
+@media (prefers-reduced-motion: no-preference) { .state, .step, .trig { transition: border-color .15s, box-shadow .15s; } }
+</style>
+
+<header class="top">
+  <div>
+    <h1>Kestrel Mission Editor</h1>
+    <p class="sub">Build the aircraft's behaviour as states. A <b style="color:var(--trigger)">trigger</b> switches state the moment it holds, for example when the detector sees a door. The <b style="color:var(--accent)">steps</b> are what the state does, in order. Copy the text and compile it on your computer; the aircraft only ever gets the compiled file.</p>
+  </div>
+  <div class="meta">
+    <div class="field"><label for="tpl">Start from</label>
+      <select id="tpl">
+        <option value="door">Door: detect, track, approach</option>
+        <option value="person">Person: find, fly over, circle</option>
+        <option value="square">Square patrol</option>
+        <option value="blank">Blank</option>
+      </select></div>
+    <div class="field"><label for="mName">Mission name</label><input id="mName" type="text"></div>
+    <div class="field"><label for="mFence">Fence (m)</label><input id="mFence" class="num" type="number" min="2" max="2000" step="1"></div>
+    <div class="field"><label for="mTimeout">Time limit (min)</label><input id="mTimeout" class="num" type="number" min="1" max="60" step="0.5"></div>
+  </div>
+</header>
+
+<div class="bench">
+  <aside class="panel palette" aria-label="Steps">
+    <div class="hint">Click a step to add it to the selected state, or drag it onto any state.</div>
+    <div class="group" id="palMove"><h2>Move</h2></div>
+    <div class="group" id="palSee"><h2>See and track</h2></div>
+    <div class="group" id="palLock"><h2>Around the lock</h2></div>
+    <div class="group" id="palPlace"><h2>Places</h2></div>
+    <div class="group" id="palFlow"><h2>Flow</h2></div>
+  </aside>
+
+  <main class="middle">
+    <section class="panel">
+      <div class="row" style="justify-content:space-between"><h2>State machine</h2><button class="add" id="addState">+ state</button></div>
+      <div class="graph-wrap"><svg class="graph" id="graph" viewBox="0 0 640 300" role="img" aria-label="States and the triggers between them"></svg></div>
+      <div class="legend"><span><i></i>trigger: switches as soon as it holds</span><span><i class="go"></i>step: go to another state</span></div>
+    </section>
+    <section class="panel" id="fpvPanel">
+      <div class="row" style="justify-content:space-between"><h2>In view: movement around the lock</h2><span class="hint" id="fpvWhat"></span></div>
+      <div id="fpvBody"></div>
+    </section>
+    <section class="states" id="states"></section>
+    <section class="side2">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between"><h2>Places</h2><button class="add" id="addPlace">+ place</button></div>
+        <div id="places"></div>
+        <p class="hint">"Marked in flight" starts at the takeoff point; a <b>Mark</b> step sets it again, for example to where a person was seen. Ahead and right are measured from the heading at GO, which suits indoors.</p>
+      </div>
+      <div class="panel">
+        <div class="row" style="justify-content:space-between"><h2>Object sizes</h2><button class="add" id="addSize">+ size</button></div>
+        <div id="sizes"></div>
+        <p class="hint">How tall each object is. With no depth camera the range comes from its size in the picture, and the tracker carries it between detections as the box grows.</p>
+      </div>
+      <div class="panel safety">
+        <h2>Always on</h2>
+        <div class="row" style="margin-top:8px">
+          <label for="battOn"><input id="battOn" type="checkbox"> When battery is below</label>
+          <input id="battPct" class="num" type="number" min="5" max="90" step="1"><span class="unit">%</span>
+          <select id="battAct" aria-label="Battery action"><option value="rtl">return to launch</option><option value="land">land</option></select>
+        </div>
+        <p class="hint">On top of this, the aircraft's own failsafe and the operator's abort still return it home. The fence and the time limit stop the mission and hover.</p>
+      </div>
+    </section>
+  </main>
+
+  <aside class="out">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between"><h2>mission.kms</h2>
+        <div class="row"><button class="btn primary" id="copy">Copy</button><button class="btn" id="save" hidden>Save .kms</button></div></div>
+      <div class="toast" id="toast" aria-live="polite"></div>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="panel">
+      <h2>Checks</h2>
+      <div class="problems" id="problems" style="margin-top:6px"></div>
+      <p class="hint" style="margin-top:8px">These are quick checks in the page. The full check is the compiler's:</p>
+      <div class="cmd" id="cmd">kestrel mission check door.kms</div>
+    </div>
+    <details class="panel">
+      <summary><b>Open a mission saved from here</b></summary>
+      <p class="hint">Paste a .kms this editor wrote. Its last line carries the editor's layout.</p>
+      <textarea id="importBox" aria-label="Paste a .kms file"></textarea>
+      <div class="row"><button class="btn" id="importBtn">Open</button><span class="toast" id="importMsg"></span></div>
+    </details>
+  </aside>
+</div>
+
+<script>
+"use strict";
+// ======================================================================
+// THE MODEL AND THE TEXT IT BECOMES. Pure functions: no DOM, so they can be
+// checked on their own (nav-sim/test/mission_editor_check.js compiles every
+// template's output with the real compiler).
+// ======================================================================
+const STEP_TYPES = {
+  move:     { group: "Move", label: "Move", hint: "certified legs", make: () => ({ dir: "forward", m: 2 }) },
+  yaw:      { group: "Move", label: "Yaw", hint: "turn on the spot", make: () => ({ dir: "right", deg: 45 }) },
+  height:   { group: "Move", label: "Height", hint: "to / up / down", make: () => ({ how: "to", m: 3 }) },
+  hold:     { group: "Move", label: "Hold", hint: "hover", make: () => ({ s: 2 }) },
+  explore:  { group: "Move", label: "Explore", hint: "safe travel", make: () => ({ s: 30 }) },
+  nav:      { group: "Move", label: "Navigation", hint: "checked / direct", make: () => ({ mode: "direct" }) },
+  search:   { group: "See", label: "Search", hint: "spin until seen", make: () => ({ label: "person", s: 30, dir: "right", isNew: false, fail: "" }) },
+  track:    { group: "See", label: "Track", hint: "hand to tracker", make: () => ({ label: "door", s: 5, fail: "" }) },
+  face:     { group: "See", label: "Face", hint: "turn onto it", make: () => ({ label: "door", s: 15, fail: "" }) },
+  approach: { group: "See", label: "Approach", hint: "to a range", make: () => ({ label: "door", by: "range", m: 2, fill: 0.5, s: 60, fail: "" }) },
+  untrack:  { group: "See", label: "Release tracker", hint: "", make: () => ({}) },
+  path:     { group: "Lock", label: "Path around it", hint: "points, in view", make: () => ({ label: "door", facing: true, radius: 0.75, pts: [{ a: -3, r: -2, hold: 0 }, { a: -2, r: 2, hold: 2 }], fail: "" }) },
+  steer:    { group: "Lock", label: "Steer on it", hint: "aim + speed", make: () => ({ label: "door", aim: 0, speed: 1, strafe: false, dive: false, until: 3, s: 30, fail: "" }) },
+  follow:   { group: "Lock", label: "Follow it", hint: "keep a distance", make: () => ({ label: "person", dist: 4, speed: 2, aim: 0, strafe: false, hmode: "none", h: 2, forS: 30, fail: "" }) },
+  mark:     { group: "Place", label: "Mark place", hint: "here / where seen", make: () => ({ place: "", from: "seen", label: "person", isNew: false, fail: "" }) },
+  goto:     { group: "Place", label: "Go to place", hint: "", make: () => ({ place: "" }) },
+  over:     { group: "Place", label: "Fly over", hint: "and hover", make: () => ({ place: "", hold: 3 }) },
+  orbit:    { group: "Place", label: "Circle", hint: "around a place", make: () => ({ place: "", r: 3, laps: 1 }) },
+  say:      { group: "Flow", label: "Say", hint: "to the log", make: () => ({ text: "hello" }) },
+  go:       { group: "Flow", label: "Go to state", hint: "", make: () => ({ state: "" }) },
+  land:     { group: "Flow", label: "Land", hint: "FC's LAND", make: () => ({}) },
+  rtl:      { group: "Flow", label: "Return home", hint: "FC's RTL", make: () => ({}) },
+};
+const TERMINAL = new Set(["go", "land", "rtl"]);
+const COND_TYPES = {
+  seen:        { text: "sees", arg: "label" },
+  notseen:     { text: "does not see", arg: "label" },
+  tracking:    { text: "is tracking", arg: "label" },
+  range:       { text: "is closer than", arg: "range" },
+  nottracking: { text: "loses track of", arg: "label" },
+  battery:     { text: "battery below", arg: "num", unit: "%" },
+  time:        { text: "mission time over", arg: "num", unit: "s" },
+  near:        { text: "is within", arg: "place" },
+};
+
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const RESERVED = new Set(["start", "here", "seen", "enu", "fwd", "gps", "state", "when", "go", "let", "set",
+  "and", "or", "not", "if", "else", "on", "repeat", "while", "true", "mission", "fence", "timeout"]);
+const num = (v, d) => { const x = Number(v); return Number.isFinite(x) ? x : d; };
+const fmt = (x) => String(Math.round(x * 100) / 100);
+const lab = (s) => IDENT.test(s) ? s : JSON.stringify(String(s).replace(/"/g, "'"));
+
+function condText(c) {
+  switch (c.kind) {
+    case "seen": return "seen " + lab(c.label);
+    case "notseen": return "not seen " + lab(c.label);
+    case "tracking": return "tracking " + lab(c.label);
+    case "nottracking": return "not tracking " + lab(c.label);
+    case "battery": return "battery < " + fmt(num(c.value, 25)) + "%";
+    case "time": return "time > " + fmt(num(c.value, 60)) + " s";
+    case "near": return "distance to " + c.place + " < " + fmt(num(c.value, 2)) + " m";
+    case "range": return "range to " + lab(c.label) + " < " + fmt(num(c.value, 3)) + " m";
+  }
+  return "true";
+}
+
+function elseText(fail) { return fail ? " else { -> " + fail + " }" : ""; }
+
+function stepText(s) {
+  switch (s.type) {
+    case "move": return "move " + s.dir + " " + fmt(num(s.m, 1)) + " m";
+    case "yaw": return "yaw " + s.dir + " " + fmt(num(s.deg, 45));
+    case "height": return s.how === "up" ? "up " + fmt(num(s.m, 1)) + " m"
+                        : s.how === "down" ? "down " + fmt(num(s.m, 1)) + " m"
+                        : "altitude " + fmt(num(s.m, 3)) + " m";
+    case "hold": return "hold " + fmt(num(s.s, 2)) + " s";
+    case "explore": return "explore " + fmt(num(s.s, 30)) + " s";
+    case "nav": return "nav " + (s.mode === "certified" ? "certified" : "direct");
+    case "path": {
+      // Points AHEAD/RIGHT of the tracked object along the line of sight when
+      // the path starts; the object is re-measured all the way.
+      const L = ["path " + lab(s.label) + (s.facing ? " facing" : "") + " radius " + fmt(num(s.radius, 0.75)) + " m {"];
+      for (const p of s.pts || []) {
+        L.push("    to ahead " + fmt(num(p.a, 0)) + " m right " + fmt(num(p.r, 0)) + " m" +
+               (p.h !== "" && p.h != null && Number.isFinite(Number(p.h)) ? " above " + fmt(Number(p.h)) + " m" : ""));
+        if (num(p.hold, 0) > 0) L.push("    hold " + fmt(num(p.hold, 0)) + " s");
+      }
+      L.push("  }" + elseText(s.fail));
+      return L.join("\n");
+    }
+    case "steer": {
+      const a = num(s.aim, 0);
+      return "steer " + lab(s.label) + " aim " + (a < 0 ? "left " + fmt(-a) : a > 0 ? "right " + fmt(a) : "centre") +
+        " speed " + fmt(num(s.speed, 1)) + " m/s" + (s.strafe ? " strafe" : "") + (s.dive ? " dive" : "") +
+        (num(s.until, 0) > 0 ? " until range to " + lab(s.label) + " < " + fmt(num(s.until, 3)) + " m" : "") +
+        " timeout " + fmt(num(s.s, 30)) + " s" + elseText(s.fail);
+    }
+    case "follow": {
+      const a = num(s.aim, 0);
+      return "follow " + lab(s.label) + " at " + fmt(num(s.dist, 4)) + " m max " + fmt(num(s.speed, 2)) + " m/s" +
+        (a ? " aim " + (a < 0 ? "left " + fmt(-a) : "right " + fmt(a)) : "") + (s.strafe ? " strafe" : "") +
+        (s.hmode === "above" ? " above " + fmt(num(s.h, 2)) + " m" : s.hmode === "height" ? " height " + fmt(num(s.h, 3)) + " m" : "") +
+        " for " + fmt(num(s.forS, 30)) + " s" + elseText(s.fail);
+    }
+    case "search": return "search " + (s.isNew ? "new " : "") + lab(s.label) + " timeout " + fmt(num(s.s, 30)) + " s " + s.dir + elseText(s.fail);
+    case "track": return "track " + lab(s.label) + " timeout " + fmt(num(s.s, 5)) + " s" + elseText(s.fail);
+    case "face": return "face " + lab(s.label) + " timeout " + fmt(num(s.s, 15)) + " s" + elseText(s.fail);
+    case "approach": return "approach " + lab(s.label) +
+      (s.by === "fill" ? " fill " + fmt(num(s.fill, 0.5)) : " to " + fmt(num(s.m, 2)) + " m") +
+      " timeout " + fmt(num(s.s, 60)) + " s" + elseText(s.fail);
+    case "untrack": return "untrack";
+    case "mark": return "set " + s.place + " = " + (s.from === "here" ? "here" : "seen " + (s.isNew ? "new " : "") + lab(s.label) + elseText(s.fail));
+    case "goto": return "goto " + s.place;
+    case "over": return "over " + s.place + " hold " + fmt(num(s.hold, 3)) + " s";
+    case "orbit": return "orbit " + s.place + " radius " + fmt(num(s.r, 3)) + " m laps " + fmt(num(s.laps, 1));
+    case "say": return "say " + JSON.stringify(String(s.text || "").replace(/"/g, "'"));
+    case "go": return "-> " + s.state;
+    case "land": return "land";
+    case "rtl": return "rtl";
+  }
+  return "# ?";
+}
+
+function placeText(p) {
+  if (p.kind === "here") return "let " + p.name + " = here";
+  if (p.kind === "enu") return "let " + p.name + " = enu(" + fmt(num(p.a, 0)) + ", " + fmt(num(p.b, 0)) + ")";
+  return "let " + p.name + " = fwd(" + fmt(num(p.a, 0)) + ", " + fmt(num(p.b, 0)) + ")";
+}
+
+function b64(s) {
+  if (typeof btoa === "function") return btoa(unescape(encodeURIComponent(s)));
+  return Buffer.from(s, "utf8").toString("base64");
+}
+function unb64(s) {
+  if (typeof atob === "function") return decodeURIComponent(escape(atob(s)));
+  return Buffer.from(s, "base64").toString("utf8");
+}
+
+function generate(m) {
+  const L = [];
+  L.push("# Written by the Kestrel mission editor. Check and compile on your computer:");
+  L.push("#   kestrel mission check FILE.kms   then   kestrel mission compile FILE.kms");
+  L.push('mission ' + JSON.stringify(String(m.name || "mission").replace(/"/g, "'")));
+  L.push("fence " + fmt(num(m.fence, 40)) + " m");
+  L.push("timeout " + fmt(num(m.timeoutMin, 8)) + " min");
+  L.push("");
+  if (m.battery && m.battery.on) {
+    L.push("on battery < " + fmt(num(m.battery.pct, 25)) + "% { " + (m.battery.act === "land" ? "land" : "rtl") + " }");
+    L.push("");
+  }
+  for (const z of (m.sizes || [])) L.push("size " + lab(z.label) + " " + fmt(num(z.m, 1)) + " m");
+  if ((m.sizes || []).length) L.push("");
+  for (const p of m.places) L.push(placeText(p));
+  if (m.places.length) L.push("");
+  for (const st of m.states) {
+    L.push("state " + st.name + " {");
+    for (const t of st.triggers) L.push("  when " + condText(t) + " -> " + t.to);
+    for (const s of st.steps) L.push("  " + stepText(s));
+    L.push("}");
+    L.push("");
+  }
+  L.push("# kestrel-editor: " + b64(JSON.stringify(m)));
+  return L.join("\n") + "\n";
+}
+
+// Quick checks, phrased for a person. The compiler is the real authority.
+function problems(m) {
+  const out = [];
+  const states = new Set(), places = new Set();
+  if (!m.states.length) out.push("Add at least one state.");
+  for (const st of m.states) {
+    if (!IDENT.test(st.name) || RESERVED.has(st.name)) out.push('State name "' + st.name + '" must be one word of letters, digits or _, and not a keyword.');
+    else if (states.has(st.name)) out.push('Two states are called "' + st.name + '".');
+    states.add(st.name);
+  }
+  for (const p of m.places) {
+    if (!IDENT.test(p.name) || RESERVED.has(p.name)) out.push('Place name "' + p.name + '" must be one word of letters, digits or _, and not a keyword.');
+    else if (places.has(p.name)) out.push('Two places are called "' + p.name + '".');
+    places.add(p.name);
+    if (p.kind !== "here" && Math.hypot(num(p.a, 0), num(p.b, 0)) > num(m.fence, 40))
+      out.push('Place "' + p.name + '" is outside the ' + fmt(num(m.fence, 40)) + " m fence.");
+  }
+  for (const z of (m.sizes || []))
+    if (!String(z.label || "").trim() || !(num(z.m, 0) > 0)) out.push("Each object size needs a name and a height above 0.");
+  for (const st of m.states) {
+    for (const t of st.triggers) {
+      if (!states.has(t.to)) out.push('In "' + st.name + '": a trigger goes to a state that does not exist.');
+      if (t.to === st.name) out.push('In "' + st.name + '": a trigger points at its own state, so it never fires.');
+      if (t.kind === "near" && !places.has(t.place)) out.push('In "' + st.name + '": a trigger uses a place that does not exist.');
+      if ((COND_TYPES[t.kind].arg === "label" || COND_TYPES[t.kind].arg === "range") && !String(t.label || "").trim()) out.push('In "' + st.name + '": a trigger needs an object name.');
+    }
+    st.steps.forEach((s, i) => {
+      const where = 'In "' + st.name + '", step ' + (i + 1) + " (" + STEP_TYPES[s.type].label + ")";
+      if ("place" in s && !places.has(s.place)) out.push(where + ": choose a place.");
+      if (s.type === "mark" && places.has(s.place) && (m.places.find(p => p.name === s.place) || {}).kind !== "here")
+        out.push(where + ': only places "marked in flight" can be marked again.');
+      if (s.type === "go" && !states.has(s.state)) out.push(where + ": choose a state.");
+      if (s.type === "path" && !(s.pts || []).length) out.push(where + ": click points in the view.");
+      if (s.type === "follow" && !(num(s.dist, 0) > 0)) out.push(where + ": give it a distance to keep.");
+      if (s.type === "steer" && !(num(s.until, 0) > 0)) out.push(where + ": with no stopping range it flies until its timeout and then FAILS -- give it a range.");
+      if (s.fail && !states.has(s.fail)) out.push(where + ": the failure branch goes to a state that does not exist.");
+      if ("label" in s && !String(s.label || "").trim()) out.push(where + ": name the object.");
+      if (TERMINAL.has(s.type) && i < st.steps.length - 1) out.push(where + ": nothing after it will run.");
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- templates
+function tplDoor() {
+  return {
+    name: "door", fence: 25, timeoutMin: 6, battery: { on: true, pct: 25, act: "rtl" }, places: [],
+    sizes: [{ label: "door", m: 2.0 }],
+    states: [
+      { name: "patrol", triggers: [{ kind: "seen", label: "door", to: "acquire" }],
+        steps: [{ type: "yaw", dir: "right", deg: 45 }, { type: "hold", s: 2 }, { type: "go", state: "patrol" }] },
+      { name: "acquire", triggers: [],
+        steps: [{ type: "track", label: "door", s: 5, fail: "patrol" }, { type: "go", state: "go_through" }] },
+      { name: "go_through", triggers: [{ kind: "nottracking", label: "door", to: "patrol" }],
+        steps: [{ type: "approach", label: "door", by: "range", m: 2, fill: 0.5, s: 60, fail: "" }, { type: "go", state: "step_aside" }] },
+      { name: "step_aside", triggers: [],
+        steps: [{ type: "path", label: "door", facing: true, radius: 0.75,
+                  pts: [{ a: -1.5, r: -1.5, hold: 0 }, { a: -1.5, r: 1.5, hold: 2 }], fail: "" },
+                { type: "untrack" }, { type: "land" }] },
+    ],
+  };
+}
+function tplPerson() {
+  return {
+    name: "fly over the person", fence: 40, timeoutMin: 8, battery: { on: true, pct: 25, act: "rtl" },
+    sizes: [{ label: "person", m: 1.7 }],
+    places: [{ name: "home", kind: "here", a: 0, b: 0 }, { name: "spot", kind: "here", a: 0, b: 0 }],
+    states: [
+      { name: "find", triggers: [],
+        steps: [{ type: "search", label: "person", s: 40, dir: "right", fail: "nobody" },
+                { type: "mark", place: "spot", from: "seen", label: "person", fail: "find" },
+                { type: "go", state: "visit" }] },
+      { name: "visit", triggers: [],
+        steps: [{ type: "over", place: "spot", hold: 5 }, { type: "orbit", place: "spot", r: 3, laps: 1 },
+                { type: "goto", place: "home" }, { type: "land" }] },
+      { name: "nobody", triggers: [],
+        steps: [{ type: "say", text: "nobody found" }, { type: "goto", place: "home" }, { type: "land" }] },
+    ],
+  };
+}
+function tplSquare() {
+  return {
+    name: "square patrol", fence: 20, timeoutMin: 5, battery: { on: true, pct: 25, act: "rtl" }, places: [],
+    states: [
+      { name: "leg", triggers: [{ kind: "time", value: 120, to: "home" }],
+        steps: [{ type: "move", dir: "forward", m: 4 }, { type: "yaw", dir: "right", deg: 90 }, { type: "go", state: "leg" }] },
+      { name: "home", triggers: [], steps: [{ type: "rtl" }] },
+    ],
+  };
+}
+function tplBlank() {
+  return { name: "my mission", fence: 30, timeoutMin: 5, battery: { on: true, pct: 25, act: "rtl" }, places: [],
+           states: [{ name: "begin", triggers: [], steps: [{ type: "hold", s: 2 }, { type: "land" }] }] };
+}
+const TEMPLATES = { door: tplDoor, person: tplPerson, square: tplSquare, blank: tplBlank };
+
+if (typeof module !== "undefined") module.exports = { generate, problems, TEMPLATES };
+
+// ======================================================================
+// THE PAGE
+// ======================================================================
+if (typeof document !== "undefined") (function () {
+  const $ = (id) => document.getElementById(id);
+  let model = null, sel = 0, dragStep = null, dragPal = null;
+  // The step the first-person pane is editing, and the preview's own
+  // settings (how far the object is, how high the camera, how tilted).
+  let fpvSel = null;
+  const view = { D: 8, h: 1.5, tilt: 10, hfov: 87 };
+
+  function store() { try { localStorage.setItem("kestrel-mission-draft", JSON.stringify(model)); } catch (e) {} }
+  function restore() {
+    try { const s = localStorage.getItem("kestrel-mission-draft"); if (s) return JSON.parse(s); } catch (e) {}
+    return null;
+  }
+  const slug = () => (String(model.name || "mission").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "mission");
+
+  function el(tag, attrs, ...kids) {
+    const e = document.createElement(tag);
+    for (const k in attrs || {}) {
+      if (k === "class") e.className = attrs[k];
+      else if (k.startsWith("on")) e.addEventListener(k.slice(2), attrs[k]);
+      else if (k === "value") e.value = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    }
+    for (const c of kids) if (c != null) e.append(c);
+    return e;
+  }
+  function select(options, value, onchange, aria) {
+    const s = el("select", { "aria-label": aria || "choice", onchange: (e) => onchange(e.target.value) });
+    for (const [v, t] of options) s.append(el("option", { value: v }, t));
+    s.value = value;
+    return s;
+  }
+  function numIn(value, onchange, aria, step) {
+    return el("input", { class: "num", type: "number", step: step || "any", value: value, "aria-label": aria,
+                         oninput: (e) => onchange(e.target.value) });
+  }
+  function txtIn(value, onchange, aria) {
+    return el("input", { class: "txt", type: "text", value: value, "aria-label": aria,
+                         oninput: (e) => onchange(e.target.value) });
+  }
+  const unit = (u) => el("span", { class: "unit" }, u);
+  // "new only": skip objects already visited (the next one in a chain).
+  function newBox(s) {
+    const cb = el("input", { type: "checkbox", "aria-label": "new only", onchange: (e) => { s.isNew = e.target.checked; changed(false); } });
+    cb.checked = !!s.isNew;
+    return el("label", { class: "unit" }, cb, " new only");
+  }
+  const stateOpts = (blank) => (blank ? [["", blank]] : []).concat(model.states.map(s => [s.name, s.name]));
+  const placeOpts = () => [["", "choose a place"]].concat(model.places.map(p => [p.name, p.name]));
+
+  // Only re-render what depends on text, so typing does not lose focus.
+  function changed(full) {
+    if (full) render(); else { renderGraph(); renderOut(); }
+    store();
+  }
+
+  // ---------------------------------------------------------------- palette
+  function renderPalette() {
+    const groups = { Move: $("palMove"), See: $("palSee"), Lock: $("palLock"), Place: $("palPlace"), Flow: $("palFlow") };
+    for (const [type, def] of Object.entries(STEP_TYPES)) {
+      const b = el("button", { class: "pal", draggable: "true", title: "Add to the selected state",
+        onclick: () => addStep(sel, type),
+        ondragstart: (e) => { dragPal = type; e.dataTransfer.setData("text/plain", type); e.dataTransfer.effectAllowed = "copy"; },
+        ondragend: () => { dragPal = null; } }, def.label, def.hint ? el("small", {}, def.hint) : null);
+      groups[def.group].append(b);
+    }
+  }
+  function addStep(si, type, at) {
+    const st = model.states[si];
+    if (!st) return;
+    const s = Object.assign({ type }, STEP_TYPES[type].make());
+    if ("place" in s && model.places.length) s.place = model.places[0].name;
+    if (type === "mark") { const p = model.places.find(p => p.kind === "here"); if (p) s.place = p.name; }
+    if (type === "go") s.state = (model.states[si + 1] || model.states[0]).name;
+    // A new step goes before a final go/land/rtl, which must stay last.
+    let i = at != null ? at : st.steps.length;
+    if (at == null && st.steps.length && TERMINAL.has(st.steps[st.steps.length - 1].type) && !TERMINAL.has(type)) i = st.steps.length - 1;
+    st.steps.splice(i, 0, s);
+    if (type === "path" || type === "steer" || type === "follow") fpvSel = s;
+    changed(true);
+  }
+
+  // ----------------------------------------------------------- state cards
+  function renameState(old, name) {
+    for (const st of model.states) {
+      for (const t of st.triggers) if (t.to === old) t.to = name;
+      for (const s of st.steps) { if (s.state === old) s.state = name; if (s.fail === old) s.fail = name; }
+    }
+  }
+  function renderStep(si, st, s, i) {
+    const set = (k, full) => (v) => { s[k] = v; changed(full); };
+    const parts = [el("span", { class: "kw s" }, STEP_TYPES[s.type].label)];
+    const failSel = () => [el("span", { class: "unit" }, "if it fails"),
+      select([["", "stop and hover"]].concat(model.states.map(x => [x.name, "go to " + x.name])), s.fail || "", set("fail", false), "If it fails")];
+    switch (s.type) {
+      case "move": parts.push(select([["forward", "forward"], ["back", "back"], ["left", "left"], ["right", "right"]], s.dir, set("dir")), numIn(s.m, set("m"), "metres", "0.5"), unit("m")); break;
+      case "yaw": parts.push(select([["left", "left"], ["right", "right"]], s.dir, set("dir")), numIn(s.deg, set("deg"), "degrees", "5"), unit("deg")); break;
+      case "height": parts.push(select([["to", "to"], ["up", "up"], ["down", "down"]], s.how, set("how", true), "height change"),
+          numIn(s.m, set("m"), "metres", "0.5"), unit(s.how === "to" ? "m above the ground" : "m")); break;
+      case "hold": case "explore": parts.push(numIn(s.s, set("s"), "seconds", "1"), unit("s")); break;
+      case "nav": parts.push(select([["direct", "direct: straight at it, unchecked"], ["certified", "certified: every leg checked"]], s.mode, set("mode", true), "navigation")); break;
+      case "path": case "steer": case "follow":
+        parts.push(txtIn(s.label, set("label"), "tracked object"),
+          el("span", { class: "unit" }, s.type === "path" ? (s.pts || []).length + " points" :
+             s.type === "follow" ? "at " + fmt(num(s.dist, 4)) + " m for " + fmt(num(s.forS, 30)) + " s" :
+             "aim " + fmt(num(s.aim, 0)) + " widths, " + fmt(num(s.speed, 1)) + " m/s"),
+          el("button", { class: "add", onclick: () => { fpvSel = s; renderFpv(); $("fpvPanel").scrollIntoView({ block: "nearest" }); } },
+             fpvSel === s ? "editing in view" : "Edit in view"),
+          ...failSel());
+        break;
+      case "search": parts.push(newBox(s), txtIn(s.label, set("label"), "object"), select([["right", "turning right"], ["left", "turning left"]], s.dir, set("dir")), unit("for"), numIn(s.s, set("s"), "seconds", "1"), unit("s"), ...failSel()); break;
+      case "track": case "face": parts.push(txtIn(s.label, set("label"), "object"), unit("within"), numIn(s.s, set("s"), "seconds", "1"), unit("s"), ...failSel()); break;
+      case "approach": parts.push(txtIn(s.label, set("label"), "object"),
+          select([["range", "until it is"], ["fill", "until it fills"]], s.by || "range", set("by", true), "stop when"));
+        if ((s.by || "range") === "range") parts.push(numIn(s.m, set("m"), "metres", "0.5"), unit("m away"));
+        else parts.push(numIn(s.fill, set("fill"), "fill", "0.05"), unit("of the frame"));
+        parts.push(...failSel()); break;
+      case "mark": parts.push(select(placeOpts(), s.place, set("place", true), "place"), unit("="), select([["seen", "where it sees"], ["here", "where it is now"]], s.from, set("from", true), "from"));
+        if (s.from === "seen") parts.push(newBox(s), txtIn(s.label, set("label"), "object"), ...failSel()); break;
+      case "goto": parts.push(select(placeOpts(), s.place, set("place"), "place")); break;
+      case "over": parts.push(select(placeOpts(), s.place, set("place"), "place"), unit("hover"), numIn(s.hold, set("hold"), "seconds", "1"), unit("s")); break;
+      case "orbit": parts.push(select(placeOpts(), s.place, set("place"), "place"), unit("radius"), numIn(s.r, set("r"), "radius", "0.5"), unit("m"), numIn(s.laps, set("laps"), "laps", "0.25"), unit("laps")); break;
+      case "say": parts.push(el("input", { class: "txt", type: "text", value: s.text, "aria-label": "message", style: "width:160px", oninput: (e) => { s.text = e.target.value; changed(false); } })); break;
+      case "go": parts.push(select(stateOpts("choose"), s.state, set("state", true), "state")); break;
+    }
+    parts.push(el("span", { class: "tools" },
+      el("button", { class: "icon", title: "Move up", "aria-label": "Move step up", onclick: () => { if (i > 0) { st.steps.splice(i - 1, 0, st.steps.splice(i, 1)[0]); changed(true); } } }, "↑"),
+      el("button", { class: "icon", title: "Move down", "aria-label": "Move step down", onclick: () => { if (i < st.steps.length - 1) { st.steps.splice(i + 1, 0, st.steps.splice(i, 1)[0]); changed(true); } } }, "↓"),
+      el("button", { class: "icon del", title: "Remove", "aria-label": "Remove step", onclick: () => { st.steps.splice(i, 1); changed(true); } }, "✕")));
+    const row = el("div", { class: "step", draggable: "true",
+      ondragstart: (e) => { dragStep = { si, i }; row.classList.add("dragging"); e.dataTransfer.setData("text/plain", "step"); e.dataTransfer.effectAllowed = "move"; },
+      ondragend: () => { dragStep = null; row.classList.remove("dragging"); } }, ...parts);
+    row.dataset.index = i;
+    return row;
+  }
+  function renderTrigger(st, t, i) {
+    const def = COND_TYPES[t.kind];
+    const parts = [el("span", { class: "kw t" }, "when it"),
+      select(Object.entries(COND_TYPES).map(([k, d]) => [k, d.text]), t.kind, (v) => {
+        t.kind = v; if (COND_TYPES[v].arg === "label" && !t.label) t.label = "person";
+        if (v === "battery" && t.value == null) t.value = 30; if (v === "time" && t.value == null) t.value = 60;
+        if (v === "range") { t.label = t.label || "door"; t.value = t.value || 3; }
+        if (v === "near") { t.value = t.value || 2; t.place = t.place || (model.places[0] || {}).name || ""; }
+        changed(true); }, "condition")];
+    if (def.arg === "label") parts.push(txtIn(t.label || "", (v) => { t.label = v; changed(false); }, "object"));
+    if (def.arg === "num") parts.push(numIn(t.value, (v) => { t.value = v; changed(false); }, "value", "1"), unit(def.unit));
+    if (def.arg === "range") parts.push(txtIn(t.label || "", (v) => { t.label = v; changed(false); }, "object"),
+      unit("by"), numIn(t.value, (v) => { t.value = v; changed(false); }, "metres", "0.5"), unit("m"));
+    if (def.arg === "place") parts.push(numIn(t.value, (v) => { t.value = v; changed(false); }, "metres", "0.5"), unit("m of"),
+      select(placeOpts(), t.place || "", (v) => { t.place = v; changed(false); }, "place"));
+    parts.push(el("span", { class: "kw t" }, "→"), select(stateOpts("choose"), t.to, (v) => { t.to = v; changed(true); }, "next state"),
+      el("span", { class: "tools" }, el("button", { class: "icon del", title: "Remove", "aria-label": "Remove trigger", onclick: () => { st.triggers.splice(i, 1); changed(true); } }, "✕")));
+    return el("div", { class: "trig" }, ...parts);
+  }
+  function renderStates() {
+    const box = $("states");
+    box.textContent = "";
+    model.states.forEach((st, si) => {
+      const steps = el("div", { class: "steps" });
+      st.steps.forEach((s, i) => steps.append(renderStep(si, st, s, i)));
+      steps.addEventListener("dragover", (e) => { e.preventDefault(); steps.classList.add("over"); });
+      steps.addEventListener("dragleave", () => steps.classList.remove("over"));
+      steps.addEventListener("drop", (e) => {
+        e.preventDefault(); steps.classList.remove("over");
+        const rows = [...steps.querySelectorAll(".step")];
+        let at = rows.length;
+        for (const r of rows) { const b = r.getBoundingClientRect(); if (e.clientY < b.top + b.height / 2) { at = Number(r.dataset.index); break; } }
+        if (dragPal) { sel = si; addStep(si, dragPal, at); }
+        else if (dragStep) {
+          const from = model.states[dragStep.si];
+          const [moved] = from.steps.splice(dragStep.i, 1);
+          if (dragStep.si === si && dragStep.i < at) at--;
+          st.steps.splice(at, 0, moved);
+          changed(true);
+        }
+      });
+      const card = el("article", { class: "state" + (si === sel ? " sel" : ""), onclick: (e) => { if (sel !== si && !e.target.closest("button,select,input")) { sel = si; render(); } } },
+        el("div", { class: "head" },
+          el("input", { type: "text", value: st.name, "aria-label": "State name",
+            onchange: (e) => { const v = e.target.value.trim(); renameState(st.name, v); st.name = v; changed(true); } }),
+          si === 0 ? el("span", { class: "badge start" }, "starts here") : null,
+          el("button", { class: "icon", title: "Make this the first state", "aria-label": "Make first", onclick: () => { if (si > 0) { model.states.unshift(model.states.splice(si, 1)[0]); sel = 0; changed(true); } } }, "★"),
+          el("button", { class: "icon del", title: "Delete state", "aria-label": "Delete state", onclick: () => { model.states.splice(si, 1); sel = Math.max(0, Math.min(sel, model.states.length - 1)); changed(true); } }, "✕")),
+        el("div", { class: "sect" }, "Triggers", el("button", { class: "add", onclick: () => { st.triggers.push({ kind: "seen", label: "person", to: (model.states.find(x => x !== st) || st).name }); changed(true); } }, "+ trigger")),
+        ...st.triggers.map((t, i) => renderTrigger(st, t, i)),
+        st.triggers.length ? null : el("div", { class: "hint" }, "No triggers: this state runs its steps to the end."),
+        el("div", { class: "sect" }, "Steps"),
+        steps,
+        st.steps.length ? null : el("div", { class: "hint" }, "Drag steps here, or select this state and click a step."));
+      box.append(card);
+    });
+  }
+
+  // ------------------------------------------------------------------ graph
+  function renderGraph() {
+    const svg = $("graph");
+    const W = 640, n = model.states.length, H = n > 4 ? 340 : 280;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    const NS = "http://www.w3.org/2000/svg";
+    const mk = (tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
+    svg.textContent = "";
+    const defs = mk("defs", {});
+    for (const [id, col] of [["aT", "var(--trigger)"], ["aG", "var(--accent)"]]) {
+      const m = mk("marker", { id, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" });
+      m.append(mk("path", { d: "M0,0 L10,5 L0,10 z", fill: col }));
+      defs.append(m);
+    }
+    svg.append(defs);
+    const cx = W / 2, cy = H / 2, R = n <= 1 ? 0 : Math.min(W * 0.36, H * 0.34);
+    const pos = model.states.map((s, i) => {
+      const a = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(1, n);
+      return { x: cx + R * Math.cos(a) * 1.35, y: cy + R * Math.sin(a) };
+    });
+    const idx = Object.fromEntries(model.states.map((s, i) => [s.name, i]));
+    const nodeW = 112, nodeH = 34;
+    const edge = (i, j, cls, marker, label, bend) => {
+      const a = pos[i], b = pos[j];
+      if (i === j) {
+        const p = mk("path", { d: `M${a.x + 20},${a.y - nodeH / 2} C${a.x + 60},${a.y - 70} ${a.x - 60},${a.y - 70} ${a.x - 20},${a.y - nodeH / 2}`, class: cls, "marker-end": "url(#" + marker + ")" });
+        svg.append(p);
+        if (label) { const t = mk("text", { x: a.x, y: a.y - 58, "text-anchor": "middle", class: "lbl" }); t.textContent = label; svg.append(t); }
+        return;
+      }
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      // Leave the node boxes: clip to their edges along the line.
+      const clip = (ux, uy) => Math.min((nodeW / 2) / Math.max(1e-6, Math.abs(ux)), (nodeH / 2) / Math.max(1e-6, Math.abs(uy)));
+      const ux = dx / d, uy = dy / d, ka = clip(ux, uy) + 3, kb = clip(ux, uy) + 6;
+      const sx = a.x + ux * ka, sy = a.y + uy * ka, ex = b.x - ux * kb, ey = b.y - uy * kb;
+      // Bend to a side fixed by the PAIR, not the direction, so a trigger
+      // one way and a failure branch back curve apart instead of together.
+      const side = i < j ? 1 : -1;
+      const mx = (sx + ex) / 2 - uy * bend * side, my = (sy + ey) / 2 + ux * bend * side;
+      svg.append(mk("path", { d: `M${sx},${sy} Q${mx},${my} ${ex},${ey}`, class: cls, "marker-end": "url(#" + marker + ")" }));
+      if (label) { const t = mk("text", { x: mx, y: my - 4, "text-anchor": "middle", class: "lbl" }); t.textContent = label; svg.append(t); }
+    };
+    model.states.forEach((st, i) => {
+      st.triggers.forEach((t) => { if (t.to in idx) edge(i, idx[t.to], "tr", "aT", condText(t).replace(/^not /, "no ").slice(0, 22), 26); });
+      st.steps.forEach((s) => {
+        if (s.type === "go" && s.state in idx) edge(i, idx[s.state], "go", "aG", "", -18);
+        if (s.fail && s.fail in idx) edge(i, idx[s.fail], "go", "aG", "if it fails", -40);
+      });
+    });
+    model.states.forEach((st, i) => {
+      const p = pos[i];
+      svg.append(mk("rect", { x: p.x - nodeW / 2, y: p.y - nodeH / 2, width: nodeW, height: nodeH, rx: 8,
+        class: "node" + (i === sel ? " sel" : "") + (i === 0 ? " start" : "") }));
+      const t = mk("text", { x: p.x, y: p.y + 5, "text-anchor": "middle", "font-weight": "600", "font-size": "14" });
+      t.textContent = st.name.length > 14 ? st.name.slice(0, 13) + "…" : st.name;
+      svg.append(t);
+      const last = st.steps[st.steps.length - 1];
+      if (last && (last.type === "land" || last.type === "rtl")) {
+        const e = mk("text", { x: p.x, y: p.y + nodeH / 2 + 13, "text-anchor": "middle", class: "end" });
+        e.textContent = last.type === "land" ? "lands" : "returns home";
+        svg.append(e);
+      }
+    });
+  }
+
+  // ----------------------------------------------------------------- places
+  function renderPlaces() {
+    const box = $("places");
+    box.textContent = "";
+    model.places.forEach((p, i) => {
+      const row = el("div", { class: "place" },
+        el("input", { class: "name", type: "text", value: p.name, "aria-label": "Place name",
+          onchange: (e) => { const old = p.name, v = e.target.value.trim(); p.name = v;
+            for (const st of model.states) { for (const s of st.steps) if (s.place === old) s.place = v; for (const t of st.triggers) if (t.place === old) t.place = v; }
+            changed(true); } }),
+        select([["here", "marked in flight"], ["fwd", "ahead/right of start"], ["enu", "east/north of start"]], p.kind, (v) => { p.kind = v; changed(true); }, "kind"));
+      if (p.kind !== "here") row.append(numIn(p.a, (v) => { p.a = v; changed(false); }, p.kind === "fwd" ? "ahead" : "east", "0.5"), el("span", { class: "unit" }, p.kind === "fwd" ? "ahead" : "E"),
+                                        numIn(p.b, (v) => { p.b = v; changed(false); }, p.kind === "fwd" ? "right" : "north", "0.5"), el("span", { class: "unit" }, p.kind === "fwd" ? "right (m)" : "N (m)"));
+      row.append(el("span", { class: "tools" }, el("button", { class: "icon del", "aria-label": "Remove place", onclick: () => { model.places.splice(i, 1); changed(true); } }, "✕")));
+      box.append(row);
+    });
+    if (!model.places.length) box.append(el("div", { class: "hint" }, "No places yet."));
+  }
+
+  function renderSizes() {
+    const box = $("sizes");
+    box.textContent = "";
+    model.sizes = model.sizes || [];
+    model.sizes.forEach((z, i) => {
+      box.append(el("div", { class: "place" },
+        el("input", { class: "name", type: "text", value: z.label, "aria-label": "Object",
+          oninput: (e) => { z.label = e.target.value.trim(); changed(false); } }),
+        numIn(z.m, (v) => { z.m = v; changed(false); }, "height in metres", "0.1"), el("span", { class: "unit" }, "m tall"),
+        el("span", { class: "tools" }, el("button", { class: "icon del", "aria-label": "Remove size", onclick: () => { model.sizes.splice(i, 1); changed(true); } }, "\u2715"))));
+    });
+    if (!model.sizes.length) box.append(el("div", { class: "hint" }, "None declared: typical heights are assumed for common objects."));
+  }
+
+  // ------------------------------------------------------- first-person pane
+  // A pinhole camera at height view.h, tilted view.tilt deg down, looking
+  // along +y; the tracked object stands at (0, view.D). World: x right,
+  // y ahead, z up. "ahead"/"right" of the object are along that line of
+  // sight, exactly as the aircraft measures them when the step starts.
+  function cam(W, H) {
+    const th = view.tilt * Math.PI / 180, f = (W / 2) / Math.tan(view.hfov * Math.PI / 360);
+    return { W, H, f, cx: W / 2, cy: H / 2, s: Math.sin(th), c: Math.cos(th) };
+  }
+  function proj(k, x, y, z) {
+    const zz = z - view.h;
+    const ry = -y * k.s - zz * k.c, fz = y * k.c - zz * k.s;
+    if (fz < 0.15) return null;
+    return { u: k.cx + k.f * x / fz, v: k.cy + k.f * ry / fz, depth: fz };
+  }
+  function unprojGround(k, u, v) {
+    const rx = (u - k.cx) / k.f, ry = (v - k.cy) / k.f;
+    const dx = rx, dy = -ry * k.s + k.c, dz = -ry * k.c - k.s;
+    if (dz >= -1e-4) return null;
+    const t = view.h / -dz;
+    return { x: t * dx, y: t * dy };
+  }
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888"; }
+  function objHeight(label) {
+    const z = (model.sizes || []).find(z => z.label === label);
+    return z ? num(z.m, 2) : 2;
+  }
+  function fitCanvas(cv) {
+    const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const W = Math.max(200, Math.round(r.width));
+    const H = Math.round(W * (cv.classList.contains("top") ? 1 : cv.classList.contains("side") ? 0.5 : 9 / 16));
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    const g = cv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { g, W, H };
+  }
+  function stepAlive(s) { return !!s && model.states.some(st => st.steps.includes(s)); }
+
+  function drawFpv(cv, s) {
+    const { g, W, H } = fitCanvas(cv), k = cam(W, H);
+    const ink = css("--ink"), muted = css("--muted"), accent = css("--accent"), trig = css("--trigger");
+    // Sky and ground split at the horizon.
+    const hz = k.cy - k.f * Math.tan(view.tilt * Math.PI / 180);
+    g.fillStyle = css("--sky"); g.fillRect(0, 0, W, H);
+    g.fillStyle = css("--ground"); g.fillRect(0, Math.max(0, hz), W, H);
+    g.strokeStyle = css("--grid"); g.lineWidth = 1;
+    const line = (a, b) => { const p = proj(k, ...a), q = proj(k, ...b); if (p && q) { g.beginPath(); g.moveTo(p.u, p.v); g.lineTo(q.u, q.v); g.stroke(); } };
+    for (let x = -12; x <= 12; x += 1) line([x, 0.5, 0], [x, 40, 0]);
+    for (let y = 1; y <= 40; y += 1) line([-12, y, 0], [12, y, 0]);
+    // The object: a box standing on the ground, its lock drawn round it.
+    const D = view.D, Ho = objHeight(s.label), Wo = Math.max(0.3, Ho / 2);
+    const tl = proj(k, -Wo / 2, D, Ho), br = proj(k, Wo / 2, D, 0);
+    let box = null;
+    if (tl && br) {
+      box = { x: tl.u, y: tl.v, w: br.u - tl.u, h: br.v - tl.v };
+      g.fillStyle = muted; g.globalAlpha = 0.35; g.fillRect(box.x, box.y, box.w, box.h); g.globalAlpha = 1;
+      g.strokeStyle = trig; g.lineWidth = 2; g.strokeRect(box.x - 3, box.y - 3, box.w + 6, box.h + 6);
+      g.fillStyle = trig; g.font = "600 12px " + css("--body");
+      g.fillText("LOCK: " + (s.label || "?"), box.x - 3, box.y - 8);
+    }
+    g.font = "12px " + css("--body");
+    if (s.type === "path") {
+      // The path on the ground, from the aircraft through every point.
+      // Each point at its height (above the object's top), or at the
+      // aircraft's own when it keeps its height; a stem down to the ground.
+      let zNow = view.h;
+      const pts = (s.pts || []).map(p => {
+        const has = p.h !== "" && p.h != null && Number.isFinite(Number(p.h));
+        if (has) zNow = Math.max(1, Ho + Number(p.h));
+        return { x: num(p.r, 0), y: D + num(p.a, 0), z: zNow };
+      });
+      g.strokeStyle = css("--grid"); g.lineWidth = 1;
+      for (const w of pts) { const a = proj(k, w.x, w.y, 0), b = proj(k, w.x, w.y, w.z); if (a && b) { g.beginPath(); g.moveTo(a.u, a.v); g.lineTo(b.u, b.v); g.stroke(); } }
+      g.strokeStyle = accent; g.lineWidth = 3; g.beginPath();
+      let first = true;
+      for (const w of [{ x: 0, y: 1.0, z: view.h }, ...pts]) {
+        const p = proj(k, w.x, w.y, w.z);
+        if (!p) { first = true; continue; }
+        if (first) g.moveTo(p.u, p.v); else g.lineTo(p.u, p.v);
+        first = false;
+      }
+      g.stroke();
+      pts.forEach((w, i) => {
+        const p = proj(k, w.x, w.y, w.z);
+        if (!p) return;
+        const r = Math.max(5, Math.min(14, 60 / p.depth));
+        g.fillStyle = accent; g.beginPath(); g.arc(p.u, p.v, r, 0, 7); g.fill();
+        g.fillStyle = "#fff"; g.textAlign = "center"; g.fillText(String(i + 1), p.u, p.v + 4); g.textAlign = "start";
+      });
+      g.fillStyle = ink;
+      g.fillText("Click the ground to add a point; drag one to move it. Heights: in the list.", 10, H - 12);
+    } else if (box) {
+      // The aim point: `aim` box widths right of the lock's centre.
+      const ax = box.x + box.w * (0.5 + num(s.aim, 0)), ay = box.y + box.h / 2;
+      g.strokeStyle = accent; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(W / 2, H - 4); g.lineTo(ax, ay); g.stroke();
+      g.beginPath(); g.arc(ax, ay, 9, 0, 7); g.stroke();
+      g.beginPath(); g.moveTo(ax - 14, ay); g.lineTo(ax + 14, ay); g.moveTo(ax, ay - 14); g.lineTo(ax, ay + 14); g.stroke();
+      g.fillStyle = ink;
+      g.fillText("Click where on the lock to aim. " + (s.strafe ? "Strafe: slides to keep it centred" : "Yaws to keep it centred") +
+        (s.type === "follow" ? ", keeping " + fmt(num(s.dist, 4)) + " m." : s.dive ? ", and dives to keep it level with the centre." : "."), 10, H - 12);
+    }
+    // The image centre: what "centred" means.
+    g.strokeStyle = muted; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(W / 2 - 8, H / 2); g.lineTo(W / 2 + 8, H / 2); g.moveTo(W / 2, H / 2 - 8); g.lineTo(W / 2, H / 2 + 8); g.stroke();
+    return { k, box };
+  }
+
+  function topScale(W) {
+    const span = Math.max(12, view.D + 8);
+    return { sc: W / span, x0: -span / 2, y1: view.D + 6 };
+  }
+  function drawTop(cv, s) {
+    const { g, W, H } = fitCanvas(cv), t = topScale(W);
+    const P = (x, y) => ({ u: (x - t.x0) * t.sc, v: (t.y1 - y) * t.sc });
+    g.fillStyle = css("--ground"); g.fillRect(0, 0, W, H);
+    g.strokeStyle = css("--grid"); g.lineWidth = 1;
+    for (let x = Math.ceil(t.x0); x <= -t.x0; x++) { const a = P(x, -10), b = P(x, 60); g.beginPath(); g.moveTo(a.u, 0); g.lineTo(a.u, H); g.stroke(); }
+    for (let y = -2; y <= t.y1; y++) { const a = P(0, y); g.beginPath(); g.moveTo(0, a.v); g.lineTo(W, a.v); g.stroke(); }
+    const o = P(0, view.D), me = P(0, 0);
+    g.fillStyle = css("--trigger"); g.fillRect(o.u - 6, o.v - 3, 12, 6);
+    g.fillStyle = css("--ink"); g.beginPath(); g.moveTo(me.u, me.v - 9); g.lineTo(me.u - 6, me.v + 6); g.lineTo(me.u + 6, me.v + 6); g.fill();
+    g.font = "11px " + css("--body"); g.fillText("from above", 6, 14);
+    if (s.type === "follow") {
+      g.strokeStyle = css("--accent"); g.lineWidth = 2; g.setLineDash([5, 4]);
+      g.beginPath(); g.arc(o.u, o.v, num(s.dist, 4) * t.sc, 0, 7); g.stroke(); g.setLineDash([]);
+      g.fillStyle = css("--muted"); g.fillText("keeps " + fmt(num(s.dist, 4)) + " m", o.u + 6, o.v - num(s.dist, 4) * t.sc - 4);
+    }
+    if (s.type === "path") {
+      g.strokeStyle = css("--accent"); g.lineWidth = 2; g.beginPath(); g.moveTo(me.u, me.v);
+      const pts = (s.pts || []).map(p => P(num(p.r, 0), view.D + num(p.a, 0)));
+      for (const p of pts) g.lineTo(p.u, p.v);
+      g.stroke();
+      pts.forEach((p, i) => { g.fillStyle = css("--accent"); g.beginPath(); g.arc(p.u, p.v, 7, 0, 7); g.fill();
+        g.fillStyle = "#fff"; g.textAlign = "center"; g.fillText(String(i + 1), p.u, p.v + 4); g.textAlign = "start"; });
+    }
+    return { P, inv: (u, v) => ({ x: u / t.sc + t.x0, y: t.y1 - v / t.sc }) };
+  }
+
+  // FROM THE SIDE: distance ahead against height -- the aircraft, the
+  // object standing on the ground, and a path's points at their heights.
+  function drawSide(cv, s) {
+    const { g, W, H } = fitCanvas(cv);
+    const Ho = objHeight(s.label), D = view.D;
+    const xMax = D + 6, zMax = Math.max(view.h, Ho) + 4;
+    const P = (y, z) => ({ u: 8 + (y + 1) / (xMax + 1) * (W - 16), v: H - 10 - z / zMax * (H - 24) });
+    g.fillStyle = css("--sky"); g.fillRect(0, 0, W, H);
+    g.fillStyle = css("--ground"); const gr = P(0, 0); g.fillRect(0, gr.v, W, H - gr.v);
+    const ob = P(D, 0), ot = P(D, Ho);
+    g.fillStyle = css("--trigger"); g.fillRect(ob.u - 3, ot.v, 6, ob.v - ot.v);
+    const me = P(0, view.h);
+    g.fillStyle = css("--ink"); g.beginPath(); g.moveTo(me.u + 8, me.v); g.lineTo(me.u - 4, me.v - 5); g.lineTo(me.u - 4, me.v + 5); g.fill();
+    g.font = "11px " + css("--body"); g.fillText("from the side", 6, 14);
+    if (s.type === "path") {
+      let z = view.h;
+      g.strokeStyle = css("--accent"); g.lineWidth = 2; g.beginPath(); g.moveTo(me.u, me.v);
+      for (const p of s.pts || []) {
+        if (p.h !== "" && p.h != null && Number.isFinite(Number(p.h))) z = Math.max(1, Ho + Number(p.h));
+        const q = P(D + num(p.a, 0), z); g.lineTo(q.u, q.v);
+      }
+      g.stroke();
+    } else if (s.type === "steer" && s.dive) {
+      g.strokeStyle = css("--accent"); g.setLineDash([5, 4]); g.beginPath(); g.moveTo(me.u, me.v); g.lineTo(ot.u, (ot.v + ob.v) / 2); g.stroke(); g.setLineDash([]);
+    }
+  }
+
+  let fpvGeom = null, topGeom = null, dragPt = -1;
+  function renderFpv() {
+    const body = $("fpvBody");
+    if (fpvSel && !stepAlive(fpvSel)) fpvSel = null;
+    if (!fpvSel) {
+      // Default to the first path/steer step anywhere, so the pane is never empty when there is one.
+      for (const st of model.states) for (const s of st.steps) if (!fpvSel && (s.type === "path" || s.type === "steer" || s.type === "follow")) fpvSel = s;
+    }
+    body.textContent = "";
+    if (!fpvSel) {
+      $("fpvWhat").textContent = "";
+      body.append(el("p", { class: "hint" }, 'Add "Path around it" or "Steer on it" from the palette: movement here is drawn in the camera view, around the object the tracker holds.'));
+      return;
+    }
+    const s = fpvSel;
+    const owner = model.states.find(st => st.steps.includes(s));
+    $("fpvWhat").textContent = ({ path: "Path around ", steer: "Steer on ", follow: "Follow " })[s.type] + (s.label || "?") + " in state " + owner.name;
+    const fpv = el("canvas", { class: "fpv", "aria-label": "Camera view" });
+    const top = el("canvas", { class: "top", "aria-label": "From above" });
+    const side = el("canvas", { class: "side", "aria-label": "From the side" });
+    const controls = el("div", {});
+    const pv = el("div", { class: "row", style: "margin-top:8px" },
+      el("span", { class: "unit" }, "preview: object at"), numIn(view.D, (v) => { view.D = Math.max(2, num(v, 8)); drawBoth(); }, "preview distance", "0.5"), unit("m, camera"),
+      numIn(view.h, (v) => { view.h = Math.max(0.3, Math.min(60, num(v, 1.5))); drawBoth(); }, "camera height", "0.5"), unit("m up, tilted"),
+      numIn(view.tilt, (v) => { view.tilt = Math.max(-10, Math.min(60, num(v, 10))); drawBoth(); }, "tilt", "5"), unit("deg down"));
+    if (s.type === "path") {
+      const facing = el("input", { type: "checkbox", onchange: (e) => { s.facing = e.target.checked; changed(false); } });
+      facing.checked = !!s.facing;
+      controls.append(el("div", { class: "row" }, el("label", { class: "unit" }, facing, " face it at each point"),
+        unit("arrive within"), numIn(s.radius, (v) => { s.radius = v; changed(false); }, "radius", "0.25"), unit("m"),
+        el("button", { class: "btn", onclick: () => { s.pts.pop(); changed(true); } }, "Undo point"),
+        el("button", { class: "btn", onclick: () => { s.pts = []; changed(true); } }, "Clear")));
+      const list = el("div", { class: "pts" });
+      (s.pts || []).forEach((p, i) => list.append(el("div", { class: "pt" }, el("b", {}, String(i + 1)),
+        unit("above it"), el("input", { type: "number", step: "0.5", value: p.h == null ? "" : p.h, placeholder: "keep", "aria-label": "height above it",
+          oninput: (e) => { p.h = e.target.value; drawBoth(); changed(false); } }), unit("m,"),
+        unit("ahead"), el("input", { type: "number", step: "0.5", value: p.a, "aria-label": "ahead", oninput: (e) => { p.a = e.target.value; drawBoth(); changed(false); } }),
+        unit("right"), el("input", { type: "number", step: "0.5", value: p.r, "aria-label": "right", oninput: (e) => { p.r = e.target.value; drawBoth(); changed(false); } }),
+        unit("m, hold"), el("input", { type: "number", step: "1", min: "0", value: p.hold || 0, "aria-label": "hold", oninput: (e) => { p.hold = e.target.value; changed(false); } }), unit("s"),
+        el("button", { class: "icon del", "aria-label": "Remove point", onclick: () => { s.pts.splice(i, 1); changed(true); } }, "✕"))));
+      controls.append(list);
+    } else {
+      const strafe = el("input", { type: "checkbox", onchange: (e) => { s.strafe = e.target.checked; changed(false); drawBoth(); } });
+      strafe.checked = !!s.strafe;
+      if (s.type === "follow") {
+        controls.append(el("div", { class: "row" },
+          unit("keep"), numIn(s.dist, (v) => { s.dist = v; changed(false); drawBoth(); }, "distance", "0.5"), unit("m away, at most"),
+          numIn(s.speed, (v) => { s.speed = v; changed(false); }, "top speed", "0.5"), unit("m/s, aim"),
+          numIn(s.aim, (v) => { s.aim = v; changed(false); drawBoth(); }, "aim, box widths right", "0.1"), unit("widths right,"),
+          el("label", { class: "unit" }, strafe, " strafe")),
+          el("div", { class: "row", style: "margin-top:6px" },
+            select([["none", "height: keep"], ["above", "height: above its top"], ["height", "height: above the ground"]], s.hmode, (v) => { s.hmode = v; changed(true); }, "height"),
+            s.hmode === "none" ? null : numIn(s.h, (v) => { s.h = v; changed(false); }, "metres", "0.5"), s.hmode === "none" ? null : unit("m"),
+            unit("for"), numIn(s.forS, (v) => { s.forS = v; changed(false); }, "seconds", "5"), unit("s")));
+      } else {
+      const dive = el("input", { type: "checkbox", onchange: (e) => { s.dive = e.target.checked; changed(false); drawBoth(); } });
+      dive.checked = !!s.dive;
+      controls.append(el("div", { class: "row" },
+        el("label", { class: "unit" }, dive, " dive (down the line of sight)")));
+      controls.append(el("div", { class: "row" },
+        unit("aim"), numIn(s.aim, (v) => { s.aim = v; changed(false); drawBoth(); }, "aim, box widths right", "0.1"), unit("box widths right (− = left)"),
+        unit("at"), numIn(s.speed, (v) => { s.speed = v; changed(false); }, "speed", "0.1"), unit("m/s,"),
+        el("label", { class: "unit" }, strafe, " strafe")),
+        el("div", { class: "row", style: "margin-top:6px" },
+          unit("until it is"), numIn(s.until, (v) => { s.until = v; changed(false); }, "stop range", "0.5"), unit("m away, at most"),
+          numIn(s.s, (v) => { s.s = v; changed(false); }, "timeout", "1"), unit("s")));
+      }
+    }
+    body.append(el("div", { class: "fpv-wrap" }, el("div", {}, fpv, pv), el("div", {}, top, side)), controls);
+    const drawBoth = () => { fpvGeom = drawFpv(fpv, s); topGeom = drawTop(top, s); drawSide(side, s); };
+    requestAnimationFrame(drawBoth);
+
+    const at = (cv, e) => { const r = cv.getBoundingClientRect(); return { u: e.clientX - r.left, v: e.clientY - r.top }; };
+    const hitPoint = (fn, q) => (s.pts || []).findIndex(p => { const w = fn(p); return w && Math.hypot(w.u - q.u, w.v - q.v) < 12; });
+    const round = (x) => Math.round(x * 2) / 2;
+    // CAMERA VIEW: path points on the ground; or the steer aim on the lock.
+    fpv.addEventListener("pointerdown", (e) => {
+      if (!fpvGeom) return;
+      const q = at(fpv, e);
+      if (s.type === "steer") {
+        if (!fpvGeom.box) return;
+        s.aim = Math.round(((q.u - fpvGeom.box.x) / fpvGeom.box.w - 0.5) * 10) / 10;
+        changed(true); return;
+      }
+      const i = hitPoint((p) => proj(fpvGeom.k, num(p.r, 0), view.D + num(p.a, 0), 0), q);
+      if (i >= 0) { dragPt = i; fpv.setPointerCapture(e.pointerId); return; }
+      const w = unprojGround(fpvGeom.k, q.u, q.v);
+      if (!w || w.y > 60) return;
+      s.pts.push({ a: round(w.y - view.D), r: round(w.x), hold: 0, h: "" });
+      changed(true);
+    });
+    fpv.addEventListener("pointermove", (e) => {
+      if (dragPt < 0 || !fpvGeom) return;
+      const w = unprojGround(fpvGeom.k, ...Object.values(at(fpv, e)));
+      if (!w) return;
+      s.pts[dragPt].a = round(w.y - view.D); s.pts[dragPt].r = round(w.x);
+      drawBoth(); changed(false);
+    });
+    const endDrag = () => { if (dragPt >= 0) { dragPt = -1; changed(true); } };
+    fpv.addEventListener("pointerup", endDrag);
+    // FROM ABOVE: any point, including ones the camera cannot see.
+    top.addEventListener("pointerdown", (e) => {
+      if (s.type !== "path" || !topGeom) return;
+      const q = at(top, e);
+      const i = hitPoint((p) => topGeom.P(num(p.r, 0), view.D + num(p.a, 0)), q);
+      if (i >= 0) { dragPt = i; top.setPointerCapture(e.pointerId); return; }
+      const w = topGeom.inv(q.u, q.v);
+      s.pts.push({ a: round(w.y - view.D), r: round(w.x), hold: 0, h: "" });
+      changed(true);
+    });
+    top.addEventListener("pointermove", (e) => {
+      if (dragPt < 0 || !topGeom) return;
+      const q = at(top, e), w = topGeom.inv(q.u, q.v);
+      s.pts[dragPt].a = round(w.y - view.D); s.pts[dragPt].r = round(w.x);
+      drawBoth(); changed(false);
+    });
+    top.addEventListener("pointerup", endDrag);
+  }
+
+  // ----------------------------------------------------------------- output
+  function highlight(text) {
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    return text.split("\n").map((ln) => {
+      if (/^\s*#/.test(ln)) return '<span class="c">' + esc(ln.length > 90 ? ln.slice(0, 60) + "…" : ln) + "</span>";
+      return esc(ln).replace(/^(\s*)(state|on|let|mission|fence|timeout)\b/, '$1<span class="k">$2</span>')
+                    .replace(/^(\s*)(when)\b/, '$1<span class="t">$2</span>')
+                    .replace(/(-&gt;|->)/g, '<span class="t">$1</span>');
+    }).join("\n");
+  }
+  function renderOut() {
+    const text = generate(model);
+    $("code").innerHTML = highlight(text);
+    const probs = problems(model);
+    const pb = $("problems");
+    pb.textContent = "";
+    if (!probs.length) pb.append(el("div", { class: "okmsg" }, "No problems found here. Run the compiler's check before flying it."));
+    for (const p of probs) pb.append(el("div", { class: "p" }, p));
+    $("cmd").textContent = "kestrel mission check " + slug() + ".kms";
+  }
+  function renderMeta() {
+    $("mName").value = model.name; $("mFence").value = model.fence; $("mTimeout").value = model.timeoutMin;
+    $("battOn").checked = !!model.battery.on; $("battPct").value = model.battery.pct; $("battAct").value = model.battery.act;
+  }
+  function render() { renderMeta(); renderStates(); renderPlaces(); renderSizes(); renderGraph(); renderFpv(); renderOut(); }
+
+  function load(m) { model = m; sel = 0; render(); store(); }
+  function toast(id, msg) { const t = $(id); t.textContent = msg; setTimeout(() => { if (t.textContent === msg) t.textContent = ""; }, 2500); }
+
+  renderPalette();
+  $("tpl").addEventListener("change", (e) => load(TEMPLATES[e.target.value]()));
+  $("mName").addEventListener("input", (e) => { model.name = e.target.value; changed(false); });
+  $("mFence").addEventListener("input", (e) => { model.fence = e.target.value; changed(false); });
+  $("mTimeout").addEventListener("input", (e) => { model.timeoutMin = e.target.value; changed(false); });
+  $("battOn").addEventListener("change", (e) => { model.battery.on = e.target.checked; changed(false); });
+  $("battPct").addEventListener("input", (e) => { model.battery.pct = e.target.value; changed(false); });
+  $("battAct").addEventListener("change", (e) => { model.battery.act = e.target.value; changed(false); });
+  $("addState").addEventListener("click", () => {
+    let k = model.states.length + 1, name = "state" + k;
+    while (model.states.some(s => s.name === name)) name = "state" + (++k);
+    model.states.push({ name, triggers: [], steps: [{ type: "hold", s: 2 }] });
+    sel = model.states.length - 1; changed(true);
+  });
+  $("addSize").addEventListener("click", () => {
+    model.sizes = model.sizes || [];
+    model.sizes.push({ label: "object", m: 1 }); changed(true);
+  });
+  $("addPlace").addEventListener("click", () => {
+    let k = model.places.length + 1, name = "place" + k;
+    while (model.places.some(p => p.name === name)) name = "place" + (++k);
+    model.places.push({ name, kind: "here", a: 0, b: 0 }); changed(true);
+  });
+  $("copy").addEventListener("click", () => {
+    const text = generate(model);
+    const done = () => toast("toast", "Copied. Save it as " + slug() + ".kms.");
+    try {
+      navigator.clipboard.writeText(text).then(done, () => { selectCode(); toast("toast", "Selected: press Ctrl+C to copy."); });
+    } catch (e) { selectCode(); toast("toast", "Selected: press Ctrl+C to copy."); }
+  });
+  function selectCode() { const r = document.createRange(); r.selectNodeContents($("code")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  // Saving a file works when this page is opened from disk (the kestrel
+  // window's "Open the visual editor"); inside a viewer frame it would not,
+  // so the button is only offered at the top level.
+  let topLevel = false;
+  try { topLevel = window.top === window; } catch (e) { topLevel = false; }
+  if (topLevel && location.protocol === "file:") {
+    $("save").hidden = false;
+    $("save").addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([generate(model)], { type: "text/plain" }));
+      a.download = slug() + ".kms";
+      document.body.append(a); a.click(); a.remove();
+    });
+  }
+  $("importBtn").addEventListener("click", () => {
+    const m = /#\s*kestrel-editor:\s*([A-Za-z0-9+/=]+)/.exec($("importBox").value);
+    if (!m) { toast("importMsg", "That file has no editor line, so it was not written here. Edit it as text instead."); return; }
+    try { load(JSON.parse(unb64(m[1]))); toast("importMsg", "Opened."); }
+    catch (e) { toast("importMsg", "The editor line is damaged, so it could not be opened."); }
+  });
+
+  window.addEventListener("resize", () => renderFpv());
+  load(restore() || tplDoor());
+})();
+</script>

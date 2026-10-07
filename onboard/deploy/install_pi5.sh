@@ -117,13 +117,18 @@ if [ "$service" = 1 ]; then
         "$HERE/kestrel.service" > "$UNITDIR/kestrel.service"
     chmod 0644 "$UNITDIR/kestrel.service"
     echo "   $UNITDIR/kestrel.service (runs as $user)"
-    if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
+    # Only a real install touches the running system: root, the system unit
+    # directory, systemd up. A scratch-prefix run (CI, testing) writes the
+    # unit and stops there -- as a normal user on a systemd host, calling
+    # systemctl would fail and abort the script.
+    if [ "$(id -u)" = 0 ] && [ "$UNITDIR" = /etc/systemd/system ] &&
+       command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
         systemctl daemon-reload
         systemctl enable kestrel
         systemctl restart kestrel
         echo "   enabled and started: journalctl -u kestrel -f"
     else
-        warn "no running systemd here: unit written, not enabled"
+        warn "not a system install (needs root, UNITDIR=/etc/systemd/system, systemd): unit written, not enabled"
     fi
 fi
 

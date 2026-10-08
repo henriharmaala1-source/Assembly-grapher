@@ -14,6 +14,10 @@
   behind the tail. A comparison page shows any two of the three side by side,
   with what their weight differences cost in flight
   ([airframe/variants/](airframe/variants/index.html)).
+- [`frames/mark4-v2-10/`](frames/mark4-v2-10/README.md): 2D drawings of the Mark4 V2 10" FPV
+  frame, taken exactly from its STEP model: one DXF profile per part, dimensioned A4
+  sheets with hole tables, and a check that the eight standoff holes line up through
+  every plate (within 0.07 mm), with notes for printing it.
 - [`aero/`](aero/README.md): drag and efficiency tools. An efficiency study
   optimizes the Kipinä wing's airfoil with NeuralFoil (an XFOIL-trained model)
   within what the printed wing needs, then compares the whole plane before and

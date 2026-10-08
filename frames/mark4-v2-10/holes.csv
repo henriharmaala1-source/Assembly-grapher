@@ -1,0 +1,76 @@
+part,label,kind,x_mm,y_mm,x2_mm,y2_mm,dia_or_width_mm,note
+top_plate,S2,hole,-15.700,66.400,,,3.000,
+top_plate,S1,hole,15.700,66.400,,,3.000,
+top_plate,S4,hole,-12.000,16.967,,,3.000,
+top_plate,S3,hole,12.000,16.967,,,3.000,
+top_plate,S6,hole,-12.000,-55.062,,,3.000,
+top_plate,S5,hole,12.000,-55.062,,,3.000,
+top_plate,H1,hole,0.000,-104.700,,,7.900,
+top_plate,S8,hole,-9.500,-117.042,,,3.000,
+top_plate,S7,hole,9.500,-117.042,,,3.000,
+top_plate,L1,slot,-5.943,-103.700,-5.943,-105.600,2.100,end-arc centres
+top_plate,L2,slot,5.943,-103.700,5.943,-105.600,2.100,end-arc centres
+lower_plate,S2,hole,-15.700,66.400,,,3.000,
+lower_plate,S1,hole,15.700,66.400,,,3.000,
+lower_plate,S4,hole,-12.000,16.940,,,3.000,
+lower_plate,S3,hole,12.000,16.940,,,3.000,
+lower_plate,H1,hole,-18.571,7.940,,,6.000,
+lower_plate,H2,hole,18.571,7.940,,,6.000,
+lower_plate,H3,hole,-15.250,-4.060,,,6.000,
+lower_plate,H4,hole,15.250,-4.060,,,6.000,
+lower_plate,H5,hole,-10.000,-9.060,,,4.000,
+lower_plate,H6,hole,10.000,-9.060,,,4.000,
+lower_plate,H7,hole,-10.000,-29.060,,,4.000,
+lower_plate,H8,hole,10.000,-29.060,,,4.000,
+lower_plate,H9,hole,-15.250,-34.560,,,6.000,
+lower_plate,H10,hole,15.250,-34.560,,,6.000,
+lower_plate,H11,hole,-18.571,-46.060,,,6.000,
+lower_plate,H12,hole,18.571,-46.060,,,6.000,
+lower_plate,S6,hole,-12.000,-55.060,,,3.000,
+lower_plate,S5,hole,12.000,-55.060,,,3.000,
+lower_plate,H13,hole,-15.000,-69.000,,,3.000,
+lower_plate,H14,hole,15.500,-69.500,,,3.000,
+lower_plate,H15,hole,-10.000,-74.000,,,2.000,
+lower_plate,H16,hole,10.000,-74.000,,,2.000,
+lower_plate,H17,hole,-10.000,-94.000,,,2.000,
+lower_plate,H18,hole,10.000,-94.000,,,2.000,
+lower_plate,H19,hole,-15.000,-99.500,,,3.000,
+lower_plate,H20,hole,15.500,-99.500,,,3.000,
+lower_plate,S8,hole,-9.500,-117.037,,,3.000,
+lower_plate,S7,hole,9.500,-117.037,,,3.000,
+belly_plate,S4,hole,-12.000,16.900,,,3.000,
+belly_plate,S3,hole,12.000,16.900,,,3.000,
+belly_plate,H1,hole,-18.571,7.900,,,3.000,
+belly_plate,H2,hole,18.571,7.900,,,3.000,
+belly_plate,H3,hole,-15.250,-4.100,,,6.000,
+belly_plate,H4,hole,15.250,-4.100,,,6.000,
+belly_plate,H5,hole,-10.000,-9.100,,,4.000,
+belly_plate,H6,hole,10.000,-9.100,,,4.000,
+belly_plate,H7,hole,-10.000,-29.100,,,4.000,
+belly_plate,H8,hole,10.000,-29.100,,,4.000,
+belly_plate,H9,hole,-15.250,-34.600,,,6.000,
+belly_plate,H10,hole,15.250,-34.600,,,6.000,
+belly_plate,H11,hole,-18.571,-46.100,,,3.000,
+belly_plate,H12,hole,18.571,-46.100,,,3.000,
+belly_plate,S6,hole,-12.000,-55.100,,,3.000,
+belly_plate,S5,hole,12.000,-55.100,,,3.000,
+chin_plate,S2,hole,-15.700,66.400,,,2.800,countersink to 6.40 on the bottom face
+chin_plate,S1,hole,15.700,66.400,,,2.800,countersink to 6.40 on the bottom face
+tail_plate,S8,hole,-9.500,-117.011,,,2.800,countersink to 6.40 on the bottom face
+tail_plate,S7,hole,9.500,-117.011,,,2.800,countersink to 6.40 on the bottom face
+arm,H1,hole,173.364,119.422,,,7.250,
+arm,H2,hole,132.527,80.125,,,4.000,
+arm,H3,hole,125.424,75.314,,,4.000,
+arm,S3,hole,12.005,16.916,,,3.200,
+arm,H4,hole,18.576,7.916,,,3.200,
+arm,L1,slot,174.884,127.276,175.169,128.749,3.000,end-arc centres
+arm,L2,slot,164.038,121.227,165.510,120.942,3.000,end-arc centres
+arm,L3,slot,181.219,117.902,182.691,117.617,3.000,end-arc centres
+arm,L4,slot,171.560,110.095,171.845,111.567,3.000,end-arc centres
+arm_brace,H1,hole,132.554,80.130,,,5.000,
+arm_brace,H2,hole,125.433,75.216,,,5.000,
+arm_brace,H3,hole,125.422,-113.445,,,5.000,
+arm_brace,H4,hole,132.544,-118.359,,,5.000,
+cam_plate,L1,slot,74.131,24.298,77.408,26.592,2.000,end-arc centres
+cam_plate,L2,slot,75.917,19.264,79.194,21.558,2.000,end-arc centres
+cam_plate,L3,slot,77.703,14.231,80.980,16.525,2.000,end-arc centres

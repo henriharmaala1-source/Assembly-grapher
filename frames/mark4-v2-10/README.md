@@ -22,6 +22,7 @@ two arm bracers, two camera plates and eight M3 × 35 mm Ø6 standoffs.
 | [`holes.csv`](holes.csv) | Every hole and slot of every part, with coordinates and diameters. |
 | [`CHECK.md`](CHECK.md) | Standoff alignment through the stack, model quirks, and which print beds each part fits. |
 | `sheets/*.png` | The drawing sheets as images. |
+| `trace/<part>.png` | Each part alone, black on white, with its overall width and height, at exactly 10 px/mm: import as a Sketch Picture in SolidWorks, scale to a dimension and trace. (`trace_images.py`) |
 
 ## Coordinates
 

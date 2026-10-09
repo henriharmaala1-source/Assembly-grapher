@@ -616,22 +616,30 @@ def as_drawn(sheet, face, left, mid, scale=1.0, **kw):
     return sheet.view((left - bb.xmin * scale, mid - (bb.ymin + bb.ymax) / 2 * scale), scale, 0.0, **kw)
 
 
+def extremes(face):
+    """The outline's farthest points: (min x, max x, min y, max y), each as an (x, y) point."""
+    pts = np.vstack([edge_points(e, n=120) for e in face.outerWire().Edges()])
+    return [tuple(pts[i]) for i in (pts[:, 0].argmin(), pts[:, 0].argmax(), pts[:, 1].argmin(), pts[:, 1].argmax())]
+
+
 def overall_dims(v, face, off=6.0, nose=True, labels=True, names=("x", "y")):
-    """Length and width of a part, with the model coordinates of its extent."""
+    """Length and width of a part, measured between its farthest points (the
+    extension lines start on them), with the model coordinates of its extent."""
     bb = face.BoundingBox()
+    x0, x1, y0, y1 = extremes(face)
     if nose:
         top = v.p([(bb.xmin, 0)])[0][1]
         front = v.p([(0, bb.ymax)])[0][0]
-        v.dim((bb.xmin, bb.ymin), (bb.xmin, bb.ymax), "h", top + off,
+        v.dim(y0, y1, "h", top + off,
               f"{bb.ylen:.2f}" + (f"   (y {f2(bb.ymin)} to {f2(bb.ymax)})" if labels else ""))
-        v.dim((bb.xmin, bb.ymax), (bb.xmax, bb.ymax), "v", front + off,
+        v.dim(x0, x1, "v", front + off,
               f"{bb.xlen:.2f}" + (f"   (x {f2(bb.xmin)} to {f2(bb.xmax)})" if labels else ""))
         return top + off
     top = v.p([(0, bb.ymax)])[0][1]
     right = v.p([(bb.xmax, 0)])[0][0]
-    v.dim((bb.xmin, bb.ymax), (bb.xmax, bb.ymax), "h", top + off,
+    v.dim(x0, x1, "h", top + off,
           f"{bb.xlen:.2f}" + (f"   ({names[0]} {f2(bb.xmin)} to {f2(bb.xmax)})" if labels else ""))
-    v.dim((bb.xmax, bb.ymin), (bb.xmax, bb.ymax), "v", right + off,
+    v.dim(y0, y1, "v", right + off,
           f"{bb.ylen:.2f}" + (f"   ({names[1]} {f2(bb.ymin)} to {f2(bb.ymax)})" if labels else ""))
     return top + off
 

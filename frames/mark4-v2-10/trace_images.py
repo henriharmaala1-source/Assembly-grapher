@@ -70,10 +70,13 @@ def render(p: b.Part, path: Path):
     # extension lines and the two overall dimensions: width along the top, height on the right
     yt = hi[1] + 9
     xr = hi[0] + 9
-    for x in (lo[0], hi[0]):
-        ax.plot([x, x], [hi[1] + 1.5, yt + 2], c=blue, lw=0.5)
-    for y in (lo[1], hi[1]):
-        ax.plot([hi[0] + 1.5, xr + 2], [y, y], c=blue, lw=0.5)
+    # extension lines start at the part's own farthest points, so they visibly touch its ends
+    for i in (allp[:, 0].argmin(), allp[:, 0].argmax()):
+        x, y = allp[i]
+        ax.plot([x, x], [y + 0.8, yt + 2], c=blue, lw=0.5)
+    for i in (allp[:, 1].argmin(), allp[:, 1].argmax()):
+        x, y = allp[i]
+        ax.plot([x + 0.8, xr + 2], [y, y], c=blue, lw=0.5)
     dim((lo[0], yt), (hi[0], yt), f"{w_mm:.2f} mm", False)
     dim((xr, lo[1]), (xr, hi[1]), f"{h_mm:.2f} mm", True)
     ax.text(lo[0] - MARGIN + 3, lo[1] - MARGIN + 3,

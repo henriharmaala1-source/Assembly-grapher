@@ -94,9 +94,35 @@ outlines and hole positions and thicken the parts:
   lower plate. For a printed plate, size these holes for M3 heat-set inserts
   instead.
 
+## Printed standoffs and fasteners for a test build
+
+`hardware.py` makes plain stand-ins for the hardware, with no threads. The
+standoffs are Ø6 × 35 tubes. Each screw becomes a Ø2.7 pin with the same head
+and length as the real one, and each press nut becomes a flanged ring. The
+pins press into Ø2.7 bores; a bore printed standing comes out slightly
+undersize, so it grips. Print `hardware/fit_gauge.stl` first; it has bores
+from 2.4 to 3.0 mm, one notch per 0.1 mm step. Then rerun with
+`--bore <size>` if needed. `hardware/assembly.step` holds the frame with every
+stand-in in place. None of them cuts into a frame part, and the pins reach
+2.75 to 5 mm into the standoffs, as the real screws do.
+
+| Qty | Part | Goes |
+|---:|---|---|
+| 8 | standoff Ø6 × 35 | S1–S8, lower plate to top plate |
+| 8 | cap-head pin 6 | top plate into the standoffs |
+| 4 | cap-head pin 18 | S3–S6 from below: belly, arm, lower plate |
+| 2 | countersunk pin 10 | S1, S2 through the chin plate |
+| 2 | countersunk pin 8 | S7, S8 through the tail plate |
+| 12 | cap-head pin 12 | arm bolts (4, from below), braces (8, from above) |
+| 12 | press-nut ring | lower plate's arm-bolt holes (4), under the arms at the braces (8) |
+
+For test assembly only: a printed pin is not an M3 screw.
+
 ## Regenerate
 
 ```
 pip install cadquery matplotlib
 python3 frames/mark4-v2-10/build.py            # or --step path/to/another.step
+python3 frames/mark4-v2-10/trace_images.py
+python3 frames/mark4-v2-10/hardware.py         # --bore 2.6 for a tighter fit
 ```

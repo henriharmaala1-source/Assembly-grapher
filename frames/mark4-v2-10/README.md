@@ -111,10 +111,12 @@ stand-in in place. None of them cuts into a frame part, and the pins reach
 | 8 | standoff Ø6 × 35 | S1–S8, lower plate to top plate |
 | 8 | cap-head pin 6 | top plate into the standoffs |
 | 4 | cap-head pin 18 | S3–S6 from below: belly, arm, lower plate |
-| 2 | countersunk pin 10 | S1, S2 through the chin plate |
-| 2 | countersunk pin 8 | S7, S8 through the tail plate |
+| 2 | cap-head pin 10 | S1, S2 through the chin plate, from below |
+| 2 | cap-head pin 8 | S7, S8 through the tail plate, from below |
 | 12 | cap-head pin 12 | arm bolts (4, from below), braces (8, from above) |
 | 12 | press-nut ring | lower plate's arm-bolt holes (4), under the arms at the braces (8) |
+
+The STEP countersinks the chin and tail holes from below. The DXFs and trace images only carry the Ø2.8 through-hole, so plain-holed plates take cap-head pins there; `--countersunk` gives countersunk pins instead. Open those Ø2.8 holes to 3.2 so the pins pass.
 
 For test assembly only: a printed pin is not an M3 screw.
 

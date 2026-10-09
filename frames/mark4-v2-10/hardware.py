@@ -89,7 +89,7 @@ def fit_gauge(f: Fit):
 # Where everything goes
 
 
-def placements(shapes, f: Fit):
+def placements(shapes, f: Fit, countersunk=False):
     """(part key, location (x, y, z), flip) for every stand-in in the assembly.
     flip=True turns the part over so its head is at the bottom, pointing up."""
     P = b.BY_KEY
@@ -101,10 +101,14 @@ def placements(shapes, f: Fit):
     for k, h in S.items():
         out.append(("standoff", (h.x, h.y, z_low), False))
         out.append(("pin_cap_m3x6", (h.x, h.y, z_top), True))           # head on the top plate, pointing down
-    for k in ("S1", "S2"):
-        out.append(("pin_csk_m3x10", (S[k].x, S[k].y, z_chin), False))  # countersunk into the chin plate, from below
-    for k in ("S7", "S8"):
-        out.append(("pin_csk_m3x8", (S[k].x, S[k].y, z_chin), False))
+    # chin (S1, S2) and tail (S7, S8): up through the 2.25 plate and the lower plate into the standoff.
+    # The STEP countersinks these holes from below; plain holes take cap-head pins, their heads under the plate.
+    for keys, L in ((("S1", "S2"), 10), (("S7", "S8"), 8)):
+        for k in keys:
+            if countersunk:
+                out.append((f"pin_csk_m3x{L}", (S[k].x, S[k].y, z_chin), False))
+            else:
+                out.append((f"pin_cap_m3x{L}", (S[k].x, S[k].y, z_chin), False))
     for k in ("S3", "S4", "S5", "S6"):
         out.append(("pin_cap_m3x18", (S[k].x, S[k].y, z_belly), False))  # up through belly, arm, lower plate
     # arm bolts: up through the belly and arm into a press nut in the lower plate's Ø6 hole
@@ -129,6 +133,8 @@ def located(shape, at, flip):
 PARTS = {   # key: (maker, title, print note)
     "standoff": (lambda f: standoff(f), "Standoff Ø6 x 35", "stand on end"),
     "pin_cap_m3x6": (lambda f: cap_pin(f, 6), "Pin, cap head, 6", "lying flat"),
+    "pin_cap_m3x8": (lambda f: cap_pin(f, 8), "Pin, cap head, 8", "lying flat"),
+    "pin_cap_m3x10": (lambda f: cap_pin(f, 10), "Pin, cap head, 10", "lying flat"),
     "pin_cap_m3x12": (lambda f: cap_pin(f, 12), "Pin, cap head, 12", "lying flat"),
     "pin_cap_m3x18": (lambda f: cap_pin(f, 18), "Pin, cap head, 18", "lying flat"),
     "pin_csk_m3x8": (lambda f: csk_pin(f, 8), "Pin, countersunk, 8", "lying flat"),
@@ -138,6 +144,8 @@ PARTS = {   # key: (maker, title, print note)
 WHERE = {
     "standoff": "S1-S8, lower plate to top plate",
     "pin_cap_m3x6": "top plate into the standoffs",
+    "pin_cap_m3x8": "S7, S8: tail plate, from below",
+    "pin_cap_m3x10": "S1, S2: chin plate, from below",
     "pin_cap_m3x12": "arm bolts (4) from below; braces (8) from above",
     "pin_cap_m3x18": "S3-S6 from below: belly, arm, lower plate",
     "pin_csk_m3x8": "S7, S8: tail plate, from below",
@@ -220,11 +228,11 @@ def sheet(out: Path, f: Fit, counts: dict, made: dict):
         hdim(r, L, at, sc, f"Ø{f.pin:g}", 2.5)
         ax.text(at[0], at[1] - 20, f"Pin, countersunk, {L:g}", fontsize=6.5, weight="bold", ha="center")
 
-    cap(np.array([70.0, 150.0]), 6)
-    cap(np.array([110.0, 136.0]), 12)
-    cap(np.array([150.0, 124.0]), 18)
-    csk(np.array([190.0, 150.0]), 8)
-    csk(np.array([230.0, 146.0]), 10)
+    pins = [k for k in PARTS if k.startswith("pin")]
+    for i, k in enumerate(pins):
+        L = float(k.split("x")[-1])
+        at = np.array([68.0 + 38.0 * i, 178.0 - 2 * L])        # shank tips level along the top
+        (cap if "cap" in k else csk)(at, L)
     # nut: flange at the top as drawn
     at = np.array([268.0, 158.0])
     outline([(2.95, -3), (2.95, 0), (4.0, 0), (4.0, 0.8)], at, sc)
@@ -244,9 +252,10 @@ def sheet(out: Path, f: Fit, counts: dict, made: dict):
     notes = [
         f"Fit: pins Ø{f.pin:g} clear the plates' 3.0-3.2 holes and press into Ø{f.bore:g} bores.  Bores printed standing come",
         "out about 0.1-0.15 undersize, so this grips.  Too tight or loose: print the gauge, then rerun hardware.py --bore.",
-        "Print pins lying flat (stronger across the layers), in PETG or PA, 100 % infill.  Lengths match the real screws:",
-        "cap-head lengths are under the head, countersunk lengths overall.  The brace fasteners are as the RJX manual shows",
-        "them (M3 x 12 and press nuts); the pins sit loose in the brace's Ø5 and arm's Ø4 holes.",
+        "Print pins lying flat (stronger across the layers), in PETG or PA, 100 % infill.  Lengths match the real screws,",
+        "measured under the head.  Chin and tail plate holes are Ø2.8 in the model: open them to 3.2 for the pins to pass.",
+        "The STEP countersinks those holes; with plain holes, cap-head pins go there (hardware.py --countersunk for the other).",
+        "The brace fasteners are as the RJX manual shows them (M3 x 12, press nuts); pins sit loose in the Ø5 and Ø4 holes.",
     ]
     for i, t in enumerate(notes):
         sh.text(14, 50 - i * 4.3, t, fs=5.4, color="#444")
@@ -260,6 +269,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--pin", type=float, default=2.7)
     ap.add_argument("--bore", type=float, default=2.7)
+    ap.add_argument("--countersunk", action="store_true",
+                    help="countersunk pins at S1, S2, S7, S8, for chin and tail plates countersunk as in the STEP")
     args = ap.parse_args(argv)
     f = Fit(args.pin, args.bore)
     OUT.mkdir(exist_ok=True)
@@ -271,8 +282,12 @@ def main(argv=None):
         pose = print_pose(k, s)
         cq.exporters.export(pose, str(OUT / f"{k}.stl"), tolerance=0.01, angularTolerance=0.1)
         cq.exporters.export(pose, str(OUT / f"{k}.step"))
-    place = placements(shapes, f)
+    place = placements(shapes, f, args.countersunk)
     counts = {k: sum(1 for p in place if p[0] == k) for k in PARTS}
+    for k in [k for k in PARTS if counts[k] == 0]:          # only the pins this build uses
+        del PARTS[k]
+        for ext in ("stl", "step"):
+            (OUT / f"{k}.{ext}").unlink(missing_ok=True)
 
     # the assembly, and a check that no stand-in cuts into a frame part
     assy = cq.Assembly(name="mark4_v2_10_test_build")

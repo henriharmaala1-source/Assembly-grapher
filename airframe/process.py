@@ -5,6 +5,7 @@ Run after build.py (it reads viewer/spec.json and stl/):
 
     python3 airframe/process.py            # uses PrusaSlicer for print times if installed
     python3 airframe/process.py --no-slice # reuse the cached slicer results
+    python3 airframe/process.py --variant single-boom   # the single-boom variant (process_single.py)
 
 Writes:
     BOP.md               operations, precedence graph, schedule
@@ -30,6 +31,8 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE                   # the build being processed: HERE, or variants/<name>
+TITLE = "Kipinä"
 
 # --------------------------------------------------------------------------
 # Time standards (seconds)
@@ -292,6 +295,9 @@ OPS = [
 
 
 def slicer_options(name: str, material: str) -> list[str]:
+    if name == "motor_mount":                       # carries the motor: stiff
+        return ["--perimeters", "4", "--fill-density", "40%", "--top-solid-layers", "4",
+                "--bottom-solid-layers", "4", "--filament-max-volumetric-speed", "12", "--filament-density", "1.27"]
     if material == "PLA/PETG":
         opts = ["--perimeters", "2", "--fill-density", "50%" if name == "bellcrank" else "15%",
                 "--top-solid-layers", "3", "--bottom-solid-layers", "3",
@@ -304,6 +310,9 @@ def slicer_options(name: str, material: str) -> list[str]:
             "--solid-infill-speed", "60", "--top-solid-infill-speed", "50", "--first-layer-speed", "25",
             "--filament-max-volumetric-speed", "6", "--extrusion-multiplier", "0.55",
             "--filament-density", "1.24", "--perimeters", "1"]
+    if name.startswith("fairing"):
+        return slow + ["--fill-density", "0%", "--top-solid-layers", "2", "--bottom-solid-layers", "2",
+                       "--brim-width", "5"]
     if name.startswith(("wing_R", "wing_L", "aileron")):
         return slow + ["--fill-density", "0%", "--top-solid-layers", "2", "--bottom-solid-layers", "2"] + \
             (["--brim-width", "8"] if name.startswith("wing_") else [])
@@ -331,7 +340,7 @@ def slice_parts(parts, cache_path: Path, use_slicer: bool):
     ini = HERE / "tools" / "a1mini.ini"
     with tempfile.TemporaryDirectory() as tmp:
         for p in parts:
-            stl = HERE / "stl" / f"{p['name']}.stl"
+            stl = ROOT / "stl" / f"{p['name']}.stl"
             out = Path(tmp) / f"{p['name']}.gcode"
             cmd = [exe, "--export-gcode", "--load", str(ini), *slicer_options(p["name"], p["material"]),
                    "--output", str(out), str(stl)]
@@ -380,7 +389,7 @@ def dfm(spec, sliced):
     import numpy as np
     rows = []
     for p in spec["parts"]:
-        stl = HERE / "stl" / f"{p['name']}.stl"
+        stl = ROOT / "stl" / f"{p['name']}.stl"
         total, wide, m = overhangs(stl)
         ext = m.extents
         slender = float(ext[2] / max(min(ext[0], ext[1]), 1e-6))
@@ -444,7 +453,7 @@ def schedule(ops, times):
         t0 = est(o)[0]
         dur = times[o["id"]]["items"] + times[o["id"]]["process"]
         if o["resource"] == "printer":
-            mat = "PETG" if o["id"] == "P1" else "LW-PLA"
+            mat = o.get("material") or ("PETG" if o["id"] == "P1" else "LW-PLA")
             if last_material and mat != last_material:
                 dur += FILAMENT_CHANGE
             last_material = mat
@@ -571,17 +580,33 @@ def mermaid(ops, crit):
     return "\n".join(lines)
 
 
+def use_variant(name: str):
+    """Point the module at variants/<name> and, for the single boom, its own operations."""
+    global ROOT, TITLE, OPS, SHORT, SUGGESTIONS, BOUGHT
+    ROOT = HERE / "variants" / name
+    spec = json.loads((ROOT / "viewer" / "spec.json").read_text())
+    if spec.get("layout") == "single":
+        import process_single as ps
+        PROC.update(ps.PROC_EXTRA)
+        OPS = ps.ops({"EPOXY_CURE": EPOXY_CURE})
+        SHORT, BOUGHT, TITLE = ps.SHORT, ps.BOUGHT, ps.TITLE
+        SUGGESTIONS = ps.suggestions(HANDLING, INSERTION, PROC)
+
+
 def main():
     use_slicer = "--no-slice" not in sys.argv
-    spec = json.loads((HERE / "viewer" / "spec.json").read_text())
-    sliced = slice_parts(spec["parts"], HERE / "tools" / "slice_cache.json", use_slicer)
+    if "--variant" in sys.argv:
+        use_variant(sys.argv[sys.argv.index("--variant") + 1])
+    spec = json.loads((ROOT / "viewer" / "spec.json").read_text())
+    cache = HERE / "tools" / "slice_cache.json" if ROOT == HERE else ROOT / "slice_cache.json"
+    sliced = slice_parts(spec["parts"], cache, use_slicer)
     dfm_list = dfm(spec, sliced)
     times = {o["id"]: op_times(o, dfm_list) for o in OPS}
     start, finish, ready, order = schedule(OPS, times)
     rows = dfma_rows()
     crit = critical_path(OPS, times, finish, ready)
 
-    n_actual = sum(r["qty"] for r in rows if r["item"] != "tail sub-assembly")
+    n_actual = sum(r["qty"] for r in rows if not r["item"].endswith("sub-assembly"))
     n_min = sum(r["n_min"] for r in rows)
     t_handle_insert = sum(r["t_total"] for r in rows)
     t_assembly_proc = sum(times[o["id"]]["process"] for o in OPS if o["id"].startswith("A"))
@@ -634,10 +659,10 @@ def main():
         })
     data = {"summary": summary, "critical": crit, "ops": ops_out, "dfma": rows, "dfm": dfm_list, "suggestions": suggestions,
             "handling": {k: v[0] for k, v in HANDLING.items()}, "insertion": {k: v[0] for k, v in INSERTION.items()}}
-    (HERE / "viewer" / "process.json").write_text(json.dumps(data, indent=1))
+    (ROOT / "viewer" / "process.json").write_text(json.dumps(data, indent=1))
 
     # ---------------- BOP.md
-    L = ["# Kipinä: bill of process", "",
+    L = [f"# {TITLE}: bill of process", "",
          "Generated by `process.py` from the CAD model and the slicer. Do not edit by hand.", "",
          "One builder and one Bambu Lab A1 mini. Print times come from "
          f"{summary['slicer']}; hand times are Boothroyd-Dewhurst handling and insertion estimates "
@@ -664,10 +689,10 @@ def main():
     for o in ops_out:
         if o["parts"]:
             L.append(f"- **{o['id']}** {', '.join(o['parts'])}")
-    (HERE / "BOP.md").write_text("\n".join(L) + "\n")
+    (ROOT / "BOP.md").write_text("\n".join(L) + "\n")
 
     # ---------------- DFMA.md
-    D = ["# Kipinä: DFMA analysis", "",
+    D = [f"# {TITLE}: DFMA analysis", "",
          "Generated by `process.py`. Do not edit by hand.", "",
          "## Design for assembly (Boothroyd-Dewhurst, manual)", "",
          "| | |", "|---|---|",
@@ -729,7 +754,7 @@ def main():
           "1.5-hour wing panel. Later airframes from the same spools cost the bought parts plus "
           "a few euros of filament.", "",
           "Prices are rough street prices for comparison only; the flight controller is the biggest item."]
-    (HERE / "DFMA.md").write_text("\n".join(D) + "\n")
+    (ROOT / "DFMA.md").write_text("\n".join(D) + "\n")
 
     print(f"parts {n_actual}, min {n_min}, t_ma {t_ma:.0f} s, E {e_ma:.1%} (h+i {e_hi:.1%}); "
           f"print {fmt_min(t_print)}, hands-on {fmt_min(t_hands)}, lead {fmt_min(lead)}")

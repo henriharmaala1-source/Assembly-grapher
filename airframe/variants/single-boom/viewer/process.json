@@ -1,0 +1,2408 @@
+{
+ "summary": {
+  "n_actual": 50,
+  "n_min": 23,
+  "t_ma": 2768,
+  "t_handle_insert": 396,
+  "e_ma": 0.025,
+  "e_hi": 0.174,
+  "n_after": 42,
+  "t_after": 2234,
+  "e_after": 0.031,
+  "t_print": 35556,
+  "t_hands": 6748,
+  "t_cure": 4500,
+  "lead": 40902,
+  "filament_g": 99.7,
+  "print_cost": 3.83,
+  "bought_cost": 171,
+  "grams_by_material": {
+   "PLA/PETG": 48.0,
+   "LW-PLA": 51.7
+  },
+  "spool_cost": 65,
+  "first_build_cost": 236,
+  "slicer": "PrusaSlicer 2.7, A1-mini-like profile (tools/a1mini.ini)"
+ },
+ "critical": [
+  "P1",
+  "P2",
+  "P3",
+  "P4",
+  "P5",
+  "Q5",
+  "A12",
+  "A13",
+  "A14",
+  "A15",
+  "A16",
+  "A17",
+  "S1",
+  "S2"
+ ],
+ "ops": [
+  {
+   "id": "P1",
+   "title": "Print plate 1: fuselage halves, lid, tail mount, rudder, motor mount",
+   "short": "Plate 1 PETG",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "fuselage_front",
+    "fuselage_rear",
+    "lid",
+    "tail_mount",
+    "rudder",
+    "motor_mount"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 10644,
+   "cure": 0.0,
+   "start": 0,
+   "finish": 10644,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P2",
+   "title": "Print plate 2: wing centre, fin, aileron fairings",
+   "short": "Plate 2",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "wing_centre",
+    "fin",
+    "fairing_ail_R",
+    "fairing_ail_L"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 8928,
+   "cure": 0.0,
+   "start": 10644,
+   "finish": 19872,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P3",
+   "title": "Print plate 3: stabiliser, elevator, ailerons",
+   "short": "Plate 3",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "stab",
+    "elevator",
+    "aileron_R",
+    "aileron_L"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 5280,
+   "cure": 0.0,
+   "start": 19872,
+   "finish": 25152,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P4",
+   "title": "Print plate 4: right wing panel",
+   "short": "Plate 4",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "wing_R"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 5352,
+   "cure": 0.0,
+   "start": 25152,
+   "finish": 30504,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "P5",
+   "title": "Print plate 5: left wing panel",
+   "short": "Plate 5",
+   "station": "Print",
+   "resource": "printer",
+   "critical": true,
+   "needs": [],
+   "parts": [
+    "wing_L"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 5352,
+   "cure": 0.0,
+   "start": 30504,
+   "finish": 35856,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "F1",
+   "title": "Cut the boom and the wing spars",
+   "short": "Cut carbon",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [],
+   "parts": [],
+   "tools": [
+    "rotary tool or fine saw",
+    "ruler",
+    "file"
+   ],
+   "consumables": [],
+   "seconds": 120,
+   "cure": 0,
+   "start": 0,
+   "finish": 120,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "F2",
+   "title": "Make the pushrods and aileron links",
+   "short": "Make linkages",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [],
+   "parts": [],
+   "tools": [
+    "wire bender or pliers",
+    "cutter",
+    "heat gun"
+   ],
+   "consumables": [
+    "CA",
+    "heat-shrink"
+   ],
+   "seconds": 420,
+   "cure": 0,
+   "start": 120,
+   "finish": 540,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "F3",
+   "title": "Drill the pushrod exits, thread the PTFE sleeves and motor wires through the boom",
+   "short": "Prepare boom",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "F1"
+   ],
+   "parts": [],
+   "tools": [
+    "2 mm drill in a pin vice",
+    "ruler"
+   ],
+   "consumables": [
+    "PTFE tube 2/1 mm",
+    "silicone wire"
+   ],
+   "seconds": 360,
+   "cure": 0,
+   "start": 540,
+   "finish": 900,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q1",
+   "title": "Finish plate 1 parts, ream the boom socket and motor cap",
+   "short": "Finish plate 1",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P1"
+   ],
+   "parts": [],
+   "tools": [
+    "10.2 mm drill or round file"
+   ],
+   "consumables": [],
+   "seconds": 150,
+   "cure": 0,
+   "start": 10644,
+   "finish": 10794,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q2",
+   "title": "Finish the wing centre, fin and fairings, ream the spar holes",
+   "short": "Finish plate 2",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P2"
+   ],
+   "parts": [],
+   "tools": [
+    "3.2 / 2.2 mm drill bits"
+   ],
+   "consumables": [],
+   "seconds": 230,
+   "cure": 0,
+   "start": 19872,
+   "finish": 20102,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q3",
+   "title": "Finish the tail surfaces and ailerons",
+   "short": "Finish plate 3",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P3"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 80,
+   "cure": 0,
+   "start": 25152,
+   "finish": 25232,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q4",
+   "title": "Remove the brim from the right panel, ream spar holes",
+   "short": "Finish plate 4",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "P4"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 110,
+   "cure": 0,
+   "start": 30504,
+   "finish": 30614,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "Q5",
+   "title": "Remove the brim from the left panel, ream spar holes",
+   "short": "Finish plate 5",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "P5"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 110,
+   "cure": 0,
+   "start": 35856,
+   "finish": 35966,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "A1",
+   "title": "Glue the fuselage halves together",
+   "short": "Fuselage",
+   "station": "Fuselage",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "Q1"
+   ],
+   "parts": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
+   "tools": [],
+   "consumables": [
+    "CA"
+   ],
+   "seconds": 26,
+   "cure": 0,
+   "start": 10794,
+   "finish": 10820,
+   "anim": [
+    {
+     "parts": [
+      "fuselage_front"
+     ],
+     "from": [
+      0,
+      0,
+      -30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "fuselage_rear"
+     ],
+     "from": [
+      60,
+      0,
+      -30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.8,
+    0.8,
+    0.9
+   ]
+  },
+  {
+   "id": "A2",
+   "title": "Fit the camera and VTX in the nose",
+   "short": "Camera, VTX",
+   "station": "Fuselage",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A1"
+   ],
+   "parts": [
+    "camera",
+    "vtx"
+   ],
+   "tools": [],
+   "consumables": [
+    "CA",
+    "foam tape"
+   ],
+   "seconds": 54,
+   "cure": 0,
+   "start": 10820,
+   "finish": 10874,
+   "anim": [
+    {
+     "parts": [
+      "camera"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "vtx"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.8,
+    0.8,
+    0.9
+   ]
+  },
+  {
+   "id": "A3",
+   "title": "Screw the FC on its posts, add the receiver, lay the ESC under the boom's mouth",
+   "short": "FC, RX, ESC",
+   "station": "Fuselage",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A2"
+   ],
+   "parts": [
+    "fc",
+    "M2 screw (FC)",
+    "receiver",
+    "esc"
+   ],
+   "tools": [
+    "1.5 mm hex driver"
+   ],
+   "consumables": [
+    "foam tape"
+   ],
+   "seconds": 69,
+   "cure": 0,
+   "start": 10874,
+   "finish": 10943,
+   "anim": [
+    {
+     "parts": [
+      "fc"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "receiver"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "esc"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.3,
+    1.0,
+    0.35
+   ]
+  },
+  {
+   "id": "A4",
+   "title": "Screw the elevator and rudder servos to their posts behind the battery",
+   "short": "Tail servos",
+   "station": "Fuselage",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A3"
+   ],
+   "parts": [
+    "servo_elev",
+    "servo_rud",
+    "servo screw"
+   ],
+   "tools": [
+    "small Phillips driver"
+   ],
+   "consumables": [],
+   "seconds": 48,
+   "cure": 0,
+   "start": 10943,
+   "finish": 10991,
+   "anim": [
+    {
+     "parts": [
+      "servo_elev"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "servo_rud"
+     ],
+     "from": [
+      0,
+      0,
+      45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.3,
+    1.0,
+    0.35
+   ]
+  },
+  {
+   "id": "A5",
+   "title": "Glue the stabiliser under the tail mount's pylons and the fin into its socket",
+   "short": "Tail glue-up",
+   "station": "Tail",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "Q1",
+    "Q2",
+    "Q3"
+   ],
+   "parts": [
+    "tail_mount",
+    "stab",
+    "fin"
+   ],
+   "tools": [],
+   "consumables": [
+    "CA"
+   ],
+   "seconds": 62,
+   "cure": 0,
+   "start": 25232,
+   "finish": 25294,
+   "anim": [
+    {
+     "parts": [
+      "tail_mount"
+     ],
+     "from": [
+      140,
+      0,
+      40
+     ],
+     "to": [
+      140,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "stab"
+     ],
+     "from": [
+      140,
+      0,
+      -40
+     ],
+     "to": [
+      140,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "fin"
+     ],
+     "from": [
+      140,
+      0,
+      50
+     ],
+     "to": [
+      140,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "tail_mount",
+    "stab",
+    "fin"
+   ],
+   "focus_offset": [
+    140,
+    0,
+    0
+   ],
+   "view": [
+    0.9,
+    0.55,
+    0.85
+   ]
+  },
+  {
+   "id": "A6",
+   "title": "Hinge the elevator and the rudder",
+   "short": "Tail hinges",
+   "station": "Tail",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A5"
+   ],
+   "parts": [
+    "elevator",
+    "rudder"
+   ],
+   "tools": [],
+   "consumables": [
+    "hinge tape"
+   ],
+   "seconds": 96,
+   "cure": 0,
+   "start": 25294,
+   "finish": 25390,
+   "anim": [
+    {
+     "parts": [
+      "elevator",
+      "rudder"
+     ],
+     "from": [
+      175,
+      0,
+      0
+     ],
+     "to": [
+      140,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "tail_mount",
+    "stab",
+    "fin"
+   ],
+   "focus_offset": [
+    140,
+    0,
+    0
+   ],
+   "view": [
+    0.75,
+    -0.5,
+    0.6
+   ]
+  },
+  {
+   "id": "A7",
+   "title": "Slide the tail onto the boom, square it and glue",
+   "short": "Tail on boom",
+   "station": "Boom",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A6",
+    "F3"
+   ],
+   "parts": [
+    "boom",
+    "tail sub-assembly"
+   ],
+   "tools": [],
+   "consumables": [
+    "5-minute epoxy"
+   ],
+   "seconds": 176,
+   "cure": 900,
+   "start": 25390,
+   "finish": 25566,
+   "anim": [
+    {
+     "parts": [
+      "boom"
+     ],
+     "from": [
+      360,
+      0,
+      0
+     ],
+     "to": [
+      140,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "boom",
+    "tail_mount",
+    "stab",
+    "fin",
+    "elevator",
+    "rudder"
+   ],
+   "focus_offset": [
+    140,
+    0,
+    0
+   ],
+   "view": [
+    0.9,
+    0.55,
+    0.85
+   ]
+  },
+  {
+   "id": "A8",
+   "title": "Glue the motor cap on the boom's end, screw on the motor, solder its wires",
+   "short": "Motor on boom",
+   "station": "Boom",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A7"
+   ],
+   "parts": [
+    "motor_mount",
+    "motor",
+    "M2 screw (motor)"
+   ],
+   "tools": [
+    "1.5 mm hex driver",
+    "soldering iron"
+   ],
+   "consumables": [
+    "5-minute epoxy",
+    "solder",
+    "heat-shrink"
+   ],
+   "seconds": 247,
+   "cure": 900,
+   "start": 26466,
+   "finish": 26713,
+   "anim": [
+    {
+     "parts": [
+      "motor_mount"
+     ],
+     "from": [
+      185,
+      0,
+      0
+     ],
+     "to": [
+      140,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "motor"
+     ],
+     "from": [
+      195,
+      0,
+      0
+     ],
+     "to": [
+      140,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "boom",
+    "tail_mount",
+    "motor_mount",
+    "motor"
+   ],
+   "focus_offset": [
+    140,
+    0,
+    0
+   ],
+   "view": [
+    0.9,
+    0.55,
+    0.85
+   ]
+  },
+  {
+   "id": "A9",
+   "title": "Push the boom into the fuselage socket, square the tail to the fuselage and glue",
+   "short": "Boom in",
+   "station": "Frame",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A8",
+    "A4"
+   ],
+   "parts": [
+    "boom sub-assembly"
+   ],
+   "tools": [],
+   "consumables": [
+    "5-minute epoxy"
+   ],
+   "seconds": 170,
+   "cure": 900,
+   "start": 27613,
+   "finish": 27782,
+   "anim": [
+    {
+     "parts": [
+      "boom",
+      "tail_mount",
+      "stab",
+      "fin",
+      "elevator",
+      "rudder",
+      "motor_mount",
+      "motor"
+     ],
+     "from": [
+      140,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "A10",
+   "title": "Run the elevator and rudder pushrods through their sleeves, hook up both ends",
+   "short": "Pushrods",
+   "station": "Frame",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A9",
+    "F2"
+   ],
+   "parts": [
+    "pushrod_elev",
+    "pushrod_rud"
+   ],
+   "tools": [],
+   "consumables": [],
+   "seconds": 75,
+   "cure": 0,
+   "start": 28682,
+   "finish": 28757,
+   "anim": [
+    {
+     "parts": [
+      "pushrod_elev",
+      "pushrod_rud"
+     ],
+     "from": [
+      220,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.45,
+    -0.8,
+    -0.6
+   ]
+  },
+  {
+   "id": "A11",
+   "title": "Solder the power, ESC, video and receiver wiring",
+   "short": "Solder",
+   "station": "Fuselage",
+   "resource": "builder",
+   "critical": false,
+   "needs": [
+    "A10"
+   ],
+   "parts": [],
+   "tools": [
+    "soldering iron"
+   ],
+   "consumables": [
+    "solder",
+    "heat-shrink",
+    "silicone wire"
+   ],
+   "seconds": 1010,
+   "cure": 0,
+   "start": 28757,
+   "finish": 29767,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "A12",
+   "title": "Slide in the spars and glue on both wing panels",
+   "short": "Wing panels",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "Q2",
+    "Q4",
+    "Q5",
+    "F1"
+   ],
+   "parts": [
+    "wing_centre",
+    "spar_main",
+    "spar_rear",
+    "wing_R",
+    "wing_L"
+   ],
+   "tools": [],
+   "consumables": [
+    "5-minute epoxy"
+   ],
+   "seconds": 140,
+   "cure": 900,
+   "start": 35966,
+   "finish": 36106,
+   "anim": [
+    {
+     "parts": [
+      "wing_centre"
+     ],
+     "from": [
+      0,
+      0,
+      120
+     ],
+     "to": [
+      0,
+      0,
+      60
+     ]
+    },
+    {
+     "parts": [
+      "spar_main",
+      "spar_rear"
+     ],
+     "from": [
+      0,
+      320,
+      60
+     ],
+     "to": [
+      0,
+      0,
+      60
+     ]
+    },
+    {
+     "parts": [
+      "wing_R"
+     ],
+     "from": [
+      0,
+      140,
+      60
+     ],
+     "to": [
+      0,
+      0,
+      60
+     ]
+    },
+    {
+     "parts": [
+      "wing_L"
+     ],
+     "from": [
+      0,
+      -140,
+      60
+     ],
+     "to": [
+      0,
+      0,
+      60
+     ]
+    }
+   ],
+   "focus": [
+    "wing_R",
+    "wing_L",
+    "wing_centre"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    60
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "A13",
+   "title": "Glue the wing onto the fuselage's flat top",
+   "short": "Wing on",
+   "station": "Frame",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A12",
+    "A11"
+   ],
+   "parts": [
+    "wing sub-assembly"
+   ],
+   "tools": [],
+   "consumables": [
+    "5-minute epoxy"
+   ],
+   "seconds": 170,
+   "cure": 900,
+   "start": 37006,
+   "finish": 37176,
+   "anim": [
+    {
+     "parts": [
+      "wing_centre",
+      "spar_main",
+      "spar_rear",
+      "wing_R",
+      "wing_L"
+     ],
+     "from": [
+      0,
+      0,
+      60
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "A14",
+   "title": "Fit the aileron servos, route their leads, glue the fairings over them",
+   "short": "Aileron servos",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A13",
+    "Q2"
+   ],
+   "parts": [
+    "servo_ail_R",
+    "servo_ail_L",
+    "fairing_ail_R",
+    "fairing_ail_L"
+   ],
+   "tools": [],
+   "consumables": [
+    "hot glue",
+    "CA"
+   ],
+   "seconds": 161,
+   "cure": 0,
+   "start": 38076,
+   "finish": 38237,
+   "anim": [
+    {
+     "parts": [
+      "servo_ail_R",
+      "servo_ail_L"
+     ],
+     "from": [
+      0,
+      0,
+      -45
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "fairing_ail_R",
+      "fairing_ail_L"
+     ],
+     "from": [
+      0,
+      0,
+      -40
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "wing_R",
+    "wing_L"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.45,
+    -0.8,
+    -0.6
+   ]
+  },
+  {
+   "id": "A15",
+   "title": "Hinge the ailerons, glue the horns, fit the links",
+   "short": "Ailerons",
+   "station": "Wing",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A14",
+    "Q3",
+    "F2"
+   ],
+   "parts": [
+    "aileron_R",
+    "aileron_L",
+    "horn_ail_R",
+    "horn_ail_L",
+    "pushrod_ail_R",
+    "pushrod_ail_L"
+   ],
+   "tools": [],
+   "consumables": [
+    "hinge tape",
+    "CA"
+   ],
+   "seconds": 159,
+   "cure": 0,
+   "start": 38237,
+   "finish": 38396,
+   "anim": [
+    {
+     "parts": [
+      "aileron_R",
+      "aileron_L"
+     ],
+     "from": [
+      45,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "horn_ail_R",
+      "horn_ail_L",
+      "pushrod_ail_R",
+      "pushrod_ail_L"
+     ],
+     "from": [
+      0,
+      0,
+      -30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "wing_R",
+    "wing_L"
+   ],
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.45,
+    -0.8,
+    -0.6
+   ]
+  },
+  {
+   "id": "A16",
+   "title": "Plug in the servo leads and tidy the wiring",
+   "short": "Servo leads",
+   "station": "Final",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A15"
+   ],
+   "parts": [],
+   "tools": [],
+   "consumables": [],
+   "seconds": 62,
+   "cure": 0,
+   "start": 38396,
+   "finish": 38458,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "A17",
+   "title": "Fit the prop, battery, antenna and lid",
+   "short": "Prop, battery",
+   "station": "Final",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A16"
+   ],
+   "parts": [
+    "prop",
+    "battery",
+    "antenna",
+    "lid"
+   ],
+   "tools": [
+    "prop wrench"
+   ],
+   "consumables": [],
+   "seconds": 44,
+   "cure": 0,
+   "start": 38458,
+   "finish": 38502,
+   "anim": [
+    {
+     "parts": [
+      "battery"
+     ],
+     "from": [
+      0,
+      0,
+      50
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "antenna"
+     ],
+     "from": [
+      0,
+      0,
+      40
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "lid"
+     ],
+     "from": [
+      0,
+      0,
+      30
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "parts": [
+      "prop"
+     ],
+     "from": [
+      45,
+      0,
+      0
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": [
+    -0.95,
+    0.62,
+    0.9
+   ]
+  },
+  {
+   "id": "S1",
+   "title": "Bind the receiver and set up INAV",
+   "short": "INAV setup",
+   "station": "Setup",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "A17"
+   ],
+   "parts": [],
+   "tools": [
+    "laptop with INAV Configurator"
+   ],
+   "consumables": [],
+   "seconds": 1920,
+   "cure": 0,
+   "start": 38502,
+   "finish": 40422,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "S2",
+   "title": "Balance and run the pre-flight checks",
+   "short": "Balance, checks",
+   "station": "Setup",
+   "resource": "builder",
+   "critical": true,
+   "needs": [
+    "S1"
+   ],
+   "parts": [],
+   "tools": [
+    "CG balancer or fingertips"
+   ],
+   "consumables": [],
+   "seconds": 480,
+   "cure": 0,
+   "start": 40422,
+   "finish": 40902,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  }
+ ],
+ "dfma": [
+  {
+   "op": "A1",
+   "item": "fuselage_front",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I00",
+   "t_each": 3.0,
+   "t_total": 3.0,
+   "n_min": 1,
+   "why": "base part"
+  },
+  {
+   "op": "A1",
+   "item": "fuselage_rear",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 0,
+   "why": "separate only for the 180 mm bed"
+  },
+  {
+   "op": "A2",
+   "item": "camera",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I08",
+   "t_each": 7.63,
+   "t_total": 7.63,
+   "n_min": 1,
+   "why": "separate function, optics"
+  },
+  {
+   "op": "A2",
+   "item": "vtx",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I06",
+   "t_each": 6.63,
+   "t_total": 6.63,
+   "n_min": 0,
+   "why": "could be one camera+VTX module"
+  },
+  {
+   "op": "A3",
+   "item": "fc",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I01",
+   "t_each": 3.63,
+   "t_total": 3.63,
+   "n_min": 1,
+   "why": "separate electronics"
+  },
+  {
+   "op": "A3",
+   "item": "M2 screw (FC)",
+   "qty": 4,
+   "handling": "Hs",
+   "insertion": "I38",
+   "t_each": 8.5,
+   "t_total": 34.0,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A3",
+   "item": "receiver",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 0,
+   "why": "could be integrated in the FC"
+  },
+  {
+   "op": "A3",
+   "item": "esc",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I01",
+   "t_each": 4.0,
+   "t_total": 4.0,
+   "n_min": 0,
+   "why": "could be integrated in the FC"
+  },
+  {
+   "op": "A4",
+   "item": "servo_elev",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A4",
+   "item": "servo_rud",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A4",
+   "item": "servo screw",
+   "qty": 4,
+   "handling": "Hs",
+   "insertion": "I38",
+   "t_each": 8.5,
+   "t_total": 34.0,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A5",
+   "item": "tail_mount",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I00",
+   "t_each": 3.0,
+   "t_total": 3.0,
+   "n_min": 0,
+   "why": "could be printed with the motor cap"
+  },
+  {
+   "op": "A5",
+   "item": "stab",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "different material (LW-PLA)"
+  },
+  {
+   "op": "A5",
+   "item": "fin",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I31",
+   "t_each": 6.13,
+   "t_total": 6.13,
+   "n_min": 0,
+   "why": "could be printed with the tail mount"
+  },
+  {
+   "op": "A6",
+   "item": "elevator",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A6",
+   "item": "rudder",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I08",
+   "t_each": 7.63,
+   "t_total": 7.63,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A7",
+   "item": "boom",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I03",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 1,
+   "why": "different material (carbon)"
+  },
+  {
+   "op": "A7",
+   "item": "tail sub-assembly",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "sub-assembly, already counted"
+  },
+  {
+   "op": "A8",
+   "item": "motor_mount",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I31",
+   "t_each": 6.13,
+   "t_total": 6.13,
+   "n_min": 0,
+   "why": "could be printed with the tail mount"
+  },
+  {
+   "op": "A8",
+   "item": "motor",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 1,
+   "why": "rotates"
+  },
+  {
+   "op": "A8",
+   "item": "M2 screw (motor)",
+   "qty": 4,
+   "handling": "Hs",
+   "insertion": "I38",
+   "t_each": 8.5,
+   "t_total": 34.0,
+   "n_min": 0,
+   "why": "fastener"
+  },
+  {
+   "op": "A9",
+   "item": "boom sub-assembly",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "sub-assembly, already counted"
+  },
+  {
+   "op": "A10",
+   "item": "pushrod_elev",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A10",
+   "item": "pushrod_rud",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A12",
+   "item": "wing_centre",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "different material (LW-PLA)"
+  },
+  {
+   "op": "A12",
+   "item": "spar_main",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I03",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 1,
+   "why": "different material (carbon)"
+  },
+  {
+   "op": "A12",
+   "item": "spar_rear",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I03",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 0,
+   "why": "could merge with the main spar"
+  },
+  {
+   "op": "A12",
+   "item": "wing_R",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "separate only for the 180 mm bed"
+  },
+  {
+   "op": "A12",
+   "item": "wing_L",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "separate only for the 180 mm bed"
+  },
+  {
+   "op": "A13",
+   "item": "wing sub-assembly",
+   "qty": 1,
+   "handling": "H2h",
+   "insertion": "I08",
+   "t_each": 9.5,
+   "t_total": 9.5,
+   "n_min": 0,
+   "why": "sub-assembly, already counted"
+  },
+  {
+   "op": "A14",
+   "item": "servo_ail_R",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A14",
+   "item": "servo_ail_L",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A14",
+   "item": "fairing_ail_R",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I08",
+   "t_each": 7.63,
+   "t_total": 7.63,
+   "n_min": 0,
+   "why": "could be printed into the wing panel"
+  },
+  {
+   "op": "A14",
+   "item": "fairing_ail_L",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I08",
+   "t_each": 7.63,
+   "t_total": 7.63,
+   "n_min": 0,
+   "why": "could be printed into the wing panel"
+  },
+  {
+   "op": "A15",
+   "item": "aileron_R",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A15",
+   "item": "aileron_L",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I08",
+   "t_each": 8.0,
+   "t_total": 8.0,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A15",
+   "item": "horn_ail_R",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I08",
+   "t_each": 9.0,
+   "t_total": 9.0,
+   "n_min": 0,
+   "why": "could be printed into the aileron"
+  },
+  {
+   "op": "A15",
+   "item": "horn_ail_L",
+   "qty": 1,
+   "handling": "Hs",
+   "insertion": "I08",
+   "t_each": 9.0,
+   "t_total": 9.0,
+   "n_min": 0,
+   "why": "could be printed into the aileron"
+  },
+  {
+   "op": "A15",
+   "item": "pushrod_ail_R",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A15",
+   "item": "pushrod_ail_L",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I03",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "moves"
+  },
+  {
+   "op": "A17",
+   "item": "prop",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I38",
+   "t_each": 7.5,
+   "t_total": 7.5,
+   "n_min": 1,
+   "why": "rotates, replaced after crashes"
+  },
+  {
+   "op": "A17",
+   "item": "battery",
+   "qty": 1,
+   "handling": "H10",
+   "insertion": "I06",
+   "t_each": 7.0,
+   "t_total": 7.0,
+   "n_min": 1,
+   "why": "removed for charging"
+  },
+  {
+   "op": "A17",
+   "item": "antenna",
+   "qty": 1,
+   "handling": "Hf",
+   "insertion": "I01",
+   "t_each": 6.5,
+   "t_total": 6.5,
+   "n_min": 0,
+   "why": "part of the VTX"
+  },
+  {
+   "op": "A17",
+   "item": "lid",
+   "qty": 1,
+   "handling": "H00",
+   "insertion": "I30",
+   "t_each": 3.13,
+   "t_total": 3.13,
+   "n_min": 1,
+   "why": "opened for battery changes"
+  }
+ ],
+ "dfm": [
+  {
+   "name": "wing_centre",
+   "material": "LW-PLA",
+   "bed": "97 x 12 x 135",
+   "minutes": 112.1,
+   "grams": 14.36,
+   "cost": 0.79,
+   "overhang_mm2": 22,
+   "support": "none",
+   "bed_contact_mm2": 818,
+   "slender": 10.9,
+   "notes": [
+    "tall and thin (height/width 11); brim and slow Y moves on a bed-slinger"
+   ]
+  },
+  {
+   "name": "wing_R",
+   "material": "LW-PLA",
+   "bed": "97 x 12 x 175",
+   "minutes": 87.2,
+   "grams": 9.62,
+   "cost": 0.53,
+   "overhang_mm2": 369,
+   "support": "none",
+   "bed_contact_mm2": 705,
+   "slender": 14.8,
+   "notes": [
+    "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
+   ]
+  },
+  {
+   "name": "wing_L",
+   "material": "LW-PLA",
+   "bed": "97 x 12 x 175",
+   "minutes": 87.2,
+   "grams": 9.6,
+   "cost": 0.53,
+   "overhang_mm2": 369,
+   "support": "none",
+   "bed_contact_mm2": 705,
+   "slender": 14.8,
+   "notes": [
+    "tall and thin (height/width 15); brim and slow Y moves on a bed-slinger"
+   ]
+  },
+  {
+   "name": "aileron_R",
+   "material": "LW-PLA",
+   "bed": "24 x 158 x 6",
+   "minutes": 21.8,
+   "grams": 3.95,
+   "cost": 0.22,
+   "overhang_mm2": 2635,
+   "support": "bridge 17 mm",
+   "bed_contact_mm2": 0,
+   "slender": 0.2,
+   "notes": [
+    "small bed contact (0 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "aileron_L",
+   "material": "LW-PLA",
+   "bed": "24 x 158 x 6",
+   "minutes": 21.8,
+   "grams": 3.95,
+   "cost": 0.22,
+   "overhang_mm2": 2635,
+   "support": "bridge 17 mm",
+   "bed_contact_mm2": 0,
+   "slender": 0.2,
+   "notes": [
+    "small bed contact (0 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "tail_mount",
+   "material": "PLA/PETG",
+   "bed": "24 x 13 x 30",
+   "minutes": 25.6,
+   "grams": 4.3,
+   "cost": 0.09,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 58,
+   "slender": 2.4,
+   "notes": [
+    "small bed contact (58 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "stab",
+   "material": "LW-PLA",
+   "bed": "31 x 174 x 2",
+   "minutes": 27.4,
+   "grams": 4.03,
+   "cost": 0.22,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 5213,
+   "slender": 0.1,
+   "notes": []
+  },
+  {
+   "name": "elevator",
+   "material": "LW-PLA",
+   "bed": "17 x 174 x 7",
+   "minutes": 15.0,
+   "grams": 2.34,
+   "cost": 0.13,
+   "overhang_mm2": 1,
+   "support": "none",
+   "bed_contact_mm2": 1448,
+   "slender": 0.4,
+   "notes": []
+  },
+  {
+   "name": "fin",
+   "material": "LW-PLA",
+   "bed": "30 x 79 x 2",
+   "minutes": 12.5,
+   "grams": 1.82,
+   "cost": 0.1,
+   "overhang_mm2": 0,
+   "support": "none",
+   "bed_contact_mm2": 2343,
+   "slender": 0.1,
+   "notes": []
+  },
+  {
+   "name": "rudder",
+   "material": "PLA/PETG",
+   "bed": "17 x 78 x 10",
+   "minutes": 5.7,
+   "grams": 2.07,
+   "cost": 0.04,
+   "overhang_mm2": 5,
+   "support": "none",
+   "bed_contact_mm2": 821,
+   "slender": 0.6,
+   "notes": []
+  },
+  {
+   "name": "motor_mount",
+   "material": "PLA/PETG",
+   "bed": "20 x 20 x 14",
+   "minutes": 16.1,
+   "grams": 2.56,
+   "cost": 0.05,
+   "overhang_mm2": 56,
+   "support": "none",
+   "bed_contact_mm2": 217,
+   "slender": 0.7,
+   "notes": []
+  },
+  {
+   "name": "fairing_ail_R",
+   "material": "LW-PLA",
+   "bed": "54 x 36 x 20",
+   "minutes": 11.1,
+   "grams": 1.02,
+   "cost": 0.06,
+   "overhang_mm2": 1444,
+   "support": "support",
+   "bed_contact_mm2": 1,
+   "slender": 0.6,
+   "notes": [
+    "1 overhang(s) wider than 10 mm; largest 32 mm",
+    "small bed contact (1 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "fairing_ail_L",
+   "material": "LW-PLA",
+   "bed": "54 x 36 x 20",
+   "minutes": 11.1,
+   "grams": 1.02,
+   "cost": 0.06,
+   "overhang_mm2": 1444,
+   "support": "support",
+   "bed_contact_mm2": 1,
+   "slender": 0.6,
+   "notes": [
+    "1 overhang(s) wider than 10 mm; largest 32 mm",
+    "small bed contact (1 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "fuselage_front",
+   "material": "PLA/PETG",
+   "bed": "126 x 38 x 24",
+   "minutes": 25.6,
+   "grams": 10.01,
+   "cost": 0.2,
+   "overhang_mm2": 747,
+   "support": "none",
+   "bed_contact_mm2": 3932,
+   "slender": 0.6,
+   "notes": []
+  },
+  {
+   "name": "fuselage_rear",
+   "material": "PLA/PETG",
+   "bed": "24 x 38 x 159",
+   "minutes": 89.0,
+   "grams": 20.29,
+   "cost": 0.41,
+   "overhang_mm2": 644,
+   "support": "bridge 11 mm",
+   "bed_contact_mm2": 57,
+   "slender": 6.5,
+   "notes": [
+    "tall and thin (height/width 7); brim and slow Y moves on a bed-slinger",
+    "small bed contact (57 mm^2); use a brim or glue stick"
+   ]
+  },
+  {
+   "name": "lid",
+   "material": "PLA/PETG",
+   "bed": "175 x 38 x 8",
+   "minutes": 13.4,
+   "grams": 8.78,
+   "cost": 0.18,
+   "overhang_mm2": 5787,
+   "support": "support",
+   "bed_contact_mm2": 280,
+   "slender": 0.2,
+   "notes": [
+    "1 overhang(s) wider than 10 mm; largest 32 mm"
+   ]
+  }
+ ],
+ "suggestions": [
+  {
+   "title": "Print the aileron control horns into the ailerons",
+   "parts": 2,
+   "seconds": 48,
+   "trade": "PETG ailerons, or a thicker LW-PLA horn; +0.3 g"
+  },
+  {
+   "title": "Use an FC with a built-in ELRS receiver",
+   "parts": 1,
+   "seconds": 147,
+   "trade": "few wing FCs have one (the Matek F405-WTE does, but it is 44 mm long and end-of-life)"
+  },
+  {
+   "title": "Use a nano camera with an integrated VTX",
+   "parts": 1,
+   "seconds": 107,
+   "trade": "fixed VTX power, harder to replace"
+  },
+  {
+   "title": "Print the tail mount, fin and motor cap as one PETG part",
+   "parts": 2,
+   "seconds": 47,
+   "trade": "the tail and the motor then go on together; about +1 g (PETG fin instead of LW-PLA)"
+  },
+  {
+   "title": "Print the aileron servo fairings into the wing panels",
+   "parts": 2,
+   "seconds": 45,
+   "trade": "the servo goes in from the root rib side; the panel needs a support-free blister"
+  },
+  {
+   "title": "Replace tape hinges with printed pin hinges",
+   "parts": 0,
+   "seconds": 80,
+   "trade": "stiffer surfaces, 0.8 mm pins; slightly more drag at the gap"
+  },
+  {
+   "title": "Key the boom (a flat at its front end) so the tail squares itself",
+   "parts": 0,
+   "seconds": 60,
+   "trade": "a file stroke and a matching flat in the socket; no alignment jig"
+  }
+ ],
+ "handling": {
+  "H00": 1.13,
+  "H10": 1.5,
+  "H20": 1.8,
+  "Hs": 2.5,
+  "Hf": 4.0,
+  "H2h": 3.0
+ },
+ "insertion": {
+  "I00": 1.5,
+  "I01": 2.5,
+  "I03": 3.5,
+  "I06": 5.5,
+  "I08": 6.5,
+  "I30": 2.0,
+  "I31": 5.0,
+  "I38": 6.0,
+  "I39": 8.0
+ }
+}

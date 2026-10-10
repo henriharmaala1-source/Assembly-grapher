@@ -1,0 +1,252 @@
+"""Bill of process for the single-boom Kipinä (build.py --variant single-boom).
+
+process.py loads this when the spec's layout is "single". The time standards,
+slicer, schedule and reports are shared; this file holds what differs: the
+operations, their short names, the redesign suggestions and the bought parts.
+"""
+from __future__ import annotations
+
+# separate processes the single boom adds (seconds each, description)
+PROC_EXTRA = {
+    "cut_ptfe":   (30, "cut a PTFE sleeve to length"),
+    "thread":     (60, "thread a sleeve or wires through the boom"),
+    "drill_exit": (60, "mark and drill a pushrod exit hole in the boom"),
+}
+
+PARK = (140, 0, 0)            # the tail and boom are built behind the plane, then slid into the fuselage
+V_FUS, V_WHOLE, V_TAIL = [-0.8, 0.8, 0.9], [-0.95, 0.62, 0.9], [0.9, 0.55, 0.85]
+V_UNDER, V_UNDER_TAIL, V_TOP = [-0.45, -0.8, -0.6], [0.75, -0.5, 0.6], [-0.3, 1.0, 0.35]
+TAIL = ["tail_mount", "stab", "fin", "elevator", "rudder"]
+BOOM = ["boom", *TAIL, "motor_mount", "motor"]
+FUS = ["fuselage_front", "fuselage_rear"]
+
+
+def ops(h):
+    """The operations; h holds the shared constants (EPOXY_CURE)."""
+    cure = h["EPOXY_CURE"]
+    return [
+        # ---- printing (A1 mini) ----
+        dict(id="P1", title="Print plate 1: fuselage halves, lid, tail mount, rudder, motor mount", station="Print",
+             resource="printer", material="PETG", needs=[],
+             plate=["fuselage_front", "fuselage_rear", "lid", "tail_mount", "rudder", "motor_mount"]),
+        dict(id="P2", title="Print plate 2: wing centre, fin, aileron fairings", station="Print", resource="printer",
+             material="LW-PLA", needs=[], plate=["wing_centre", "fin", "fairing_ail_R", "fairing_ail_L"]),
+        dict(id="P3", title="Print plate 3: stabiliser, elevator, ailerons", station="Print", resource="printer",
+             material="LW-PLA", needs=[], plate=["stab", "elevator", "aileron_R", "aileron_L"]),
+        dict(id="P4", title="Print plate 4: right wing panel", station="Print", resource="printer",
+             material="LW-PLA", needs=[], plate=["wing_R"]),
+        dict(id="P5", title="Print plate 5: left wing panel", station="Print", resource="printer",
+             material="LW-PLA", needs=[], plate=["wing_L"]),
+        # ---- preparation ----
+        dict(id="F1", title="Cut the boom and the wing spars", station="Prep", resource="builder", needs=[],
+             proc=[("cut_tube", 1), ("cut_rod", 2)], tools=["rotary tool or fine saw", "ruler", "file"]),
+        dict(id="F2", title="Make the pushrods and aileron links", station="Prep", resource="builder", needs=[],
+             proc=[("cut_rod", 4), ("z_bend", 6), ("rod_end", 2), ("l_bend", 2)],
+             tools=["wire bender or pliers", "cutter", "heat gun"], consumables=["CA", "heat-shrink"]),
+        dict(id="F3", title="Drill the pushrod exits, thread the PTFE sleeves and motor wires through the boom",
+             station="Prep", resource="builder", needs=["F1"],
+             proc=[("drill_exit", 2), ("cut_ptfe", 2), ("thread", 3)],
+             tools=["2 mm drill in a pin vice", "ruler"], consumables=["PTFE tube 2/1 mm", "silicone wire"]),
+        dict(id="Q1", title="Finish plate 1 parts, ream the boom socket and motor cap", station="Prep",
+             resource="builder", needs=["P1"], proc=[("unplate", 6), ("ream", 2)],
+             tools=["10.2 mm drill or round file"]),
+        dict(id="Q2", title="Finish the wing centre, fin and fairings, ream the spar holes", station="Prep",
+             resource="builder", needs=["P2"], proc=[("unplate", 4), ("brim", 2), ("ream", 2)],
+             tools=["3.2 / 2.2 mm drill bits"]),
+        dict(id="Q3", title="Finish the tail surfaces and ailerons", station="Prep", resource="builder",
+             needs=["P3"], proc=[("unplate", 4)]),
+        dict(id="Q4", title="Remove the brim from the right panel, ream spar holes", station="Prep",
+             resource="builder", needs=["P4"], proc=[("unplate", 1), ("brim", 1), ("ream", 2)]),
+        dict(id="Q5", title="Remove the brim from the left panel, ream spar holes", station="Prep",
+             resource="builder", needs=["P5"], proc=[("unplate", 1), ("brim", 1), ("ream", 2)]),
+        # ---- fuselage ----
+        dict(id="A1", title="Glue the fuselage halves together", station="Fuselage", resource="builder",
+             needs=["Q1"],
+             items=[("fuselage_front", 1, "H10", "I00", 1, "base part"),
+                    ("fuselage_rear", 1, "H10", "I08", 0, "separate only for the 180 mm bed")],
+             proc=[("ca", 1)], consumables=["CA"],
+             anim=[(["fuselage_front"], (0, 0, -30), None), (["fuselage_rear"], (60, 0, -30), None)],
+             focus=FUS, view=V_FUS),
+        dict(id="A2", title="Fit the camera and VTX in the nose", station="Fuselage", resource="builder",
+             needs=["A1"],
+             items=[("camera", 1, "H00", "I08", 1, "separate function, optics"),
+                    ("vtx", 1, "H00", "I06", 0, "could be one camera+VTX module")],
+             proc=[("ca", 2), ("tape", 1)], consumables=["CA", "foam tape"],
+             anim=[(["camera"], (0, 0, 45), None), (["vtx"], (0, 0, 45), None)], focus=FUS, view=V_FUS),
+        dict(id="A3", title="Screw the FC on its posts, add the receiver, lay the ESC under the boom's mouth",
+             station="Fuselage", resource="builder", needs=["A2"],
+             items=[("fc", 1, "H00", "I01", 1, "separate electronics"),
+                    ("M2 screw (FC)", 4, "Hs", "I38", 0, "fastener"),
+                    ("receiver", 1, "H10", "I06", 0, "could be integrated in the FC"),
+                    ("esc", 1, "H10", "I01", 0, "could be integrated in the FC")],
+             proc=[("tape", 2)], tools=["1.5 mm hex driver"], consumables=["foam tape"],
+             anim=[(["fc"], (0, 0, 45), None), (["receiver"], (0, 0, 45), None), (["esc"], (0, 0, 45), None)],
+             focus=FUS, view=V_TOP),
+        dict(id="A4", title="Screw the elevator and rudder servos to their posts behind the battery",
+             station="Fuselage", resource="builder", needs=["A3"],
+             items=[("servo_elev", 1, "H10", "I06", 1, "moves"),
+                    ("servo_rud", 1, "H10", "I06", 1, "moves"),
+                    ("servo screw", 4, "Hs", "I38", 0, "fastener")],
+             proc=[], tools=["small Phillips driver"],
+             anim=[(["servo_elev"], (0, 0, 45), None), (["servo_rud"], (0, 0, 45), None)],
+             focus=FUS, view=V_TOP),
+        # ---- tail, built behind the plane ----
+        dict(id="A5", title="Glue the stabiliser under the tail mount's pylons and the fin into its socket",
+             station="Tail", resource="builder", needs=["Q1", "Q2", "Q3"],
+             items=[("tail_mount", 1, "H10", "I00", 0, "could be printed with the motor cap"),
+                    ("stab", 1, "H10", "I08", 1, "different material (LW-PLA)"),
+                    ("fin", 1, "H00", "I31", 0, "could be printed with the tail mount")],
+             proc=[("ca", 3)], consumables=["CA"],
+             anim=[(["tail_mount"], (PARK[0], 0, 40), PARK), (["stab"], (PARK[0], 0, -40), PARK),
+                   (["fin"], (PARK[0], 0, 50), PARK)],
+             focus=["tail_mount", "stab", "fin"], focus_offset=PARK, view=V_TAIL),
+        dict(id="A6", title="Hinge the elevator and the rudder", station="Tail", resource="builder",
+             needs=["A5"],
+             items=[("elevator", 1, "H10", "I08", 1, "moves"),
+                    ("rudder", 1, "H00", "I08", 1, "moves")],
+             proc=[("tape_hinge", 2)], consumables=["hinge tape"],
+             anim=[(["elevator", "rudder"], (PARK[0] + 35, 0, 0), PARK)],
+             focus=["tail_mount", "stab", "fin"], focus_offset=PARK, view=V_UNDER_TAIL),
+        dict(id="A7", title="Slide the tail onto the boom, square it and glue", station="Boom", resource="builder",
+             needs=["A6", "F3"], cure=cure,
+             items=[("boom", 1, "H2h", "I03", 1, "different material (carbon)"),
+                    ("tail sub-assembly", 1, "H2h", "I08", 0, "sub-assembly, already counted")],
+             proc=[("square", 1), ("epoxy_mix", 1), ("epoxy", 2)], consumables=["5-minute epoxy"],
+             anim=[(["boom"], (PARK[0] + 220, 0, 0), PARK)],
+             focus=["boom", *TAIL], focus_offset=PARK, view=V_TAIL),
+        dict(id="A8", title="Glue the motor cap on the boom's end, screw on the motor, solder its wires",
+             station="Boom", resource="builder", needs=["A7"], cure=cure,
+             items=[("motor_mount", 1, "H00", "I31", 0, "could be printed with the tail mount"),
+                    ("motor", 1, "H10", "I06", 1, "rotates"),
+                    ("M2 screw (motor)", 4, "Hs", "I38", 0, "fastener")],
+             proc=[("epoxy_mix", 1), ("epoxy", 1), ("solder", 3), ("shrink", 3)],
+             tools=["1.5 mm hex driver", "soldering iron"], consumables=["5-minute epoxy", "solder", "heat-shrink"],
+             anim=[(["motor_mount"], (PARK[0] + 45, 0, 0), PARK), (["motor"], (PARK[0] + 55, 0, 0), PARK)],
+             focus=["boom", "tail_mount", "motor_mount", "motor"], focus_offset=PARK, view=V_TAIL),
+        # ---- frame ----
+        dict(id="A9", title="Push the boom into the fuselage socket, square the tail to the fuselage and glue",
+             station="Frame", resource="builder", needs=["A8", "A4"], cure=cure,
+             items=[("boom sub-assembly", 1, "H2h", "I08", 0, "sub-assembly, already counted")],
+             proc=[("square", 1), ("epoxy_mix", 1), ("epoxy", 2)], consumables=["5-minute epoxy"],
+             anim=[(BOOM, PARK, None)], focus=None, view=V_WHOLE),
+        dict(id="A10", title="Run the elevator and rudder pushrods through their sleeves, hook up both ends",
+             station="Frame", resource="builder", needs=["A9", "F2"],
+             items=[("pushrod_elev", 1, "Hf", "I03", 1, "moves"),
+                    ("pushrod_rud", 1, "Hf", "I03", 1, "moves")],
+             proc=[("hook", 4)],
+             anim=[(["pushrod_elev", "pushrod_rud"], (220, 0, 0), None)], focus=None, view=V_UNDER),
+        dict(id="A11", title="Solder the power, ESC, video and receiver wiring", station="Fuselage",
+             resource="builder", needs=["A10"],
+             # as the twin boom less nothing: 4 servos x 3, ESC signal 2, FC power 2, XT30 2,
+             # motor wires at the ESC 3, camera 3, VTX 4, receiver 4
+             proc=[("solder", 32), ("shrink", 14)],
+             tools=["soldering iron"], consumables=["solder", "heat-shrink", "silicone wire"]),
+        # ---- wing ----
+        dict(id="A12", title="Slide in the spars and glue on both wing panels", station="Wing",
+             resource="builder", needs=["Q2", "Q4", "Q5", "F1"], cure=cure,
+             items=[("wing_centre", 1, "H10", "I08", 1, "different material (LW-PLA)"),
+                    ("spar_main", 1, "H2h", "I03", 1, "different material (carbon)"),
+                    ("spar_rear", 1, "H2h", "I03", 0, "could merge with the main spar"),
+                    ("wing_R", 1, "H2h", "I08", 0, "separate only for the 180 mm bed"),
+                    ("wing_L", 1, "H2h", "I08", 0, "separate only for the 180 mm bed")],
+             proc=[("epoxy_mix", 1), ("epoxy", 2)], consumables=["5-minute epoxy"],
+             anim=[(["wing_centre"], (0, 0, 120), (0, 0, 60)),
+                   (["spar_main", "spar_rear"], (0, 320, 60), (0, 0, 60)),
+                   (["wing_R"], (0, 140, 60), (0, 0, 60)), (["wing_L"], (0, -140, 60), (0, 0, 60))],
+             focus=["wing_R", "wing_L", "wing_centre"], focus_offset=(0, 0, 60), view=V_WHOLE),
+        dict(id="A13", title="Glue the wing onto the fuselage's flat top", station="Frame", resource="builder",
+             needs=["A12", "A11"], cure=cure,
+             items=[("wing sub-assembly", 1, "H2h", "I08", 0, "sub-assembly, already counted")],
+             proc=[("square", 1), ("epoxy_mix", 1), ("epoxy", 2)], consumables=["5-minute epoxy"],
+             anim=[(["wing_centre", "spar_main", "spar_rear", "wing_R", "wing_L"], (0, 0, 60), None)],
+             focus=None, view=V_WHOLE),
+        dict(id="A14", title="Fit the aileron servos, route their leads, glue the fairings over them",
+             station="Wing", resource="builder", needs=["A13", "Q2"],
+             items=[("servo_ail_R", 1, "H10", "I08", 1, "moves"),
+                    ("servo_ail_L", 1, "H10", "I08", 1, "moves"),
+                    ("fairing_ail_R", 1, "H00", "I08", 0, "could be printed into the wing panel"),
+                    ("fairing_ail_L", 1, "H00", "I08", 0, "could be printed into the wing panel")],
+             proc=[("hotglue", 2), ("route", 2), ("ca", 2)], consumables=["hot glue", "CA"],
+             anim=[(["servo_ail_R", "servo_ail_L"], (0, 0, -45), None),
+                   (["fairing_ail_R", "fairing_ail_L"], (0, 0, -40), None)],
+             focus=["wing_R", "wing_L"], view=V_UNDER),
+        dict(id="A15", title="Hinge the ailerons, glue the horns, fit the links", station="Wing",
+             resource="builder", needs=["A14", "Q3", "F2"],
+             items=[("aileron_R", 1, "H10", "I08", 1, "moves"),
+                    ("aileron_L", 1, "H10", "I08", 1, "moves"),
+                    ("horn_ail_R", 1, "Hs", "I08", 0, "could be printed into the aileron"),
+                    ("horn_ail_L", 1, "Hs", "I08", 0, "could be printed into the aileron"),
+                    ("pushrod_ail_R", 1, "Hf", "I03", 1, "moves"),
+                    ("pushrod_ail_L", 1, "Hf", "I03", 1, "moves")],
+             proc=[("tape_hinge", 2), ("ca", 2)], consumables=["hinge tape", "CA"],
+             anim=[(["aileron_R", "aileron_L"], (45, 0, 0), None),
+                   (["horn_ail_R", "horn_ail_L", "pushrod_ail_R", "pushrod_ail_L"], (0, 0, -30), None)],
+             focus=["wing_R", "wing_L"], view=V_UNDER),
+        # ---- final ----
+        dict(id="A16", title="Plug in the servo leads and tidy the wiring", station="Final",
+             resource="builder", needs=["A15"], proc=[("plug", 4), ("route", 1)]),
+        dict(id="A17", title="Fit the prop, battery, antenna and lid", station="Final", resource="builder",
+             needs=["A16"],
+             items=[("prop", 1, "H10", "I38", 1, "rotates, replaced after crashes"),
+                    ("battery", 1, "H10", "I06", 1, "removed for charging"),
+                    ("antenna", 1, "Hf", "I01", 0, "part of the VTX"),
+                    ("lid", 1, "H00", "I30", 1, "opened for battery changes")],
+             proc=[("strap", 1)], tools=["prop wrench"],
+             anim=[(["battery"], (0, 0, 50), None), (["antenna"], (0, 0, 40), None),
+                   (["lid"], (0, 0, 30), None), (["prop"], (45, 0, 0), None)],
+             focus=None, view=V_WHOLE),
+        # ---- setup ----
+        dict(id="S1", title="Bind the receiver and set up INAV", station="Setup", resource="builder",
+             needs=["A17"], proc=[("bind", 1), ("config", 1)], tools=["laptop with INAV Configurator"]),
+        dict(id="S2", title="Balance and run the pre-flight checks", station="Setup", resource="builder",
+             needs=["S1"], proc=[("balance", 1), ("checks", 1)], tools=["CG balancer or fingertips"]),
+    ]
+
+
+SHORT = {
+    "P1": "Plate 1 PETG", "P2": "Plate 2", "P3": "Plate 3", "P4": "Plate 4", "P5": "Plate 5",
+    "F1": "Cut carbon", "F2": "Make linkages", "F3": "Prepare boom",
+    "Q1": "Finish plate 1", "Q2": "Finish plate 2", "Q3": "Finish plate 3", "Q4": "Finish plate 4",
+    "Q5": "Finish plate 5",
+    "A1": "Fuselage", "A2": "Camera, VTX", "A3": "FC, RX, ESC", "A4": "Tail servos",
+    "A5": "Tail glue-up", "A6": "Tail hinges", "A7": "Tail on boom", "A8": "Motor on boom",
+    "A9": "Boom in", "A10": "Pushrods", "A11": "Solder", "A12": "Wing panels", "A13": "Wing on",
+    "A14": "Aileron servos", "A15": "Ailerons", "A16": "Servo leads", "A17": "Prop, battery",
+    "S1": "INAV setup", "S2": "Balance, checks",
+}
+
+
+def suggestions(H, I, P):
+    """(title, parts removed, seconds saved, trade-off), from the handling, insertion and process tables."""
+    return [
+        ("Print the aileron control horns into the ailerons", 2, 2 * (H["Hs"][0] + I["I08"][0] + P["ca"][0]),
+         "PETG ailerons, or a thicker LW-PLA horn; +0.3 g"),
+        ("Use an FC with a built-in ELRS receiver", 1,
+         H["H10"][0] + I["I06"][0] + P["tape"][0] + 4 * P["solder"][0] + 2 * P["shrink"][0],
+         "few wing FCs have one (the Matek F405-WTE does, but it is 44 mm long and end-of-life)"),
+        ("Use a nano camera with an integrated VTX", 1,
+         H["H00"][0] + I["I06"][0] + P["tape"][0] + 3 * P["solder"][0] + P["shrink"][0],
+         "fixed VTX power, harder to replace"),
+        ("Print the tail mount, fin and motor cap as one PETG part", 2,
+         H["H00"][0] + I["I31"][0] + P["ca"][0] + H["H00"][0] + I["I31"][0] + P["epoxy"][0],
+         "the tail and the motor then go on together; about +1 g (PETG fin instead of LW-PLA)"),
+        ("Print the aileron servo fairings into the wing panels", 2, 2 * (H["H00"][0] + I["I08"][0] + P["ca"][0]),
+         "the servo goes in from the root rib side; the panel needs a support-free blister"),
+        ("Replace tape hinges with printed pin hinges", 0, 4 * P["tape_hinge"][0] - 4 * 20,
+         "stiffer surfaces, 0.8 mm pins; slightly more drag at the gap"),
+        ("Key the boom (a flat at its front end) so the tail squares itself", 0, P["square"][0],
+         "a file stroke and a matching flat in the socket; no alignment jig"),
+    ]
+
+
+BOUGHT = [
+    ("SG90 servo", 4, 3.0), ("1404 motor, 3000-3800 KV", 1, 15.0), ("4x2.5 prop (pair)", 1, 1.0),
+    ("Hobbywing XRotor Micro 30A ESC", 1, 15.0), ("Matek F405-WMN wing FC", 1, 55.0),
+    ("ELRS nano receiver", 1, 10.0),
+    ("nano camera 14 mm", 1, 15.0), ("VTX 25-200 mW", 1, 15.0), ("5.8 GHz whip antenna", 1, 3.0),
+    ("2S 450 mAh LiPo", 1, 8.0), ("roll-wrapped carbon tube 10x9 x 500 mm", 1, 9.0),
+    ("carbon rod 3 / 2 mm", 2, 2.0), ("PTFE tube 2/1 mm, 1 m", 1, 2.0),
+    ("pushrod rod, wire, horns", 1, 3.0), ("screws, tape, velcro, glue", 1, 4.0),
+]
+
+TITLE = "Kipinä, single boom"

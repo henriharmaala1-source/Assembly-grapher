@@ -443,11 +443,14 @@ python3 airframe/build.py --variant optimized   # the optimized variant in varia
 python3 airframe/build.py --variant single-boom # the single-boom variant in variants/single-boom/
 
 python3 airframe/process.py     # BOP.md, DFMA.md, viewer/process.json (slices with prusa-slicer if installed)
+python3 airframe/process.py --variant single-boom   # the same for variants/single-boom/
+python3 airframe/tools/make_single_viewer.py         # variants/single-boom/viewer/index.html from the twin's page
 
 # optional: PNG previews and the assembly video from the three.js viewer (headless Chromium)
 npm install three@0.169.0 playwright
 node airframe/tools/render.mjs
 node airframe/tools/render.mjs --video --ffmpeg /path/to/ffmpeg
+node airframe/tools/render.mjs --variant single-boom [--video]   # into variants/single-boom/preview/
 node airframe/tools/shoot-variants.mjs   # the comparison page's figures (after aero/variants.py)
 ```
 
@@ -640,6 +643,71 @@ power, but the 9 m/s stall limit stops it at 230 g first.
 | ![Both planes](variants/figures/single-models.png) | ![Side view](variants/figures/single-models-side.png) |
 | **Servos and pushrods inside, from above** | **The tail** |
 | ![Servos](variants/figures/single-models-servos.png) | ![Tail](variants/figures/single-models-tail.png) |
+
+### Building the single boom
+
+`python3 airframe/process.py --variant single-boom` writes its bill of process
+([variants/single-boom/BOP.md](variants/single-boom/BOP.md)) and DFMA analysis
+([variants/single-boom/DFMA.md](variants/single-boom/DFMA.md)). It slices every
+part with the same PrusaSlicer profile as the twin. The operations are in
+`process_single.py`. The viewer, [variants/single-boom/viewer/](variants/single-boom/viewer/index.html),
+has the same **Assemble** button, and the video is
+[variants/single-boom/preview/assembly.mp4](variants/single-boom/preview/assembly.mp4).
+
+![Single boom](variants/single-boom/preview/hero.png)
+
+The build order changes behind the battery:
+
+1. The tail servos screw to their posts in the fuselage before anything closes it in.
+2. The tail is glued up off the plane: stabiliser under the pylons, fin in its
+   socket, then the elevator and rudder hinged.
+3. It slides onto the boom and is squared and glued. The boom was already
+   drilled for the pushrod exits and threaded with the two PTFE sleeves and
+   the motor wires.
+4. The motor cap goes on the boom's end, with the motor on the cap.
+5. The whole boom slides into the fuselage socket and is squared to it, and
+   the pushrods go in through their sleeves.
+6. The wing is built separately and glued onto the fuselage's flat top.
+
+| | Twin boom | Single boom |
+|---|---|---|
+| Parts and fasteners | 54 (minimum 26) | 50 (minimum 23) |
+| Manual assembly time | 42 min | 46 min |
+| Design efficiency | 3 % | 2.5 % |
+| Printing | 8 h 38 min, 97 g | 9 h 53 min, 100 g |
+| Hands-on | 1 h 46 min | 1 h 52 min |
+| Epoxy cure waits | 45 min | 1 h 15 min |
+| Lead time | 10 h 09 min | 11 h 22 min |
+| Cost per airframe | about 170 EUR | about 175 EUR |
+
+- **Fewer parts, more joints.** The single boom drops the bellcrank, the
+  joiner wires, one boom and a fin. But it adds five epoxy joints: the tail on
+  the boom, the motor cap, the boom in the fuselage, the wing panels and the
+  wing on the fuselage. It also adds boom preparation (exit holes, sleeves,
+  motor wires).
+- **Lead time.** The prints still set it: the five plates run in series, and
+  the standing fuselage rear makes plate 1 longer (1 h 29 min on its own). The
+  critical path ends in the wing, which can only go on once the last panel has
+  printed.
+- **Two parts need support.** The lid and the aileron servo fairings each have
+  a 32 mm overhang. The lid's lips wrap round the fuselage's rounded top edges;
+  the fairing closes a shallow dome. The twin boom has neither problem. A
+  flatter lid lip, and a fairing printed into the wing panel (one of the
+  redesign suggestions), would remove both.
+- **Redesign suggestions** (DFMA.md has each one's trade-off):
+  - print the tail mount, fin and motor cap as one PETG part;
+  - print the servo fairings into the wing panels;
+  - key the boom so the tail squares itself.
+
+  Together with the twin's suggestions (printed horns, an FC with a built-in
+  receiver, a camera with an integrated VTX, printed hinges), they bring it to
+  42 parts.
+
+| Fuselage, cut open | Tail servos, lid off | ESC under the boom's mouth |
+|---|---|---|
+| ![Fuselage](variants/single-boom/preview/fuselage.png) | ![Servos](variants/single-boom/preview/servos.png) | ![ESC](variants/single-boom/preview/esc.png) |
+| **Tail** | **Motor on the boom** | **Side, cut open** |
+| ![Tail](variants/single-boom/preview/tail.png) | ![Motor](variants/single-boom/preview/motor.png) | ![Cutaway](variants/single-boom/preview/cutaway.png) |
 
 ## Known limitations
 

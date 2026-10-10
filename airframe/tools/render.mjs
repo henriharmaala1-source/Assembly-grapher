@@ -4,6 +4,7 @@
 //   npm install three@0.169.0 playwright   (or use a global playwright)
 //   node airframe/tools/render.mjs [--three node_modules/three] [--page]
 //   node airframe/tools/render.mjs --video [--ffmpeg path/to/ffmpeg] [--fps 30]
+//   node airframe/tools/render.mjs --variant single-boom [--video]   (variants/<name>/preview/)
 //
 // --video steps the viewer's assembly animation frame by frame and encodes
 // preview/assembly.mp4 (H.264) with ffmpeg.
@@ -18,9 +19,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const viewer = path.resolve(here, "../viewer");
-const out = path.resolve(here, "../preview");
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
+const variant = arg("--variant", null);
+const root = variant ? path.resolve(here, "../variants", variant) : path.resolve(here, "..");
+const viewer = path.join(root, "viewer");
+const out = path.join(root, "preview");
 const threeDir = path.resolve(arg("--three", "node_modules/three"));
 
 const require = createRequire(import.meta.url);
@@ -77,7 +80,22 @@ if (process.argv.includes("--video")) {
   server.close();
   process.exit(0);
 }
-const shots = [
+const shots = variant === "single-boom" ? [
+  ["hero", "view=quarter", 1600, 1000],
+  ["top", "view=top", 1400, 1000],
+  ["side", "view=side", 1600, 700],
+  ["front", "view=front", 1400, 700],
+  ["under", "view=under", 1400, 900],
+  ["cutaway", "view=side&cut=1", 1600, 700],
+  ["fuselage", "view=fuselage&cut=1", 1400, 900],
+  ["nose", "view=nose", 1200, 800],
+  ["bay", "view=bay", 1400, 900],
+  ["servos", "view=servos", 1300, 800],
+  ["esc", "view=esc&cut=1", 1300, 800],
+  ["aileron", "view=ail", 1200, 800],
+  ["tail", "view=tail", 1400, 900],
+  ["motor", "view=motor", 1300, 800],
+] : [
   ["hero", "view=quarter", 1600, 1000],
   ["top", "view=top", 1400, 1000],
   ["side", "view=side", 1600, 700],
@@ -92,12 +110,14 @@ const shots = [
   ["servo", "view=servo", 1200, 800],
   ["tail", "view=tail", 1400, 900],
 ];
-for (const [name, q, w, h] of shots) {
+for (const [name, q, w, h] of shots.filter(([n]) => !process.env.ONLY || process.env.ONLY.split(",").includes(n))) {
   const p = await page(w, h);
   await p.goto(`${base}?shot=1&${q}`);
   await p.waitForFunction(() => window.__ready === true, null, { timeout: 60000 });
   await p.waitForTimeout(800);
-  await p.screenshot({ path: path.join(out, `${name}.png`) });
+  await p.evaluate(() => { window.__freeze = true; });   // pages that support it stop drawing
+  await p.waitForTimeout(100);
+  await p.screenshot({ path: path.join(out, `${name}.png`), timeout: 120000 });
   await p.close();
   console.log("wrote", name);
 }

@@ -11,7 +11,8 @@
   and a DFMA analysis. An optimized variant (`--variant optimized`) builds in
   the efficiency study's airfoil and drag fixes. A single-boom variant
   (`--variant single-boom`) puts that plane on one carbon tube with the motor
-  behind the tail. A comparison page shows any two of the three side by side,
+  behind the tail; it has its own bill of process, DFMA analysis, viewer and
+  assembly video. A comparison page shows any two of the three side by side,
   with what their weight differences cost in flight
   ([airframe/variants/](airframe/variants/index.html)).
 - [`frames/mark4-v2-10/`](frames/mark4-v2-10/README.md): 2D drawings of the Mark4 V2 10" FPV

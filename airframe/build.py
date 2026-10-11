@@ -41,23 +41,35 @@ def airfoil_label(p: Params) -> str:
 
 class Section:
     """Wing section (NACA 4-digit, or a .dat file) at the wing's incidence,
-    placed on the pod top."""
+    placed on the pod top. With `chord` and `twist` it is the same section out
+    on a tapered panel: scaled and turned about the main spar's axis, which
+    stays where the root section has it (`anchor`), and thickened towards the
+    trailing edge where scaling would leave it thinner than te_min."""
 
-    def __init__(self, p: Params, L: Layout):
+    def __init__(self, p: Params, L: Layout, chord: float = None, twist: float = 0.0, anchor=None):
         self.p, self.L = p, L
-        c = L.chord
-        self.th = math.radians(p.incidence)
+        c = self.c = chord or L.chord
+        self.th = math.radians(p.incidence + twist)
+        self.dx = self.dz = 0.0
         up, lo = airfoil_file(p.airfoil) if p.airfoil else naca4(p.naca, 70, p.te_min / c)
+        extra = max(0.0, p.te_min / c - (up[-1][1] - lo[-1][1]))
+        if p.airfoil and extra > 1e-6:                       # a .dat section keeps its own TE: open it up
+            up = [(x, z + 0.5 * extra * x) for x, z in up]
+            lo = [(x, z - 0.5 * extra * x) for x, z in lo]
         self._cu = sorted(up)
         self._cl = sorted(lo)
         up = [self._rot(*q) for q in up]
         lo = [self._rot(*q) for q in lo]
-        self.dz = L.z_top + p.wing_gap - min(z for _, z in lo)
-        self.up = [(x, z + self.dz) for x, z in up]
-        self.lo = [(x, z + self.dz) for x, z in lo]
+        if anchor is None:
+            self.dz = L.z_top + p.wing_gap - min(z for _, z in lo)
+        else:
+            x0, z0 = self.camber_point(p.main_spar_pos)
+            self.dx, self.dz = anchor[0] - x0, anchor[1] - z0
+        self.up = [(x + self.dx, z + self.dz) for x, z in up]
+        self.lo = [(x + self.dx, z + self.dz) for x, z in lo]
 
     def _rot(self, xf, zf):
-        c = self.L.chord
+        c = self.c
         dx, dz = (xf - 0.25) * c, zf * c
         return (self.L.x_qc + dx * math.cos(self.th) + dz * math.sin(self.th),
                 -dx * math.sin(self.th) + dz * math.cos(self.th))
@@ -73,7 +85,7 @@ class Section:
 
     def camber_point(self, xf):
         x, z = self._rot(xf, self.camber(xf))
-        return x, z + self.dz
+        return x + self.dx, z + self.dz
 
     def x_at(self, xf):
         return self.camber_point(xf)[0]
@@ -89,10 +101,19 @@ class Section:
     def outline(self):
         return list(reversed(self.up)) + self.lo[1:]
 
+    def wire(self, y):
+        vs = [V(x, y, z) for x, z in self.outline()]
+        return cq.Wire.assembleEdges([cq.Edge.makeSpline(vs), cq.Edge.makeLine(vs[-1], vs[0])])
+
     def solid(self, y0, y1):
-        vs = [V(x, y0, z) for x, z in self.outline()]
-        wire = cq.Wire.assembleEdges([cq.Edge.makeSpline(vs), cq.Edge.makeLine(vs[-1], vs[0])])
-        return cq.Solid.extrudeLinear(cq.Face.makeFromWires(wire), V(0, y1 - y0, 0))
+        return cq.Solid.extrudeLinear(cq.Face.makeFromWires(self.wire(y0)), V(0, y1 - y0, 0))
+
+    def at(self, y: float) -> "Section":
+        """The section out at y on a tapered wing (this one, inboard of the break)."""
+        L = self.L
+        if not L.tapered or abs(y) <= L.y_break:
+            return self
+        return Section(self.p, L, L.chord_at(y), L.twist_at(y), anchor=self.camber_point(self.p.main_spar_pos))
 
     def centre_solid(self, y0, y1, z_floor, fill_from=0.08):
         """Section with the gap under it filled down to z_floor (sits on the pod)."""
@@ -273,10 +294,13 @@ def make_wing_centre(p: Params, L: Layout, sec: Section):
 
 
 def side_servo(p: Params, sec: Section, k: Kit, ya: float, horn_deg: float = 90.0,
-               horn_len: float = None, hole: float = None, z_base: float = None):
+               horn_len: float = None, hole: float = None, z_base: float = None, top: Section = None):
     """SG90 lying on its side in a wing pocket: tabs between the spars, shaft
-    pointing +y from its base at y = ya, horn hanging below the wing."""
+    pointing +y from its base at y = ya, horn hanging below the wing. On a
+    tapered panel `sec` is the section where the tabs sit and `top` the thinner
+    one at the pocket's outboard end, which the servo's top must stay under."""
     sv = k.servo
+    top = top or sec
     hole = hole or sv.horn_hole
     xa = sec.camber_point(p.main_spar_pos)[0] + p.main_spar_d / 2 + 0.4
     xb = sec.camber_point(p.rear_spar_pos)[0] - p.rear_spar_d / 2 - 0.4
@@ -286,17 +310,17 @@ def side_servo(p: Params, sec: Section, k: Kit, ya: float, horn_deg: float = 90.
     xm = (xa + xb) / 2                                       # body centre
     xs = xm + sv.shaft_x                                     # output shaft
     span = np.linspace(xm - sv.tab_span / 2, xm + sv.tab_span / 2, 16)
-    zt = min(sec.upper_z(x) for x in span) - 1.2            # top of the servo
+    zt = min(top.upper_z(x) for x in span) - 1.2            # top of the servo
     if z_base is not None:                                   # raised into a fairing
         zt = z_base + sv.width
     zc = zt - sv.width / 2                                   # shaft axis height
     zl = min(min(sec.lower_z(x) for x in span), zt - sv.width) - 3
-    top = ya + sv.height
+    top_y = ya + sv.height
     pocket = [
-        box(xm - sv.length / 2 - 0.2, xm + sv.length / 2 + 0.2, ya - 0.2, top + 0.2, zl, zt),
+        box(xm - sv.length / 2 - 0.2, xm + sv.length / 2 + 0.2, ya - 0.2, top_y + 0.2, zl, zt),
         box(xm - sv.tab_span / 2 - 0.3, xm + sv.tab_span / 2 + 0.3,
             ya + sv.tab_z - 0.2, ya + sv.tab_z + sv.tab_t + 0.2, zl, zt),
-        box(xm - 5.5, xs + 7.5, top, top + sv.boss_h + sv.spline_h + 1.2, zl, zt),
+        box(xm - 5.5, xs + 7.5, top_y, top_y + sv.boss_h + sv.spline_h + 1.2, zl, zt),
         box(xm - sv.length / 2 - 6, xm - sv.length / 2, ya + 2.0, ya + 6.0, zl, zt),   # lead
     ]
     return {"pocket": pocket, "origin": (xm, ya, zc), "horn_deg": horn_deg, "horn_len": horn_len,
@@ -304,8 +328,14 @@ def side_servo(p: Params, sec: Section, k: Kit, ya: float, horn_deg: float = 90.
 
 
 def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
-    """Right aileron SG90 under the panel, shaft pointing at the tip."""
-    return side_servo(p, sec, k, p.centre_w / 2 + 3.0)
+    """Right aileron SG90 under the panel, shaft pointing at the tip. On a tapered
+    wing it sits at the outer panel's root, the tabs between the spars where
+    they reach out to, the top under the skin at the pocket's outboard end."""
+    if not L.tapered:
+        return side_servo(p, sec, k, p.centre_w / 2 + 3.0)
+    sv, ya = k.servo, L.y_break + 3.0
+    return side_servo(p, sec.at(ya + sv.tab_z + sv.tab_t + 0.2), k, ya,
+                      top=sec.at(ya + sv.height + sv.boss_h + sv.spline_h + 1.2))
 
 
 LEAD_DROP_Y = 9.0                 # single boom: aileron leads drop into the fuselage beside the boom socket
@@ -337,6 +367,61 @@ def rudder_servo(p: Params, L: Layout, sec: Section, k: Kit):
     return side_servo(p, sec, k, -L.rudder_pushrod_y - k.servo.horn_z, hole=s["origin"][2] - L.pushrod_z)
 
 
+def spar_holes(p: Params, L: Layout, sec: Section, y0: float, y1: float, end: float):
+    """Holes for the main spar (straight along y) and the rear spar between y0
+    and y1. Outboard of the break the rear spar runs at 70 % of the local
+    chord, so there it is a straight rod of its own, slanting forward."""
+    x, z = sec.camber_point(p.main_spar_pos)
+    holes = [cyl_y(p.main_spar_d / 2 + 0.1, y0 - 1, end, x, z)]
+    a, b = sec.at(y0).camber_point(p.rear_spar_pos), sec.at(end).camber_point(p.rear_spar_pos)
+    if abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6:
+        holes.append(cyl_y(p.rear_spar_d / 2 + 0.1, y0 - 1, end, *a))
+    else:
+        holes.append(rod(p.rear_spar_d / 2 + 0.15, (a[0], y0 - 1, a[1]), (b[0], end, b[1])))
+    return holes
+
+
+def loft_y(sa: Section, ya: float, sb: Section, yb: float):
+    return cq.Solid.makeLoft([sa.wire(ya), sb.wire(yb)], True)
+
+
+def hinge_cut(p: Params, L: Layout, sec: Section, ya: float, yb: float, gap: float = -0.3):
+    """Everything aft of the aileron hinge line between ya and yb (the hinge at
+    hinge_pos of the local chord, so it slants on a tapered panel)."""
+    xa, xb = sec.at(ya).x_at(p.hinge_pos) + gap, sec.at(yb).x_at(p.hinge_pos) + gap
+    return prism_z([(xa, ya), (L.x_te + 5, ya), (L.x_te + 5, yb), (xb, yb)], -20, 40)
+
+
+def make_inner_panel(p: Params, L: Layout, sec: Section):
+    """Tapered wing: the right inner panel, constant chord from the centre
+    section to the break, with the aileron lead's channel running through it."""
+    y0, y1 = p.centre_w / 2, L.y_break
+    holes = spar_holes(p, L, sec, y0, y1, y1 + 1)
+    xw, zw = aileron_lead(p, L, sec)
+    holes.append(cyl_y(2.0, y0 - 1, y1 + 1, xw, zw))
+    return cut(sec.solid(y0, y1), *holes)
+
+
+def make_outer_panel(p: Params, L: Layout, sec: Section):
+    """Tapered wing: the right outer panel, lofted from the root section at the
+    break to the smaller, twisted tip section. The aileron servo sits at its
+    root; the aileron runs from there to the tip."""
+    y0, y1 = L.y_break, p.span / 2
+    panel = loft_y(sec, y0, sec.at(y1), y1)
+    holes = spar_holes(p, L, sec, y0, y1, y1 - 5)
+    xw, zw = aileron_lead(p, L, sec)
+    holes.append(cyl_y(2.0, y0 - 1, y0 + 8, xw, zw))
+    holes += aileron_servo(p, L, sec, Kit())["pocket"]
+    holes.append(hinge_cut(p, L, sec, y0 + p.aileron_root_gap, y1 - p.aileron_tip_gap))
+    return cut(panel, *holes)
+
+
+def aileron_span(p: Params, L: Layout) -> tuple[float, float]:
+    """Where the aileron's hinge cut-out starts and ends (y, mm)."""
+    y0 = L.y_break if L.tapered else p.centre_w / 2
+    return y0 + p.aileron_root_gap, p.span / 2 - p.aileron_tip_gap
+
+
 def make_panel(p: Params, L: Layout, sec: Section):
     """Right wing panel (the left one is its mirror image)."""
     y0, y1 = p.centre_w / 2, p.span / 2
@@ -353,7 +438,34 @@ def make_panel(p: Params, L: Layout, sec: Section):
     return cut(panel, *holes)
 
 
+def make_aileron_tapered(p: Params, L: Layout, sec: Section):
+    """The outer panel's aileron: the panel's loft behind the hinge line, a
+    bevel along its hinge edge so it can swing down, a slot for the horn."""
+    ya, yb = aileron_span(p, L)
+    ya, yb = ya + 0.5, yb - 0.5
+    y1 = p.span / 2
+    loft = loft_y(sec, L.y_break, sec.at(y1), y1)
+    ail = loft.intersect(hinge_cut(p, L, sec, ya, yb, gap=0.3).intersect(box(-1e3, 1e3, ya, yb, -50, 50)))
+
+    def bevel_at(y):
+        s = sec.at(y)
+        xh = s.x_at(p.hinge_pos) + 0.3
+        zl, zu = s.lower_z(xh), s.upper_z(xh)
+        return [(xh - 0.1, zl - 1), (xh - 0.1, zu - 1.0), (xh + 2.5, zl - 1)]
+    wa = cq.Wire.makePolygon([V(x, ya - 1, z) for x, z in bevel_at(ya - 1)], close=True)
+    wb = cq.Wire.makePolygon([V(x, yb + 1, z) for x, z in bevel_at(yb + 1)], close=True)
+    bevel = cq.Solid.makeLoft([wa, wb], True)
+    ly = aileron_servo(p, L, sec, Kit())["link"][1]
+    s = sec.at(ly)
+    xh = s.x_at(p.hinge_pos) + 0.3
+    zl = s.lower_z(xh)
+    slot = box(xh + 0.4, xh + 9.8, ly - 0.75, ly + 0.75, zl - 2, s.lower_z(xh + 5) + 1.6)
+    return cut(ail, bevel, slot)
+
+
 def make_aileron(p: Params, L: Layout, sec: Section):
+    if L.tapered:
+        return make_aileron_tapered(p, L, sec)
     y0, y1 = p.centre_w / 2, p.span / 2
     xh = sec.x_at(p.hinge_pos) + 0.3
     ail = sec.solid(y0 + p.aileron_root_gap + 0.5, y1 - p.aileron_tip_gap - 0.5)
@@ -545,21 +657,31 @@ def servo_fairing(p: Params, L: Layout, s: dict, k: Kit, surface, above, x_limit
     lx, ly, lz = s["link"]
     d = V(*rod_to) - V(lx, ly, lz)
     exit_hole = rod(1.5, (lx, ly, lz), tuple(V(lx, ly, lz) + d.normalized() * 70))
-    return cut(fuse(*outer), *inner, above, exit_hole, *clear)
+    out = cut(fuse(*outer), above)                          # what is under the wing first, then hollow it: in
+    for tool in (*inner, exit_hole, *clear):                # one go, or the other way round, OCCT can keep the
+        out = cut(out, tool)                                # wrong pieces on a tapered panel
+    return out
 
 
 def fairings(p: Params, L: Layout, sec: Section, k: Kit) -> dict:
     """Fairings for the two aileron servos and the elevator and rudder servos."""
     out = {}
     ail = aileron_servo(p, L, sec, k)
-    xh = sec.x_at(p.hinge_pos) + 0.3
-    y0, y1 = p.centre_w / 2, p.span / 2
-    lower = sorted(sec.lo)                                  # everything above the panel's lower surface
-    above = prism_y([(lower[0][0] - 60, lower[0][1]), *lower, (lower[-1][0] + 60, lower[-1][1]),
-                     (lower[-1][0] + 60, 80), (lower[0][0] - 60, 80)], y0 - 5, y1)
+    y0, y1 = (L.y_break if L.tapered else p.centre_w / 2), p.span / 2
+    ls = sec.at(ail["origin"][1] + k.servo.height / 2)       # the section over the servo's middle
+    lk = sec.at(ail["link"][1])                              # ... and at its pushrod
+    xh = lk.x_at(p.hinge_pos) + 0.3
+
+    def above_at(y):                                        # everything above the panel's lower surface
+        lower = sorted(sec.at(y).lo)
+        pts = [(lower[0][0] - 60, lower[0][1]), *lower, (lower[-1][0] + 60, lower[-1][1]),
+               (lower[-1][0] + 60, 80), (lower[0][0] - 60, 80)]
+        return cq.Wire.makePolygon([V(x, y, z) for x, z in pts], close=True)
+    above = fuse(cq.Solid.makeLoft([above_at(y0), above_at(y1)], True),
+                 cq.Solid.extrudeLinear(cq.Face.makeFromWires(above_at(y0 - 5)), V(0, 5.5, 0)))
     out["fairing_ail_R"] = servo_fairing(
-        p, L, ail, k, lambda x: sec.lower_z(x) + 0.2, above, sec.x_at(p.hinge_pos) - 1.5,
-        (xh + 2.1, ail["link"][1], sec.lower_z(xh + 1.8) - 7.8))
+        p, L, ail, k, lambda x: ls.lower_z(x) + 0.2, above, ls.x_at(p.hinge_pos) - 1.5,
+        (xh + 2.1, ail["link"][1], lk.lower_z(xh + 1.8) - 7.8))
     out["fairing_ail_L"] = out["fairing_ail_R"].mirror("XZ")
     if L.single:
         return out
@@ -651,7 +773,11 @@ def circle_points(r, zc, n=144):
 
 
 def fuselage_split_x(L: Layout) -> float:
-    """Front and rear halves meet in the battery bay, clear of the servo bay."""
+    """Front and rear halves meet in the battery bay, clear of the servo bay. A
+    stretched fuselage splits just behind the servo bay instead, in the empty
+    stretch: the front half then prints diagonally on the bed."""
+    if L.p.bay_stretch > 0:
+        return round(L.boom_x0 + 2.0)
     return round(L.batt_max - 10.0)
 
 
@@ -850,6 +976,30 @@ def pushrod_paths(L: Layout):
     return out
 
 
+def spars(p: Params, L: Layout, sec: Section):
+    """The carbon spars. The main spar runs straight from tip to tip (a tube if
+    main_spar_id is set). On a tapered wing the rear spar is three rods: one
+    through the centre and both inner panels, and one in each outer panel at
+    70 % of the local chord."""
+    x, z = sec.camber_point(p.main_spar_pos)
+    h, d, dr = p.span / 2, p.main_spar_d, p.rear_spar_d
+    main = cyl_y(d / 2, -h + 5, h - 5, x, z)
+    if p.main_spar_id > 0:
+        main = cut(main, cyl_y(p.main_spar_id / 2, -h, h, x, z))
+    out = [Ref("spar_main", main, BLACK, rod_mass(d, p.span - 10, p.main_spar_id), "hardware")]
+    xr, zr = sec.camber_point(p.rear_spar_pos)
+    if not L.tapered:
+        out.append(Ref("spar_rear", cyl_y(dr / 2, -h + 5, h - 5, xr, zr), BLACK, rod_mass(dr, p.span - 10), "hardware"))
+        return out
+    yb = L.y_break
+    out.append(Ref("spar_rear", cyl_y(dr / 2, -yb + 0.5, yb - 0.5, xr, zr), BLACK, rod_mass(dr, 2 * yb - 1), "hardware"))
+    a, b = sec.at(yb + 0.5).camber_point(p.rear_spar_pos), sec.at(h - 5).camber_point(p.rear_spar_pos)
+    outer = rod(dr / 2, (a[0], yb + 0.5, a[1]), (b[0], h - 5, b[1]))
+    g = rod_mass(dr, math.dist((a[0], yb + 0.5, a[1]), (b[0], h - 5, b[1])))
+    out += [Ref("spar_rear_R", outer, BLACK, g, "hardware"), Ref("spar_rear_L", outer.mirror("XZ"), BLACK, g, "hardware")]
+    return out
+
+
 def bought_parts_single(p: Params, k: Kit, L: Layout, sec: Section, batt_x: float):
     """The bought parts for the single boom, in flight position."""
     zf, sv = L.z_floor, k.servo
@@ -865,11 +1015,7 @@ def bought_parts_single(p: Params, k: Kit, L: Layout, sec: Section, batt_x: floa
                *[rod(0.9, pts[2], pts[3]) for pts in paths.values()],          # the pushrods' exit holes
                cyl_z(WIRE_HOLE_R, -p.boom_od / 2 - 1.0, 0.0, motor_wire_hole_x(L), 0))   # the motor wires' entry
     out.append(Ref("boom", boom, BLACK, rod_mass(p.boom_od, L.boom_len, p.boom_id, p.tube_density), "hardware"))
-    for pos, d, name in ((p.main_spar_pos, p.main_spar_d, "spar_main"),
-                         (p.rear_spar_pos, p.rear_spar_d, "spar_rear")):
-        x, z = sec.camber_point(pos)
-        out.append(Ref(name, cyl_y(d / 2, -p.span / 2 + 5, p.span / 2 - 5, x, z), BLACK,
-                       rod_mass(d, p.span - 10), "hardware"))
+    out += spars(p, L, sec)
 
     turn = lambda s: s.rotate(V(0, 0, 0), V(0, 0, 1), 180)   # noqa: E731  pusher: turned to face aft
     add("motor", {n: turn(s).translate(V(L.x_mp, 0, 0)) for n, s in parts_lib.motor_1404().items()},
@@ -922,9 +1068,10 @@ def bought_parts_single(p: Params, k: Kit, L: Layout, sec: Section, batt_x: floa
     ail = aileron_servo(p, L, sec, k)
     trim = (lambda s: horn_trim(s)) if p.fairings else (lambda s: None)   # noqa: E731
     servo = {n: shaft_along_y(s, ail["origin"]) for n, s in parts_lib.sg90(sv, ail["horn_deg"], trim(ail)).items()}
-    xh = sec.x_at(p.hinge_pos) + 0.3
-    zl = sec.lower_z(xh + 1.8)
     ly = ail["link"][1]
+    lk = sec.at(ly)                                         # the section at the aileron's horn
+    xh = lk.x_at(p.hinge_pos) + 0.3
+    zl = lk.lower_z(xh + 1.8)
     horn = parts_lib.micro_horn()[""].translate(V(xh + 0.3, ly, zl + 0.2))
     rod_r = rod(0.4, ail["link"], (xh + 2.1, ly, zl - 7.8))
     for side, m in (("R", lambda s: s), ("L", lambda s: s.mirror("XZ"))):
@@ -1143,6 +1290,8 @@ PRINT = {
     "wing_centre": (LW_PLA, 0.5, 0.05, (0.86, 0.87, 0.84)),
     "wing_R":      (LW_PLA, 0.45, 0.0, (0.93, 0.93, 0.90)),
     "wing_L":      (LW_PLA, 0.45, 0.0, (0.93, 0.93, 0.90)),
+    "wing_outer_R": (LW_PLA, 0.45, 0.0, (0.93, 0.93, 0.90)),
+    "wing_outer_L": (LW_PLA, 0.45, 0.0, (0.93, 0.93, 0.90)),
     "aileron_R":   (LW_PLA, 0.45, 0.0, (0.96, 0.45, 0.10)),
     "aileron_L":   (LW_PLA, 0.45, 0.0, (0.96, 0.45, 0.10)),
     "tail_mount":  (PLA, 0.8, 0.15, (0.20, 0.22, 0.25)),
@@ -1172,6 +1321,8 @@ PRINT_NOTES = {
     "wing_centre": "On its side, spar holes vertical. 0.5 mm walls, 5 % infill.",
     "wing_R": "Standing on the root rib, brim. 1 wall, 0 % infill.",
     "wing_L": "Standing on the root rib, brim. 1 wall, 0 % infill.",
+    "wing_outer_R": "Standing on the root rib, brim. 1 wall, 0 % infill.",
+    "wing_outer_L": "Standing on the root rib, brim. 1 wall, 0 % infill.",
     "aileron_R": "Flat on the lower surface. 1 wall, 0 % infill.",
     "aileron_L": "Flat on the lower surface. 1 wall, 0 % infill.",
     "tail_mount": "Pads face down.",
@@ -1222,9 +1373,9 @@ def to_bed(shape, name, p: Params = None):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), -90)
     elif name == "lid" or name == "tail_mount" or name == "elevator" or name.startswith("fairing"):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), 180)
-    elif name in ("wing_centre", "wing_R", "fin_L", "rudder_L"):
+    elif name in ("wing_centre", "wing_R", "wing_outer_R", "fin_L", "rudder_L"):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), 90)
-    elif name in ("wing_L", "fin_R", "rudder_R"):
+    elif name in ("wing_L", "wing_outer_L", "fin_R", "rudder_R"):
         s = s.rotate(V(0, 0, 0), V(1, 0, 0), -90)
     elif name.startswith("aileron"):
         s = s.rotate(V(0, 0, 0), V(0, 1, 0), -Params().incidence)
@@ -1263,8 +1414,14 @@ def build_at(p: Params, k: Kit, x_le: float):
 
     parts = {}
     parts["wing_centre"] = (make_wing_centre_single if L.single else make_wing_centre)(p, L, sec)
-    parts["wing_R"] = make_panel(p, L, sec)
-    parts["wing_L"] = parts["wing_R"].mirror("XZ")
+    if L.tapered:
+        parts["wing_R"] = make_inner_panel(p, L, sec)
+        parts["wing_L"] = parts["wing_R"].mirror("XZ")
+        parts["wing_outer_R"] = make_outer_panel(p, L, sec)
+        parts["wing_outer_L"] = parts["wing_outer_R"].mirror("XZ")
+    else:
+        parts["wing_R"] = make_panel(p, L, sec)
+        parts["wing_L"] = parts["wing_R"].mirror("XZ")
     parts["aileron_R"] = make_aileron(p, L, sec)
     parts["aileron_L"] = parts["aileron_R"].mirror("XZ")
     if L.single:
@@ -1320,7 +1477,7 @@ def build_at(p: Params, k: Kit, x_le: float):
         return items
 
     others = [i for i in mass_items() if i[0] != "battery"]
-    target = L.x_le + p.cg_target * L.chord
+    target = L.cg_x
     m = sum(i[1] for i in others)
     batt_x = round((target * (m + k.battery) - sum(i[1] * i[2] for i in others)) / k.battery, 1)
     parts.update(body(batt_x))
@@ -1375,11 +1532,18 @@ def export_all(p, k, L, parts, refs, out: Path, step: bool = True):
 
 
 def fits_bed(p: Params, shape, name) -> bool:
-    """Does the print-oriented part fit the build volume (footprint may turn 90 deg)?"""
+    """Does the print-oriented part fit the build volume (footprint may turn 90 deg,
+    or lie across the bed's diagonal)?"""
     bb = to_bed(shape, name, p).BoundingBox()
     bx, by, bz = p.bed
     flat = (bb.xlen <= bx and bb.ylen <= by) or (bb.xlen <= by and bb.ylen <= bx)
-    return flat and bb.zlen <= bz
+    return (flat or diagonal(p, bb)) and bb.zlen <= bz
+
+
+def diagonal(p: Params, bb) -> bool:
+    """A long, narrow footprint turned 45 deg on a square bed."""
+    bx, by, _ = p.bed
+    return (bb.xlen + bb.ylen) / math.sqrt(2) <= min(bx, by) - 2.0
 
 
 def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="baseline"):
@@ -1420,8 +1584,16 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="bas
         "| | |",
         "|---|---|",
         f"| Wingspan | {p.span:.0f} mm |",
-        f"| Chord | {L.chord:.0f} mm ({airfoil_label(p)}, {p.incidence:.0f} deg incidence) |",
-        f"| Wing area | {L.area / 1e4:.2f} dm^2 |",
+        *([f"| Chord | {L.chord:.0f} mm ({airfoil_label(p)}, {p.incidence:.0f} deg incidence) |"] if not L.tapered else [
+            f"| Chord | {L.chord:.0f} mm at the root, {L.c_tip:.0f} mm at the tip, mean {L.mac:.1f} mm "
+            f"({airfoil_label(p)}, {p.incidence:.0f} deg incidence) |",
+            f"| Wing | centre {p.centre_w:.0f} mm, then {p.panels} panels of {L.panel:.0f} mm a side; the outer ones "
+            f"taper from {L.y_break:.0f} mm out and twist {p.washout:g} deg tip-down |",
+            f"| Spars | main: {p.main_spar_d:.0f}"
+            + (f"x{p.main_spar_id:.0f} mm carbon tube" if p.main_spar_id else " mm carbon rod")
+            + f", tip to tip; rear: {p.rear_spar_d:.0f} mm rod, one through the centre and inner panels, "
+            "one in each outer panel |"]),
+        f"| Wing area | {L.area / 1e4:.2f} dm^2 (aspect ratio {L.ar:.1f}) |",
         f"| Length ({'nose to prop' if L.single else 'nose to elevator TE'}) | {L.length:.0f} mm |",
         *layout_rows,
         f"| All-up weight | **{auw:.0f} g** (printed parts {printed:.0f} g) |",
@@ -1434,10 +1606,11 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="bas
         f"full throttle at 1:1 thrust ~{perf['full_a']:.0f} A |",
         f"| Thrust target | >= {auw:.0f} g static (1:1) |",
         f"| Tail volumes | Vh {L.vh_actual:.2f}, Vv {L.vv_actual:.3f} |",
-        f"| CG target | {p.cg_target * 100:.0f} % chord = **{L.x_le + p.cg_target * L.chord:.1f} mm** "
-        f"from the nose ({p.cg_target * L.chord:.1f} mm behind the wing LE) |",
+        f"| CG target | {p.cg_target * 100:.0f} % of the {'mean ' if L.tapered else ''}chord = **{L.cg_x:.1f} mm** "
+        f"from the nose ({L.cg_x - L.x_le:.1f} mm behind the wing's root LE) |",
         f"| CG (computed) | x {cg:.1f} mm, z {cgz:.1f} mm |",
-        f"| Neutral point | {np_ * 100:.0f} % chord -> static margin {(np_ - p.cg_target) * 100:.0f} % |",
+        f"| Neutral point | {np_ * 100:.0f} % {'mean ' if L.tapered else ''}chord -> static margin "
+        f"{(np_ - p.cg_target) * 100:.0f} % |",
         f"| Battery centre | **{batt_x:.0f} mm** from the nose "
         f"(travel {L.batt_min + k.batt_len / 2:.0f}-{L.batt_max - k.batt_len / 2:.0f} mm) |",
         "",
@@ -1488,10 +1661,12 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="bas
         dims = f"{bb.xlen:.0f} x {bb.ylen:.0f} x {bb.zlen:.0f}"
         grams = print_mass(name, shape)
         fits = fits_bed(p, shape, name)
-        lines.append(f"| stl/{name}.stl | {mat} | {grams:.1f} | {dims} | {'yes' if fits else '**no**'} | "
-                     f"{PRINT_NOTES[name]} |")
+        bx, by, _ = p.bed
+        diag = fits and not ((bb.xlen <= bx and bb.ylen <= by) or (bb.xlen <= by and bb.ylen <= bx))
+        note = PRINT_NOTES[name] + (" Across the bed's diagonal." if diag else "")
+        lines.append(f"| stl/{name}.stl | {mat} | {grams:.1f} | {dims} | {'yes' if fits else '**no**'} | {note} |")
         print_list.append({"name": name, "material": mat, "grams": round(grams, 1),
-                           "bed": dims, "fits": fits, "note": PRINT_NOTES[name]})
+                           "bed": dims, "fits": fits, "note": note})
     if L.single:
         lines += ["", "## The boom", "",
                   f"One carbon tube carries the tail, the motor and the prop ({tip:.0f} g on its end), "
@@ -1529,7 +1704,11 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="bas
         "vv": round(L.vv_actual, 3), "x_le": L.x_le, "x_te": round(L.x_te, 1),
         "pod_len": round(L.pod_len, 1), "x_stab": round(L.x_stab, 1), "c_h": L.c_h,
         "cg_x": round(cg, 1), "cg_pct": round(p.cg_target * 100), "np_pct": round(np_ * 100),
-        "np_x": round(L.x_le + np_ * L.chord, 1), "battery_x": batt_x,
+        "np_x": round(L.x_mac_le + np_ * L.mac, 1), "battery_x": batt_x,
+        "c_tip": round(L.c_tip, 1), "mac": round(L.mac, 1), "aspect_ratio": round(L.ar, 2), "panels": p.panels,
+        "taper": p.taper, "washout": p.washout, "y_break": round(L.y_break, 1),
+        "spar": f"{p.main_spar_d:g}x{p.main_spar_id:g}" if p.main_spar_id else f"{p.main_spar_d:g}",
+        "boom_tube": f"{p.boom_od:g}x{p.boom_id:g}",
         "battery_len": k.batt_len, "batt_range": [round(L.batt_min + k.batt_len / 2),
                                                   round(L.batt_max - k.batt_len / 2)],
         "tube": f"{p.tube_od:.0f}x{p.tube_id:.0f}", "tube_len": round(L.tube_len),
@@ -1619,7 +1798,7 @@ def interference(parts, refs, tol=0.05):
     return hits
 
 
-VARIANTS = ("baseline", "optimized", "single-boom")
+VARIANTS = ("baseline", "optimized", "single-boom", "extreme")
 
 
 def variant_params(name: str) -> Params:
@@ -1639,8 +1818,15 @@ def variant_params(name: str) -> Params:
     p = replace(p, airfoil="aero/study/kipina-opt.dat", nose_top_r=float(d.get("nose_top_r", 0)),
                 boattail=float(d.get("boattail", 0)), antenna_lean=float(d.get("antenna_lean", 0)),
                 fairings=bool(d.get("fairings")), joiner_sleeves=bool(d.get("joiners_hidden")))
-    if name == "single-boom":
+    if name in ("single-boom", "extreme"):
         p = single_boom(p)                          # the optimized plane on one carbon boom
+    if name == "extreme":                           # ... with the wing and tail aero/extreme.py picks
+        chosen = json.loads((HERE.parent / "aero" / "study" / "extreme.json").read_text())["chosen"]
+        x = chosen["design"]
+        p = replace(p, cl_max=round(chosen["clmax"], 3), span=x["span"], root_chord=x["c_root"], taper=x["taper"], washout=x["washout"], panels=2,
+                    main_spar_d=x["spar"][0], main_spar_id=x["spar"][1],
+                    boom_od=x["boom"][0], boom_id=x["boom"][1], tail_arm=round(x["tail_arm"] / x["mac"], 4),
+                    bay_stretch=x["stretch"])
     return p
 
 
@@ -1654,7 +1840,9 @@ def main(argv=None):
     ap.add_argument("--variant", choices=VARIANTS, default="baseline",
                     help="baseline: as built (writes here); optimized: the efficiency study's airfoil "
                          "and detail changes (writes variants/optimized/); single-boom: the optimized plane "
-                         "on one carbon boom with the motor behind the tail (writes variants/single-boom/)")
+                         "on one carbon boom with the motor behind the tail (writes variants/single-boom/); "
+                         "extreme: the single boom with the longer, tapered wing and longer tail arm "
+                         "aero/extreme.py picks (writes variants/extreme/)")
     ap.add_argument("--step", action="store_true", help="also write the STEP for a variant (always for the baseline)")
     args = ap.parse_args(argv)
     out = variant_dir(args.variant)

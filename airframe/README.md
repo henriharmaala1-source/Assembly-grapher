@@ -441,16 +441,20 @@ python3 airframe/design.py      # sizing sweep and layout, no CAD needed
 python3 airframe/build.py       # STLs, STEP, GLB, REPORT.md, sizing + interference checks
 python3 airframe/build.py --variant optimized   # the optimized variant in variants/optimized/ (--step for its STEP)
 python3 airframe/build.py --variant single-boom # the single-boom variant in variants/single-boom/
+python3 aero/extreme.py                         # the extreme-aero design study (aero/study/EXTREME.md)
+python3 airframe/build.py --variant extreme     # what it picks, in variants/extreme/
 
 python3 airframe/process.py     # BOP.md, DFMA.md, viewer/process.json (slices with prusa-slicer if installed)
 python3 airframe/process.py --variant single-boom   # the same for variants/single-boom/
 python3 airframe/tools/make_single_viewer.py         # variants/single-boom/viewer/index.html from the twin's page
+python3 airframe/tools/make_single_viewer.py --variant extreme   # and variants/extreme/viewer/index.html
 
 # optional: PNG previews and the assembly video from the three.js viewer (headless Chromium)
 npm install three@0.169.0 playwright
 node airframe/tools/render.mjs
 node airframe/tools/render.mjs --video --ffmpeg /path/to/ffmpeg
 node airframe/tools/render.mjs --variant single-boom [--video]   # into variants/single-boom/preview/
+node airframe/tools/render.mjs --variant extreme                  # into variants/extreme/preview/
 node airframe/tools/shoot-variants.mjs   # the comparison page's figures (after aero/variants.py)
 ```
 
@@ -746,6 +750,153 @@ leads only once the wing is on (A16), and drills the boom's third hole in F3.
 | ![Fuselage](variants/single-boom/preview/fuselage.png) | ![Servos](variants/single-boom/preview/servos.png) | ![ESC](variants/single-boom/preview/esc.png) |
 | **Tail** | **Motor on the boom** | **Side, cut open** |
 | ![Tail](variants/single-boom/preview/tail.png) | ![Motor](variants/single-boom/preview/motor.png) | ![Cutaway](variants/single-boom/preview/cutaway.png) |
+
+## The extreme-aero variant
+
+The single boom's drag at 13 m/s is about a third induced drag and a third
+the wing's own profile drag. The induced drag depends on the span, not the
+area (D_i = W² / (q π e b²)), so a wider wing is the biggest lever left.
+`python3 aero/extreme.py` searches for it, and
+`python3 airframe/build.py --variant extreme` builds what it picks into
+`variants/extreme/` (STLs, GLB, REPORT.md). Everything else stays as on the
+single boom: the electronics, motor, prop and battery, the optimized
+section, the fuselage, and the printer.
+
+![Extreme aero](variants/extreme/preview/hero.png)
+
+**The search.** [aero/study/EXTREME.md](../aero/study/EXTREME.md) has the
+details. It tries span, root chord, taper and tail arm (3,825 designs on a
+coarse grid and a fine one) and flies each one at its own weight:
+
+- **Span loading:** a lifting line with the section's own lift slope and the
+  twist. An AeroSandbox vortex lattice agrees with it to within 2 % on the
+  induced drag.
+- **Profile drag:** NeuralFoil strip by strip, at each strip's own lift
+  coefficient and Reynolds number.
+- **The rest:** the single boom's drag build-up, with the tail, boom and
+  fuselage re-sized.
+- **Weight:** the single boom's CAD weights re-sized part by part. The wing
+  panels are weighed as the CAD weighs them, by wall area, holes included.
+  The study's 242.7 g came within 0.1 g of the CAD's 242.8 g.
+
+Each design also has to pass these checks:
+
+| Check | Why |
+|---|---|
+| Every panel at most 175 mm long | it prints standing on its root rib on the A1 mini |
+| Two panels a side, a narrow centre | the inner panels keep the root chord; the outer ones taper and twist |
+| The SG90's tabs fit between the spars where the taper has begun | the aileron servo sits at the outer panel's root |
+| The lightest carbon spar tube that bends under 1.5 % of the half span at 1 g and fits the tip | this wing on a 3 mm rod would bend about 23 mm at 1 g |
+| A boom as stiff as the single boom's (46 Hz first mode with the tail and motor on its end) | a longer tail arm needs a heavier boom |
+| The wing still sits down on the fuselage's full section once the plane balances | the bigger tail moves the balance aft; the fuselage can stretch between the servos and the ESC to keep the wing's seat ahead of the tail cone |
+| No more power at 13 m/s than the single boom, stall under 9 m/s | it must not get worse where the single boom is good |
+
+It keeps the best glide ratio and, of the designs within 1 % of it, the
+lightest. The optimum is flat: the best designs at every span from 680 to
+710 mm glide within 1 % of each other. Nothing wider than 710 mm passes. A
+stiffer spar no longer fits a tip slim enough to keep the area down, and a
+broader tip makes the plane need more power at 13 m/s than the single boom.
+
+| | Single boom | Extreme aero |
+|---|---|---|
+| Span | 485 mm | **700 mm** |
+| Chord | 97 mm, straight | 86 mm root, 69 mm tip; the outer panels taper (0.8) and twist 3° tip-down |
+| Wing area, aspect ratio | 4.71 dm², 5.0 | 5.74 dm², 8.5 |
+| Panels | 135 mm centre, one 175 mm panel a side | 56 mm centre, two 161 mm panels a side |
+| Main spar | 3 mm carbon rod | 5 × 4 mm carbon tube, tip to tip |
+| Rear spar | 2 mm rod, tip to tip | 2 mm rod through the centre and inner panels, and one in each outer panel at 70 % of its narrowing chord |
+| Ailerons | from the centre section out | on the outer panels; the servo sits at their root, 192 mm out |
+| Tail arm | 272 mm | 260 mm (the 10 × 9 mm boom stays as stiff) |
+| Stabiliser, fin | 175 × 48 mm, 79 mm tall | 175 × 52 mm, 134 mm tall (the same tail volumes) |
+| Fuselage | 277 mm | 282 mm: 5 mm more between the servos and the ESC |
+
+**The twist.** Even untwisted, this wing first reaches its maximum lift at
+the root, as the straight wing does. The twist is not needed for a root-first
+stall here. It unloads the tips, which costs a little maximum lift and gains a
+little glide. The study keeps the 3° that glides best, as long as the stall
+still starts inboard of the ailerons.
+
+**In the CAD.** The outer panels are lofted from the root section at the
+break to the smaller tip section. Each section is scaled and turned about the
+main spar's axis, so the tube runs straight through every panel. Towards the
+tip the trailing edge is thickened back to the printable 0.8 mm. The aileron
+hinge, the bevel and the rear spar follow the taper. The SG90 pocket checks its
+tabs against the section where they sit, and its top against the thinner
+section at the pocket's outboard end. The interference check passes with
+every wire run modelled, and every part fits the A1 mini. The fuselage's
+front half (208 mm) prints across the bed's diagonal. Its halves now meet just
+behind the servo bay, in the stretch.
+
+**Weight.** 242.8 g against 227.4 g:
+
+- **Heavier:**
+  - the four wing panels (+19.0 g);
+  - the spars (+3.5 g);
+  - the bigger tail (+3.8 g);
+  - the fuselage stretch (+0.8 g).
+- **Lighter:**
+  - the wing centre (−9.8 g), the only wing part printed with infill;
+  - the smaller ailerons (−1.6 g).
+
+The balance puts the wing 9.6 mm further aft. The static margin is 16 %
+(13 % on the single boom).
+
+**Flight.** From `aero/variants.py`, at their CAD weights:
+
+| | Single boom | Extreme aero | change |
+|---|---|---|---|
+| Best glide ratio | 9.7 at 12.2 m/s | **11.6** at 10.2 m/s | +19 % |
+| Least sink, motor off | 1.10 m/s | **0.79 m/s** | −28 % |
+| Longest flight | 21.0 min at 9.2 m/s | **25.7 min** at 8.8 m/s | +4.7 min |
+| Furthest flight | 13.8 km | 14.7 km | +0.8 km |
+| Power at 13 m/s | 9.02 W | 8.98 W | the same |
+| Stall | 8.95 m/s | 8.41 m/s | −0.54 m/s |
+| Best climb | 4.68 m/s | 4.51 m/s | −0.17 m/s (the weight) |
+| Top speed | 20.0 m/s | 19.5 m/s | −0.5 m/s |
+| Tightest level turn at 13 m/s | 9.3 m | 7.9 m | the lower wing loading |
+
+It is built to fly slow and long. At its best-glide speed, 10.25 m/s, the
+induced drag halves (0.069 N against 0.131 N). The wing's extra area gives back
+about a quarter of that (0.073 N of profile drag against 0.058 N). At
+13 m/s the two planes need the same power. Above that the single boom is
+better: 9.9 W against 10.2 W at 14 m/s.
+
+**What the numbers leave out:**
+
+- **Roll:**
+  - The ailerons sit further out, but the longer wing also damps the roll more.
+  - Expect a slower roll than the single boom's. Give them more throw.
+- **Aileron leads:** the servos sit 192 mm out, so each SG90 lead needs about
+  180 mm of extension instead of 55.
+- **Flex:**
+  - The 5 × 4 mm tube is sized to bend 1.5 % of the half span at 1 g, which
+    is about 5 mm.
+  - The printed shell and the rear spar add stiffness the sizing leaves out.
+  - Pull up gently the first time.
+- **The fin:**
+  - It is 134 mm tall, on a 2 mm plate.
+  - It is stiff enough for the loads, but check it for flutter at full speed.
+  - A taller fin is also easier to break in a landing.
+- **Transport:**
+  - The main spar is one 690 mm tube, so the wing does not come apart.
+  - Glue only the inner panels to the centre if you want the outer panels to
+    slide off the spar.
+- **Not built yet:** there is no bill of process, DFMA analysis or assembly
+  video for this variant yet. They would follow the single boom's, with two
+  more panels and a longer lead extension.
+
+| Top | The wing, from above |
+|---|---|
+| ![Top](variants/extreme/preview/top.png) | ![Wing](variants/extreme/preview/wing.png) |
+| **Side** | **Aileron servo at the outer panel's root** |
+| ![Side](variants/extreme/preview/side.png) | ![Aileron](variants/extreme/preview/aileron.png) |
+
+The comparison page, [variants/index.html](variants/index.html), shows it
+against any of the other three builds.
+
+| Single boom (left) and extreme aero (right) | From above |
+|---|---|
+| ![Both planes](variants/figures/extreme-models.png) | ![From above](variants/figures/extreme-models-top.png) |
 
 ## Known limitations
 

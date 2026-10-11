@@ -1,0 +1,877 @@
+<title>Kipinä extreme aero</title>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #EEF1F2;
+    --panel: #F8FAFA;
+    --ink: #1B2226;
+    --muted: #5C6A70;
+    --rule: #C9D1D4;
+    --accent: #E4601A;
+    --accent-ink: #B4470C;
+    --carbon: #15191B;
+    --grid-minor: #D6DDDF;
+    --grid-major: #B9C3C7;
+    --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #111517;
+      --panel: #182125;
+      --ink: #E6ECEE;
+      --muted: #94A3A9;
+      --rule: #2C373C;
+      --accent: #F07A35;
+      --accent-ink: #F59A62;
+      --carbon: #0B0E0F;
+      --grid-minor: #1F292D;
+      --grid-major: #34424A;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #111517;
+    --panel: #182125;
+    --ink: #E6ECEE;
+    --muted: #94A3A9;
+    --rule: #2C373C;
+    --accent: #F07A35;
+    --accent-ink: #F59A62;
+    --carbon: #0B0E0F;
+    --grid-minor: #1F292D;
+    --grid-major: #34424A;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--ground); color: var(--ink); font: 16px/1.5 var(--body); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 56px;
+          display: grid; gap: 40px; }
+
+  header { display: grid; gap: 6px; }
+  .eyebrow { font: 500 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { font: 700 clamp(44px, 7vw, 72px)/0.95 var(--display); letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+  h1 span { color: var(--accent); }
+  .lede { max-width: 62ch; color: var(--muted); margin: 4px 0 0; }
+  h2 { font: 600 28px/1.1 var(--display); margin: 0; text-wrap: balance; letter-spacing: .01em; }
+  h3 { font: 600 13px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+
+  .top { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
+  @media (max-width: 920px) { .top { grid-template-columns: minmax(0, 1fr); } }
+
+  .stage { position: relative; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+           aspect-ratio: 16 / 10.5; max-width: 100%; min-height: 320px; overflow: hidden; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .bar { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; flex-wrap: wrap;
+         justify-content: space-between; pointer-events: none; }
+  .bar > * { pointer-events: auto; }
+  .seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--panel); }
+  .seg button, .toggle { font: 500 12px/1 var(--mono); letter-spacing: .03em; color: var(--ink); background: transparent;
+                         border: 0; padding: 8px 10px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .toggles { display: inline-flex; gap: 6px; }
+  .toggle { border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); display: inline-flex; gap: 6px; align-items: center; }
+  .toggle::before { content: ""; width: 8px; height: 8px; border-radius: 2px; border: 1.5px solid var(--muted); }
+  .toggle[aria-pressed="true"]::before { background: var(--accent); border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .foot { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; justify-content: space-between; gap: 8px;
+          font: 400 11px/1.3 var(--mono); color: var(--muted); pointer-events: none; }
+  .status { position: absolute; inset: 0; display: grid; place-items: center; font: 500 13px var(--mono); color: var(--muted); }
+
+  .rail { display: grid; gap: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 12px; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; font-size: 14px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+  dd b { font-weight: 500; color: var(--ink); }
+
+  .parts { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+  .parts button { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 8px; text-align: left; font: 14px/1.3 var(--body);
+                  color: var(--ink); background: transparent; border: 0; border-radius: 3px; padding: 6px 8px; cursor: pointer; }
+  .parts button span:last-child { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .parts button:hover { background: var(--ground); }
+  .parts button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .parts button[aria-pressed="true"] span:last-child { color: var(--panel); }
+  .note { font-size: 13px; color: var(--muted); margin: 0; min-height: 2.6em; }
+  .kit { margin: 0; padding-left: 18px; font-size: 14px; display: grid; gap: 3px; }
+
+  section { display: grid; gap: 14px; }
+  .two { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr); } }
+  .prose { max-width: 62ch; display: grid; gap: 10px; }
+  .prose p { margin: 0; }
+  .figure { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; overflow-x: auto; }
+  svg text { font-family: var(--mono); }
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font: 500 11px/1.2 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  td.num { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td code { font: 13px var(--mono); }
+  tr:last-child td { border-bottom: 0; }
+  footer { font: 12px/1.5 var(--mono); color: var(--muted); }
+
+  .caption { position: absolute; left: 12px; bottom: 52px; max-width: min(560px, calc(100% - 24px)); display: grid; gap: 2px;
+             background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+             border-radius: 4px; padding: 8px 12px; pointer-events: none; }
+  .caption .cap-id { font: 500 11px/1.2 var(--mono); letter-spacing: .06em; color: var(--accent-ink); }
+  .caption .cap-title { font: 600 18px/1.2 var(--display); }
+  .caption .cap-meta { font: 400 12px/1.3 var(--mono); color: var(--muted); }
+  .player { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; gap: 8px; align-items: center;
+            font: 500 12px/1 var(--mono); }
+  .player button { font: 500 12px/1 var(--mono); color: var(--ink); background: var(--panel); border: 1px solid var(--rule);
+                   border-radius: 4px; padding: 7px 10px; cursor: pointer; }
+  .player input[type=range] { flex: 1; min-width: 60px; accent-color: var(--accent); }
+  .player span { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .stage.assembling .foot { display: none; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; display: grid; gap: 2px; }
+  .tile .k { font: 500 11px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .tile .v { font: 600 26px/1.1 var(--display); font-variant-numeric: tabular-nums; }
+  .tile .s { font-size: 13px; color: var(--muted); }
+  figure { margin: 0; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; max-width: 80ch; }
+  .graph { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; overflow-x: auto; color: var(--ink); }
+  .graph svg { display: block; width: 100%; max-width: 760px; height: auto; margin: 0 auto; }
+  td .crit { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; }
+  .muted { color: var(--muted); }
+  body.shot .wrap { max-width: none; padding: 0; }
+  body.shot header, body.shot .rail, body.shot section, body.shot footer, body.shot .bar, body.shot .foot,
+  body.shot .player { display: none !important; }
+  body.shot .top { display: block; }
+  body.shot .stage { border: 0; border-radius: 0; aspect-ratio: auto; height: 100vh; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Single-boom micro FPV pusher, extreme aero · 3D printed · parametric CadQuery</div>
+    <h1>Kipinä <span id="h1-span">700</span> extreme aero</h1>
+    <p class="lede" id="lede">The single-boom Kipinä with a longer, tapered and twisted wing, for the best glide.</p>
+  </header>
+
+  <div class="top">
+    <div class="stage" id="stage">
+      <div class="status" id="status">Loading model…</div>
+      <div class="bar">
+        <div class="seg" role="group" aria-label="View">
+          <button id="v-quarter" data-view="quarter" aria-pressed="true">3/4</button>
+          <button id="v-top" data-view="top" aria-pressed="false">Top</button>
+          <button id="v-side" data-view="side" aria-pressed="false">Side</button>
+          <button id="v-front" data-view="front" aria-pressed="false">Front</button>
+          <button id="v-under" data-view="under" aria-pressed="false">Under</button>
+          <button id="v-fuselage" data-view="fuselage" aria-pressed="false">Fuselage</button>
+          <button id="v-nose" data-view="nose" aria-pressed="false">Nose</button>
+          <button id="v-bay" data-view="bay" aria-pressed="false">Bay</button>
+          <button id="v-servos" data-view="servos" aria-pressed="false">Servos</button>
+          <button id="v-esc" data-view="esc" aria-pressed="false">ESC</button>
+          <button id="v-wing" data-view="wing" aria-pressed="false">Wing</button>
+          <button id="v-ail" data-view="ail" aria-pressed="false">Aileron</button>
+          <button id="v-tail" data-view="tail" aria-pressed="false">Tail</button>
+          <button id="v-motor" data-view="motor" aria-pressed="false">Motor</button>
+          <button id="v-wiring" data-view="wiring" aria-pressed="false">Wiring</button>
+        </div>
+        <div class="toggles">
+          <button class="toggle" id="t-elec" aria-pressed="true">Electronics</button>
+          <button class="toggle" id="t-cut" aria-pressed="false">Cutaway</button>
+          <button class="toggle" id="t-assemble" aria-pressed="false" hidden>Assemble</button>
+        </div>
+      </div>
+      <div class="foot"><span>Grid 10 mm</span><span id="picked">Drag to orbit · click a part</span></div>
+      <div class="caption" id="caption" hidden aria-live="polite">
+        <span class="cap-id" id="cap-id"></span><span class="cap-title" id="cap-title"></span><span class="cap-meta" id="cap-meta"></span>
+      </div>
+      <div class="player" id="player" hidden>
+        <button id="a-play">Pause</button>
+        <input type="range" id="a-scrub" min="0" max="1000" value="0" aria-label="Assembly progress">
+        <span id="a-step">0 / 0</span>
+        <button id="a-exit">Exit</button>
+      </div>
+    </div>
+
+    <aside class="rail">
+      <div class="card">
+        <h3>Numbers</h3>
+        <dl id="specs"></dl>
+      </div>
+      <div class="card">
+        <h3>Printed parts</h3>
+        <ul class="parts" id="parts"></ul>
+        <p class="note" id="part-note">Select a part to see how it prints.</p>
+      </div>
+      <div class="card">
+        <h3>Bought parts</h3>
+        <ul class="parts" id="bought"></ul>
+      </div>
+    </aside>
+  </div>
+
+  <section>
+    <h2>Balance</h2>
+    <p class="prose" style="margin:0">Distances from the nose. The battery slides in the fuselage to set the CG; the strap slots allow the travel shown.</p>
+    <div class="figure"><svg id="balance" viewBox="0 0 900 190" role="img" aria-label="Side layout with CG and battery position"></svg></div>
+  </section>
+
+  <section>
+    <h2>Print list</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>File</th><th>Material</th><th>Grams</th><th>On the bed, mm</th><th>A1 mini</th><th>Orientation</th></tr></thead>
+      <tbody id="print"></tbody>
+    </table></div>
+  </section>
+
+  <section class="two">
+    <div class="prose">
+      <h2>Also needed</h2>
+      <ul class="kit">
+        <li id="kit-tubes">1 × roll-wrapped carbon tube 10×9 mm (the boom)</li>
+        <li id="kit-spars">Carbon tube 5×4 mm and rod 2 mm (wing spars)</li>
+        <li>4 × SG90 servo (9 g), with their single-arm horns</li>
+        <li>1404 3800 KV motor, 4×2.5 two-blade prop, run as a pusher: reverse the motor and fit the prop lettering-forward, or use the reverse-rotation prop</li>
+        <li id="kit-esc">Hobbywing XRotor Micro 30A ESC (BLHeli_S, 2–4S, 23.8 × 14.5 × 5.8 mm)</li>
+        <li id="kit-fc">Matek F405-WMN flight controller (INAV or ArduPilot, 31 × 26 mm on 22 mm holes), ELRS nano receiver</li>
+        <li>Nano camera (14 mm) with 25–200 mW VTX</li>
+        <li>1 mm carbon rod (2 pushrods, about 350 mm, in PTFE sleeves inside the boom) and 0.8 mm wire for the aileron links, 2 micro control horns, M2 screws for the motor and FC</li>
+        <li>2S 450 mAh LiPo, 10 mm velcro strap, hinge tape</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h2>Source</h2>
+      <p>Everything is generated from <code>aero/extreme.py</code> and <code>airframe/build.py --variant extreme</code> in the Assembly-grapher repository. Change a number and rebuild to get new STLs, the STEP assembly, this model, and the <code>BOP.md</code> and <code>DFMA.md</code> reports.</p>
+    </div>
+  </section>
+
+  <footer>henriharmaala1-source/Assembly-grapher · branch claude/cad-software-connection-l8ls4m · airframe/variants/extreme/</footer>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const LABEL = {
+  fuselage_front: "Fuselage, front", fuselage_rear: "Fuselage, rear", boom: "Boom, 10×9 carbon",
+  wing_outer_R: "Outer panel R", wing_outer_L: "Outer panel L", spar_rear_R: "Rear spar, outer R",
+  spar_rear_L: "Rear spar, outer L",
+  fin: "Fin", rudder: "Rudder", motor_mount: "Motor cap", fairing_ail_R: "Servo fairing R", fairing_ail_L: "Servo fairing L",
+  harness_ail_R: "Aileron lead R, to the FC", harness_ail_L: "Aileron lead L, to the FC",
+  harness_elev: "Elevator servo lead", harness_rud: "Rudder servo lead",
+  harness_motor: "Motor wires, inside the boom", harness_power: "ESC power, to the XT30",
+  pod_front: "Pod, front half", pod_rear: "Pod, rear half", lid: "Hatch lid", wing_centre: "Wing centre",
+  wing_R: "Wing panel R", wing_L: "Wing panel L",
+  aileron_R: "Aileron R", aileron_L: "Aileron L", tail_mount: "Tail mount", stab: "Stabiliser",
+  elevator: "Elevator", fin_R: "Fin R", fin_L: "Fin L", tube_L: "Boom L, 6×5 carbon", tube_R: "Boom R, 6×5 carbon",
+  spar_main: "Main spar, 3 mm rod", spar_rear: "Rear spar, 2 mm rod", motor: "Motor, 1404", prop: "Prop, 4×2.5",
+  battery: "Battery, 2S 450 mAh", camera: "Nano camera", vtx: "VTX", antenna: "VTX antenna", fc: "Flight controller, F405-WMN",
+  receiver: "ELRS receiver", esc: "ESC, XRotor Micro 30A", servo_elev: "SG90, elevator", servo_ail_R: "SG90, aileron R",
+  servo_ail_L: "SG90, aileron L", pushrod_elev: "Elevator pushrod", pushrod_ail_R: "Aileron pushrod R",
+  pushrod_ail_L: "Aileron pushrod L", horn_ail_R: "Control horn R", horn_ail_L: "Control horn L",
+  rudder_R: "Rudder R", rudder_L: "Rudder L", bellcrank: "Rudder bellcrank", servo_rud: "SG90, rudder",
+  pushrod_rud: "Rudder pushrod", joiner_R: "Rudder joiner R", joiner_L: "Rudder joiner L",
+};
+const ELECTRONICS = new Set(["harness_ail_R", "harness_ail_L", "harness_elev", "harness_rud", "harness_motor",
+                             "harness_power", "motor", "prop", "battery", "camera", "vtx", "antenna", "fc", "receiver", "esc",
+                             "servo_elev", "servo_ail_R", "servo_ail_L", "servo_rud"]);
+const BOUGHT = ["servo_ail_R", "servo_ail_L", "servo_elev", "servo_rud", "motor", "prop", "battery", "fc", "receiver", "esc",
+                "camera", "vtx", "antenna", "boom", "spar_main", "spar_rear", "spar_rear_R", "spar_rear_L"];
+const base = (n) => n.replace(/_(horn|shaft|lens|chips|leads|wires|pcb|pads|base|coil|nut|metal|xt30|jst|conn)$/, "");
+const params = new URLSearchParams(location.search);
+if (params.has("shot")) document.body.classList.add("shot");
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- spec panels
+const spec = await fetch("spec.json").then((r) => r.json());
+const proc = await fetch("process.json").then((r) => r.json()).catch(() => null);
+const f1 = (v) => Number(v).toFixed(1);
+const rows = [
+  ["Wingspan", `<b>${spec.span}</b> mm`],
+  ["Chord", `${spec.chord} mm root, ${f1(spec.c_tip)} mm tip · ${spec.airfoil}`],
+  ["Wing", `centre, then 2 panels a side; ${spec.washout}° washout outboard · AR ${f1(spec.aspect_ratio)}`],
+  ["Length", `${spec.length} mm`],
+  ["All-up weight", `<b>${spec.auw}</b> g`],
+  ["Printed parts", `${spec.printed} g`],
+  ["Wing loading", `${f1(spec.loading)} g/dm²`],
+  ["Stall / cruise", `${f1(spec.stall)} / ${f1(spec.cruise)} m/s`],
+  ["Top speed", `≈ ${Math.round(spec.top * 3.6)} km/h level`],
+  ["Endurance", `≈ ${spec.endurance} min`],
+  ["CG from nose", `<b>${f1(spec.cg_x)}</b> mm`],
+  ["CG / neutral point", `${spec.cg_pct} % / ${spec.np_pct} % MAC`],
+  ["Boom", `1 × ${spec.boom_tube.replace("x", "×")} mm roll-wrapped carbon, ${spec.tube_len} long`],
+  ["Main spar", `${spec.spar.replace("x", "×")} mm carbon tube, tip to tip`],
+  ["Motor", `on the boom's end, ${Math.round(spec.x_prop)} mm from the nose`],
+  ["Servos", "4 × SG90"],
+  ["Flight controller", spec.fc],
+  ["ESC", spec.esc],
+  ["Current", `≈ ${f1(spec.cruise_a)} A cruise, ${Math.round(spec.full_a)} A full`],
+  ["Printer", `fits ${spec.bed.map((v) => Math.round(v)).join(" × ")} mm`],
+];
+$("specs").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+$("h1-span").textContent = spec.span;
+document.title = `Kipinä ${spec.span} extreme aero`;
+$("lede").textContent = `The single-boom Kipinä with the wing aero/extreme.py picked for the best glide: ${spec.span} mm span, aspect ratio ${f1(spec.aspect_ratio)}, a ${Math.round(spec.chord)} mm root tapering to ${Math.round(spec.c_tip)} mm on the outer panels, which twist ${spec.washout}° tip-down. Same electronics, motor, prop and battery; the ailerons move to the outer panels, a ${spec.spar.replace("x", "×")} mm carbon tube runs tip to tip, and every printed part still fits a Bambu Lab A1 mini.`;
+$("kit-tubes").textContent = `1 × roll-wrapped carbon tube 10×9 mm, ${spec.tube_len} mm long (the boom), and 2/1 mm PTFE tube for the pushrod sleeves`;
+$("kit-spars").textContent = `Carbon tube ${spec.spar.replace("x", "×")} mm, ${spec.span - 10} mm (main spar); carbon rod 2 mm, ${Math.round(2 * spec.y_break - 1)} mm and 2 × ${Math.round(spec.span / 2 - 5.5 - spec.y_break)} mm (rear spar)`;
+const grams = Object.fromEntries(spec.mass.map((m) => [m.name, m.g]));
+$("bought").innerHTML = BOUGHT.filter((n) => n in grams).map((n) =>
+  `<li><button id="p-${n}" data-part="${n}" aria-pressed="false"><span>${LABEL[n]}</span><span>${f1(grams[n])} g</span></button></li>`).join("");
+$("print").innerHTML = spec.parts.map((p) =>
+  `<tr><td><code>stl/${p.name}.stl</code></td><td>${p.material}</td><td class="num">${f1(p.grams)}</td>` +
+  `<td class="num">${p.bed.replaceAll(" x ", " × ")}</td><td>${p.fits ? "fits" : "too big"}</td><td>${p.note}</td></tr>`).join("");
+$("parts").innerHTML = spec.parts.map((p) =>
+  `<li><button id="p-${p.name}" data-part="${p.name}" aria-pressed="false"><span>${LABEL[p.name]}</span><span>${f1(p.grams)} g</span></button></li>`).join("");
+
+function svg(tag, attrs, text) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function drawChart() {
+  const g = $("chart");
+  g.replaceChildren();
+  const ink = css("--ink"), muted = css("--muted"), rule = css("--rule"), accent = css("--accent"), panel = css("--panel");
+  const L = 56, R = 540, T = 20, B = 250;
+  const x = (s) => L + (s - 300) / (560 - 300) * (R - L);
+  const y = (v) => B - (v - 7) / (11 - 7) * (B - T);
+  for (let v = 7; v <= 11; v++) {
+    g.append(svg("line", { x1: L, x2: R, y1: y(v), y2: y(v), stroke: rule, "stroke-width": 1 }));
+    g.append(svg("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: muted }, v));
+  }
+  for (let s = 300; s <= 540; s += 40)
+    g.append(svg("text", { x: x(s), y: B + 18, "text-anchor": "middle", "font-size": 11, fill: muted }, s));
+  g.append(svg("text", { x: (L + R) / 2, y: B + 40, "text-anchor": "middle", "font-size": 11, fill: muted }, "Wingspan, mm"));
+  g.append(svg("text", { x: 14, y: (T + B) / 2, "text-anchor": "middle", "font-size": 11, fill: muted,
+                         transform: `rotate(-90 14 ${(T + B) / 2})` }, "Stall speed, m/s"));
+  const lim = spec.stall_limit;
+  g.append(svg("line", { x1: L, x2: R, y1: y(lim), y2: y(lim), stroke: accent, "stroke-width": 1.5, "stroke-dasharray": "5 4" }));
+  g.append(svg("text", { x: R, y: y(lim) - 7, "text-anchor": "end", "font-size": 11, fill: accent }, `${lim} m/s hand-launch limit`));
+  const pts = spec.sweep.map((r) => [x(r.span), y(r.stall)]);
+  g.append(svg("polyline", { points: pts.map((p) => p.join(",")).join(" "), fill: "none", stroke: ink, "stroke-width": 1.75 }));
+  spec.sweep.forEach((r) => {
+    const ok = r.stall <= lim;
+    g.append(svg("circle", { cx: x(r.span), cy: y(r.stall), r: 3.6, fill: ok ? ink : panel, stroke: ink, "stroke-width": 1.5 }));
+  });
+  const chosen = spec.sweep.find((r) => r.span === spec.span);
+  if (chosen) {
+    g.append(svg("circle", { cx: x(chosen.span), cy: y(chosen.stall), r: 8, fill: "none", stroke: accent, "stroke-width": 2 }));
+    g.append(svg("text", { x: x(chosen.span) + 14, y: y(chosen.stall) - 12, "font-size": 11, fill: ink },
+                 `${chosen.span} mm build`));
+  }
+}
+
+function drawBalance() {
+  const g = $("balance");
+  g.replaceChildren();
+  const ink = css("--ink"), muted = css("--muted"), rule = css("--rule"), accent = css("--accent"),
+        carbon = css("--carbon"), panel = css("--panel");
+  const end = Math.max(spec.x_stab + spec.c_h, spec.x_prop + 10);
+  const L = 40, R = 870;
+  const x = (mm) => L + (mm + 10) / (end + 10) * (R - L);
+  const axisY = 150;
+  for (let mm = 0; mm <= end; mm += 50) {
+    g.append(svg("line", { x1: x(mm), x2: x(mm), y1: axisY, y2: axisY + 6, stroke: muted }));
+    g.append(svg("text", { x: x(mm), y: axisY + 20, "text-anchor": "middle", "font-size": 11, fill: muted }, mm));
+  }
+  g.append(svg("line", { x1: x(-10), x2: x(end), y1: axisY, y2: axisY, stroke: muted }));
+  // boom, fuselage, wing, tail, battery
+  g.append(svg("rect", { x: x(spec.tube_x0), y: 83, width: x(spec.tube_x1) - x(spec.tube_x0), height: 5, fill: carbon }));
+  g.append(svg("rect", { x: x(0), y: 88, width: x(spec.pod_len) - x(0), height: 34, fill: "none", stroke: ink, "stroke-width": 1.5, rx: 3 }));
+  g.append(svg("rect", { x: x(spec.x_le), y: 62, width: x(spec.x_te) - x(spec.x_le), height: 14, fill: rule, stroke: ink, "stroke-width": 1.2, rx: 7 }));
+  g.append(svg("rect", { x: x(spec.x_stab), y: 96, width: x(spec.x_stab + spec.c_h) - x(spec.x_stab), height: 4, fill: ink }));
+  g.append(svg("path", { d: `M${x(spec.x_stab + 4)} 83 L${x(spec.x_stab + 18)} 40 L${x(spec.x_stab + spec.c_h)} 40 L${x(spec.x_stab + spec.c_h)} 83 Z`,
+                         fill: "none", stroke: ink, "stroke-width": 1.2 }));
+  const bl = spec.battery_len;
+  g.append(svg("rect", { x: x(spec.battery_x - bl / 2), y: 104, width: x(bl) - x(0), height: 14, fill: accent, opacity: 0.85, rx: 2 }));
+  g.append(svg("text", { x: x(spec.battery_x - bl / 2) + 2, y: 139, "font-size": 11, fill: ink }, `battery ${Math.round(spec.battery_x)}`));
+  const [b0, b1] = spec.batt_range;
+  g.append(svg("line", { x1: x(b0), x2: x(b1), y1: 99, y2: 99, stroke: accent, "stroke-width": 2 }));
+  g.append(svg("rect", { x: x(spec.x_prop) - 1.5, y: 64, width: 3, height: 52, fill: muted }));
+  g.append(svg("text", { x: x(spec.x_prop) + 6, y: 112, "font-size": 11, fill: muted }, "motor, prop"));
+  // CG and neutral point
+  const cx = x(spec.cg_x);
+  g.append(svg("line", { x1: cx, x2: cx, y1: 30, y2: axisY, stroke: ink, "stroke-width": 1.2, "stroke-dasharray": "3 3" }));
+  g.append(svg("circle", { cx, cy: 30, r: 7, fill: panel, stroke: ink, "stroke-width": 1.5 }));
+  g.append(svg("path", { d: `M${cx} 23 A7 7 0 0 1 ${cx + 7} 30 L${cx} 30 Z M${cx} 37 A7 7 0 0 1 ${cx - 7} 30 L${cx} 30 Z`, fill: ink }));
+  g.append(svg("text", { x: cx - 12, y: 26, "text-anchor": "end", "font-size": 12, fill: ink }, `CG ${f1(spec.cg_x)} (${spec.cg_pct} %)`));
+  const nx = x(spec.np_x);
+  g.append(svg("line", { x1: nx, x2: nx, y1: 44, y2: 62, stroke: muted, "stroke-width": 1.5 }));
+  g.append(svg("text", { x: nx + 6, y: 52, "font-size": 11, fill: muted }, `NP ${f1(spec.np_x)}`));
+  g.append(svg("text", { x: x(spec.x_stab - 4), y: 44, "text-anchor": "end", "font-size": 11, fill: muted }, "fin"));
+  g.append(svg("text", { x: x((spec.pod_len + spec.x_stab) / 2), y: 78, "text-anchor": "middle", "font-size": 11, fill: muted },
+               "one 10 mm boom"));
+}
+// ---------------------------------------------------------------- bill of process + DFMA
+const fmtMin = (sec) => {
+  const m = Math.round(sec / 60), h = Math.floor(m / 60);
+  return h ? `${h} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`;
+};
+const tiles = (el, list) => { $(el).innerHTML = list.map(([k, v, s]) =>
+  `<div class="tile"><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join(""); };
+
+function drawProcess() {
+  if (!proc) return;
+  const S = proc.summary, crit = new Set(proc.critical);
+  tiles("bop-tiles", [
+    ["Printer", fmtMin(S.t_print), `5 plates, ${Math.round(S.filament_g)} g of filament`],
+    ["Hands-on", fmtMin(S.t_hands), "prep, assembly and INAV setup"],
+    ["Epoxy cure", fmtMin(S.t_cure), "waits, no work"],
+    ["Lead time", fmtMin(S.lead), "builder works while the printer runs"],
+  ]);
+  $("ops").innerHTML = proc.ops.slice().sort((a, b) => a.start - b.start || a.id.localeCompare(b.id)).map((o) =>
+    `<tr><td class="num">${crit.has(o.id) ? '<span class="crit" title="critical path"></span>' : ""}${o.id}</td>` +
+    `<td>${o.title}</td><td>${o.station}</td>` +
+    `<td class="num">${fmtMin(o.seconds)}${o.cure ? ` + ${Math.round(o.cure / 60)} min cure` : ""}</td>` +
+    `<td class="num">${fmtMin(o.start)}</td><td class="num">${fmtMin(o.finish)}</td>` +
+    `<td class="num">${o.needs.join(", ") || "–"}</td></tr>`).join("");
+  tiles("dfma-tiles", [
+    ["Parts", S.n_actual, `theoretical minimum ${S.n_min}`],
+    ["Assembly time", fmtMin(S.t_ma), `${fmtMin(S.t_handle_insert)} handling and insertion`],
+    ["Design efficiency", `${Math.round(S.e_ma * 100)} %`, `${Math.round(S.e_hi * 100)} % counting handling and insertion only`],
+    ["With the suggestions", `${Math.round(S.e_after * 100)} %`, `${S.n_after} parts, ${fmtMin(S.t_after)} to assemble`],
+    ["Cost per airframe", `≈ ${Math.round(S.bought_cost + S.print_cost)} EUR`,
+     `filament used ${Math.round(S.filament_g)} g ≈ ${Math.round(S.print_cost)} EUR; first build ≈ ${S.first_build_cost} EUR with spools`],
+  ]);
+  const share = Math.round(S.t_handle_insert / S.t_ma * 100);
+  $("dfma-note").textContent = `Handling and inserting parts is ${share} % of the assembly time; gluing, soldering, taping and bending take the rest. The suggestions that pay most remove joints (solder, glue, tape) rather than just parts.`;
+  $("sugg").innerHTML = proc.suggestions.map((s) =>
+    `<tr><td>${s.title}</td><td class="num">${s.parts || "–"}</td><td class="num">${s.seconds} s</td><td>${s.trade}</td></tr>`).join("");
+  $("dfm").innerHTML = proc.dfm.map((r) =>
+    `<tr><td><code>${r.name}</code></td><td>${r.material}</td><td class="num">${fmtMin(r.minutes * 60)}</td>` +
+    `<td class="num">${(r.grams ?? 0).toFixed(1)} g</td><td class="num">${r.cost.toFixed(2)} EUR</td>` +
+    `<td>${r.support}</td><td>${r.notes.join("; ") || "–"}</td></tr>`).join("");
+}
+
+function drawGraph() {
+  if (!proc) return;
+  const g = $("graph");
+  g.replaceChildren();
+  const ink = css("--ink"), muted = css("--muted"), rule = css("--rule"), accent = css("--accent"),
+        ground = css("--ground");
+  const ops = proc.ops, crit = proc.critical;
+  const printer = ops.filter((o) => o.resource === "printer").map((o) => o.id);
+  const edges = [];
+  ops.forEach((o) => o.needs.forEach((n) => edges.push({ from: n, to: o.id, queue: false })));
+  printer.slice(1).forEach((id, i) => edges.push({ from: printer[i], to: id, queue: true }));
+  const preds = (id) => edges.filter((e) => e.to === id).map((e) => e.from);
+  const depth = {};
+  const d = (id) => depth[id] ?? (depth[id] = Math.max(-1, ...preds(id).map(d)) + 1);
+  ops.forEach((o) => d(o.id));
+  const rows = [];
+  ops.forEach((o) => (rows[depth[o.id]] ??= []).push(o));
+  const W = 128, H = 38, GX = 14, GY = 24, pad = 12;
+  const maxN = Math.max(...rows.map((r) => r.length));
+  const width = maxN * (W + GX) - GX + 2 * pad, height = rows.length * (H + GY) - GY + 2 * pad;
+  g.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const pos = {};
+  rows.forEach((r, i) => {
+    if (i > 0) {
+      const bary = (o) => { const p = preds(o.id).map((id) => pos[id].x); return p.reduce((a, b) => a + b, 0) / p.length; };
+      r.sort((a, b) => bary(a) - bary(b));
+    }
+    const x0 = (width - (r.length * (W + GX) - GX)) / 2;
+    r.forEach((o, j) => { pos[o.id] = { x: x0 + j * (W + GX), y: pad + i * (H + GY) }; });
+  });
+  const defs = svg("defs", {});
+  for (const [id, fill] of [["arr", muted], ["arr-crit", accent]]) {
+    const m = svg("marker", { id, viewBox: "0 0 8 8", refX: 7, refY: 4, markerWidth: 7, markerHeight: 7, orient: "auto" });
+    m.append(svg("path", { d: "M0 0 L8 4 L0 8 Z", fill }));
+    defs.append(m);
+  }
+  g.append(defs);
+  const onPath = (e) => { const i = crit.indexOf(e.from); return i >= 0 && crit[i + 1] === e.to; };
+  edges.sort((a, b) => onPath(a) - onPath(b)).forEach((e) => {
+    const a = pos[e.from], b = pos[e.to], c = onPath(e);
+    const sx = a.x + W / 2, sy = a.y + H, tx = b.x + W / 2, ty = b.y - 1, dy = Math.max(12, (ty - sy) / 2);
+    g.append(svg("path", { d: `M${sx} ${sy} C${sx} ${sy + dy} ${tx} ${ty - dy} ${tx} ${ty}`, fill: "none",
+      stroke: c ? accent : muted, "stroke-width": c ? 2 : 1, "stroke-dasharray": e.queue ? "4 3" : "none",
+      opacity: c ? 1 : 0.7, "marker-end": `url(#${c ? "arr-crit" : "arr"})` }));
+  });
+  // label the printer queue beside a vertical queue arrow (fall back to the first one)
+  const qe = edges.filter((e) => e.queue);
+  const lab = qe.find((e) => Math.abs(pos[e.from].x - pos[e.to].x) < 1) || qe[0];
+  if (lab) {
+    const a = pos[lab.from], b = pos[lab.to];
+    g.append(svg("text", { x: (a.x + b.x) / 2 + W / 2 - 6, y: (a.y + H + b.y) / 2 + 3.5, "text-anchor": "end",
+      "font-size": 10, fill: muted }, "printer queue"));
+  }
+  ops.forEach((o) => {
+    const p = pos[o.id], c = crit.includes(o.id);
+    g.append(svg("rect", { x: p.x, y: p.y, width: W, height: H, rx: 4, fill: ground,
+      stroke: c ? accent : rule, "stroke-width": c ? 1.6 : 1 }));
+    g.append(svg("text", { x: p.x + 8, y: p.y + 15, "font-size": 11, "font-weight": 600, fill: c ? accent : ink }, o.id));
+    g.append(svg("text", { x: p.x + 34, y: p.y + 15, "font-size": 11, fill: ink }, o.short));
+    const t = fmtMin(o.seconds) + (o.cure ? " + cure" : "");
+    g.append(svg("text", { x: p.x + 8, y: p.y + 30, "font-size": 10, fill: muted }, t));
+  });
+}
+
+drawBalance();
+drawProcess();
+drawGraph();
+
+// ---------------------------------------------------------------- 3D viewer
+const stage = $("stage");
+const canvas = document.createElement("canvas");
+stage.prepend(canvas);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.localClippingEnabled = true;
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(-0.4, 1.0, 0.6);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(28, 1, 0.01, 20);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+
+const clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.0002);
+const meshes = new Map();
+let grid, center = new THREE.Vector3(), radius = 0.3;
+
+async function loadModel() {
+  const loader = new GLTFLoader();
+  try {
+    return await loader.loadAsync("airframe.glb");
+  } catch {
+    // Hosts that don't serve .glb get the same binary as base64 JSON
+    const { glb } = await fetch("airframe-glb.json").then((r) => r.json());
+    return loader.parseAsync(Uint8Array.from(atob(glb), (c) => c.charCodeAt(0)).buffer, "");
+  }
+}
+const gltf = await loadModel().catch((e) => {
+  $("status").textContent = "The 3D model did not load. Reload the page to try again.";
+  throw e;
+});
+$("status").hidden = true;
+const root = gltf.scene;
+root.traverse((o) => {
+  if (!o.isMesh) return;
+  const name = o.name.replace(/_\d+$/, "");
+  const src = o.material;
+  o.material = new THREE.MeshStandardMaterial({
+    color: src.color.clone(), roughness: name.startsWith("tube") || name.startsWith("spar") ? 0.35 : 0.62,
+    metalness: name === "motor" ? 0.6 : 0.0, side: THREE.DoubleSide,
+  });
+  o.userData.part = base(name);
+  o.userData.base = o.material.color.clone();
+  meshes.set(name, o);
+});
+scene.add(root);
+const box = new THREE.Box3().setFromObject(root);
+box.getCenter(center);
+radius = box.getSize(new THREE.Vector3()).length() / 2;
+
+function buildGrid() {
+  if (grid) scene.remove(grid);
+  grid = new THREE.GridHelper(0.6, 60, new THREE.Color(css("--grid-major")), new THREE.Color(css("--grid-minor")));
+  grid.position.set(center.x, box.min.y - 0.004, center.z);
+  scene.add(grid);
+}
+buildGrid();
+
+// parts that hide the pod interior from above; the Bay and ESC views take them off
+const WING = ["wing_centre", "wing_R", "wing_L", "wing_outer_R", "wing_outer_L", "spar_rear_R", "spar_rear_L",
+              "aileron_R", "aileron_L", "spar_main", "spar_rear", "servo_ail_R",
+              "servo_ail_L", "horn_ail_R", "horn_ail_L", "pushrod_ail_R", "pushrod_ail_L", "fairing_ail_R", "fairing_ail_L"];
+const hidden = new Set();
+function applyVis() {
+  if (anim.on) return;
+  const elec = $("t-elec").getAttribute("aria-pressed") === "true";
+  meshes.forEach((m, n) => { const b = base(n); m.visible = (elec || !ELECTRONICS.has(b)) && !hidden.has(b); });
+}
+const VIEWS = {
+  quarter: { dir: [-0.95, 0.62, 0.9] },
+  top: { dir: [0, 1, 0.02] },
+  side: { dir: [0, 0.02, 1] },
+  front: { dir: [-1, 0.06, 0.001] },
+  under: { dir: [-0.55, -0.75, 0.75] },
+  fuselage: { dir: [-0.8, 0.75, 0.95], fit: ["fuselage_front", "fuselage_rear", "wing_centre"] },
+  nose: { dir: [-0.85, -0.3, 0.75], fit: ["camera", "vtx"], pad: 3.0 },
+  bay: { dir: [-0.3, 1, 0.5], fit: ["camera", "vtx", "fc", "receiver"], pad: 1.2, hide: ["lid"] },
+  servos: { dir: [-0.2, 1, 0.45], fit: ["servo_elev", "servo_rud"], pad: 1.6, hide: ["lid", ...WING] },
+  esc: { dir: [0.2, 0.3, 1], fit: ["esc", "servo_rud"], pad: 1.5, hide: [...WING] },
+  wing: { dir: [0.0, 1, 0.02], fit: ["wing_R", "wing_outer_R", "aileron_R"], pad: 1.08 },
+  ail: { dir: [-0.35, -0.8, -0.55], fit: ["servo_ail_R", "horn_ail_R", "pushrod_ail_R"], pad: 1.5, hide: ["fairing_ail_R"] },
+  tail: { dir: [0.75, 0.45, 0.6], fit: ["rudder", "fin", "tail_mount", "stab", "elevator"], pad: 1.1 },
+  motor: { dir: [0.9, 0.35, -0.5], fit: ["motor", "motor_mount", "prop", "tail_mount"], pad: 1.4 },
+  wiring: { dir: [-0.35, 1, 0.55], fit: ["harness_ail_R", "harness_ail_L", "harness_elev", "harness_rud", "harness_power",
+            "esc", "fc"], pad: 1.05, hide: ["lid", "wing_centre", "wing_R", "wing_L", "wing_outer_R", "wing_outer_L", "spar_rear_R", "spar_rear_L",
+            "aileron_R", "aileron_L", "spar_main",
+            "spar_rear", "fairing_ail_R", "fairing_ail_L", "boom", "fuselage_rear"] },
+};
+let tween = null, target = center.clone();
+function frame(names) {
+  if (!names) return box;
+  const b = new THREE.Box3();
+  meshes.forEach((m, n) => { if (names.includes(base(n))) b.expandByObject(m); });
+  return b;
+}
+function fitDistance(dir, b, c, pad) {
+  const fwd = dir.clone().negate(), right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
+  const up = new THREE.Vector3().crossVectors(right, fwd);
+  let hw = 0, hh = 0, depth = 0;
+  for (const cx of [b.min.x, b.max.x]) for (const cy of [b.min.y, b.max.y]) for (const cz of [b.min.z, b.max.z]) {
+    const d = new THREE.Vector3(cx, cy, cz).sub(c);
+    hw = Math.max(hw, Math.abs(d.dot(right))); hh = Math.max(hh, Math.abs(d.dot(up))); depth = Math.max(depth, Math.abs(d.dot(dir)));
+  }
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  return 0.35 * depth + Math.max(hh / t, hw / (t * camera.aspect)) * 1.08 * pad;
+}
+function setView(name, instant) {
+  const v = VIEWS[name], dir = new THREE.Vector3(...v.dir).normalize();
+  const b = frame(v.fit), c = b.getCenter(new THREE.Vector3());
+  const to = c.clone().add(dir.clone().multiplyScalar(fitDistance(dir, b, c, v.pad ?? 1)));
+  if (grid) grid.visible = name === "quarter" || name === "top";
+  hidden.clear();
+  (v.hide || []).forEach((h) => hidden.add(h));
+  applyVis();
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === name)));
+  target = c;
+  if (instant || reduceMotion) { camera.position.copy(to); controls.target.copy(c); controls.update(); return; }
+  tween = { from: camera.position.clone(), to, fromT: controls.target.clone(), t0: performance.now() };
+}
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+
+function toggle(btn, fn) {
+  btn.addEventListener("click", () => {
+    const on = btn.getAttribute("aria-pressed") !== "true";
+    btn.setAttribute("aria-pressed", String(on));
+    fn(on);
+  });
+}
+toggle($("t-elec"), applyVis);
+toggle($("t-cut"), (on) => meshes.forEach((m) => { m.material.clippingPlanes = on ? [clip] : []; m.material.needsUpdate = true; }));
+
+let selected = null;
+function select(name) {
+  selected = selected === name ? null : name;
+  const accent = new THREE.Color(css("--accent"));
+  meshes.forEach((m, n) => {
+    const on = base(n) === selected, dim = selected && !on;
+    m.material.transparent = dim;
+    m.material.opacity = dim ? 0.16 : 1;
+    m.material.depthWrite = !dim;
+    m.material.emissive.copy(on ? accent : new THREE.Color(0));
+    m.material.emissiveIntensity = on ? 0.35 : 0;
+  });
+  document.querySelectorAll(".parts button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.part === selected)));
+  const p = spec.parts.find((q) => q.name === selected);
+  $("part-note").textContent = p ? `stl/${p.name}.stl · ${p.material} · ${p.note}`
+    : selected ? `${LABEL[selected] ?? selected} is a bought part.` : "Select a part to see how it prints.";
+  $("picked").textContent = selected ? LABEL[selected] ?? selected : "Drag to orbit · click a part";
+}
+document.querySelectorAll(".parts button").forEach((b) => b.addEventListener("click", () => select(b.dataset.part)));
+
+const ray = new THREE.Raycaster();
+let down = null;
+canvas.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
+canvas.addEventListener("pointerup", (e) => {
+  if (anim.on || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+  const r = canvas.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
+  const hit = ray.intersectObjects([...meshes.values()].filter((m) => m.visible && m.material.opacity > 0.5))[0];
+  if (hit) select(hit.object.userData.part);
+});
+
+// ---------------------------------------------------------------- assembly animation
+const anim = { on: false, playing: false, driven: true, t: 0, last: 0, blend: null };
+const toV = ([x, y, z]) => new THREE.Vector3(x / 1000, z / 1000, -y / 1000);
+const homeBox = new Map();
+meshes.forEach((m, n) => {
+  const b = base(n), bb = new THREE.Box3().setFromObject(m);
+  homeBox.set(b, homeBox.has(b) ? homeBox.get(b).union(bb) : bb);
+});
+const STEP = 1.2, GAP = 0.2, HOLD = 0.8, LEAD = 0.7;
+const steps = [], partSegs = new Map();
+let T = 0.3;
+for (const op of proc?.ops ?? []) {
+  if (!op.anim.length) continue;
+  const st = { op, t0: T };
+  T += LEAD;
+  for (const a of op.anim) {
+    const seg = { from: toV(a.from), to: toV(a.to), a: T, b: T + STEP };
+    a.parts.forEach((p) => { if (!partSegs.has(p)) partSegs.set(p, []); partSegs.get(p).push(seg); });
+    T += STEP + GAP;
+  }
+  T += HOLD;
+  st.t1 = T;
+  const fb = new THREE.Box3();
+  (op.focus || [...homeBox.keys()]).forEach((p) => homeBox.has(p) && fb.union(homeBox.get(p)));
+  if (op.focus) fb.translate(toV(op.focus_offset));
+  st.box = fb;
+  st.dir = new THREE.Vector3(...(op.view || [-0.95, 0.62, 0.9])).normalize();
+  st.pad = op.focus ? 1.3 : 1.0;
+  steps.push(st);
+}
+const DURATION = T + 1.2;
+function pose(st) {
+  const c = st.box.getCenter(new THREE.Vector3());
+  return { pos: c.clone().add(st.dir.clone().multiplyScalar(fitDistance(st.dir, st.box, c, st.pad))), target: c };
+}
+const ease = (k) => k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+function applyAt(t, now = performance.now()) {
+  meshes.forEach((m, n) => {
+    const segs = partSegs.get(base(n));
+    if (!segs) return;
+    if (t < segs[0].a) { m.visible = false; return; }
+    m.visible = true;
+    let p = segs[0].from;
+    for (const s of segs) {
+      if (t < s.a) break;
+      const u = Math.min(1, (t - s.a) / (s.b - s.a));
+      p = s.from.clone().lerp(s.to, 1 - (1 - u) ** 3);
+    }
+    m.position.copy(p);
+  });
+  let i = steps.findLastIndex((s) => s.t0 <= t);
+  if (i < 0) i = 0;
+  const cur = steps[i];
+  if (anim.driven && cur) {
+    const a = pose(steps[Math.max(0, i - 1)]), b = pose(cur), e = ease(Math.min(1, Math.max(0, (t - cur.t0) / LEAD)));
+    const pos = a.pos.clone().lerp(b.pos, e), tgt = a.target.clone().lerp(b.target, e);
+    if (anim.blend) {
+      const k = Math.min(1, (now - anim.blend.t0) / 600);
+      pos.copy(anim.blend.pos.clone().lerp(pos, ease(k)));
+      tgt.copy(anim.blend.target.clone().lerp(tgt, ease(k)));
+      if (k >= 1) anim.blend = null;
+    }
+    camera.position.copy(pos);
+    controls.target.copy(tgt);
+    camera.lookAt(tgt);
+  }
+  if (cur) {
+    const o = cur.op;
+    $("cap-id").textContent = `${o.id} · ${o.station} · step ${i + 1} of ${steps.length}`;
+    $("cap-title").textContent = o.title;
+    $("cap-meta").textContent = `${fmtMin(o.seconds)} hands-on${o.cure ? ` + ${Math.round(o.cure / 60)} min cure` : ""}` +
+      (o.tools.length ? ` · ${o.tools.join(", ")}` : "");
+    $("a-step").textContent = `${i + 1} / ${steps.length}`;
+  }
+  $("a-scrub").value = String(Math.round(t / DURATION * 1000));
+}
+function setPlaying(on) {
+  anim.playing = on;
+  anim.driven = on;
+  controls.enabled = !on;
+  $("a-play").textContent = on ? "Pause" : (anim.t >= DURATION ? "Replay" : "Play");
+  if (on) anim.blend = { pos: camera.position.clone(), target: controls.target.clone(), t0: performance.now() };
+}
+function enterAssembly(play = true) {
+  if (!steps.length) return;
+  if (selected) select(selected);
+  anim.on = true;
+  anim.t = 0;
+  stage.classList.add("assembling");
+  $("caption").hidden = false;
+  $("player").hidden = false;
+  $("t-assemble").setAttribute("aria-pressed", "true");
+  if (grid) grid.visible = false;
+  anim.last = performance.now();
+  setPlaying(play);
+  applyAt(0);
+}
+function exitAssembly() {
+  anim.on = false;
+  anim.playing = false;
+  stage.classList.remove("assembling");
+  $("caption").hidden = true;
+  $("player").hidden = true;
+  $("t-assemble").setAttribute("aria-pressed", "false");
+  controls.enabled = true;
+  const elec = $("t-elec").getAttribute("aria-pressed") === "true";
+  meshes.forEach((m, n) => { m.position.set(0, 0, 0); m.visible = elec || !ELECTRONICS.has(base(n)); });
+  setView("quarter");
+}
+$("t-assemble").addEventListener("click", () => (anim.on ? exitAssembly() : enterAssembly()));
+$("a-exit").addEventListener("click", exitAssembly);
+$("a-play").addEventListener("click", () => {
+  if (anim.t >= DURATION) anim.t = 0;
+  anim.last = performance.now();
+  setPlaying(!anim.playing);
+});
+$("a-scrub").addEventListener("input", (e) => {
+  if (anim.playing) setPlaying(false);
+  anim.t = Number(e.target.value) / 1000 * DURATION;
+  anim.driven = true;
+  applyAt(anim.t);
+  anim.driven = false;
+});
+window.__anim = {
+  duration: DURATION,
+  seek(t) {
+    if (!anim.on) enterAssembly(false);
+    anim.driven = true;
+    anim.blend = null;
+    anim.t = t;
+    applyAt(t);
+    renderer.render(scene, camera);
+  },
+};
+
+function resize() {
+  const { clientWidth: w, clientHeight: h } = stage;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(() => { resize(); }).observe(stage);
+resize();
+
+function retheme() {
+  buildGrid();
+  if (anim.on) grid.visible = false;
+  drawBalance(); drawGraph();
+  if (selected) { const s = selected; selected = null; select(s); }
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
+new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+const hash = location.hash.slice(1);
+setView(params.get("view") || (VIEWS[hash] ? hash : "quarter"), true);
+if (params.get("elec") === "0") $("t-elec").click();
+if (params.get("cut") === "1") $("t-cut").click();
+if (params.has("assemble") || hash === "assemble") enterAssembly(!params.has("record"));
+
+renderer.setAnimationLoop((now) => {
+  if (params.has("record") || window.__freeze) return;                  // frames are driven by __anim.seek
+  if (anim.on && anim.playing) {
+    anim.t = Math.min(DURATION, anim.t + (now - anim.last) / 1000);
+    anim.last = now;
+    applyAt(anim.t, now);
+    if (anim.t >= DURATION) setPlaying(false);
+    renderer.render(scene, camera);
+    return;
+  }
+  anim.last = now;
+  if (tween) {
+    const k = Math.min(1, (now - tween.t0) / 650), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+    camera.position.lerpVectors(tween.from, tween.to, e);
+    controls.target.lerpVectors(tween.fromT, target, e);
+    if (k >= 1) tween = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+window.__ready = true;
+</script>

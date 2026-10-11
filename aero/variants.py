@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-"""The three Kipinä CAD builds side by side: their weights, and what the
+"""The four Kipinä CAD builds side by side: their weights, and what the
 weight differences do to the way each flies.
 
     python3 airframe/build.py                         # as built (airframe/viewer/spec.json)
     python3 airframe/build.py --variant optimized     # optimized (airframe/variants/optimized/)
     python3 airframe/build.py --variant single-boom   # single boom (airframe/variants/single-boom/)
+    python3 aero/extreme.py                           # the extreme-aero design study (aero/study/extreme.json)
+    python3 airframe/build.py --variant extreme       # extreme aero (airframe/variants/extreme/)
     python3 aero/variants.py                          # airframe/variants/compare.json and COMPARE.md
 
 The optimized plane has the efficiency study's airfoil and the drag optimizer's
 detail changes; the single boom is the same plane rebuilt round one carbon boom
-with the motor on its end.
+with the motor on its end; the extreme-aero plane is the single boom with the
+longer, tapered and twisted wing and the tail aero/extreme.py picks.
 
 Each variant flies at its own CAD weight with its own aerodynamics: the wing's
 profile drag from NeuralFoil with its airfoil at the lift it needs, every other
 part from the drag build-up (aero/models/airframe.py) with its details, and the
-induced drag as in the efficiency study. The maximum lift follows each
+induced drag as in the efficiency study. The extreme-aero wing is not straight,
+so it flies on aero/extreme.py's lifting line instead, with the profile drag
+strip by strip along the span (on that model the single boom needs 0.8 % more
+power at 13 m/s than here: the differences between the planes are much larger). The maximum lift follows each
 airfoil's own section maximum. Both have the same motor and prop, so the
 thrust is the as-built plane's (1:1 static, falling to zero at the pitch
 speed) for both.
@@ -53,7 +59,8 @@ VOLTS = 7.4
 
 
 # key, label, the build's variant directory
-BUILDS = (("baseline", "As built", None), ("optimized", "Optimized", "optimized"), ("single", "Single boom", "single-boom"))
+BUILDS = (("baseline", "As built", None), ("optimized", "Optimized", "optimized"), ("single", "Single boom", "single-boom"),
+          ("extreme", "Extreme aero", "extreme"))
 
 
 def spec(variant: str) -> dict:
@@ -88,7 +95,7 @@ class Plane:
         self.v_pitch = k.motor_kv * k.v_loaded * k.rpm_frac / 60 * k.prop_pitch_in * 0.0254
 
     def at_mass(self, mass_g: float) -> "Plane":
-        p = object.__new__(Plane)
+        p = object.__new__(type(self))
         p.__dict__.update(self.__dict__)
         p.mass, p.w = mass_g, mass_g / 1000 * G
         return p
@@ -114,6 +121,41 @@ class Plane:
 
     def thrust(self, v: float, t0: float) -> float:
         return max(0.0, t0 * (1 - v / self.v_pitch))
+
+
+class ExtremePlane(Plane):
+    """The extreme-aero build: its tapered, twisted wing on aero/extreme.py's
+    lifting line and strip profile drag, the rest from its own layout."""
+
+    def __init__(self, label: str, mass_g: float, study: dict):
+        import extreme as X
+        o = json.loads((HERE / "study" / "extreme.json").read_text())["chosen"]["design"]
+        fields = X.Design.__dataclass_fields__
+        self.d = X.Design(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in o.items() if k in fields})
+        self.X = X
+        self.label, self.section, self.mass = label, "optimized", mass_g
+        self.details = {k: float(v) for k, v in study["details"].items()}
+        self.details.update(single_boom=1.0, boattail=0.0, joiners_hidden=0.0)
+        self.kulfan = kulfan(study, "optimized")
+        self.n_crit = study["n_crit"]
+        self.L = X.layout(self.d)
+        self.s, self.c, self.ar = self.d.area * 1e-6, self.d.mac / 1000, self.d.ar
+        self.xp = X.Plane(self.d, mass_g)
+        self.clmax = self.xp.clmax
+        self.w = mass_g / 1000 * G
+        k = AF.KIT
+        self.v_pitch = k.motor_kv * k.v_loaded * k.rpm_frac / 60 * k.prop_pitch_in * 0.0254
+
+    def at_mass(self, mass_g: float) -> "ExtremePlane":
+        p = super().at_mass(mass_g)
+        p.xp = self.X.Plane(self.d, mass_g)
+        return p
+
+    def drag(self, v: float, n: float = 1.0) -> dict:
+        r = self.xp.drag(v, n)
+        q = 0.5 * RHO * v * v
+        return {"drag": r["drag"], "induced": r["induced"], "wing": r["wing"], "cl": r["CL"],
+                "cd_wing": r["wing"] / (q * self.s), "items": r["items"]}
 
 
 @lru_cache(maxsize=None)
@@ -210,7 +252,8 @@ def main():
     dets = {"baseline": {k: 0.0 for k in details}, "optimized": details,
             "single": dict(details, single_boom=1.0, boattail=0.0, joiners_hidden=0.0)}
     sections = {"baseline": "baseline", "optimized": "optimized", "single": "optimized"}
-    planes = {k: Plane(label, sections[k], dets[k], mass[k], study) for k, label, _ in BUILDS}
+    planes = {k: ExtremePlane(label, mass[k], study) if k == "extreme" else Plane(label, sections[k], dets[k], mass[k], study)
+              for k, label, _ in BUILDS}
     t0 = mass["baseline"] / 1000 * G                      # the same motor and prop: 1:1 static for the as-built plane
     print("  ".join(f"{p.label} {p.mass:.1f} g" for p in planes.values()), flush=True)
     cases = {k: fly(p, t0) for k, p in planes.items()}
@@ -262,12 +305,15 @@ def main():
     mass_rows = [{"name": n, "g": {k: parts[k].get(n, {}).get("g", 0.0) for k in planes},
                   "x": {k: parts[k].get(n, {}).get("x") for k in planes}} for n in names]
     keys = ("x_le", "cg_x", "battery_x", "np_x", "pod_len", "length", "x_stab", "printed", "stall", "loading",
-            "airfoil", "details", "layout")
+            "airfoil", "details", "layout", "span", "chord", "c_tip", "mac", "aspect_ratio", "area_dm2", "taper",
+            "washout", "panels", "spar", "boom_tube", "c_h", "b_h", "fin_h", "y_break", "tube_len")
     out = {
         "generated": time.strftime("%Y-%m-%d"), "n_crit": study["n_crit"], "cruise_v": V_CRUISE,
         "thrust_static_n": round(t0, 3), "v_pitch": round(planes["baseline"].v_pitch, 2), "stall_limit": stall_limit,
         "order": list(planes),
-        "variants": {k: {**{kk: specs[k].get(kk) for kk in keys}, "auw": mass[k], "label": planes[k].label}
+        "variants": {k: {**{kk: specs[k].get(kk) for kk in keys}, "auw": mass[k], "label": planes[k].label,
+                         **({"tail_arm_mm": planes[k].d.tail_arm, "stretch": planes[k].d.stretch}
+                            if k == "extreme" else {})}
                      for k in planes},
         "mass": mass_rows, "cases": cases, "cross": cross, "sweep": sweep, "per10g": per10,
         "break_even": break_even, "max_mass_for_stall": max_mass,
@@ -295,15 +341,21 @@ ROWS = [("Weight, g", "mass", "{:.1f}"), ("Wing loading, g/dm²", "loading", "{:
 def report(o: dict) -> str:
     v, c, order = o["variants"], o["cases"], o["order"]
     lab = {k: v[k]["label"] for k in order}
-    L = ["# Kipinä: three CAD builds compared", "",
-         "Generated by `aero/variants.py` from the three CAD builds (`airframe/viewer/spec.json`, "
-         "`airframe/variants/optimized/viewer/spec.json` and `airframe/variants/single-boom/viewer/spec.json`). "
-         "Do not edit by hand.", "",
+    L = ["# Kipinä: four CAD builds compared", "",
+         "Generated by `aero/variants.py` from the four CAD builds (`airframe/viewer/spec.json` and "
+         "`airframe/variants/{optimized,single-boom,extreme}/viewer/spec.json`). Do not edit by hand.", "",
          "## The designs", "",
          "| | " + " | ".join(lab[k] for k in order) + " |", "|---|" + "---|" * len(order),
          "| Layout | " + " | ".join("one carbon boom, motor behind the tail" if v[k].get("layout") == "single"
                                     else "twin booms, motor behind the pod" for k in order) + " |",
          "| Airfoil | " + " | ".join(str(v[k]["airfoil"]) for k in order) + " |",
+         "| Wing | " + " | ".join(
+             f"{v[k]['span']:.0f} mm span, {v[k]['chord']:.0f} mm chord" if (v[k].get("panels") or 1) == 1 else
+             f"{v[k]['span']:.0f} mm span, {v[k]['chord']:.0f} mm root to {v[k]['c_tip']:.0f} mm tip, "
+             f"{v[k]['washout']:g}° washout" for k in order) + " |",
+         "| Wing area, aspect ratio | " + " | ".join(
+             f"{v[k]['area_dm2']:.2f} dm², {(v[k].get('aspect_ratio') or v[k]['span'] / v[k]['chord']):.1f}"
+             for k in order) + " |",
          "| Details | " + " | ".join(", ".join(f"{d} {x:g}" if not isinstance(x, bool) else d
                                               for d, x in (v[k]["details"] or {}).items() if x) or "none"
                                     for k in order) + " |",
@@ -326,12 +378,12 @@ def report(o: dict) -> str:
         if any(c[x].get(k) is None for x in order):
             continue
         L.append(f"| {label} | " + " | ".join(f.format(c[x][k]) for x in order) + " |")
-    for l, r in (("baseline", "optimized"), ("optimized", "single"), ("baseline", "single")):
+    for l, r in (("baseline", "optimized"), ("optimized", "single"), ("baseline", "single"), ("single", "extreme")):
         a, b, m = c[l], o["cross"][f"{r}@{l}"], c[r]
         L += ["", f"### {lab[r]} against {lab[l].lower()}: aerodynamics and weight", "",
               f"The middle column is the {lab[r].lower()} plane's aerodynamics at the {lab[l].lower()} weight "
               f"({v[l]['auw']:.1f} g against {v[r]['auw']:.1f} g).", "",
-              f"| | {lab[l]} | {lab[r]} aero, {lab[l].lower()} weight | {lab[r]} | change | of which aerodynamics | of which weight |",
+              f"| | {lab[l]} | {lab[r]}: its aerodynamics, {lab[l].lower()} weight | {lab[r]} | change | of which aerodynamics | of which weight |",
               "|---|---|---|---|---|---|---|"]
         for label, k, f in ROWS:
             if a.get(k) is None or m.get(k) is None or b.get(k) is None:

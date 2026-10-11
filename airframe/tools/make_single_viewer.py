@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Write variants/single-boom/viewer/index.html from the twin-boom viewer.
 
-    python3 airframe/tools/make_single_viewer.py
+    python3 airframe/tools/make_single_viewer.py                    # the single boom
+    python3 airframe/tools/make_single_viewer.py --variant extreme  # the extreme-aero plane
 
 The 3D viewer, the assembly animation and the process and DFMA sections are the
 twin's; this swaps the labels, views, text and the side layout for the single boom.
+The extreme-aero page is the single boom's with its wing, spars and text, and
+without the process and DFMA sections (that variant has no bill of process yet).
 """
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -135,6 +139,56 @@ sub("""renderer.setAnimationLoop((now) => {
   if (params.has("record")) return;""", """renderer.setAnimationLoop((now) => {
   if (params.has("record") || window.__freeze) return;""")
 
-out = HERE / "variants" / "single-boom" / "viewer" / "index.html"
+variant = sys.argv[sys.argv.index("--variant") + 1] if "--variant" in sys.argv else "single-boom"
+if variant == "extreme":
+    sub("<title>Kipinä single boom</title>", "<title>Kipinä extreme aero</title>")
+    sub("Single-boom micro FPV pusher · 3D printed · parametric CadQuery",
+        "Single-boom micro FPV pusher, extreme aero · 3D printed · parametric CadQuery")
+    sub('<h1>Kipinä <span id="h1-span">485</span> single boom</h1>', '<h1>Kipinä <span id="h1-span">700</span> extreme aero</h1>')
+    sub('''<p class="lede" id="lede">The 485 mm Kipinä on one carbon boom, with the motor on the boom's end.</p>''',
+        '''<p class="lede" id="lede">The single-boom Kipinä with a longer, tapered and twisted wing, for the best glide.</p>''')
+    # the outer panels and the split rear spar
+    sub('''  fuselage_front: "Fuselage, front", fuselage_rear: "Fuselage, rear", boom: "Boom, 10×9 carbon",''',
+        '''  fuselage_front: "Fuselage, front", fuselage_rear: "Fuselage, rear", boom: "Boom, 10×9 carbon",
+  wing_outer_R: "Outer panel R", wing_outer_L: "Outer panel L", spar_rear_R: "Rear spar, outer R",
+  spar_rear_L: "Rear spar, outer L",''')
+    sub('''"camera", "vtx", "antenna", "boom", "spar_main", "spar_rear"];''',
+        '''"camera", "vtx", "antenna", "boom", "spar_main", "spar_rear", "spar_rear_R", "spar_rear_L"];''')
+    sub('''const WING = ["wing_centre", "wing_R", "wing_L", "aileron_R", "aileron_L", "spar_main", "spar_rear", "servo_ail_R",''',
+        '''const WING = ["wing_centre", "wing_R", "wing_L", "wing_outer_R", "wing_outer_L", "spar_rear_R", "spar_rear_L",
+              "aileron_R", "aileron_L", "spar_main", "spar_rear", "servo_ail_R",''')
+    sub('''hide: ["lid", "wing_centre", "wing_R", "wing_L", "aileron_R", "aileron_L", "spar_main",''',
+        '''hide: ["lid", "wing_centre", "wing_R", "wing_L", "wing_outer_R", "wing_outer_L", "spar_rear_R", "spar_rear_L",
+            "aileron_R", "aileron_L", "spar_main",''')
+    sub('''  ail: { dir: [-0.35, -0.8, -0.55],''', '''  wing: { dir: [0.0, 1, 0.02], fit: ["wing_R", "wing_outer_R", "aileron_R"], pad: 1.08 },
+  ail: { dir: [-0.35, -0.8, -0.55],''')
+    sub('''          <button id="v-ail" data-view="ail" aria-pressed="false">Aileron</button>''',
+        '''          <button id="v-wing" data-view="wing" aria-pressed="false">Wing</button>
+          <button id="v-ail" data-view="ail" aria-pressed="false">Aileron</button>''')
+    sub('''  ["Chord", `${spec.chord} mm · NACA ${spec.naca}`],''',
+        '''  ["Chord", `${spec.chord} mm root, ${f1(spec.c_tip)} mm tip · ${spec.airfoil}`],
+  ["Wing", `centre, then 2 panels a side; ${spec.washout}° washout outboard · AR ${f1(spec.aspect_ratio)}`],''')
+    sub('''  ["Boom", `1 × 10×9 mm roll-wrapped carbon, ${spec.tube_len} long`],''',
+        '''  ["Boom", `1 × ${spec.boom_tube.replace("x", "×")} mm roll-wrapped carbon, ${spec.tube_len} long`],
+  ["Main spar", `${spec.spar.replace("x", "×")} mm carbon tube, tip to tip`],''')
+    sub('''document.title = `Kipinä ${spec.span} single boom`;''', '''document.title = `Kipinä ${spec.span} extreme aero`;''')
+    sub('''$("lede").textContent = `The ${spec.span} mm Kipinä on one carbon boom. The camera sits in the nose, the fuselage holds the battery, FC, ESC and the tail servos, and a 10 mm boom carries the tail and, on its end, the motor and pusher prop. Every printed part fits a Bambu Lab A1 mini, and four SG90 servos give roll, pitch and yaw.`;''',
+        '''$("lede").textContent = `The single-boom Kipinä with the wing aero/extreme.py picked for the best glide: ${spec.span} mm span, aspect ratio ${f1(spec.aspect_ratio)}, a ${Math.round(spec.chord)} mm root tapering to ${Math.round(spec.c_tip)} mm on the outer panels, which twist ${spec.washout}° tip-down. Same electronics, motor, prop and battery; the ailerons move to the outer panels, a ${spec.spar.replace("x", "×")} mm carbon tube runs tip to tip, and every printed part still fits a Bambu Lab A1 mini.`;''')
+    sub('''$("kit-spars").textContent = `Carbon rod 3 mm and 2 mm, ${spec.span - 10} mm each (wing spars)`;''',
+        '''$("kit-spars").textContent = `Carbon tube ${spec.spar.replace("x", "×")} mm, ${spec.span - 10} mm (main spar); carbon rod 2 mm, ${Math.round(2 * spec.y_break - 1)} mm and 2 × ${Math.round(spec.span / 2 - 5.5 - spec.y_break)} mm (rear spar)`;''')
+    sub('''        <li id="kit-spars">Carbon rod 3 mm and 2 mm (wing spars)</li>''',
+        '''        <li id="kit-spars">Carbon tube 5×4 mm and rod 2 mm (wing spars)</li>''')
+    sub("airframe/design.py</code>, <code>build.py --variant single-boom</code> and <code>process.py --variant single-boom</code>",
+        "aero/extreme.py</code> and <code>airframe/build.py --variant extreme</code>")
+    sub("branch claude/cad-software-connection-l8ls4m · airframe/variants/single-boom/</footer>",
+        "branch claude/cad-software-connection-l8ls4m · airframe/variants/extreme/</footer>")
+    # no bill of process for this one yet: drop its sections and the Assemble button
+    a = src.index("  <section>\n    <h2>Bill of process</h2>")
+    b = src.index("  <section>\n    <h2>Print list</h2>")
+    src = src[:a] + src[b:]
+    sub('''<button class="toggle" id="t-assemble" aria-pressed="false">Assemble</button>''',
+        '''<button class="toggle" id="t-assemble" aria-pressed="false" hidden>Assemble</button>''')
+out = HERE / "variants" / variant / "viewer" / "index.html"
+out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(src)
 print("wrote", out)

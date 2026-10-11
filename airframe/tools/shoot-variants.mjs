@@ -6,6 +6,7 @@
 //   node airframe/tools/shoot-variants.mjs --page    # and the whole page
 //   node airframe/tools/shoot-variants.mjs --charts  # only the charts and the default 3D view
 //   node airframe/tools/shoot-variants.mjs --three path/to/node_modules/three
+//   PAIRS=extreme- node airframe/tools/shoot-variants.mjs   # only the pairs with these file prefixes
 //
 // Serves airframe/ on a local port (the page reaches ../viewer/airframe.glb),
 // waits for the charts and both 3D models, and saves one PNG per figure plus
@@ -68,7 +69,8 @@ async function shootStage(page, file) {
 const PAIRS = [
   ["", "baseline,optimized", [[0, "airfoil"], [1, "hood"], [2, "boattail"], [4, "fairings"]]],
   ["single-", "optimized,single", [[0, "boom"], [1, "centre"], [2, "fuselage"], [3, "servos"], [4, "tail"], [5, "motor"]]],
-];
+  ["extreme-", "single,extreme", [[0, "wing"], [1, "spar"], [2, "ailerons"], [4, "tail"], [5, "fuselage"]]],
+].filter(([pre]) => !process.env.PAIRS || process.env.PAIRS.split(",").includes(pre));
 async function pick(page, pair) {
   await page.locator(`#pairs button[data-pair="${pair}"]`).click();
   await page.mouse.move(2, 2);                         // no tooltip left under the pointer

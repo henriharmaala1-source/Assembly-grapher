@@ -4,9 +4,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-  /* Three CAD builds, two at a time: the planes side by side, then where the grams went and what
+  /* Four CAD builds, two at a time: the planes side by side, then where the grams went and what
      they do in the air. As built in gray, optimized in orange (as "airfoil + details" on the
-     efficiency study page), single boom in violet. */
+     efficiency study page), single boom in violet, extreme aero in teal. */
   :root {
     --ground: #EEF1F2;
     --panel: #F8FAFA;
@@ -19,6 +19,7 @@
     --s-base: #898781;
     --s-opt: #eb6834;
     --s-single: #7a58c6;
+    --s-ext: #1b8ea6;
     --good: #006300;
     --tip: #FFFFFF;
     --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
@@ -28,13 +29,13 @@
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --ground: #111517; --panel: #182125; --stage: #1D282C; --ink: #E6ECEE; --ink-2: #B8C4C9; --muted: #94A3A9;
-      --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-opt: #d95926; --s-single: #8a6fd6; --good: #0ca30c; --tip: #212C31;
+      --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-opt: #d95926; --s-single: #8a6fd6; --s-ext: #2b97b0; --good: #0ca30c; --tip: #212C31;
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --ground: #111517; --panel: #182125; --stage: #1D282C; --ink: #E6ECEE; --ink-2: #B8C4C9; --muted: #94A3A9;
-    --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-opt: #d95926; --s-single: #8a6fd6; --good: #0ca30c; --tip: #212C31;
+    --rule: #2C373C; --grid: #24302F; --s-base: #898781; --s-opt: #d95926; --s-single: #8a6fd6; --s-ext: #2b97b0; --good: #0ca30c; --tip: #212C31;
     color-scheme: dark;
   }
 
@@ -138,17 +139,19 @@
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Kipinä 485 · three CAD builds</div>
-    <h1>As built, optimized, single boom</h1>
-    <p class="lede" id="lede">The Kipinä as it is drawn today, the version the efficiency study recommends, and that version rebuilt round one carbon boom with the motor behind the tail. All three are built in CAD, weighed part by part and flown through the same performance model. Pick two to compare.</p>
+    <div class="eyebrow">Kipinä · four CAD builds</div>
+    <h1>As built, optimized, single boom, extreme aero</h1>
+    <p class="lede" id="lede">The Kipinä as it is drawn today, the version the efficiency study recommends, that version rebuilt round one carbon boom with the motor behind the tail, and the single boom with the longer, tapered and twisted wing a design study picked for the best glide. All four are built in CAD, weighed part by part and flown through the same performance model. Pick two to compare.</p>
   </header>
 
   <div class="pairbar">
     <span>Compare</span>
     <div class="seg" role="group" aria-label="Which two builds to compare" id="pairs">
-      <button type="button" data-pair="optimized,single" aria-pressed="true"><i style="background: var(--s-opt)"></i>Optimized <i style="background: var(--s-single); margin-left: 6px"></i>single boom</button>
+      <button type="button" data-pair="single,extreme" aria-pressed="true"><i style="background: var(--s-single)"></i>Single boom <i style="background: var(--s-ext); margin-left: 6px"></i>extreme aero</button>
+      <button type="button" data-pair="optimized,single" aria-pressed="false"><i style="background: var(--s-opt)"></i>Optimized <i style="background: var(--s-single); margin-left: 6px"></i>single boom</button>
       <button type="button" data-pair="baseline,optimized" aria-pressed="false"><i style="background: var(--s-base)"></i>As built <i style="background: var(--s-opt); margin-left: 6px"></i>optimized</button>
       <button type="button" data-pair="baseline,single" aria-pressed="false"><i style="background: var(--s-base)"></i>As built <i style="background: var(--s-single); margin-left: 6px"></i>single boom</button>
+      <button type="button" data-pair="baseline,extreme" aria-pressed="false"><i style="background: var(--s-base)"></i>As built <i style="background: var(--s-ext); margin-left: 6px"></i>extreme aero</button>
     </div>
   </div>
 
@@ -203,14 +206,16 @@
   <section id="method" hidden>
     <div class="prose">
       <h2>How it was worked out</h2>
-      <p>All three planes are built by <code>airframe/build.py</code>. The optimized one uses the airfoil from the efficiency study and the detail changes its drag optimizer picked, each drawn as a printable part. The single boom is the optimized plane rebuilt round one 10 × 9 mm carbon tube: the fuselage section is the one <code>aero/section.py</code> finds holds the contents with the least skin, the elevator and rudder servos sit in the fuselage with their pushrods inside the boom, and the motor is on the boom's end behind the tail. The build weighs every printed part from its volume (shell and infill for its material) and adds the bought parts. It then moves the wing until the battery balances the plane at 28 % chord, in the middle of its travel.</p>
-      <p>Each plane flies at its own CAD weight with its own aerodynamics. The wing's profile drag comes from NeuralFoil with its airfoil, at the lift coefficient the weight needs. Every other part comes from the drag build-up with its details and layout, and the induced drag follows the lift. The maximum lift scales with each airfoil's section maximum. All three have the same motor and prop, so the thrust is the same: 1:1 static for the as-built plane, falling to zero at the prop's pitch speed. Power is drag × speed ÷ 40 % propulsion efficiency, plus the avionics; flight time uses 80 % of the 450 mAh pack. The propulsion efficiency is held the same, so the cleaner air a prop behind the tail works in is not counted.</p>
+      <p>All four planes are built by <code>airframe/build.py</code>. The optimized one uses the airfoil from the efficiency study and the detail changes its drag optimizer picked, each drawn as a printable part. The single boom is the optimized plane rebuilt round one 10 × 9 mm carbon tube: the fuselage section is the one <code>aero/section.py</code> finds holds the contents with the least skin, the elevator and rudder servos sit in the fuselage with their pushrods inside the boom, and the motor is on the boom's end behind the tail. The extreme-aero plane is the single boom with the wing and tail <code>aero/extreme.py</code> picks: it searched span, root chord, taper and tail arm for the best glide ratio, with every panel standing on a 180 mm bed, a spar tube and a boom stiff enough, the SG90 still fitting between the spars, no more power at 13 m/s than the single boom, and the wing still sitting down on the fuselage once the plane balances. The build weighs every printed part from its volume (shell and infill for its material) and adds the bought parts. It then moves the wing until the battery balances the plane at 28 % of the (mean) chord, in the middle of its travel.</p>
+      <p>Each plane flies at its own CAD weight with its own aerodynamics. The wing's profile drag comes from NeuralFoil with its airfoil, at the lift coefficient the weight needs. Every other part comes from the drag build-up with its details and layout, and the induced drag follows the lift. The maximum lift scales with each airfoil's section maximum. The extreme-aero wing is tapered and twisted, so it flies on a lifting-line model instead: its span loading, induced drag and maximum lift follow its planform, and its profile drag is summed strip by strip at each strip's own lift and Reynolds number. All four have the same motor and prop, so the thrust is the same: 1:1 static for the as-built plane, falling to zero at the prop's pitch speed. Power is drag × speed ÷ 40 % propulsion efficiency, plus the avionics; flight time uses 80 % of the 450 mAh pack. The propulsion efficiency is held the same, so the cleaner air a prop behind the tail works in is not counted.</p>
       <p id="method-caveat"></p>
     </div>
     <pre>python3 airframe/build.py                         # the as-built CAD
 python3 airframe/build.py --variant optimized     # the optimized CAD (airframe/variants/optimized/)
 python3 airframe/build.py --variant single-boom   # the single boom (airframe/variants/single-boom/)
 python3 aero/section.py                           # the fuselage section study
+python3 aero/extreme.py                           # the extreme-aero design study (aero/study/EXTREME.md)
+python3 airframe/build.py --variant extreme       # the extreme-aero CAD (airframe/variants/extreme/)
 python3 aero/variants.py                          # weights and flight: airframe/variants/compare.json and COMPARE.md</pre>
   </section>
 
@@ -222,7 +227,7 @@ python3 aero/variants.py                          # weights and flight: airframe
   const NS = "http://www.w3.org/2000/svg";
   const $ = (id) => document.getElementById(id);
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  const COL = { baseline: "--s-base", optimized: "--s-opt", single: "--s-single" };
+  const COL = { baseline: "--s-base", optimized: "--s-opt", single: "--s-single", extreme: "--s-ext" };
   function el(tag, attrs, parent, text) {
     const e = document.createElementNS(NS, tag);
     for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
@@ -548,6 +553,7 @@ python3 aero/variants.py                          # weights and flight: airframe
     { label: "Pod or fuselage, and lid", test: (n) => /^(pod_|fuselage_)/.test(n) || n === "lid" },
     { label: "Wing", test: (n) => /^(wing_|aileron_)/.test(n) },
     { label: "Tail booms", test: (n) => /^tube_/.test(n) || n === "boom" },
+    { label: "Wing spars", test: (n) => /^spar_/.test(n) },
     { label: "Tail and motor mount", test: (n) => /^(tail_mount|stab|elevator|fin|rudder|bellcrank|motor_mount)/.test(n) },
     { label: "Servo fairings", test: (n) => n.startsWith("fairing") },
     { label: "Joiner sleeves", test: (n) => n.startsWith("sleeve") },
@@ -566,7 +572,7 @@ python3 aero/variants.py                          # weights and flight: airframe
   }
 
   // the pair being compared, left then right; the 3D module follows the same event
-  window.__pair = window.__pair || ["optimized", "single"];
+  window.__pair = window.__pair || ["single", "extreme"];
   function render(D) {
     const [lk, rk] = window.__pair;
     const A = D.cases[lk], C = D.cases[rk], B = D.cross[`${rk}@${lk}`];
@@ -607,14 +613,16 @@ python3 aero/variants.py                          # weights and flight: airframe
     const list = (rs) => rs.map((r) => `${r.label.toLowerCase()} (${sgn(r.value)} g)`).join(", ");
     $("weight-title").textContent = `Where the ${Math.abs(dm).toFixed(1)} g ${dm >= 0 ? "went" : "came from"}`;
     $("weight-intro").textContent = `${up.length ? `Heavier: ${list(up)}. ` : ""}${dn.length ? `Lighter: ${list(dn)}. ` : ""}` +
-      `Everything bought (servos, motor, battery, electronics) is the same in all three builds; only where it sits changes. The CAD masses are rounded to 0.1 g per part.`;
+      `The electronics (servos, motor, battery and the rest) are the same in all four builds; only where they sit changes. The CAD masses are rounded to 0.1 g per part.`;
     divergingBars($("f-mass"), {
       title: "Weight change by part", sub: `Grams, ${rn} minus ${ln}, from the CAD volumes`, key: rk,
       aria: `Weight change of each group of parts from the ${ln} to the ${rn} plane`, rows, domain: [-mx, mx],
       fmt: (v) => `${v > 0 ? "+" : ""}${v}`, valFmt: (v) => `${v > 0 ? "+" : "−"}${Math.abs(v).toFixed(1)} g`, label: "grams", ml: 210,
       table: [["part", `${ln}, g`, `${rn}, g`, "change"], ...D.mass.filter((m) => Math.abs(g(m, rk) - g(m, lk)) >= 0.05)
         .map((m) => [m.name, g(m, lk).toFixed(1), g(m, rk).toFixed(1), `${g(m, rk) - g(m, lk) > 0 ? "+" : "−"}${Math.abs(g(m, rk) - g(m, lk)).toFixed(1)}`])],
-      caption: rk === "single" || lk === "single"
+      caption: rk === "extreme"
+        ? `The longer wing's panels and spar tube outweigh the single boom's straight wing, though its centre section, the only part printed with infill, is 56 mm wide instead of 135. The tail grows with the span, and the fuselage is ${Math.round(vc.stretch ?? 0)} mm longer between the servos and the ESC.`
+        : rk === "single" || lk === "single"
         ? "The single boom's fuselage carries the boom's socket and closes its own top ahead of the wing, so it outweighs the twin booms' pod; its wing centre loses the two sockets and the servo pockets. The pushrods run in PTFE sleeves inside the boom, and the motor wires run the boom's length."
         : "Printed in lightweight PLA with one wall, the six fairings weigh about as much as a servo horn each. The joiner sleeves are solid PLA.",
     });
@@ -624,7 +632,7 @@ python3 aero/variants.py                          # weights and flight: airframe
                    ["camera", "camera", false]]
         .filter(([n]) => mass[n] && mass[n].g > 0).map(([n, lab, show]) => ({ x: mass[n].x, g: mass[n].g, label: lab, show }));
       pts.push({ x: v.cg_x, cg: true, label: "centre of gravity" });
-      return { key, label, le: v.x_le, te: v.x_le + 97, points: pts };
+      return { key, label, le: v.x_le, te: v.x_le + (v.chord || 97), points: pts };
     };
     const mOf = (n, k) => (D.mass.find((m) => m.name === n) || { x: {} }).x[k];
     const dMotor = mOf("motor", rk) - mOf("motor", lk), dServo = mOf("servo_elev", rk) - mOf("servo_elev", lk);
@@ -637,7 +645,9 @@ python3 aero/variants.py                          # weights and flight: airframe
       table: [["", ln, rn], ["wing leading edge, mm", va.x_le.toFixed(1), vc.x_le.toFixed(1)], ["centre of gravity, mm", va.cg_x.toFixed(1), vc.cg_x.toFixed(1)],
               ["battery centre, mm", va.battery_x.toFixed(1), vc.battery_x.toFixed(1)], ["motor, mm", String(mOf("motor", lk)), String(mOf("motor", rk))],
               ["pod or fuselage length, mm", va.pod_len.toFixed(1), vc.pod_len.toFixed(1)]],
-      caption: Math.abs(dMotor) > 50
+      caption: rk === "extreme" && lk === "single"
+        ? `The tail grows with the longer wing and its tail arm is shorter, so the wing balances ${Math.abs(vc.x_le - va.x_le).toFixed(1)} mm further ${vc.x_le > va.x_le ? "aft" : "forward"}. The fuselage is stretched ${Math.round(vc.stretch ?? 0)} mm between the servos and the ESC, so the wing still sits down on its full section ahead of the tail cone. The battery stays where it was.`
+        : Math.abs(dMotor) > 50
         ? `The motor moves ${Math.abs(dMotor).toFixed(0)} mm ${dMotor > 0 ? "aft, to the boom's end" : "forward, to the pod's back wall"}, and the elevator and rudder servos ${Math.abs(dServo).toFixed(0)} and ${Math.abs(dServoR).toFixed(0)} mm ${dServo < 0 ? "forward, into the fuselage" : "aft, into the wing centre"}. The battery stays where it was, so the wing moves ${Math.abs(vc.x_le - va.x_le).toFixed(1)} mm ${vc.x_le > va.x_le ? "aft" : "forward"} to keep the balance, and the static margin is the same.`
         : `The ESC moves ${Math.abs(mOf("esc", lk) - mOf("esc", rk)).toFixed(0)} mm ${mOf("esc", rk) < mOf("esc", lk) ? "forward, out of the tapered tail" : "aft"}, and the fairings sit a little behind the centre of gravity, so the wing moves ${Math.abs(vc.x_le - va.x_le).toFixed(1)} mm ${vc.x_le > va.x_le ? "aft" : "forward"} to keep the balance. The battery stays where it was and the static margin is the same.`,
     });
@@ -741,8 +751,8 @@ python3 aero/variants.py                          # weights and flight: airframe
       const d = (a, b) => { const x = b - a; return Math.abs(x) < 1e-9 ? "–" : `${x > 0 ? "+" : "−"}${Math.abs(x) >= 1 ? Math.abs(x).toFixed(2) : Math.abs(x).toPrecision(2)}`; };
       h("td", { class: "n" }, tr, d(A[k], C[k])); h("td", { class: "n" }, tr, d(A[k], B[k])); h("td", { class: "n" }, tr, d(B[k], C[k]));
     }
-    $("method-caveat").textContent = `The aerodynamics carry the efficiency study's uncertainties: NeuralFoil's section drag has been cross-checked against XFOIL and CFD, the rest of the drag build-up is good to about ±30 %, and the maximum lift follows the section's, not a 3D measurement. The weights are the CAD's, so glue, paint and wire lengths are left out on all three alike. The flight model steps through speed in 0.25 m/s.`;
-    $("foot").textContent = `Generated ${D.generated} by aero/variants.py from the three CAD builds (airframe/viewer/spec.json, airframe/variants/optimized/viewer/spec.json and airframe/variants/single-boom/viewer/spec.json).`;
+    $("method-caveat").textContent = `The aerodynamics carry the efficiency study's uncertainties: NeuralFoil's section drag has been cross-checked against XFOIL and CFD, the rest of the drag build-up is good to about ±30 %, and the maximum lift follows the section's, not a 3D measurement. The weights are the CAD's, so glue, paint and wire lengths are left out on all four alike. The flight model steps through speed in 0.25 m/s.`;
+    $("foot").textContent = `Generated ${D.generated} by aero/variants.py from the four CAD builds (airframe/viewer/spec.json and airframe/variants/{optimized,single-boom,extreme}/viewer/spec.json).`;
   }
 
   // lineChart with horizontal reference lines
@@ -849,13 +859,41 @@ const C_ = {
   motor: { title: "Motor on the boom's end", parts: ["motor", "prop", "motor_mount", "motor_wires"],
     what: "The motor moves from the pod's back wall to a cap on the boom's end, behind the tail. Its wires run inside the boom; the wing moves aft to balance it.",
     view: { dir: [0.45, 0.75, 0.5], pad: 0.85 } },
+  // the extreme-aero plane: its numbers come from compare.json (V = its variant row there)
+  wingx: { title: "Longer, tapered wing", parts: ["wing_R", "wing_L", "wing_outer_R", "wing_outer_L", "wing_centre", "aileron_R", "aileron_L"],
+    what: (V) => `${V.span} mm instead of 485: a narrow centre, then two panels a side. The inner ones keep the ${V.chord} mm root chord; the outer ones taper to ${Math.round(V.c_tip)} mm and twist ${V.washout}° tip-down. Aspect ratio ${V.aspect_ratio.toFixed(1)} instead of 5.`,
+    view: { dir: [0, 1, 0.02], fit: ["wing_R", "wing_outer_R", "wing_L", "wing_outer_L", "wing_centre"], pad: 1.05 } },
+  sparx: { title: "Spar tube", parts: ["spar_main", "spar_rear", "spar_rear_R", "spar_rear_L"],
+    what: (V) => `A ${V.spar.replace("x", " × ")} mm carbon tube runs tip to tip and keeps the longer wing's bending under 1.5 % of its half span at 1 g. The rear spar is three 2 mm rods: one through the centre and inner panels, and one in each outer panel at 70 % of its narrowing chord.`,
+    view: { dir: [0.02, 0.05, -1], fit: ["wing_outer_R", "aileron_R"], pad: 0.6, clip: { n: [0, 0, 1], c: 0.27 } } },
+  ailx: { title: "Ailerons on the outer panels", parts: ["aileron_R", "aileron_L", "servo_ail_R", "servo_ail_L", "fairing_ail_R", "fairing_ail_L"],
+    what: (V) => `The aileron servos sit at the outer panels' roots, ${Math.round(V.y_break ?? 190)} mm out, and the ailerons run from there to the tips. Their leads run inboard through the inner panels, so each needs about 180 mm of extension.`,
+    view: { dir: [-0.35, -0.85, -0.6], fit: ["servo_ail_R", "horn_ail_R"], pad: 1.6 } },
+  centrex: { title: "Narrow wing centre", parts: ["wing_centre"],
+    what: "56 mm wide instead of 135: with two panels a side, the panels reach the span without it. It is the only wing part printed with infill, so it sheds most of its weight.",
+    view: { dir: [-0.3, 0.9, 0.35], fit: ["wing_centre"], pad: 1.4 } },
+  centre_x: { title: "Wing centre", parts: ["wing_centre"],
+    what: "The thinner section, no boom sockets or servo pockets, and 56 mm wide instead of 155: two panels a side reach the span.",
+    view: { dir: [-0.3, 0.9, 0.35], fit: ["wing_centre"], pad: 1.4 } },
+  tailx: { title: "Bigger tail", parts: ["stab", "elevator", "fin", "rudder", "tail_mount"],
+    what: (V) => `The tail volumes stay the same, so the tail grows with the wing: a ${Math.round(V.c_h)} mm stabiliser chord instead of 48, and a fin ${Math.round(V.fin_h)} mm tall instead of 79. The tail arm is ${Math.round(V.tail_arm_mm)} mm instead of 272, so the ${V.boom_tube.replace("x", " × ")} mm boom stays as stiff as the single boom's.`,
+    view: { dir: [0.75, 0.35, 0.8], fit: ["tail_mount", "stab", "elevator", "fin", "rudder"], pad: 1.2 } },
+  tail_x: { title: "One tall fin, stabiliser under the boom",
+    parts: ["fin", "rudder", "fin_R", "fin_L", "rudder_R", "rudder_L", "stab", "elevator", "tail_mount", "bellcrank", "joiner_R", "joiner_L"],
+    what: (V) => `One ${Math.round(V.fin_h)} mm fin with the area of both, on the boom; the stabiliser hangs under the boom so the elevator swings up past it. No bellcrank or joiner wires.`,
+    view: { dir: [0.75, 0.35, 0.8], fit: ["tail_mount", "stab", "elevator"], pad: 1.25 } },
+  stretchx: { title: "Fuselage stretched", parts: ["fuselage_front", "fuselage_rear", "esc"],
+    what: (V) => `The bigger tail moves the balance aft, and the wing with it. ${Math.round(V.stretch)} mm more between the servos and the ESC keeps the wing sitting down on the full section ahead of the tail cone. The halves now meet just behind the servos; the front half prints across the bed's diagonal.`,
+    view: { dir: [-0.75, -0.45, 0.75], fit: ["fuselage_front", "fuselage_rear"], pad: 1.0 } },
 };
 const CARDS = {
+  "single,extreme": ["wingx", "sparx", "ailx", "centrex", "tailx", "stretchx"],
+  "baseline,extreme": ["wingx", "sparx", "ailx", "centre_x", "antenna", "boom", "fuselage", "servos", "tail_x", "motor"],
   "baseline,optimized": ["airfoil", "hood", "boattail", "antenna", "fairings", "sleeves"],
   "optimized,single": ["boom", "centre", "fuselage", "servos", "tail", "motor"],
   "baseline,single": ["panels", "centre_b", "antenna", "ailfair", "boom", "fuselage", "servos", "tail", "motor"],
 };
-const COLV = { baseline: "--s-base", optimized: "--s-opt", single: "--s-single" };
+const COLV = { baseline: "--s-base", optimized: "--s-opt", single: "--s-single", extreme: "--s-ext" };
 const VIEWS = {
   quarter: { dir: [-0.95, 0.62, 0.9], pad: 0.74 }, side: { dir: [0, 0.02, 1] }, top: { dir: [0, 1, 0.02], pad: 1.1 }, under: { dir: [-0.55, -0.8, 0.7] },
 };
@@ -887,7 +925,7 @@ function makeScene() {
   s.add(sun);
   return s;
 }
-const models = Object.fromEntries(["baseline", "optimized", "single"].map((k) => [k, { key: k, scene: makeScene(), meshes: new Map(), ok: false }]));
+const models = Object.fromEntries(["baseline", "optimized", "single", "extreme"].map((k) => [k, { key: k, scene: makeScene(), meshes: new Map(), ok: false }]));
 let views = window.__pair.map((k) => models[k]);
 
 async function load(urls) {
@@ -924,7 +962,8 @@ const stamp = (v, gltf) => {
 
 const SOURCES = { baseline: ["../viewer/airframe.glb", "baseline-glb.json"],
                   optimized: ["optimized/viewer/airframe.glb", "optimized-glb.json"],
-                  single: ["single-boom/viewer/airframe.glb", "single-glb.json"] };
+                  single: ["single-boom/viewer/airframe.glb", "single-glb.json"],
+                  extreme: ["extreme/viewer/airframe.glb", "extreme-glb.json"] };
 const loaded = await Promise.allSettled(Object.entries(SOURCES).map(async ([k, urls]) => stamp(models[k], await load(urls))));
 for (const m of Object.values(models)) if (m.ok) box.union(new THREE.Box3().setFromObject(m.scene));
 $("models").hidden = false;
@@ -1004,7 +1043,8 @@ function cards() {
     const btn = document.createElement("button");
     btn.type = "button"; btn.className = "change"; btn.setAttribute("aria-pressed", "false");
     const b = document.createElement("b"); b.textContent = c.title;
-    const w = document.createElement("span"); w.className = "what"; w.textContent = c.what;
+    const w = document.createElement("span"); w.className = "what";
+    w.textContent = typeof c.what === "function" ? (data ? c.what(data.variants.extreme) : "") : c.what;
     const g = document.createElement("span"); g.className = "g";
     const dg = c.parts.reduce((s, p) => s + (mass[p] ? (mass[p].g[rk] || 0) - (mass[p].g[lk] || 0) : 0), 0);
     g.textContent = data ? (Math.abs(dg) < 0.05 ? "weight: no change" : `weight: ${dg > 0 ? "+" : "−"}${Math.abs(dg).toFixed(1)} g`) : "";
@@ -1025,10 +1065,10 @@ function labels() {
   window.__pair.forEach((k, i) => {
     const s = i ? "b" : "a";
     $(`lab-${s}-i`).style.borderColor = `var(${COLV[k]})`;
-    $(`lab-${s}-n`).textContent = D ? D.variants[k].label : { baseline: "As built", optimized: "Optimized", single: "Single boom" }[k];
+    $(`lab-${s}-n`).textContent = D ? D.variants[k].label : { baseline: "As built", optimized: "Optimized", single: "Single boom", extreme: "Extreme aero" }[k];
     if (D) {
       const v = D.variants[k];
-      $(`lab-${s}-s`).textContent = `${v.auw.toFixed(1)} g · ${v.airfoil}${k === "baseline" ? "" : " + details"}${v.layout === "single" ? " · one boom" : ""}`;
+      $(`lab-${s}-s`).textContent = `${v.auw.toFixed(1)} g · ${v.airfoil}${k === "baseline" ? "" : " + details"}${v.layout === "single" ? " · one boom" : ""}${v.panels > 1 ? ` · ${v.span.toFixed(0)} mm tapered wing` : ""}`;
     }
   });
 }

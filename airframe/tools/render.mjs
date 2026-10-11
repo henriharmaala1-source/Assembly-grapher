@@ -5,6 +5,7 @@
 //   node airframe/tools/render.mjs [--three node_modules/three] [--page]
 //   node airframe/tools/render.mjs --video [--ffmpeg path/to/ffmpeg] [--fps 30]
 //   node airframe/tools/render.mjs --variant single-boom [--video]   (variants/<name>/preview/)
+//   node airframe/tools/render.mjs --variant extreme                 (no assembly video: no bill of process yet)
 //
 // --video steps the viewer's assembly animation frame by frame and encodes
 // preview/assembly.mp4 (H.264) with ffmpeg.
@@ -35,8 +36,9 @@ const types = { ".html": "text/html", ".json": "application/json", ".glb": "mode
 const server = createServer(async (req, res) => {
   try {
     const file = path.join(viewer, decodeURIComponent(new URL(req.url, "http://x").pathname).replace(/^\/$/, "/index.html"));
+    const body = await readFile(file);               // read first: a missing file is a 404, not a broken 200
     res.writeHead(200, { "content-type": types[path.extname(file)] ?? "application/octet-stream" });
-    res.end(await readFile(file));
+    res.end(body);
   } catch { res.writeHead(404); res.end(); }
 }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}/`;
@@ -80,7 +82,7 @@ if (process.argv.includes("--video")) {
   server.close();
   process.exit(0);
 }
-const shots = variant === "single-boom" ? [
+const shots = variant === "single-boom" || variant === "extreme" ? [
   ["hero", "view=quarter", 1600, 1000],
   ["top", "view=top", 1400, 1000],
   ["side", "view=side", 1600, 700],
@@ -96,6 +98,7 @@ const shots = variant === "single-boom" ? [
   ["tail", "view=tail", 1400, 900],
   ["motor", "view=motor", 1300, 800],
   ["wiring", "view=wiring", 1500, 900],
+  ...(variant === "extreme" ? [["wing", "view=wing", 1500, 900]] : []),
 ] : [
   ["hero", "view=quarter", 1600, 1000],
   ["top", "view=top", 1400, 1000],

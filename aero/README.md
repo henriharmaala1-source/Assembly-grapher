@@ -124,6 +124,8 @@ It writes these files:
 python3 airframe/build.py                         # the as-built CAD
 python3 airframe/build.py --variant optimized     # the optimized CAD, in airframe/variants/optimized/
 python3 airframe/build.py --variant single-boom   # the single boom, in airframe/variants/single-boom/
+python3 aero/extreme.py                           # the extreme-aero wing study, aero/study/EXTREME.md
+python3 airframe/build.py --variant extreme       # what it picks, in airframe/variants/extreme/
 python3 aero/variants.py                          # airframe/variants/compare.json and COMPARE.md
 ```
 
@@ -140,6 +142,31 @@ is 1.5 g heavier, has 6.4 % less drag at 13 m/s, and flies 17.7 min against
 - the tail mount's pylons.
 
 The drag optimizer does not search over the layout.
+
+A fourth build, the extreme-aero plane, is the single boom with a longer
+wing. `aero/extreme.py` searches span, root chord, taper and tail arm for the
+best glide ratio. It flies each design with:
+
+- a lifting line for the span loading, checked against an AeroSandbox vortex
+  lattice;
+- NeuralFoil strip by strip for the profile drag;
+- the single boom's drag build-up for the rest.
+
+Each design also has to:
+
+- print on the 180 mm bed;
+- carry a carbon spar tube stiff enough and a boom as stiff as the single
+  boom's;
+- balance with the wing still on the fuselage's full section;
+- need no more power at 13 m/s than the single boom.
+
+It picks a 700 mm wing tapering from 86 to 69 mm, with 3° of washout on the
+outer panels: a best glide of 11.6 instead of 9.7, least sink 0.79 instead of
+1.10 m/s, and 25.7 instead of 21.0 min at the slowest. See
+[aero/study/EXTREME.md](study/EXTREME.md) and the
+[airframe README](../airframe/README.md#the-extreme-aero-variant). In
+`aero/variants.py` it flies on the study's lifting line (`ExtremePlane`),
+because its wing is not straight.
 
 The optimized variant is a full CAD build. It has the study's airfoil and
 every detail change the optimizer picked, each drawn as a printable part:

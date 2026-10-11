@@ -102,8 +102,20 @@ class Params:
     belly_ch: float = 2.0          # 45 deg chamfer on the fuselage's bottom long edges
     cone: float = 48.0             # tail cone from the full section down to the boom socket
     elevator_up: float = 20.0      # elevator travel the stabiliser's drop below the boom allows, degrees
+    bay_stretch: float = 0.0       # extra fuselage between the servo bay and the ESC: moves the ESC and the
+                                   # tail cone aft, so a wing that balances further aft still sits on the full section
 
-    cg_target: float = 0.28        # fraction of chord, first flights
+    # Tapered wing (panels = 2, the extreme-aero variant): a centre section, then
+    # on each side an inner panel of constant chord and an outer panel that tapers
+    # to the tip and twists tip-down. The quarter-chord line is straight and square
+    # to the fuselage, so the main spar runs straight through every panel.
+    root_chord: float = 0.0        # 0: span / aspect_ratio, one chord all the way out
+    taper: float = 1.0             # tip chord / root chord, on the outer panels
+    washout: float = 0.0           # degrees, outer panel root to tip, tip nose-down
+    panels: int = 1                # wing panels a side
+    main_spar_id: float = 0.0      # a carbon tube's bore (0: a solid rod)
+
+    cg_target: float = 0.28        # fraction of the mean chord, first flights
     bed: tuple = (180.0, 180.0, 180.0)   # printer build volume: Bambu Lab A1 mini
     bed_margin: float = 5.0
 
@@ -114,7 +126,7 @@ class Params:
         booms = self.tube_spacing + 2 * (self.tube_od / 2 + self.clearance / 2 + self.boss_wall + 3.0)
         if self.layout == "single":
             booms = 0.0
-        return max(self.center_width, booms, self.span - 2 * (self.bed[2] - self.bed_margin))
+        return max(self.center_width, booms, self.span - 2 * self.panels * (self.bed[2] - self.bed_margin))
     stall_limit: float = 9.0       # m/s, "as small as possible" criterion
 
 
@@ -285,14 +297,25 @@ class Layout:
 
     def __init__(self, p: Params, x_le: float, k: Kit = Kit()):
         self.p, self.k = p, k
-        c = self.chord = p.span / p.aspect_ratio
-        self.area = p.span * c                       # mm^2
+        c = self.chord = p.root_chord or p.span / p.aspect_ratio      # the centre's (and inner panels') chord
+        h = p.span / 2
+        self.panel = (p.span - p.centre_w) / (2 * p.panels)          # each panel's length
+        self.tapered = p.panels > 1 and p.taper < 1.0
+        self.y_break = p.centre_w / 2 + self.panel * (p.panels - 1) if self.tapered else h   # the taper starts here
+        self.c_tip = c * p.taper if self.tapered else c
+        ct, yb = self.c_tip, self.y_break
+        self.area = 2 * (c * yb + (c + ct) / 2 * (h - yb))          # mm^2
+        self.mac = 2 / self.area * (c * c * yb + (h - yb) * (c * c + c * ct + ct * ct) / 3)
+        self.ar = p.span ** 2 / self.area
         self.x_le = x_le
         self.x_te = x_le + c
-        self.x_qc = x_le + 0.25 * c
-        self.l_h = p.tail_arm * c
-        self.c_h = p.stab_chord_ratio * c
-        s_h = p.vh * self.area * c / self.l_h
+        self.x_qc = x_le + 0.25 * c                  # on the straight quarter-chord line: the mean chord's too
+        self.x_mac_le = self.x_qc - 0.25 * self.mac
+        self.cg_x = self.x_mac_le + p.cg_target * self.mac
+        m = self.mac                                 # tail volumes and the tail arm count in mean chords
+        self.l_h = p.tail_arm * m
+        self.c_h = p.stab_chord_ratio * m
+        s_h = p.vh * self.area * m / self.l_h
         # keep the stabiliser short enough to print flat; widen its chord instead
         self.b_h = min(round_to(s_h / self.c_h, 2), p.bed[0] - p.bed_margin)
         self.c_h = s_h / self.b_h
@@ -379,7 +402,7 @@ class Layout:
         self.horn_y = -wall_y + sv.horn_z            # elevator horn plane; the rudder's is its mirror
         # the boom starts behind the rear servo's tabs and runs to the motor
         self.boom_x0 = self.servo_rud[0] + sv.tab_span / 2 + 2.0
-        self.esc_x = self.boom_x0 + 5.0              # ESC lies flat under the boom's mouth, its leads clear of the servo
+        self.esc_x = self.boom_x0 + 5.0 + p.bay_stretch   # ESC lies flat under the boom, its leads clear of the servo
         self.esc_bay_x = self.esc_x
         self.cone_x0 = self.esc_x + k.esc_len + 2.0  # tail cone: full section to the boom socket
         self.pod_len = self.cone_x0 + p.cone
@@ -390,6 +413,20 @@ class Layout:
         self.tube_x0, self.tube_x1, self.tube_len = self.boom_x0, self.boom_x1, self.boom_len
         self.pushrod_exit_x = self.x_stab - 12.0     # both pushrods leave the boom ahead of the tail mount
         self.length = self.x_prop + 3.0
+
+    def chord_at(self, y: float) -> float:
+        """Local chord at y (mm from the centre-line)."""
+        y = abs(y)
+        if y <= self.y_break:
+            return self.chord
+        return self.chord + (self.c_tip - self.chord) * (y - self.y_break) / (self.p.span / 2 - self.y_break)
+
+    def twist_at(self, y: float) -> float:
+        """Local twist at y, degrees (negative: nose down)."""
+        y = abs(y)
+        if not self.tapered or y <= self.y_break:
+            return 0.0
+        return -self.p.washout * (y - self.y_break) / (self.p.span / 2 - self.y_break)
 
     def servo_slack(self) -> float:
         """Room left between the spars for the aileron servo's tabs (mm)."""
@@ -404,7 +441,7 @@ class Layout:
 
     @property
     def vh_actual(self):
-        return self.s_h * self.l_h / (self.area * self.chord)
+        return self.s_h * self.l_h / (self.area * self.mac)
 
     @property
     def vv_actual(self):
@@ -459,7 +496,7 @@ def structure_estimate(p: Params, L: Layout):
     """(name, grams, x) for the printed parts, tubes and rods."""
     c, b = L.chord, p.span
     panels = b - p.centre_w                              # the centre section is counted separately
-    wing_area = (2.06 * c + math.pi * (p.main_spar_d + p.rear_spar_d + 4)) * panels
+    wing_area = 2.06 * (L.area - p.centre_w * c) + math.pi * (p.main_spar_d + p.rear_spar_d + 4) * panels
     tail_plan = L.b_h * L.c_h + L.fin_plan
     if L.single:
         plate_equiv = 2 * 0.4 + 0.15 * (p.plate - 0.8)
@@ -469,7 +506,8 @@ def structure_estimate(p: Params, L: Layout):
         return [
             ("wing panels", LW_PLA * p.skin * wing_area / 1000, L.x_le + 0.42 * c),
             ("wing centre", 0.128 * p.centre_w * c / 90 + 0.3, L.x_le + 0.6 * c),
-            ("spar rods", rod_mass(p.main_spar_d, b - 10) + rod_mass(p.rear_spar_d, b - 10), L.x_le + 0.43 * c),
+            ("spar rods", rod_mass(p.main_spar_d, b - 10, p.main_spar_id) + rod_mass(p.rear_spar_d, b - 10),
+             L.x_le + 0.43 * c),
             ("tail plates", LW_PLA * plate_equiv * tail_plan / 1000, L.x_stab + 0.45 * L.c_h),
             ("tail mount", 3.0, L.x_stab + L.c_fix / 2),
             ("motor mount", 1.2, L.x_mp - 4.0),
@@ -550,7 +588,7 @@ def solve_x_le(p: Params, k: Kit, structure=structure_estimate) -> float:
         L = Layout(p, x_le, k)
         items = [(n, g, x) for n, g, x in structure(p, L)]
         items += [(n, g, x) for n, g, x, _ in components(p, k, L)]
-        need = battery_for_cg(items, k, x_le + p.cg_target * L.chord)
+        need = battery_for_cg(items, k, L.cg_x)
         mid = (L.batt_min + L.batt_max) / 2
         return need - mid
 
@@ -569,15 +607,15 @@ def solve_x_le(p: Params, k: Kit, structure=structure_estimate) -> float:
 
 
 def neutral_point(p: Params, L: Layout) -> float:
-    """Neutral point as a fraction of chord (wing + tail - pod)."""
-    ar = p.aspect_ratio
+    """Neutral point as a fraction of the mean chord, from its leading edge (wing + tail - pod)."""
+    ar = L.ar
     a_w = lift_slope(ar)
     a_h = lift_slope(L.b_h / L.c_h)
     downwash = 2 * a_w / (math.pi * ar)
     h_n = 0.25 + 0.9 * L.vh_actual * (a_h / a_w) * (1 - downwash)
     # Pod: Gilruth/Raymer K_f estimate, per degree
     k_f = 0.005 + 0.02 * min(L.x_le / L.pod_len, 1.0) ** 2
-    cm_pod = k_f * (2 * L.half_w) ** 2 * L.pod_len / (L.chord * L.area)
+    cm_pod = k_f * (2 * L.half_w) ** 2 * L.pod_len / (L.mac * L.area)
     return h_n - cm_pod / (a_w / 57.3)
 
 
@@ -636,7 +674,7 @@ def top_speed(p: Params, auw_g: float, L: Layout, k: Kit):
         v = (lo + hi) / 2
         q = 0.5 * RHO_AIR * v * v
         cl = w / (q * s)
-        drag = q * (cda + s * cl * cl / (math.pi * 0.8 * p.aspect_ratio))
+        drag = q * (cda + s * cl * cl / (math.pi * 0.8 * L.ar))
         if t0 * (1 - v / v_pitch) > drag:
             lo = v
         else:

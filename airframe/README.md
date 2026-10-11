@@ -552,7 +552,7 @@ aileron servo fairings. Everything behind the battery changes:
 | Tail | one 79 mm fin with the area of both twin fins, in a socket on the tail mount. The stabiliser hangs on two wedge-nosed pylons, its top 11.7 mm under the boom's centre-line, so the elevator can swing 20 degrees up past the boom. No bellcrank, joiner wires or sleeves |
 | Motor | on a printed cap at the boom's end, 3 mm behind the tail's trailing edge. A 16 degree cone runs from the boom up to the motor plate. The ESC lies flat under the boom's mouth and the motor wires run inside the boom |
 
-The build's interference check passes, and every part fits the A1 mini.
+The build's interference check passes, with every wire run modelled too (see [Wiring](#wiring)), and every part fits the A1 mini.
 
 **The boom.** One tube carries the tail, the motor and the prop: 27 g on its
 end, 246 mm from the socket. The aim was to keep the first bending mode near
@@ -672,13 +672,13 @@ The build order changes behind the battery:
 | | Twin boom | Single boom |
 |---|---|---|
 | Parts and fasteners | 54 (minimum 26) | 50 (minimum 23) |
-| Manual assembly time | 42 min | 46 min |
-| Design efficiency | 3 % | 2.5 % |
+| Manual assembly time | 42 min | 48 min |
+| Design efficiency | 3 % | 2.4 % |
 | Printing | 8 h 38 min, 97 g | 9 h 53 min, 100 g |
-| Hands-on | 1 h 46 min | 1 h 52 min |
+| Hands-on | 1 h 46 min | 2 h 01 min |
 | Epoxy cure waits | 45 min | 1 h 15 min |
-| Lead time | 10 h 09 min | 11 h 22 min |
-| Cost per airframe | about 170 EUR | about 175 EUR |
+| Lead time | 10 h 09 min | 11 h 26 min |
+| Cost per airframe | about 170 EUR | about 177 EUR |
 
 - **Fewer parts, more joints.** The single boom drops the bellcrank, the
   joiner wires, one boom and a fin. But it adds five epoxy joints: the tail on
@@ -702,6 +702,44 @@ The build order changes behind the battery:
   Together with the twin's suggestions (printed horns, an FC with a built-in
   receiver, a camera with an integrated VTX, printed hinges), they bring it to
   42 parts.
+
+### Wiring
+
+Every wire run in the single boom is modelled as a body along its route:
+- both aileron leads;
+- the elevator and rudder servo leads;
+- the motor wires;
+- the ESC's battery wires.
+
+The build's interference check covers these runs like any other part, so a
+route that's blocked shows up as an overlap. The only contacts allowed are a
+wire at its own two ends, and wires against wires, since they bundle. The
+check passes, and REPORT.md lists each run's length:
+
+| Run | Route | Length | Note |
+|---|---|---:|---|
+| Aileron leads | out of the servo into the pocket's lead slot, inboard through the panel and the wing centre, down beside the boom socket into the fuselage's open top, forward over the servos and battery to the FC | 263 mm | needs about 303 mm with slack: **extend each SG90 lead by about 55 mm** |
+| Elevator, rudder leads | up from the servo, forward over the battery to the FC | 128, 162 mm | the SG90's 250 mm lead is enough |
+| Motor wires | from the ESC's motor tabs up through a 3.2 mm hole under the boom, along the upper right of the bore (clear of both pushrod exits), out through the motor cap's slot | 328 mm | three silicone wires, about 370 mm each |
+| ESC power | aft past the ESC, up beside the boom socket, forward over the servos to the battery's XT30 | 165 mm | |
+
+Getting the runs through needed three changes to the CAD:
+- **Aileron lead channel.** It now runs at the servo pocket's lead slot,
+  where the SG90's lead leaves the case. Before, it ran at 45 % chord, where
+  the servo itself was in the way.
+- **Lead drop holes.** They now go down each side of the boom socket, into
+  the fuselage's open top. The old single hole landed on the closed top of the
+  tail cone, on the boom's axis.
+- **Motor-wire entry.** There's a new hole through the bottom of the boom
+  socket and the tube, right over the ESC's motor tabs. Before, the wires'
+  only way into the boom was a 2 mm gap between the rudder servo's tabs and
+  the socket.
+
+The servo plugs come off: the F405-WMN has solder pads. The bill of process now
+has a step for extending the aileron leads (F4). It also solders the aileron
+leads only once the wing is on (A16), and drills the boom's third hole in F3.
+
+![Wiring](variants/single-boom/preview/wiring.png)
 
 | Fuselage, cut open | Tail servos, lid off | ESC under the boom's mouth |
 |---|---|---|

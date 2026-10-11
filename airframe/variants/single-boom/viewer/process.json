@@ -2,26 +2,26 @@
  "summary": {
   "n_actual": 50,
   "n_min": 23,
-  "t_ma": 2768,
+  "t_ma": 2901,
   "t_handle_insert": 396,
-  "e_ma": 0.025,
+  "e_ma": 0.024,
   "e_hi": 0.174,
   "n_after": 42,
-  "t_after": 2234,
-  "e_after": 0.031,
-  "t_print": 35556,
-  "t_hands": 6748,
+  "t_after": 2367,
+  "e_after": 0.029,
+  "t_print": 35568,
+  "t_hands": 7241,
   "t_cure": 4500,
-  "lead": 40902,
+  "lead": 41152,
   "filament_g": 99.7,
   "print_cost": 3.83,
-  "bought_cost": 171,
+  "bought_cost": 173,
   "grams_by_material": {
    "PLA/PETG": 48.0,
    "LW-PLA": 51.7
   },
   "spool_cost": 65,
-  "first_build_cost": 236,
+  "first_build_cost": 238,
   "slicer": "PrusaSlicer 2.7, A1-mini-like profile (tools/a1mini.ini)"
  },
  "critical": [
@@ -59,10 +59,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 10644,
+   "seconds": 10650,
    "cure": 0.0,
    "start": 0,
-   "finish": 10644,
+   "finish": 10650,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -90,8 +90,8 @@
    "consumables": [],
    "seconds": 8928,
    "cure": 0.0,
-   "start": 10644,
-   "finish": 19872,
+   "start": 10650,
+   "finish": 19878,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -119,8 +119,8 @@
    "consumables": [],
    "seconds": 5280,
    "cure": 0.0,
-   "start": 19872,
-   "finish": 25152,
+   "start": 19878,
+   "finish": 25158,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -143,10 +143,10 @@
    ],
    "tools": [],
    "consumables": [],
-   "seconds": 5352,
+   "seconds": 5358,
    "cure": 0.0,
-   "start": 25152,
-   "finish": 30504,
+   "start": 25158,
+   "finish": 30516,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -171,8 +171,8 @@
    "consumables": [],
    "seconds": 5352,
    "cure": 0.0,
-   "start": 30504,
-   "finish": 35856,
+   "start": 30516,
+   "finish": 35868,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -243,7 +243,7 @@
   },
   {
    "id": "F3",
-   "title": "Drill the pushrod exits, thread the PTFE sleeves and motor wires through the boom",
+   "title": "Drill the pushrod exits and the motor-wire entry, thread the PTFE sleeves and motor wires through the boom",
    "short": "Prepare boom",
    "station": "Prep",
    "resource": "builder",
@@ -253,17 +253,48 @@
    ],
    "parts": [],
    "tools": [
-    "2 mm drill in a pin vice",
+    "2 mm and 3.2 mm drills in a pin vice",
     "ruler"
    ],
    "consumables": [
     "PTFE tube 2/1 mm",
-    "silicone wire"
+    "silicone wire (motor, about 370 mm x 3)"
    ],
-   "seconds": 360,
+   "seconds": 420,
    "cure": 0,
    "start": 540,
-   "finish": 900,
+   "finish": 960,
+   "anim": [],
+   "focus": null,
+   "focus_offset": [
+    0,
+    0,
+    0
+   ],
+   "view": null
+  },
+  {
+   "id": "F4",
+   "title": "Extend both aileron servo leads by about 55 mm, cut off their plugs",
+   "short": "Extend leads",
+   "station": "Prep",
+   "resource": "builder",
+   "critical": false,
+   "needs": [],
+   "parts": [],
+   "tools": [
+    "soldering iron",
+    "wire stripper"
+   ],
+   "consumables": [
+    "3-core servo wire",
+    "solder",
+    "heat-shrink"
+   ],
+   "seconds": 300,
+   "cure": 0,
+   "start": 960,
+   "finish": 1260,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -290,8 +321,8 @@
    "consumables": [],
    "seconds": 150,
    "cure": 0,
-   "start": 10644,
-   "finish": 10794,
+   "start": 10650,
+   "finish": 10800,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -318,8 +349,8 @@
    "consumables": [],
    "seconds": 230,
    "cure": 0,
-   "start": 19872,
-   "finish": 20102,
+   "start": 19878,
+   "finish": 20108,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -344,8 +375,8 @@
    "consumables": [],
    "seconds": 80,
    "cure": 0,
-   "start": 25152,
-   "finish": 25232,
+   "start": 25158,
+   "finish": 25238,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -370,8 +401,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 30504,
-   "finish": 30614,
+   "start": 30516,
+   "finish": 30626,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -396,8 +427,8 @@
    "consumables": [],
    "seconds": 110,
    "cure": 0,
-   "start": 35856,
-   "finish": 35966,
+   "start": 35868,
+   "finish": 35978,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -427,8 +458,8 @@
    ],
    "seconds": 26,
    "cure": 0,
-   "start": 10794,
-   "finish": 10820,
+   "start": 10800,
+   "finish": 10826,
    "anim": [
     {
      "parts": [
@@ -497,8 +528,8 @@
    ],
    "seconds": 54,
    "cure": 0,
-   "start": 10820,
-   "finish": 10874,
+   "start": 10826,
+   "finish": 10880,
    "anim": [
     {
      "parts": [
@@ -570,8 +601,8 @@
    ],
    "seconds": 69,
    "cure": 0,
-   "start": 10874,
-   "finish": 10943,
+   "start": 10880,
+   "finish": 10949,
    "anim": [
     {
      "parts": [
@@ -655,8 +686,8 @@
    "consumables": [],
    "seconds": 48,
    "cure": 0,
-   "start": 10943,
-   "finish": 10991,
+   "start": 10949,
+   "finish": 10997,
    "anim": [
     {
      "parts": [
@@ -727,8 +758,8 @@
    ],
    "seconds": 62,
    "cure": 0,
-   "start": 25232,
-   "finish": 25294,
+   "start": 25238,
+   "finish": 25300,
    "anim": [
     {
      "parts": [
@@ -812,8 +843,8 @@
    ],
    "seconds": 96,
    "cure": 0,
-   "start": 25294,
-   "finish": 25390,
+   "start": 25300,
+   "finish": 25396,
    "anim": [
     {
      "parts": [
@@ -869,8 +900,8 @@
    ],
    "seconds": 176,
    "cure": 900,
-   "start": 25390,
-   "finish": 25566,
+   "start": 25396,
+   "finish": 25572,
    "anim": [
     {
      "parts": [
@@ -933,8 +964,8 @@
    ],
    "seconds": 247,
    "cure": 900,
-   "start": 26466,
-   "finish": 26713,
+   "start": 26472,
+   "finish": 26719,
    "anim": [
     {
      "parts": [
@@ -1004,8 +1035,8 @@
    ],
    "seconds": 170,
    "cure": 900,
-   "start": 27613,
-   "finish": 27782,
+   "start": 27619,
+   "finish": 27788,
    "anim": [
     {
      "parts": [
@@ -1061,8 +1092,8 @@
    "consumables": [],
    "seconds": 75,
    "cure": 0,
-   "start": 28682,
-   "finish": 28757,
+   "start": 28688,
+   "finish": 28763,
    "anim": [
     {
      "parts": [
@@ -1095,7 +1126,7 @@
   },
   {
    "id": "A11",
-   "title": "Solder the power, ESC, video and receiver wiring",
+   "title": "Solder the tail servos, ESC, power, video and receiver wiring",
    "short": "Solder",
    "station": "Fuselage",
    "resource": "builder",
@@ -1112,18 +1143,44 @@
     "heat-shrink",
     "silicone wire"
    ],
-   "seconds": 1010,
+   "seconds": 905,
    "cure": 0,
-   "start": 28757,
-   "finish": 29767,
-   "anim": [],
-   "focus": null,
+   "start": 28763,
+   "finish": 29668,
+   "anim": [
+    {
+     "parts": [
+      "harness_elev",
+      "harness_rud",
+      "harness_power",
+      "harness_motor"
+     ],
+     "from": [
+      0,
+      0,
+      25
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
    "focus_offset": [
     0,
     0,
     0
    ],
-   "view": null
+   "view": [
+    -0.3,
+    1.0,
+    0.35
+   ]
   },
   {
    "id": "A12",
@@ -1151,8 +1208,8 @@
    ],
    "seconds": 140,
    "cure": 900,
-   "start": 35966,
-   "finish": 36106,
+   "start": 35978,
+   "finish": 36118,
    "anim": [
     {
      "parts": [
@@ -1252,8 +1309,8 @@
    ],
    "seconds": 170,
    "cure": 900,
-   "start": 37006,
-   "finish": 37176,
+   "start": 37018,
+   "finish": 37188,
    "anim": [
     {
      "parts": [
@@ -1289,14 +1346,15 @@
   },
   {
    "id": "A14",
-   "title": "Fit the aileron servos, route their leads, glue the fairings over them",
+   "title": "Fit the aileron servos, thread their leads through the wing centre into the fuselage, glue the fairings over them",
    "short": "Aileron servos",
    "station": "Wing",
    "resource": "builder",
    "critical": true,
    "needs": [
     "A13",
-    "Q2"
+    "Q2",
+    "F4"
    ],
    "parts": [
     "servo_ail_R",
@@ -1311,8 +1369,8 @@
    ],
    "seconds": 161,
    "cure": 0,
-   "start": 38076,
-   "finish": 38237,
+   "start": 38088,
+   "finish": 38249,
    "anim": [
     {
      "parts": [
@@ -1389,8 +1447,8 @@
    ],
    "seconds": 159,
    "cure": 0,
-   "start": 38237,
-   "finish": 38396,
+   "start": 38249,
+   "finish": 38408,
    "anim": [
     {
      "parts": [
@@ -1444,29 +1502,59 @@
   },
   {
    "id": "A16",
-   "title": "Plug in the servo leads and tidy the wiring",
-   "short": "Servo leads",
+   "title": "Solder the aileron leads to the FC and tidy the wiring",
+   "short": "Aileron leads",
    "station": "Final",
    "resource": "builder",
    "critical": true,
    "needs": [
-    "A15"
+    "A15",
+    "A11"
    ],
    "parts": [],
-   "tools": [],
-   "consumables": [],
-   "seconds": 62,
+   "tools": [
+    "soldering iron"
+   ],
+   "consumables": [
+    "solder",
+    "heat-shrink"
+   ],
+   "seconds": 300,
    "cure": 0,
-   "start": 38396,
-   "finish": 38458,
-   "anim": [],
-   "focus": null,
+   "start": 38408,
+   "finish": 38708,
+   "anim": [
+    {
+     "parts": [
+      "harness_ail_R",
+      "harness_ail_L"
+     ],
+     "from": [
+      0,
+      0,
+      25
+     ],
+     "to": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "focus": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
    "focus_offset": [
     0,
     0,
     0
    ],
-   "view": null
+   "view": [
+    -0.3,
+    1.0,
+    0.35
+   ]
   },
   {
    "id": "A17",
@@ -1490,8 +1578,8 @@
    "consumables": [],
    "seconds": 44,
    "cure": 0,
-   "start": 38458,
-   "finish": 38502,
+   "start": 38708,
+   "finish": 38752,
    "anim": [
     {
      "parts": [
@@ -1583,8 +1671,8 @@
    "consumables": [],
    "seconds": 1920,
    "cure": 0,
-   "start": 38502,
-   "finish": 40422,
+   "start": 38752,
+   "finish": 40672,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -1611,8 +1699,8 @@
    "consumables": [],
    "seconds": 480,
    "cure": 0,
-   "start": 40422,
-   "finish": 40902,
+   "start": 40672,
+   "finish": 41152,
    "anim": [],
    "focus": null,
    "focus_offset": [
@@ -2115,9 +2203,9 @@
    "material": "LW-PLA",
    "bed": "97 x 12 x 135",
    "minutes": 112.1,
-   "grams": 14.36,
+   "grams": 14.41,
    "cost": 0.79,
-   "overhang_mm2": 22,
+   "overhang_mm2": 36,
    "support": "none",
    "bed_contact_mm2": 818,
    "slender": 10.9,
@@ -2129,10 +2217,10 @@
    "name": "wing_R",
    "material": "LW-PLA",
    "bed": "97 x 12 x 175",
-   "minutes": 87.2,
-   "grams": 9.62,
+   "minutes": 87.3,
+   "grams": 9.61,
    "cost": 0.53,
-   "overhang_mm2": 369,
+   "overhang_mm2": 372,
    "support": "none",
    "bed_contact_mm2": 705,
    "slender": 14.8,
@@ -2145,9 +2233,9 @@
    "material": "LW-PLA",
    "bed": "97 x 12 x 175",
    "minutes": 87.2,
-   "grams": 9.6,
+   "grams": 9.59,
    "cost": 0.53,
-   "overhang_mm2": 369,
+   "overhang_mm2": 372,
    "support": "none",
    "bed_contact_mm2": 705,
    "slender": 14.8,
@@ -2314,10 +2402,10 @@
    "name": "fuselage_rear",
    "material": "PLA/PETG",
    "bed": "24 x 38 x 159",
-   "minutes": 89.0,
-   "grams": 20.29,
+   "minutes": 89.1,
+   "grams": 20.28,
    "cost": 0.41,
-   "overhang_mm2": 644,
+   "overhang_mm2": 646,
    "support": "bridge 11 mm",
    "bed_contact_mm2": 57,
    "slender": 6.5,

@@ -308,6 +308,21 @@ def aileron_servo(p: Params, L: Layout, sec: Section, k: Kit):
     return side_servo(p, sec, k, p.centre_w / 2 + 3.0)
 
 
+LEAD_DROP_Y = 9.0                 # single boom: aileron leads drop into the fuselage beside the boom socket
+
+
+def aileron_lead(p: Params, L: Layout, sec: Section):
+    """(x, z) of the aileron lead channel. The twin boom runs it at 45 % chord;
+    the single boom runs it from the servo pocket's lead slot, where the SG90's
+    lead leaves the case, so the channel meets the lead and its drop into the
+    fuselage lands ahead of the tail cone."""
+    if not L.single:
+        return sec.camber_point(0.45)
+    sv = Kit().servo
+    x = aileron_servo(p, L, sec, Kit())["xm"] - sv.length / 2 - 3.0           # middle of the lead slot
+    return x, (sec.upper_z(x) + sec.lower_z(x)) / 2
+
+
 def elevator_servo(p: Params, L: Layout, sec: Section, k: Kit):
     """Elevator SG90 in the wing centre, right of the pod: shaft pointing right,
     horn hanging below the wing on the line of the right boom's pushrod."""
@@ -330,7 +345,7 @@ def make_panel(p: Params, L: Layout, sec: Section):
     for pos, d in ((p.main_spar_pos, p.main_spar_d), (p.rear_spar_pos, p.rear_spar_d)):
         x, z = sec.camber_point(pos)
         holes.append(cyl_y(d / 2 + 0.1, y0 - 1, y1 - 5, x, z))
-    xw, zw = sec.camber_point(0.45)
+    xw, zw = aileron_lead(p, L, sec)
     holes.append(cyl_y(2.0, y0 - 1, y0 + 8, xw, zw))
     holes += aileron_servo(p, L, sec, Kit())["pocket"]
     xh = sec.x_at(p.hinge_pos)
@@ -691,6 +706,7 @@ def make_fuselage(p: Params, L: Layout, batt_x: float):
     body = fuse(body, *adds)
 
     holes.append(cyl_x(L.r_hole, L.boom_x0 - 1, x1c + 1, 0, 0))
+    holes.append(cyl_z(WIRE_HOLE_R, -L.r_boss - 1.0, -L.r_hole + 0.5, motor_wire_hole_x(L), 0))   # motor wires
     holes += [cyl_z(0.85, zf, zf + 4, L.fc_x + dx, dy) for dx in (-hp, hp) for dy in (-hp, hp)]
     zcam = -9.0                                                          # nano camera (14 mm) window
     holes.append(box(-1, fw + 1, -7.2, 7.2, zcam - 7.2, zcam + 7.2))
@@ -724,9 +740,10 @@ def make_wing_centre_single(p: Params, L: Layout, sec: Section):
     for pos, d in ((p.main_spar_pos, p.main_spar_d), (p.rear_spar_pos, p.rear_spar_d)):
         x, z = sec.camber_point(pos)
         holes.append(cyl_y(d / 2 + 0.1, -cw, cw, x, z))
-    xw, zw = sec.camber_point(0.45)                          # aileron servo leads into the fuselage
-    holes.append(cyl_y(2.0, -cw, cw, xw, zw))
-    holes.append(cyl_z(3.0, L.z_top - 1, zw, xw, 0))
+    xw, zw = aileron_lead(p, L, sec)                         # aileron servo leads into the fuselage:
+    holes.append(cyl_y(2.0, -cw, cw, xw, zw))                # along the span, then down each side of the
+    for s in (1, -1):                                        # boom socket into the fuselage's open top
+        holes.append(cyl_z(2.2, L.z_top - 1, zw, xw, s * LEAD_DROP_Y))
     return cut(body, *holes)
 
 
@@ -845,7 +862,8 @@ def bought_parts_single(p: Params, k: Kit, L: Layout, sec: Section, batt_x: floa
 
     paths = pushrod_paths(L)
     boom = cut(cyl_x(p.boom_od / 2, L.boom_x0, L.boom_x1, 0, 0), cyl_x(p.boom_id / 2, L.boom_x0 - 1, L.boom_x1 + 1, 0, 0),
-               *[rod(0.9, pts[2], pts[3]) for pts in paths.values()])        # the pushrods' exit holes
+               *[rod(0.9, pts[2], pts[3]) for pts in paths.values()],          # the pushrods' exit holes
+               cyl_z(WIRE_HOLE_R, -p.boom_od / 2 - 1.0, 0.0, motor_wire_hole_x(L), 0))   # the motor wires' entry
     out.append(Ref("boom", boom, BLACK, rod_mass(p.boom_od, L.boom_len, p.boom_id, p.tube_density), "hardware"))
     for pos, d, name in ((p.main_spar_pos, p.main_spar_d, "spar_main"),
                          (p.rear_spar_pos, p.rear_spar_d, "spar_rear")):
@@ -913,6 +931,76 @@ def bought_parts_single(p: Params, k: Kit, L: Layout, sec: Section, batt_x: floa
         add(f"servo_ail_{side}", {n: m(s) for n, s in servo.items()}, servo_colours, sv.mass, "electronics")
         out.append(Ref(f"horn_ail_{side}", m(horn), WHITE, 0.3, "hardware"))
         out.append(Ref(f"pushrod_ail_{side}", m(rod_r), BLACK, 0.2, "hardware"))
+    out += harness_single(p, k, L, sec, out, batt_x)
+    return out
+
+
+# --------------------------------------------------------------------------
+# Wiring harness (single boom): every run modelled, so the interference check covers it
+
+SG90_LEAD = 250.0                 # an SG90's own lead, case to plug, mm
+WIRE_HOLE_R = 1.6                 # motor wires up from the ESC into the boom, through the socket and the tube
+
+
+def motor_wire_hole_x(L: Layout) -> float:
+    """Over the ESC's motor tabs, under the boom: where the motor wires go up into the boom."""
+    return L.esc_x + Kit().esc_len - 3.0
+LEAD_R, MOTOR_R, POWER_R = 0.9, 1.1, 1.3      # bundle radii: 3-wire servo lead, 3 motor wires, 20 AWG pair
+Z_RUN = 2.5                       # the runs along the fuselage: over the servos and pushrods, under the lid
+
+
+def harness_single(p: Params, k: Kit, L: Layout, sec: Section, refs, batt_x: float):
+    """Wire runs as bodies. Each starts where the wire leaves its part (a
+    servo's lead stub, the ESC's tabs and pads) and ends at its other end
+    (the FC's pads, the motor, the battery's XT30). The lengths go in REPORT.md."""
+    R = {r.name: r.shape for r in refs}
+    zf = L.z_floor
+    fc_top = max(R[n].BoundingBox().zmax for n in ("fc", "fc_chips", "fc_metal", "fc_jst") if n in R)
+
+    def stub_end(name):
+        bb = R[name].BoundingBox()                       # the 5 mm wire stub, pointing -x out of the case
+        return (bb.xmin + 0.5, bb.center.y, bb.center.z)
+
+    def fc_end(y, dx):
+        return (L.fc_x + dx, y, fc_top + LEAD_R + 0.6)
+
+    runs = {}
+    xl, zl = aileron_lead(p, L, sec)
+    for side, sgn in (("R", 1), ("L", -1)):
+        x0, y0, z0 = stub_end(f"servo_ail_{side}_wires")
+        y_d = sgn * LEAD_DROP_Y
+        runs[f"harness_ail_{side}"] = (LEAD_R, [
+            (x0, y0, z0), (xl, y0, z0), (xl, y0, zl),               # out of the case into the lead slot, up to the channel
+            (xl, y_d, zl),                                           # inboard through the panel and the wing centre
+            (xl, y_d, Z_RUN),                                        # down beside the boom socket into the fuselage
+            (L.fc_x + 22, y_d, Z_RUN), fc_end(y_d, 8.0)])            # forward over the servos and battery to the FC
+    for name, sgn in (("elev", 1), ("rud", -1)):
+        x0, y0, z0 = stub_end(f"servo_{name}_wires")
+        y_r = sgn * (LEAD_DROP_Y - 3.0)
+        runs[f"harness_{name}"] = (LEAD_R, [
+            (x0, y0, z0), (x0 - 3.0, y0, z0), (x0 - 3.0, y0, Z_RUN), (x0 - 3.0, y_r, Z_RUN),
+            (L.fc_x + 22, y_r, Z_RUN), fc_end(y_r, 2.0)])
+    # motor wires: from the ESC's motor tabs straight up through the hole under the boom, between the
+    # pushrods, into the upper right of the bore (clear of both pushrod exits), out through the motor cap's slot
+    eb = R["esc"].BoundingBox()
+    xh, xm = motor_wire_hole_x(L), L.x_mp
+    hi = (2.3, 2.3)                                            # (y, z) in the bore, 3.3 mm off its axis
+    runs["harness_motor"] = (MOTOR_R, [
+        (eb.xmax - 1.0, 0.0, eb.zmax - 0.3), (xh, 0.0, eb.zmax + 1.5), (xh, 0.0, 1.0), (xh + 3.0, *hi),
+        (xm - 3.5, *hi), (xm - 3.5, 0.0, 1.0), (xm - 1.1, 0.0, 1.0), (xm - 1.1, 0.0, 7.2), (xm + 2.0, 0.0, 7.2)])
+    # battery power: the ESC's battery wires turn aft past its end (the servos fill the floor ahead), rise
+    # beside the boom socket, and run forward over the servos to the battery's XT30
+    wb = R["esc_wires"].BoundingBox()
+    xb = R["battery_xt30"].BoundingBox()
+    xr, yr = L.boom_x0 + 2.6, 10.0
+    runs["harness_power"] = (POWER_R, [
+        (wb.xmin + 0.5, 0.0, wb.center.z), (xr, 0.0, wb.center.z), (xr, yr, wb.center.z), (xr, yr, Z_RUN),
+        (xb.xmax + 4.0, yr, Z_RUN), (xb.xmax + 4.0, 0.0, Z_RUN), (xb.xmax + 0.5, 0.0, xb.center.z)])
+    out = []
+    for name, (r, pts) in runs.items():
+        out.append(Ref(name, wire_path(r, pts), (0.80, 0.20, 0.12) if name in ("harness_motor", "harness_power")
+                       else (0.55, 0.25, 0.10), 0.0, "electronics"))
+        out[-1].length = sum((V(*b) - V(*a)).Length for a, b in zip(pts, pts[1:]))
     return out
 
 
@@ -1356,8 +1444,8 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="bas
         f"Sizing check with CAD weights: stall {perf['stall']:.2f} m/s against the "
         f"{p.stall_limit} m/s limit: **{'passes' if perf['stall'] <= p.stall_limit else 'FAILS'}**.",
         "",
-        "Interference check (bought parts against everything, pushrod-in-horn links "
-        "excluded): " + ("**" + "; ".join(f"{a} / {b} {v} mm^3" for a, b, v in hits) + "**"
+        "Interference check (bought parts and wire runs against everything; pushrods in their horns, "
+        "wires at their own ends and wires against wires excluded): " + ("**" + "; ".join(f"{a} / {b} {v} mm^3" for a, b, v in hits) + "**"
                          if hits else "no overlaps."),
         "",
         f"Analytic structure estimate for comparison: {est:.0f} g "
@@ -1470,7 +1558,11 @@ LINKS = {frozenset(pair) for pair in (
     ("pushrod_rud", "servo_rud_horn"), ("pushrod_rud", "bellcrank"),
     ("joiner_R", "bellcrank"), ("joiner_L", "bellcrank"),
     ("joiner_R", "rudder_R"), ("joiner_L", "rudder_L"), ("joiner_R", "joiner_L"),
-    ("pushrod_rud", "rudder"))}
+    ("pushrod_rud", "rudder"),
+    ("harness_ail_R", "servo_ail_R"), ("harness_ail_L", "servo_ail_L"), ("harness_elev", "servo_elev"),
+    ("harness_rud", "servo_rud"), ("harness_motor", "esc"), ("harness_motor", "motor"),
+    ("harness_power", "esc"), ("harness_power", "battery"),
+    *[(h, f) for h in ("harness_ail_R", "harness_ail_L", "harness_elev", "harness_rud") for f in ("fc", "fc_keepout")])}
 
 
 def component(name):
@@ -1479,6 +1571,29 @@ def component(name):
     if head and tail in parts_lib.SUFFIXES and not name.startswith("horn_"):
         return head
     return name
+
+
+def wiring_report(refs, out: Path):
+    """Append the modelled wire runs and their lengths to REPORT.md (single boom)."""
+    runs = [r for r in refs if r.name.startswith("harness_")]
+    if not runs:
+        return
+    what = {"harness_ail_R": ("aileron servo R to FC", True), "harness_ail_L": ("aileron servo L to FC", True),
+            "harness_elev": ("elevator servo to FC", True), "harness_rud": ("rudder servo to FC", True),
+            "harness_motor": ("ESC to motor, inside the boom", False),
+            "harness_power": ("ESC to battery XT30", False)}
+    L = ["", "## Wiring", "",
+         "Every wire run is modelled as a body along its route and goes through the interference "
+         "check above, so a run that is blocked shows up there. Lengths are along the route, "
+         f"plus 20 mm at each end for slack and soldering. An SG90's own lead is about {SG90_LEAD:.0f} mm.", "",
+         "| Run | Route length | Needs | Extension |", "|---|---:|---:|---|"]
+    for r in runs:
+        label, servo = what.get(r.name, (r.name, False))
+        need = r.length + 40
+        ext = (f"{max(0, need - SG90_LEAD):.0f} mm" if need > SG90_LEAD else "none") if servo else "own wire"
+        L.append(f"| {label} | {r.length:.0f} mm | {need:.0f} mm | {ext} |")
+    with open(out / "REPORT.md", "a") as fh:
+        fh.write("\n".join(L) + "\n")
 
 
 def interference(parts, refs, tol=0.05):
@@ -1490,7 +1605,9 @@ def interference(parts, refs, tol=0.05):
         for b, sb in bodies[i + 1:]:
             if a in parts and b in parts:
                 continue                                   # printed parts are glued, not checked
-            if component(a) == component(b) or frozenset((a, b)) in LINKS:
+            if component(a) == component(b) or frozenset((a, b)) in LINKS \
+                    or frozenset((component(a), component(b))) in LINKS \
+                    or (a.startswith("harness_") and b.startswith("harness_")):   # wires bundle together
                 continue
             ba, bb = boxes[a], boxes[b]
             if (ba.xmax < bb.xmin or bb.xmax < ba.xmin or ba.ymax < bb.ymin or bb.ymax < ba.ymin
@@ -1552,6 +1669,7 @@ def main(argv=None):
     for a, b, v in hits:
         print(f"WARNING: {a} overlaps {b} by {v} mm^3")
     auw, cg = write_report(p, k, L, parts, items, batt_x, out, hits, args.variant)
+    wiring_report(refs, out)
     export_all(p, k, L, parts, refs, out, step=args.variant == "baseline" or args.step)
     print(f"AUW {auw:.1f} g, CG {cg:.1f} mm, battery centre {batt_x:.1f} mm, x_le {L.x_le:.1f}")
 

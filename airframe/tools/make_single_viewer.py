@@ -38,7 +38,8 @@ sub('''          <button id="v-pod" data-view="pod" aria-pressed="false">Pod</bu
           <button id="v-esc" data-view="esc" aria-pressed="false">ESC</button>
           <button id="v-ail" data-view="ail" aria-pressed="false">Aileron</button>
           <button id="v-tail" data-view="tail" aria-pressed="false">Tail</button>
-          <button id="v-motor" data-view="motor" aria-pressed="false">Motor</button>''')
+          <button id="v-motor" data-view="motor" aria-pressed="false">Motor</button>
+          <button id="v-wiring" data-view="wiring" aria-pressed="false">Wiring</button>''')
 sub('''  pod: { dir: [-0.8, 0.75, 0.95], fit: ["pod_front", "pod_rear", "motor", "wing_centre"] },
   nose: { dir: [-0.85, -0.3, 0.75], fit: ["camera", "vtx"], pad: 3.0 },
   prop: { dir: [0.95, 0.35, 0.55], fit: ["prop", "motor", "servo_elev", "servo_rud"], pad: 1.25 },
@@ -53,11 +54,19 @@ sub('''  pod: { dir: [-0.8, 0.75, 0.95], fit: ["pod_front", "pod_rear", "motor",
   esc: { dir: [0.2, 0.3, 1], fit: ["esc", "servo_rud"], pad: 1.5, hide: [...WING] },
   ail: { dir: [-0.35, -0.8, -0.55], fit: ["servo_ail_R", "horn_ail_R", "pushrod_ail_R"], pad: 1.5, hide: ["fairing_ail_R"] },
   tail: { dir: [0.75, 0.45, 0.6], fit: ["rudder", "fin", "tail_mount", "stab", "elevator"], pad: 1.1 },
-  motor: { dir: [0.9, 0.35, -0.5], fit: ["motor", "motor_mount", "prop", "tail_mount"], pad: 1.4 },''')
+  motor: { dir: [0.9, 0.35, -0.5], fit: ["motor", "motor_mount", "prop", "tail_mount"], pad: 1.4 },
+  wiring: { dir: [-0.35, 1, 0.55], fit: ["harness_ail_R", "harness_ail_L", "harness_elev", "harness_rud", "harness_power",
+            "esc", "fc"], pad: 1.05, hide: ["lid", "wing_centre", "wing_R", "wing_L", "aileron_R", "aileron_L", "spar_main",
+            "spar_rear", "fairing_ail_R", "fairing_ail_L", "boom", "fuselage_rear"] },''')
 sub('''const WING = ["wing_centre", "wing_R", "wing_L", "aileron_R", "aileron_L", "spar_main", "spar_rear", "servo_ail_R",
               "servo_ail_L", "servo_rud", "horn_ail_R", "horn_ail_L", "pushrod_ail_R", "pushrod_ail_L", "pushrod_rud"];''',
     '''const WING = ["wing_centre", "wing_R", "wing_L", "aileron_R", "aileron_L", "spar_main", "spar_rear", "servo_ail_R",
               "servo_ail_L", "horn_ail_R", "horn_ail_L", "pushrod_ail_R", "pushrod_ail_L", "fairing_ail_R", "fairing_ail_L"];''')
+
+# the wire runs are electronics: the Electronics toggle hides them with the rest
+sub('''const ELECTRONICS = new Set(["motor", "prop", "battery", "camera", "vtx", "antenna", "fc", "receiver", "esc",''',
+    '''const ELECTRONICS = new Set(["harness_ail_R", "harness_ail_L", "harness_elev", "harness_rud", "harness_motor",
+                             "harness_power", "motor", "prop", "battery", "camera", "vtx", "antenna", "fc", "receiver", "esc",''')
 
 # labels and bought parts
 sub('''const LABEL = {
@@ -65,6 +74,9 @@ sub('''const LABEL = {
     '''const LABEL = {
   fuselage_front: "Fuselage, front", fuselage_rear: "Fuselage, rear", boom: "Boom, 10×9 carbon",
   fin: "Fin", rudder: "Rudder", motor_mount: "Motor cap", fairing_ail_R: "Servo fairing R", fairing_ail_L: "Servo fairing L",
+  harness_ail_R: "Aileron lead R, to the FC", harness_ail_L: "Aileron lead L, to the FC",
+  harness_elev: "Elevator servo lead", harness_rud: "Rudder servo lead",
+  harness_motor: "Motor wires, inside the boom", harness_power: "ESC power, to the XT30",
   pod_front: "Pod, front half", pod_rear: "Pod, rear half", lid: "Hatch lid", wing_centre: "Wing centre",''')
 sub('''"camera", "vtx", "antenna", "tube_L", "tube_R", "spar_main", "spar_rear"];''',
     '''"camera", "vtx", "antenna", "boom", "spar_main", "spar_rear"];''')

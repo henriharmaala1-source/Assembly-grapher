@@ -95,6 +95,7 @@ const shots = variant === "single-boom" ? [
   ["aileron", "view=ail", 1200, 800],
   ["tail", "view=tail", 1400, 900],
   ["motor", "view=motor", 1300, 800],
+  ["wiring", "view=wiring", 1500, 900],
 ] : [
   ["hero", "view=quarter", 1600, 1000],
   ["top", "view=top", 1400, 1000],

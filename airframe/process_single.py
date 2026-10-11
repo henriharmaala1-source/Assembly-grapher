@@ -43,10 +43,16 @@ def ops(h):
         dict(id="F2", title="Make the pushrods and aileron links", station="Prep", resource="builder", needs=[],
              proc=[("cut_rod", 4), ("z_bend", 6), ("rod_end", 2), ("l_bend", 2)],
              tools=["wire bender or pliers", "cutter", "heat gun"], consumables=["CA", "heat-shrink"]),
-        dict(id="F3", title="Drill the pushrod exits, thread the PTFE sleeves and motor wires through the boom",
+        dict(id="F3", title="Drill the pushrod exits and the motor-wire entry, thread the PTFE sleeves and "
+                            "motor wires through the boom",
              station="Prep", resource="builder", needs=["F1"],
-             proc=[("drill_exit", 2), ("cut_ptfe", 2), ("thread", 3)],
-             tools=["2 mm drill in a pin vice", "ruler"], consumables=["PTFE tube 2/1 mm", "silicone wire"]),
+             proc=[("drill_exit", 3), ("cut_ptfe", 2), ("thread", 3)],
+             tools=["2 mm and 3.2 mm drills in a pin vice", "ruler"],
+             consumables=["PTFE tube 2/1 mm", "silicone wire (motor, about 370 mm x 3)"]),
+        dict(id="F4", title="Extend both aileron servo leads by about 55 mm, cut off their plugs",
+             station="Prep", resource="builder", needs=[],
+             proc=[("cut_rod", 2), ("solder", 6), ("shrink", 6)],
+             tools=["soldering iron", "wire stripper"], consumables=["3-core servo wire", "solder", "heat-shrink"]),
         dict(id="Q1", title="Finish plate 1 parts, ream the boom socket and motor cap", station="Prep",
              resource="builder", needs=["P1"], proc=[("unplate", 6), ("ream", 2)],
              tools=["10.2 mm drill or round file"]),
@@ -135,12 +141,14 @@ def ops(h):
                     ("pushrod_rud", 1, "Hf", "I03", 1, "moves")],
              proc=[("hook", 4)],
              anim=[(["pushrod_elev", "pushrod_rud"], (220, 0, 0), None)], focus=None, view=V_UNDER),
-        dict(id="A11", title="Solder the power, ESC, video and receiver wiring", station="Fuselage",
+        dict(id="A11", title="Solder the tail servos, ESC, power, video and receiver wiring", station="Fuselage",
              resource="builder", needs=["A10"],
-             # as the twin boom less nothing: 4 servos x 3, ESC signal 2, FC power 2, XT30 2,
-             # motor wires at the ESC 3, camera 3, VTX 4, receiver 4
-             proc=[("solder", 32), ("shrink", 14)],
-             tools=["soldering iron"], consumables=["solder", "heat-shrink", "silicone wire"]),
+             # elevator and rudder servos 2 x 3, ESC signal 2, FC power 2, XT30 2, motor wires at the ESC 3,
+             # camera 3, VTX 4, receiver 4; the aileron leads come in A16, once the wing is on
+             proc=[("solder", 26), ("shrink", 11), ("route", 3)],
+             tools=["soldering iron"], consumables=["solder", "heat-shrink", "silicone wire"],
+             anim=[(["harness_elev", "harness_rud", "harness_power", "harness_motor"], (0, 0, 25), None)],
+             focus=FUS, view=V_TOP),
         # ---- wing ----
         dict(id="A12", title="Slide in the spars and glue on both wing panels", station="Wing",
              resource="builder", needs=["Q2", "Q4", "Q5", "F1"], cure=cure,
@@ -160,8 +168,9 @@ def ops(h):
              proc=[("square", 1), ("epoxy_mix", 1), ("epoxy", 2)], consumables=["5-minute epoxy"],
              anim=[(["wing_centre", "spar_main", "spar_rear", "wing_R", "wing_L"], (0, 0, 60), None)],
              focus=None, view=V_WHOLE),
-        dict(id="A14", title="Fit the aileron servos, route their leads, glue the fairings over them",
-             station="Wing", resource="builder", needs=["A13", "Q2"],
+        dict(id="A14", title="Fit the aileron servos, thread their leads through the wing centre into the "
+                             "fuselage, glue the fairings over them",
+             station="Wing", resource="builder", needs=["A13", "Q2", "F4"],
              items=[("servo_ail_R", 1, "H10", "I08", 1, "moves"),
                     ("servo_ail_L", 1, "H10", "I08", 1, "moves"),
                     ("fairing_ail_R", 1, "H00", "I08", 0, "could be printed into the wing panel"),
@@ -183,8 +192,10 @@ def ops(h):
                    (["horn_ail_R", "horn_ail_L", "pushrod_ail_R", "pushrod_ail_L"], (0, 0, -30), None)],
              focus=["wing_R", "wing_L"], view=V_UNDER),
         # ---- final ----
-        dict(id="A16", title="Plug in the servo leads and tidy the wiring", station="Final",
-             resource="builder", needs=["A15"], proc=[("plug", 4), ("route", 1)]),
+        dict(id="A16", title="Solder the aileron leads to the FC and tidy the wiring", station="Final",
+             resource="builder", needs=["A15", "A11"], proc=[("solder", 6), ("shrink", 6), ("route", 2)],
+             tools=["soldering iron"], consumables=["solder", "heat-shrink"],
+             anim=[(["harness_ail_R", "harness_ail_L"], (0, 0, 25), None)], focus=FUS, view=V_TOP),
         dict(id="A17", title="Fit the prop, battery, antenna and lid", station="Final", resource="builder",
              needs=["A16"],
              items=[("prop", 1, "H10", "I38", 1, "rotates, replaced after crashes"),
@@ -205,13 +216,13 @@ def ops(h):
 
 SHORT = {
     "P1": "Plate 1 PETG", "P2": "Plate 2", "P3": "Plate 3", "P4": "Plate 4", "P5": "Plate 5",
-    "F1": "Cut carbon", "F2": "Make linkages", "F3": "Prepare boom",
+    "F1": "Cut carbon", "F2": "Make linkages", "F3": "Prepare boom", "F4": "Extend leads",
     "Q1": "Finish plate 1", "Q2": "Finish plate 2", "Q3": "Finish plate 3", "Q4": "Finish plate 4",
     "Q5": "Finish plate 5",
     "A1": "Fuselage", "A2": "Camera, VTX", "A3": "FC, RX, ESC", "A4": "Tail servos",
     "A5": "Tail glue-up", "A6": "Tail hinges", "A7": "Tail on boom", "A8": "Motor on boom",
     "A9": "Boom in", "A10": "Pushrods", "A11": "Solder", "A12": "Wing panels", "A13": "Wing on",
-    "A14": "Aileron servos", "A15": "Ailerons", "A16": "Servo leads", "A17": "Prop, battery",
+    "A14": "Aileron servos", "A15": "Ailerons", "A16": "Aileron leads", "A17": "Prop, battery",
     "S1": "INAV setup", "S2": "Balance, checks",
 }
 
@@ -246,6 +257,7 @@ BOUGHT = [
     ("nano camera 14 mm", 1, 15.0), ("VTX 25-200 mW", 1, 15.0), ("5.8 GHz whip antenna", 1, 3.0),
     ("2S 450 mAh LiPo", 1, 8.0), ("roll-wrapped carbon tube 10x9 x 500 mm", 1, 9.0),
     ("carbon rod 3 / 2 mm", 2, 2.0), ("PTFE tube 2/1 mm, 1 m", 1, 2.0),
+    ("servo extension wire and silicone wire", 1, 2.0),
     ("pushrod rod, wire, horns", 1, 3.0), ("screws, tape, velcro, glue", 1, 4.0),
 ]
 

@@ -1,15 +1,15 @@
 {
  "wing_centre": {
-  "seconds": 6727.0,
-  "grams": 14.36
+  "seconds": 6725.0,
+  "grams": 14.41
  },
  "wing_R": {
-  "seconds": 5229.0,
-  "grams": 9.62
+  "seconds": 5236.0,
+  "grams": 9.61
  },
  "wing_L": {
-  "seconds": 5229.0,
-  "grams": 9.6
+  "seconds": 5234.0,
+  "grams": 9.59
  },
  "aileron_R": {
   "seconds": 1306.0,
@@ -52,12 +52,12 @@
   "grams": 1.02
  },
  "fuselage_front": {
-  "seconds": 1539.0,
+  "seconds": 1538.0,
   "grams": 10.01
  },
  "fuselage_rear": {
-  "seconds": 5339.0,
-  "grams": 20.29
+  "seconds": 5344.0,
+  "grams": 20.28
  },
  "lid": {
   "seconds": 803.0,

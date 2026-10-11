@@ -158,6 +158,11 @@ Tunables load_tunables(Config& c) {
     t.stickMps      = c.f("fc.stick_mps",       t.stickMps);
     t.stickClimbMps = c.f("fc.stick_climb_mps", t.stickClimbMps);
     t.stickYawDps   = c.f("fc.stick_yaw_dps",   t.stickYawDps);
+    // Config has float getters only: parse lat/lon as strings for full precision.
+    { const std::string la = c.s("fc.origin_lat", ""), lo = c.s("fc.origin_lon", "");
+      if (!la.empty()) t.originLat = std::strtod(la.c_str(), nullptr);
+      if (!lo.empty()) t.originLon = std::strtod(lo.c_str(), nullptr); }
+    t.originAltM    = c.f("fc.origin_alt_m",    t.originAltM);
 
     // --- camera geometry (monocular tilt handling) ---
     t.cameraMountTiltDeg = c.f("camera.mount_tilt_deg",    t.cameraMountTiltDeg);

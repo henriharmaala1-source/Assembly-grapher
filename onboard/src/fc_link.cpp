@@ -66,6 +66,7 @@ void FcLink::proximity(const float* distM, int n, double stampS) {
 void FcLink::vision(const VisionOdom& v, double stampS) {
     std::lock_guard<std::mutex> lk(mu_);
     vis_ = v;
+    vis_.stampS = stampS;          // the frame's time, not the send's
     visStampS_ = stampS;
 }
 

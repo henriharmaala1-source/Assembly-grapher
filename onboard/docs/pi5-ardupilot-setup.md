@@ -108,6 +108,13 @@ On such a board everything else works, but the `K` line cannot be shown.
       the Pi starting, it shows `K FLY DRY ...`. Stop the service
       (`sudo systemctl stop kestrel`) and `K LOST` appears within 3 s.
 
+**Flying on the Pi's VIO instead of GPS** (`--voxel-vio-fc`) needs more:
+ArduCopter 4.7.1 or later, `VISO_TYPE = 3`, `EK3_SRC1_POSXY/VELXY = 6`,
+`EK3_SRC1_VELZ = 0`, `FS_EKF_ACTION = 1`, and an EKF origin
+(`fc.origin_lat/lon/alt_m` in kestrel.conf). The full table and the reasons
+are in `gnss-denied-setup.md` §11. The connect-time parameter report flags any
+of them that are wrong with `!!`.
+
 ## 3. The radio (EdgeTX, RadioMaster Pocket)
 
 In the model's **Mixes**:

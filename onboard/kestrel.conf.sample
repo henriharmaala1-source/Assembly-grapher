@@ -38,6 +38,9 @@
 # fc.stick_mps                 = 4
 # fc.stick_climb_mps           = 1.5
 # fc.stick_yaw_dps             = 90
+# fc.origin_lat                =            (EKF origin to set when the FC has none; near where you fly)
+# fc.origin_lon                =
+# fc.origin_alt_m              = 0
 # rc.mode_aux                  = -1
 # rc.mode_hyst_us              = 30
 # rc.mode_dwell_s              = 0.3

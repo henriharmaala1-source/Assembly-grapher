@@ -173,6 +173,18 @@ public:
         rawW_ = w; rawH_ = h;
         // Raw samples for a consumer that integrates them (stereo-inertial
         // SLAM). Bounded: nobody draining them must not grow memory.
+        // Drop out-of-order IMU samples before anyone integrates them
+        // (ImuGate, frame_source.hpp).
+        {
+            const long before = imuGate_.rejected;
+            motion_.erase(std::remove_if(motion_.begin(), motion_.end(), [&](const auto& m) {
+                              return !imuGate_.accept(m.isGyro, m.tMs);
+                          }), motion_.end());
+            if (imuGate_.rejected / 100 != before / 100 || (before == 0 && imuGate_.rejected > 0))
+                std::fprintf(stderr, "[live] IMU: %ld out-of-order samples dropped, %ld clock "
+                                     "restarts (D435i timestamps)\n",
+                             imuGate_.rejected, imuGate_.rebased);
+        }
         for (const auto& m : motion_) {
             if (rawImu_.size() >= 8000) rawImu_.erase(rawImu_.begin(), rawImu_.begin() + 4000);
             ImuRaw r; r.tS = m.tMs * 1e-3; r.gyro = m.isGyro; r.x = m.x; r.y = m.y; r.z = m.z;
@@ -194,7 +206,9 @@ public:
             // first real camera), and so would the aircraft's have been.
             else          { ax_ = -m.x; ay_ = -m.y; az_ = -m.z; }
             const double t = m.tMs;
-            if (lastImuMs_ > 0.0 && t > lastImuMs_) {
+            // A gap (dropped USB packets, a clock restart) is not one long
+            // rotation at the last rate: skip it rather than integrate it.
+            if (lastImuMs_ > 0.0 && t > lastImuMs_ && t - lastImuMs_ < 50.0) {
                 att_.update(gx_, gy_, gz_, ax_, ay_, az_,
                             float((t - lastImuMs_) * 0.001));
             } else if (lastImuMs_ <= 0.0 && !m.isGyro) {
@@ -292,6 +306,7 @@ private:
     std::vector<rsdyn::Pipeline::Motion> motion_;
     AttitudeFilter att_;
     double lastImuMs_ = 0.0;
+    ImuGate imuGate_;
     float gx_ = 0, gy_ = 0, gz_ = 0, ax_ = 0, ay_ = 0, az_ = 0;
     bool  haveImu_ = false;
     bool  strobing_ = false;

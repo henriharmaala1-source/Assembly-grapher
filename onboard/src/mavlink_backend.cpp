@@ -36,6 +36,9 @@ constexpr const char* kParamNames[] = {
     "LOIT_SPEED", "PILOT_SPEED_UP", "PILOT_SPEED_DN", "THR_DZ",
     "PILOT_Y_RATE", "PILOT_Y_EXPO", "ACRO_YAW_P", "ANGLE_MAX",
     "WPNAV_SPEED", "WPNAV_SPEED_UP", "WPNAV_SPEED_DN", "GUID_OPTIONS",
+    // Vision into EKF3: which backend, what it fuses, what it drops.
+    "VISO_TYPE", "VISO_QUAL_MIN", "VISO_DELAY_MS", "EK3_SRC1_YAW", "EK3_SRC1_VELZ",
+    "FS_EKF_ACTION",
 };
 
 const char* copterModeName(uint32_t m) {
@@ -183,6 +186,23 @@ void MavlinkBackend::tick() {
     tel_.linkUp = linkUp_;
 
     serviceParams(t);
+    serviceOrigin(t);
+
+    // AN RTL THE FC WOULD NOT TAKE. ArduPilot refuses RTL without a position
+    // estimate -- which is exactly the case when VIO is what failed, and
+    // kestrel's failsafe asked for RTL anyway. Sitting in the old mode with
+    // neutral sticks is a drift; LAND descends where it is.
+    if (specialMode_ == mav::COPTER_RTL) {
+        if (copterMode_ == mav::COPTER_RTL) specialSeen_ = true;
+        else if (!specialSeen_ && linkUp_ && t - specialReqS_ > modeConfirmS_) {
+            std::printf("[mavlink] !! FC did not enter RTL within %.1f s (no position?) -> LAND\n",
+                        modeConfirmS_);
+            specialMode_ = mav::COPTER_LAND;
+            specialReqS_ = t;
+            commandLong(mav::CMD_DO_SET_MODE, float(mav::MODE_FLAG_CUSTOM_MODE_ENABLED),
+                        float(mav::COPTER_LAND));
+        }
+    }
     // Say which uplink is live whenever the pilot's switch changes it: the
     // single most useful line on a field day.
     const char* path = controlPath();     // string literals: compare by address
@@ -304,6 +324,38 @@ std::string MavlinkBackend::paramReport() const {
     if (int(pv("GUID_OPTIONS", 0.f)) & 8)
         line("!! GUID_OPTIONS bit 3 set: attitude thrust is raw thrust, not a climb rate -- "
              "the attitude uplink is REFUSED\n");
+    // ---- vision into EKF3 -------------------------------------------------
+    if (param("VISO_TYPE", v)) {
+        const int vt = int(v);
+        if (vt == 3)
+            line("  VISO_TYPE 3: VIO re-anchored and yaw-aligned by the FC, attitude pre-arm check on\n");
+        else if (expectVision_ && vt == 0)
+            line("!! VISO_TYPE 0: the FC ignores vision entirely. Set 3.\n");
+        else if (expectVision_)
+            line("!! VISO_TYPE %d: set 3. ODOMETRY is accepted either way, but only 3 aligns "
+                 "yaw and refuses to arm on a VIO/AHRS attitude mismatch.\n", vt);
+    }
+    if (param("VISO_QUAL_MIN", v) && v > 0.f)
+        line("  VISO_QUAL_MIN %.0f: frames below it are dropped (kestrel sends 1-100 by "
+             "tracked features)\n", double(v));
+    if (param("EK3_SRC1_YAW", v)) {
+        if (int(v) == 6)
+            line("  EK3_SRC1_YAW 6: heading FROM the VIO; kestrel does not re-align it\n");
+        else if (expectVision_)
+            line("  EK3_SRC1_YAW %.0f: VIO heading is held to the FC's (slewed, 2 deg/s max)\n",
+                 double(v));
+    }
+    if (expectVision_ && param("EK3_SRC1_VELZ", v) && int(v) == 6)
+        line("!! EK3_SRC1_VELZ 6: kestrel's VIO sends no vertical velocity (it would read "
+             "as 0). Set 0.\n");
+    if (expectVision_ && param("FS_EKF_ACTION", v))
+        line("  FS_EKF_ACTION %.0f (%s)\n", double(v),
+             int(v) == 2 ? "AltHold: a pilot takes over" : int(v) == 3 ? "Land, even in STABILIZE"
+                                                                 : "Land");
+    if (expectVision_)
+        line(ekfOriginKnown_ ? "  EKF origin set\n"
+             : cfgOriginValid_ ? "  EKF origin: not yet -- setting the configured one\n"
+                               : "  EKF origin: none yet (needed for GUIDED / LOITER without GPS)\n");
     if (param("WPNAV_SPEED", v) && k.mps > v / 100.f)
         line("!! GUIDED caps speed at WPNAV_SPEED %.1f m/s, below stick_mps\n", double(v / 100.f));
     return r;
@@ -324,6 +376,16 @@ void MavlinkBackend::drainRx() {
 
 void MavlinkBackend::onMessage(const mav::Msg& m) {
     switch (m.id) {
+    case mav::MSG_GPS_GLOBAL_ORIGIN:
+        if (m.sysid != tgtSys_) break;
+        // Sent only when the FC HAS an origin (ArduPilot's
+        // send_gps_global_origin returns early otherwise).
+        if (!ekfOriginKnown_)
+            std::printf("[mavlink] EKF origin %.7f %.7f %.1f m\n", m.i32(0) * 1e-7,
+                        m.i32(4) * 1e-7, m.i32(8) * 1e-3);
+        ekfOriginKnown_ = true;
+        ekfLat_ = m.i32(0) * 1e-7; ekfLon_ = m.i32(4) * 1e-7; ekfAlt_ = float(m.i32(8) * 1e-3);
+        break;
     case mav::MSG_PARAM_VALUE:
         if (m.sysid == tgtSys_) onParamValue(m);
         break;
@@ -350,6 +412,7 @@ void MavlinkBackend::onMessage(const mav::Msg& m) {
         tel_.pitchRateDps = m.f32(20) * 180.f / kPi;
         tel_.yawRateDps   = m.f32(24) * 180.f / kPi;
         tel_.attFresh     = true;
+        lastAttS_         = nowS();
         break;
     case mav::MSG_EKF_STATUS_REPORT:
         // Floats first, flags last -- MAVLink v2 orders fields by descending
@@ -772,10 +835,90 @@ void MavlinkBackend::feedVisionPose(float xN, float yE, float zD,
 bool MavlinkBackend::sendVisionOdometry(const VisionOdom& v) {
     if (!serial_.isOpen()) return false;
     constexpr float kD2R = float(kPi / 180.0);
-    feedVisionPose(v.n, v.e, -v.u, v.rollDeg * kD2R, v.pitchDeg * kD2R, v.yawDeg * kD2R,
-                   v.resets);
-    feedVisionSpeed(v.vn, v.ve, -v.vu);
+    const double t = v.stampS > 0.0 ? v.stampS : nowS();
+
+    // Yaw reference: the FC's own heading, while fresh -- unless the FC takes
+    // its yaw FROM us (EK3_SRC1_YAW = 6), when aligning would chase itself.
+    const bool extnavYaw = pv("EK3_SRC1_YAW", 1.f) == 6.f;
+    const float ref = (!extnavYaw && tel_.attFresh && nowS() - lastAttS_ < 0.5)
+                          ? tel_.yawDeg * kD2R : std::numeric_limits<float>::quiet_NaN();
+    VioFrameAligner::Pose in;
+    in.n = v.n; in.e = v.e; in.d = -v.u; in.yaw = v.yawDeg * kD2R;
+    in.vn = v.vn; in.ve = v.ve; in.vd = -v.vu;
+    const VioFrameAligner::Pose o = aligner_.update(in, v.resets, t, ref);
+
+    // Attitude: the FC's roll/pitch (the VIO's are the camera's), aligned yaw.
+    const float r = v.rollDeg * kD2R, p = v.pitchDeg * kD2R, y = o.yaw;
+    const float cr = std::cos(r * 0.5f), sr = std::sin(r * 0.5f);
+    const float cp = std::cos(p * 0.5f), sp = std::sin(p * 0.5f);
+    const float cy = std::cos(y * 0.5f), sy = std::sin(y * 0.5f);
+    const float q0 = cr*cp*cy + sr*sp*sy, q1 = sr*cp*cy - cr*sp*sy;
+    const float q2 = cr*sp*cy + sr*cp*sy, q3 = cr*cp*sy - sr*sp*cy;
+    // Velocity in BODY FRD: ArduPilot rotates it back to NED by this same q.
+    // R (body->NED) is the ZYX DCM; body = R^T * ned.
+    const float Rm[3][3] = {
+        {1 - 2*(q2*q2 + q3*q3), 2*(q1*q2 - q0*q3),     2*(q1*q3 + q0*q2)},
+        {2*(q1*q2 + q0*q3),     1 - 2*(q1*q1 + q3*q3), 2*(q2*q3 - q0*q1)},
+        {2*(q1*q3 - q0*q2),     2*(q2*q3 + q0*q1),     1 - 2*(q1*q1 + q2*q2)}};
+    const float vned[3] = {o.vn, o.ve, o.vd};
+    float vb[3];
+    for (int i = 0; i < 3; ++i) vb[i] = Rm[0][i]*vned[0] + Rm[1][i]*vned[1] + Rm[2][i]*vned[2];
+
+    mav::Payload pl;
+    pl.u64(uint64_t(t * 1e6));
+    pl.f32(o.n); pl.f32(o.e); pl.f32(o.d);
+    pl.f32(q0); pl.f32(q1); pl.f32(q2); pl.f32(q3);
+    pl.f32(vb[0]); pl.f32(vb[1]); pl.f32(vb[2]);
+    pl.f32(0.f); pl.f32(0.f); pl.f32(0.f);              // body rates: not used by ArduPilot
+    // pose_covariance, upper triangle of x y z roll pitch yaw: diagonal at
+    // 0, 6, 11 (position) and 15, 18, 20 (angle). NaN first = unknown, and
+    // the FC uses VISO_POS_M_NSE / VISO_YAW_M_NSE; either way it floors them.
+    float cov[21];
+    for (float& c : cov) c = 0.f;
+    if (std::isfinite(v.posSigmaM)) {
+        const float pv2 = v.posSigmaM * v.posSigmaM, a2 = (2.f * kD2R) * (2.f * kD2R);
+        cov[0] = cov[6] = cov[11] = pv2;
+        cov[15] = cov[18] = cov[20] = a2;
+    } else {
+        cov[0] = std::numeric_limits<float>::quiet_NaN();
+    }
+    for (float c : cov) pl.f32(c);
+    pl.f32(std::numeric_limits<float>::quiet_NaN());    // velocity_covariance: unused by ArduPilot
+    for (int i = 1; i < 21; ++i) pl.f32(0.f);
+    pl.u8(mav::FRAME_LOCAL_FRD);
+    pl.u8(mav::FRAME_BODY_FRD);
+    pl.u8(0);                                           // reset_counter: continuity is ours
+    pl.u8(mav::ESTIMATOR_TYPE_VIO);
+    pl.u8(uint8_t(int8_t(std::max(0, std::min(100, v.quality)))));
+    send(mav::MSG_ODOMETRY, pl);
     return true;
+}
+
+// EKF ORIGIN: ask; if the FC has none and we were given one, set it; repeat
+// both until the FC answers with GPS_GLOBAL_ORIGIN.
+void MavlinkBackend::serviceOrigin(double now) {
+    if (ekfOriginKnown_ || !linkUp_ || !paramsDone_) return;
+    if (originT0_ < 0) originT0_ = now;
+    if (now - lastOriginReqS_ < 2.0) return;
+    lastOriginReqS_ = now;
+    commandLong(mav::CMD_REQUEST_MESSAGE, float(mav::MSG_GPS_GLOBAL_ORIGIN));
+    if (cfgOriginValid_ && now - originT0_ >= 1.0) {
+        mav::Payload p;
+        p.i32(int32_t(std::lround(cfgLat_ * 1e7)));
+        p.i32(int32_t(std::lround(cfgLon_ * 1e7)));
+        p.i32(int32_t(std::lround(double(cfgAlt_) * 1000.0)));   // mm
+        p.u8(tgtSys_);
+        send(mav::MSG_SET_GPS_GLOBAL_ORIGIN, p);
+        if (!originSent_)
+            std::printf("[mavlink] FC has no EKF origin: setting %.7f %.7f %.1f m\n",
+                        cfgLat_, cfgLon_, double(cfgAlt_));
+        originSent_ = true;
+    } else if (!cfgOriginValid_ && expectVision_ && !originWarned_ && now - originT0_ >= 5.0) {
+        std::printf("[mavlink] !! FC has NO EKF origin and none is configured: GUIDED and "
+                    "LOITER on vision will not work. Set fc.origin_lat / fc.origin_lon / "
+                    "fc.origin_alt_m (near where you fly), or AHRS_OPTIONS on 4.7+.\n");
+        originWarned_ = true;
+    }
 }
 
 void MavlinkBackend::feedVisionSpeed(float vN, float vE, float vD) {
@@ -841,6 +984,7 @@ bool MavlinkBackend::setMode(FcMode m) {
         if (specialMode_ == kNoMode && copterMode_ != mav::COPTER_RTL &&
             copterMode_ != mav::COPTER_LAND)
             resumeMode_ = copterMode_;
+        if (cm != specialMode_) { specialReqS_ = nowS(); specialSeen_ = copterMode_ == cm; }
         specialMode_ = cm;
     }
     return commandLong(mav::CMD_DO_SET_MODE,

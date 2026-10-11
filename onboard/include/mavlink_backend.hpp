@@ -5,6 +5,7 @@
 
 #include "flight_controller.hpp"
 #include "mavlink_v2.hpp"
+#include "vio_frame_align.hpp"
 #include "serial_port.hpp"
 
 // ---------------------------------------------------------------------------
@@ -161,11 +162,33 @@ public:
     bool sendProximity(const float* distM, int n) override {
         return sendObstacleDistance(distM, n, 0.2f, 20.f);
     }
-    // VIO pose + speed as VISION_POSITION_ESTIMATE / VISION_SPEED_ESTIMATE in
-    // local NED (x North, y East, z DOWN) -- the ENU->NED swap happens here and
-    // nowhere else. ArduPilot: VISO_TYPE=1, EK3_SRC1_POSXY=6, EK3_SRC1_VELXY=6
-    // (onboard/docs/gnss-denied-setup.md section 11).
+    // VIO into EKF3 as ODOMETRY -- ArduPilot's "preferred method", and the only
+    // vision message whose `quality` it reads (VISION_POSITION_ESTIMATE's is
+    // hard-wired to 0, "unknown"). Local NED position, BODY-FRD velocity,
+    // frame_id LOCAL_FRD / child BODY_FRD exactly (anything else is silently
+    // dropped). The ENU->NED swap happens here and nowhere else. On the way the
+    // pose goes through VioFrameAligner: continuous across VIO re-anchors (the
+    // reset_counter sent never changes) and its yaw held to the FC's.
+    // ArduPilot: VISO_TYPE=3, EK3_SRC1_POSXY=6, EK3_SRC1_VELXY=6, firmware
+    // 4.7.1+ (onboard/docs/gnss-denied-setup.md section 11).
     bool sendVisionOdometry(const VisionOdom& v) override;
+    // The FC will be asked to fuse vision: the parameter report then flags
+    // VISO_TYPE / EK3 source settings and a missing EKF origin as problems.
+    void setExpectVision(bool on) { expectVision_ = on; }
+    // THE EKF ORIGIN. Without GPS, ArduPilot has no origin until one is set,
+    // and with none GUIDED and LOITER have no frame to work in. After link-up
+    // the backend asks for it (GPS_GLOBAL_ORIGIN); if the FC has none and one
+    // was configured here (fc.origin_lat/lon/alt_m), it sends
+    // SET_GPS_GLOBAL_ORIGIN until the FC confirms. The point should be near
+    // where you fly: the EKF takes magnetic declination from it.
+    void setEkfOrigin(double latDeg, double lonDeg, float altMslM) {
+        cfgOriginValid_ = true; cfgLat_ = latDeg; cfgLon_ = lonDeg; cfgAlt_ = altMslM;
+    }
+    bool ekfOriginKnown() const { return ekfOriginKnown_; }
+    // An RTL the FC does not take within this long (ArduPilot refuses RTL
+    // without a position estimate -- exactly when VIO has failed) becomes LAND.
+    void setModeConfirmS(double s) { modeConfirmS_ = s; }
+    const VioFrameAligner& aligner() const { return aligner_; }
     void setRthChannel(int, int) override {}   // MAVLink has a real mode API
 
     // ExtGps is an MSP-shaped struct (lat/lon/alt). ArduPilot's supported
@@ -264,12 +287,29 @@ private:
 
     // Parameter readback. Fixed table, no allocation on the link thread.
     struct Param { const char* name; float v; bool have; int tries; };
-    static constexpr int kNParams = 39;
+    static constexpr int kNParams = 45;
     Param    params_[kNParams];
     bool     paramsStarted_ = false, paramsDone_ = false;
     double   paramsT0_ = 0, lastParamReqS_ = -1e9;
     double   paramTimeoutS_ = 3.0;
     float    pv(const char* name, float def) const;
+
+    // Vision into EKF3 (sendVisionOdometry) and its EKF origin.
+    VioFrameAligner aligner_;
+    bool     expectVision_ = false;
+    double   lastAttS_ = -1e9;              // newest ATTITUDE, for the yaw reference
+    bool     cfgOriginValid_ = false;
+    double   cfgLat_ = 0, cfgLon_ = 0;
+    float    cfgAlt_ = 0;
+    bool     ekfOriginKnown_ = false;
+    double   ekfLat_ = 0, ekfLon_ = 0;
+    float    ekfAlt_ = 0;
+    double   originT0_ = -1, lastOriginReqS_ = -1e9;
+    bool     originWarned_ = false, originSent_ = false;
+    void     serviceOrigin(double now);
+    // RTL -> LAND when the FC does not take RTL.
+    double   specialReqS_ = -1e9, modeConfirmS_ = 2.5;
+    bool     specialSeen_ = false;
 
     bool   originValid_ = false;
     double originLat_ = 0, originLon_ = 0;

@@ -55,6 +55,8 @@ enum : uint32_t {
     MSG_ATTITUDE                      = 30,
     MSG_LOCAL_POSITION_NED            = 32,
     MSG_GLOBAL_POSITION_INT           = 33,
+    MSG_SET_GPS_GLOBAL_ORIGIN         = 48,
+    MSG_GPS_GLOBAL_ORIGIN             = 49,
     MSG_RC_CHANNELS                   = 65,
     MSG_RC_CHANNELS_OVERRIDE          = 70,
     MSG_COMMAND_LONG                  = 76,
@@ -65,6 +67,7 @@ enum : uint32_t {
     MSG_VISION_SPEED_ESTIMATE         = 103,
     MSG_EKF_STATUS_REPORT             = 193,
     MSG_OBSTACLE_DISTANCE             = 330,
+    MSG_ODOMETRY                      = 331,
     MSG_STATUSTEXT                    = 253,
 };
 
@@ -73,6 +76,7 @@ enum : uint16_t {
     CMD_DO_SET_MODE          = 176,
     CMD_COMPONENT_ARM_DISARM = 400,
     CMD_SET_MESSAGE_INTERVAL = 511,
+    CMD_REQUEST_MESSAGE      = 512,
 };
 
 // ArduCopter custom_mode values (COPTER_MODE). ACRO is 1 -- the manual mode an
@@ -98,7 +102,11 @@ enum : uint8_t {
 // MAV_FRAME. BODY_NED (8) is the one that matters: velocity setpoints expressed
 // in the aircraft's own frame, which is exactly what the trajectory planner
 // produces and saves the companion from having to know its own heading.
-enum : uint8_t { FRAME_LOCAL_NED = 1, FRAME_BODY_NED = 8, FRAME_BODY_OFFSET_NED = 9 };
+enum : uint8_t { FRAME_LOCAL_NED = 1, FRAME_BODY_NED = 8, FRAME_BODY_OFFSET_NED = 9,
+                 // ODOMETRY: ArduPilot DROPS the message unless frame_id is
+                 // LOCAL_FRD and child_frame_id is BODY_FRD, exactly.
+                 FRAME_BODY_FRD = 12, FRAME_LOCAL_FRD = 20 };
+enum : uint8_t { ESTIMATOR_TYPE_VIO = 3 };   // MAV_ESTIMATOR_TYPE
 
 // CRC_EXTRA for the messages above; 0 (and false) for anything else, which the
 // parser treats as "not for us" rather than guessing.

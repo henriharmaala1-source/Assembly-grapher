@@ -384,6 +384,9 @@ int main(int argc, char** argv) {
         }
         mb->setUplink(u);
         mb->setStickScale({tune.stickMps, tune.stickClimbMps, tune.stickYawDps});
+        mb->setExpectVision(vioToFc);
+        if (std::isfinite(tune.originLat) && std::isfinite(tune.originLon))
+            mb->setEkfOrigin(tune.originLat, tune.originLon, tune.originAltM);
         std::printf("[mavlink] uplink %s; full stick = %.1f m/s, %.1f m/s climb, %.0f deg/s\n",
                     MavlinkBackend::uplinkName(u), double(tune.stickMps),
                     double(tune.stickClimbMps), double(tune.stickYawDps));
@@ -572,6 +575,9 @@ int main(int argc, char** argv) {
                 v.rollDeg = ps.vehRollDeg; v.pitchDeg = ps.vehPitchDeg;
                 v.yawDeg = ps.vioYawDeg;
                 v.resets = ps.vioResets;
+                // ODOMETRY's quality: ArduPilot's VISO_QUAL_MIN and the
+                // source-switching scripts act on it.
+                vioQualityFromTracked(ps.vioTracked, v);
                 fcLink.vision(v, ps.vioStampS);
             }
         }

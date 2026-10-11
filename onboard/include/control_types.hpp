@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 
 // Shared control/telemetry value types — used by the controller, the world
 // model, and (P-FC) the flight-controller backends. Kept dependency-free so
@@ -30,8 +32,29 @@ struct VisionOdom {
     float e = 0.f, n = 0.f, u = 0.f;
     float ve = 0.f, vn = 0.f, vu = 0.f;
     float rollDeg = 0.f, pitchDeg = 0.f, yawDeg = 0.f;
+    // Re-anchors of the VIO/SLAM frame. NOT forwarded as-is: the MAVLink
+    // backend makes the pose continuous across them itself (VioFrameAligner),
+    // because ArduPilot reads a reset_counter change as "snap to this pose".
     int   resets = 0;
+    // HOW MUCH TO TRUST IT. quality 1..100 (100 best), 0 unknown -- ArduPilot's
+    // ODOMETRY convention; a lost frame is not sent at all. posSigmaM: 1-sigma
+    // position error, NaN = unknown (the FC then uses VISO_POS_M_NSE).
+    int   quality = 0;
+    float posSigmaM = std::numeric_limits<float>::quiet_NaN();
+    double stampS = -1.0;        // monoNowS of the frame it describes
 };
+
+// VIO health -> quality and sigma, from the tracked-feature count: below
+// `minTracked` the VIO calls the frame lost; `goodTracked` and up is full
+// marks. Deliberately simple and monotone -- it only has to rank frames, and
+// the FC floors sigma at VISO_POS_M_NSE anyway.
+inline void vioQualityFromTracked(int tracked, VisionOdom& v, int minTracked = 20,
+                                  int goodTracked = 120) {
+    const float f = float(tracked - minTracked) / float(std::max(1, goodTracked - minTracked));
+    const float c = f < 0.f ? 0.f : (f > 1.f ? 1.f : f);
+    v.quality   = 1 + int(c * 99.f + 0.5f);
+    v.posSigmaM = 0.05f + 0.45f * (1.f - c);   // 5 cm well-tracked, 0.5 m barely
+}
 
 // Telemetry read back from the flight controller.
 struct FcTelemetry {

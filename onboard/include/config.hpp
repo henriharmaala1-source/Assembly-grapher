@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include <map>
 #include <set>
 #include <string>
@@ -81,6 +83,12 @@ struct Tunables {
     float stickMps      = 4.f;
     float stickClimbMps = 1.5f;
     float stickYawDps   = 90.f;
+    // The EKF origin to give ArduPilot when it has none (no GPS). NaN = do
+    // not set one. Near where you fly: the EKF takes magnetic declination
+    // from it, so a far-off point turns the compass heading.
+    double originLat = std::numeric_limits<double>::quiet_NaN();
+    double originLon = std::numeric_limits<double>::quiet_NaN();
+    float  originAltM = 0.f;
 
     // Camera geometry — FPV cameras are up-tilted; the monocular corridor/grid
     // scan is suppressed when the effective elevation leaves the usable window.

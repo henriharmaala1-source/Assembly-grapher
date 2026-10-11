@@ -146,7 +146,9 @@ std::vector<PV> identityParams() {
         {"LOIT_SPEED", 400}, {"PILOT_SPEED_UP", 150}, {"PILOT_SPEED_DN", 0}, {"THR_DZ", 0},
         {"PILOT_Y_RATE", 90}, {"PILOT_Y_EXPO", 0}, {"ACRO_YAW_P", 2}, {"ANGLE_MAX", 3000},
         {"WPNAV_SPEED", 1000}, {"WPNAV_SPEED_UP", 150}, {"WPNAV_SPEED_DN", 150},
-        {"GUID_OPTIONS", 0}};
+        {"GUID_OPTIONS", 0},
+        {"VISO_TYPE", 3}, {"VISO_QUAL_MIN", 0}, {"VISO_DELAY_MS", 50}, {"EK3_SRC1_YAW", 1},
+        {"EK3_SRC1_VELZ", 0}, {"FS_EKF_ACTION", 1}};
     static const char* rc[4][5] = {
         {"RC1_MIN", "RC1_TRIM", "RC1_MAX", "RC1_DZ", "RC1_REVERSED"},
         {"RC2_MIN", "RC2_TRIM", "RC2_MAX", "RC2_DZ", "RC2_REVERSED"},
@@ -259,12 +261,12 @@ int main() {
         CHECK(!fc.paramsResolved());
         const int asked = serveParams(mfd, fc, identityParams());
         CHECK(fc.paramsResolved());
-        CHECK(asked >= 39);                       // every one asked for, by name
+        CHECK(asked >= 45);                       // every one asked for, by name
         const std::string rep = fc.paramReport();
-        CHECK(rep.find("39 of 39") != std::string::npos);
+        CHECK(rep.find("45 of 45") != std::string::npos);
         CHECK(rep.find("matches ours") != std::string::npos);
         CHECK(rep.find("!!") == std::string::npos);
-        std::printf("  parameters: %d requests, 39 answers, control held until then\n", asked);
+        std::printf("  parameters: %d requests, 45 answers, control held until then\n", asked);
     }
 
     // --- ACRO: mid stick is not "hold height", so no sticks at all -----------
@@ -565,6 +567,71 @@ int main() {
         std::printf("  OSD line: STATUSTEXT from 255/191; tags VEL / OFF / RC by mode\n");
     }
 
+    // --- an RTL the FC will not take becomes LAND ---------------------------
+    // ArduPilot refuses RTL without a position estimate -- exactly when VIO
+    // has failed. Waiting in ALT_HOLD on neutral sticks would drift.
+    {
+        fc.setModeConfirmS(0.3);
+        enterMode(mfd, fc, mav::COPTER_ALT_HOLD);
+        drainMaster(mfd);
+        CHECK(fc.setMode(FcMode::RTL));
+        std::vector<float> got;
+        for (int k = 0; k < 30; ++k) {                      // ~0.6 s, FC stays in ALT_HOLD
+            fcHeartbeat(mfd, mav::COPTER_ALT_HOLD, true);
+            fc.tick();
+            for (const mav::Msg& m : decodeAll(drainMaster(mfd, 20)))
+                if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_DO_SET_MODE)
+                    got.push_back(m.f32(4));
+        }
+        CHECK(got.size() == 2 && got[0] == float(mav::COPTER_RTL) &&
+              got[1] == float(mav::COPTER_LAND));
+        // It lands; the failsafe clears; the pilot's ALT_HOLD comes back.
+        enterMode(mfd, fc, mav::COPTER_LAND);
+        drainMaster(mfd);
+        CHECK(fc.setMode(FcMode::RESUME));
+        got.clear();
+        for (const mav::Msg& m : decodeAll(drainMaster(mfd)))
+            if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_DO_SET_MODE)
+                got.push_back(m.f32(4));
+        CHECK(got.size() == 1 && got[0] == float(mav::COPTER_ALT_HOLD));
+        enterMode(mfd, fc, mav::COPTER_ALT_HOLD);          // the FC reports it is back
+        // An RTL the FC DOES take is left alone.
+        CHECK(fc.setMode(FcMode::RTL));
+        enterMode(mfd, fc, mav::COPTER_RTL);
+        drainMaster(mfd);
+        for (int k = 0; k < 25; ++k) { fcHeartbeat(mfd, mav::COPTER_RTL, true); fc.tick();
+                                       std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+        int lands = 0;
+        for (const mav::Msg& m : decodeAll(drainMaster(mfd)))
+            if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_DO_SET_MODE) ++lands;
+        CHECK(lands == 0);
+        CHECK(fc.setMode(FcMode::RESUME));
+        enterMode(mfd, fc, mav::COPTER_ALT_HOLD);
+        fc.setModeConfirmS(2.5);
+        drainMaster(mfd);
+        std::printf("  RTL refused by the FC (no position): LAND after the timeout; resume ALT_HOLD\n");
+    }
+
+    // --- vision settings the FC must have are the loudest lines too --------
+    {
+        fc.setExpectVision(true);
+        fcParam(mfd, "VISO_TYPE", 1);
+        fcParam(mfd, "EK3_SRC1_VELZ", 6);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        const std::string rep = fc.paramReport();
+        CHECK(rep.find("!! VISO_TYPE 1") != std::string::npos);
+        CHECK(rep.find("!! EK3_SRC1_VELZ 6") != std::string::npos);
+        CHECK(rep.find("EKF origin") != std::string::npos);       // its state is reported
+        fcParam(mfd, "VISO_TYPE", 3);
+        fcParam(mfd, "EK3_SRC1_VELZ", 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        CHECK(fc.paramReport().find("!!") == std::string::npos);
+        fc.setExpectVision(false);
+        drainMaster(mfd);
+    }
+
     // --- a GCS sysid that is not ours is the loudest line in the report -----
     {
         fcParam(mfd, "MAV_GCS_SYSID", 254);
@@ -644,33 +711,104 @@ int main() {
         std::printf("  vision pose: origin latched, NED offsets, z down\n");
     }
 
-    // --- VIO odometry: ENU in, NED on the wire, reset counter carried --------
+    // --- VIO into EKF3: ODOMETRY, the message ArduPilot reads quality from ---
     {
+        // The FC's heading is 90 deg; the VIO agrees, so nothing is rotated.
+        { mav::Payload p; p.u32(3000);
+          p.f32(0.f); p.f32(0.f); p.f32(1.5707963f); p.f32(0); p.f32(0); p.f32(0);
+          fcSend(mfd, mav::MSG_ATTITUDE, p); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
         drainMaster(mfd);
         VisionOdom v;
         v.e = 2.f; v.n = 5.f; v.u = 1.5f;             // 5 m North, 2 m East, 1.5 m up
         v.ve = 0.5f; v.vn = 1.f; v.vu = 0.2f;
         v.rollDeg = 2.f; v.pitchDeg = -3.f; v.yawDeg = 90.f;
-        v.resets = 3;
+        v.resets = 3; v.quality = 70; v.posSigmaM = 0.2f; v.stampS = 100.0;
         CHECK(fc.sendVisionOdometry(v));
         auto msgs = decodeAll(drainMaster(mfd));
-        const mav::Msg* p = findMsg(msgs, mav::MSG_VISION_POSITION_ESTIMATE);
-        CHECK(p != nullptr);
-        if (p) {
-            CHECK(std::fabs(p->f32(8) - 5.f) < 1e-6f);     // x = North
-            CHECK(std::fabs(p->f32(12) - 2.f) < 1e-6f);    // y = East
-            CHECK(std::fabs(p->f32(16) + 1.5f) < 1e-6f);   // z DOWN: up is negative
-            CHECK(std::fabs(p->f32(28) - 1.5707963f) < 1e-5f);   // yaw, radians
-            CHECK(std::isnan(p->f32(32)));                 // covariance: unknown
-            CHECK(p->u8(116) == 3);                        // reset_counter
+        CHECK(countMsg(msgs, mav::MSG_VISION_POSITION_ESTIMATE) == 0);   // replaced
+        const mav::Msg* o = findMsg(msgs, mav::MSG_ODOMETRY);
+        CHECK(o != nullptr);
+        if (o) {
+            CHECK(o->u64(0) == 100000000ull);                 // the frame's time, us
+            CHECK(std::fabs(o->f32(8) - 5.f) < 1e-4f);        // x = North
+            CHECK(std::fabs(o->f32(12) - 2.f) < 1e-4f);       // y = East
+            CHECK(std::fabs(o->f32(16) + 1.5f) < 1e-4f);      // z DOWN
+            // ArduPilot drops it unless these are EXACTLY LOCAL_FRD / BODY_FRD.
+            CHECK(o->u8(228) == mav::FRAME_LOCAL_FRD && o->u8(229) == mav::FRAME_BODY_FRD);
+            CHECK(o->u8(230) == 0);                           // reset_counter: never moves
+            CHECK(o->u8(231) == mav::ESTIMATOR_TYPE_VIO);
+            CHECK(o->u8(232) == 70);                          // quality
+            CHECK(std::fabs(o->f32(60) - 0.04f) < 1e-6f);     // pose cov xx = 0.2^2
+            CHECK(std::fabs(o->f32(84) - 0.04f) < 1e-6f);     // yy (index 6)
+            // Velocity goes BODY FRD; ArduPilot turns it back with the same q.
+            const float q0 = o->f32(20), q1 = o->f32(24), q2 = o->f32(28), q3 = o->f32(32);
+            const float vb[3] = {o->f32(36), o->f32(40), o->f32(44)};
+            const float R[3][3] = {
+                {1 - 2*(q2*q2 + q3*q3), 2*(q1*q2 - q0*q3), 2*(q1*q3 + q0*q2)},
+                {2*(q1*q2 + q0*q3), 1 - 2*(q1*q1 + q3*q3), 2*(q2*q3 - q0*q1)},
+                {2*(q1*q3 - q0*q2), 2*(q2*q3 + q0*q1), 1 - 2*(q1*q1 + q2*q2)}};
+            float vn[3];
+            for (int i = 0; i < 3; ++i) vn[i] = R[i][0]*vb[0] + R[i][1]*vb[1] + R[i][2]*vb[2];
+            CHECK(std::fabs(vn[0] - 1.f) < 1e-4f && std::fabs(vn[1] - 0.5f) < 1e-4f);
+            CHECK(std::fabs(vn[2] + 0.2f) < 1e-4f);
+            // Facing east, 1 m/s north is mostly to the LEFT of the body.
+            CHECK(vb[1] < -0.9f);
+            const float yaw = std::atan2(2*(q0*q3 + q1*q2), 1 - 2*(q2*q2 + q3*q3));
+            CHECK(std::fabs(yaw - 1.5707963f) < 1e-3f);
         }
-        const mav::Msg* sp = findMsg(msgs, mav::MSG_VISION_SPEED_ESTIMATE);
-        CHECK(sp != nullptr);
-        if (sp) {
-            CHECK(std::fabs(sp->f32(8) - 1.f) < 1e-6f && std::fabs(sp->f32(12) - 0.5f) < 1e-6f);
-            CHECK(std::fabs(sp->f32(16) + 0.2f) < 1e-6f);
+        // A VIO RE-ANCHOR: the pose jumps 10 m and the reset counter moves.
+        // The FC must see the track continue (1 m/s north for 0.1 s), and a
+        // reset_counter that has not changed.
+        v.n += 10.f; v.resets = 4; v.stampS = 100.1; v.posSigmaM = std::nanf("");
+        CHECK(fc.sendVisionOdometry(v));
+        auto held = decodeAll(drainMaster(mfd));
+        const mav::Msg* o2 = findMsg(held, mav::MSG_ODOMETRY);
+        CHECK(o2 != nullptr);
+        if (o2) {
+            CHECK(std::fabs(o2->f32(8) - 5.1f) < 1e-3f);      // not 15
+            CHECK(o2->u8(230) == 0);
+            CHECK(std::isnan(o2->f32(60)));                  // sigma unknown -> NaN
         }
-        std::printf("  VIO odometry: ENU->NED, yaw in rad, covariance unknown, resets 3\n");
+        CHECK(fc.aligner().resetsAbsorbed() == 1);
+        std::printf("  VIO: ODOMETRY LOCAL_FRD/BODY_FRD, body-frame velocity, quality 70; "
+                    "a 10 m re-anchor reaches the FC as 0.1 m\n");
+    }
+
+    // --- EKF origin: asked for; set when the FC has none; then left alone ---
+    {
+        fc.setEkfOrigin(60.1699, 24.9384, 25.f);
+        bool req = false, set = false;
+        for (int k = 0; k < 130 && !set; ++k) {
+            fc.tick();
+            for (const mav::Msg& m : decodeAll(drainMaster(mfd, 20))) {
+                if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_REQUEST_MESSAGE &&
+                    std::fabs(m.f32(0) - float(mav::MSG_GPS_GLOBAL_ORIGIN)) < 0.5f) req = true;
+                if (m.id == mav::MSG_SET_GPS_GLOBAL_ORIGIN) {
+                    set = true;
+                    CHECK(m.i32(0) == 601699000 && m.i32(4) == 249384000 && m.i32(8) == 25000);
+                    CHECK(m.u8(12) == 1);                     // to the autopilot
+                }
+            }
+        }
+        CHECK(req && set);
+        CHECK(!fc.ekfOriginKnown());
+        // The FC confirms (it only sends this once it HAS an origin).
+        { mav::Payload p; p.i32(601699000); p.i32(249384000); p.i32(25000);
+          fcSend(mfd, mav::MSG_GPS_GLOBAL_ORIGIN, p); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        CHECK(fc.ekfOriginKnown());
+        int after = 0;
+        for (int k = 0; k < 110; ++k) {
+            fc.tick();
+            for (const mav::Msg& m : decodeAll(drainMaster(mfd, 20)))
+                if (m.id == mav::MSG_SET_GPS_GLOBAL_ORIGIN ||
+                    (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_REQUEST_MESSAGE)) ++after;
+        }
+        CHECK(after == 0);
+        std::printf("  EKF origin: requested, set (60.1699, 24.9384, 25 m), confirmed, then quiet\n");
     }
 
     // --- link goes down when the autopilot stops talking --------------------

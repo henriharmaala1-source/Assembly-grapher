@@ -199,6 +199,10 @@ if(BUILD_TESTS)
   kestrel_test(test_fc_link src/fc_link.cpp src/sim_fc_backend.cpp
                src/world_model.cpp src/realtime.cpp)
   kestrel_test(test_realtime src/realtime.cpp)
+  # VIO into EKF3: continuity across re-anchors, yaw held to the FC's; and the
+  # D435i IMU timestamp gate (navcore/frame_source.hpp).
+  kestrel_test(test_vio_align)
+  target_link_libraries(test_vio_align PRIVATE navcore)
   kestrel_test(test_black_box src/black_box.cpp src/world_model.cpp)
 
   # The fused tracker is deliberately OpenCV-free, so its tests link nothing but

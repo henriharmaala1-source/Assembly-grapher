@@ -214,20 +214,66 @@ Three flags:
 |---|---|
 | `--voxel-vio` / `nav.vox_vio` | VIO is the mission's displacement when neither the Pi estimate nor the FC's flow position exists. The FC does **not** hold on it: hover drift (§9.2) remains. |
 | `--voxel-slam` / `nav.vox_slam` | **ORB-SLAM3** instead of the built-in VIO: stereo (or stereo-inertial) SLAM on the IR pair, in its own process (`onboard/orbslam/`, GPLv3 kept out of `kestrel`). Its poses land in the same place, so both rows around this one apply unchanged. Start `kestrel-orbslam` first. |
-| `--voxel-vio-fc` / `nav.vox_vio_to_fc` | also sends it to EKF3 as ExternalNav (`VISION_POSITION_ESTIMATE` + `VISION_SPEED_ESTIMATE`, with `reset_counter` and covariance marked unknown), at <= 30 Hz, valid frames only, never repeated once stale. The FC then holds position on it, and the mission reads the FC's own local position (§9.1) -- one filter. |
+| `--voxel-vio-fc` / `nav.vox_vio_to_fc` | also sends it to EKF3 as ExternalNav, as `ODOMETRY` (below), at <= 30 Hz, valid frames only, never repeated once stale. The FC then holds position on it, and the mission reads the FC's own local position (§9.1) -- one filter. |
 
-ArduPilot parameters for `--voxel-vio-fc` (from the ArduPilot non-GPS /
-ExternalNav docs; bench-check before flight):
+**What goes to the FC, and why it is shaped this way.** Read from
+ArduPilot's own source (master, 2026-10), not its user wiki, because the
+plain reading of the wiki got four things wrong here:
+
+- **`ODOMETRY`, not `VISION_POSITION_ESTIMATE` + `VISION_SPEED_ESTIMATE`.**
+  ArduPilot hard-wires the quality of the latter pair to 0 ("unknown"), so
+  there was no way to say "tracking is thin". ODOMETRY carries a real quality
+  (1-100 from tracked features here) and a position sigma. It is dropped
+  silently unless `frame_id` is `LOCAL_FRD` and `child_frame_id` `BODY_FRD`,
+  exactly; velocity goes in the BODY frame. Pinned in `test_mavlink`
+  (pymavlink golden) and `test_mavlink_backend`.
+- **VIO re-anchors never reach the FC as jumps.** The VIO counts a re-anchor
+  (tracking lost and regained, a SLAM map change) as a reset. ArduPilot reads
+  a reset_counter change as "snap your position to mine" (`VISO_TYPE` 1) or
+  "freeze where I was" (3) -- neither is what happened. The Pi absorbs it
+  instead (`VioFrameAligner`): the track continues at its last velocity
+  across the gap, and the counter sent never changes.
+- **The VIO heading is held to the FC's.** With compass yaw, EKF and VIO
+  headings drift apart, and position hold then circles ("toilet bowling").
+  ArduPilot aligns VIO yaw once at most. The Pi snaps the VIO frame to the
+  FC's heading at the first sample and then slews it toward the FC's
+  (2 deg/s max), rotating about the current position so nothing jumps.
+  With `EK3_SRC1_YAW = 6` the FC's heading IS the VIO's, and this is off.
+- **The EKF origin is set.** Without GPS the FC has none, and GUIDED and
+  LOITER have no frame. The Pi asks for it after connecting and, if there is
+  none, sends `fc.origin_lat` / `fc.origin_lon` / `fc.origin_alt_m` until
+  the FC confirms (kestrel.conf). Use a point near where you fly: the EKF
+  takes magnetic declination from it. On 4.7+ `AHRS_OPTIONS` can also save
+  and restore one.
+
+ArduPilot parameters for `--voxel-vio-fc` (the connect-time parameter report
+flags the ones that matter with `!!`; bench-check before flight):
 
 | param | value | why |
 |---|---|---|
-| `VISO_TYPE` | 1 (MAVLink) | vision odometry arrives over MAVLink |
+| firmware | **ArduCopter 4.7.1 or later** | external-nav covariance and variances only fused correctly from 4.7.0; `VISO_DELAY_MS` was ignored before 4.5.2 |
+| `VISO_TYPE` | **3** (VOXL) | the backend that aligns yaw to the AHRS and refuses to arm on a >10 deg VIO/AHRS attitude mismatch. 1 also accepts ODOMETRY but checks nothing |
 | `VISO_POS_X/Y/Z` | camera offset from CG, m | lever arm; the Pi sends the camera's position |
-| `VISO_DELAY_MS` | ~50-70 | exposure + USB + VIO latency; measure it |
+| `VISO_DELAY_MS` | ~50-70 | exposure + USB + VIO latency; tune by minimising innovations in dynamic flight |
+| `VISO_POS_M_NSE` | 0.1-0.2 | the FLOOR under the sigma the Pi sends (5 cm well-tracked to 0.5 m barely); set from logs |
+| `VISO_QUAL_MIN` | 0 | frames below it are dropped; the Pi already sends nothing when lost |
 | `EK3_SRC1_POSXY` | 6 (ExternalNav) | |
 | `EK3_SRC1_VELXY` | 6 (ExternalNav) | or 5 if a flow sensor is fitted and preferred |
 | `EK3_SRC1_POSZ` | 1 (Baro) | VIO height drifts; baro does not walk |
-| `EK3_SRC1_YAW` | 1 (Compass) | VIO's heading starts from the compass and drifts |
+| `EK3_SRC1_VELZ` | 0 (None) | the VIO sends no vertical velocity; 6 would fuse a constant 0 |
+| `EK3_SRC1_YAW` | 1 (Compass) | the Pi holds the VIO heading to it |
+| `FS_EKF_ACTION` | 1 (Land), or 2 (AltHold) with a pilot | with VIO gone there is no position: RTL is impossible |
+| `MAVx_OPTIONS` | 2 (4.7+) | do not forward 30 Hz odometry to the GCS link (was `SERIALx_OPTIONS` 1024) |
+
+**When VIO fails, RTL cannot work** -- ArduPilot refuses RTL without a
+position estimate. kestrel's own failsafe asks for RTL; if the FC has not
+entered it within 2.5 s, the Pi asks for LAND instead (tested in
+`test_mavlink_backend`). Treat an in-flight VIO loss as the end of the flight.
+
+**OBSTACLE_DISTANCE does not steer you in ALT_HOLD or GUIDED_NOGPS.** 4.7
+turned lean-angle avoidance off by default, so outside the position modes
+(LOITER, GUIDED with a position) the FC's avoidance only limits climb. The
+Pi's own veto is the only horizontal protection there (§10).
 
 Measured in simulation only (`test/test_vio.cpp`, the navcore IR and stereo
 models, IMU with 0.3 deg tilt noise and a 0.5 deg/s gyro bias). Drift as a

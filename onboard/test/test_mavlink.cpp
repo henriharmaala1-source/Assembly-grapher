@@ -127,6 +127,40 @@ int main() {
                     "fd180000072abffd000006534352495054204c4956452056454c20474f20444f4f52f9d3");
     }
     {
+        // VIO into EKF3. ArduPilot drops it unless frame_id is LOCAL_FRD (20)
+        // and child_frame_id BODY_FRD (12); reset_counter, estimator_type and
+        // quality are v2 extensions, at the very end.
+        Codec c = fresh();
+        Payload p;
+        p.u64(123456789);
+        p.f32(1.5f); p.f32(-2.0f); p.f32(-0.75f);
+        p.f32(0.9238795f); p.f32(0.f); p.f32(0.f); p.f32(0.3826834f);
+        p.f32(0.5f); p.f32(0.25f); p.f32(-0.1f);
+        p.f32(0.f); p.f32(0.f); p.f32(0.05f);
+        float pc[21] = {}; pc[0] = 0.04f; pc[6] = 0.04f; pc[11] = 0.09f;
+        for (float f : pc) p.f32(f);
+        p.f32(std::numeric_limits<float>::quiet_NaN());
+        for (int i = 1; i < 21; ++i) p.f32(0.f);
+        p.u8(FRAME_LOCAL_FRD); p.u8(FRAME_BODY_FRD);
+        p.u8(0); p.u8(ESTIMATOR_TYPE_VIO); p.u8(87);
+        expectFrame("ODOMETRY (VIO, quality 87)", c, MSG_ODOMETRY, p,
+                    "fde90000072abf4b010015cd5b07000000000000c03f000000c0000040bf5e836c3f000000000000"
+                    "000014efc33e0000003f0000803ecdccccbd0000000000000000cdcc4c3d0ad7233d000000000000"
+                    "00000000000000000000000000000ad7233d00000000000000000000000000000000ec51b83d0000"
+                    "000000000000000000000000000000000000000000000000000000000000000000000000c07f0000"
+                    "00000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    "0000000000000000000000000000000000000000000000000000000000000000000000000000140c"
+                    "000357c9e6");
+    }
+    {
+        // The EKF origin, for flight without GPS: lat/lon 1e-7 deg, alt mm.
+        Codec c = fresh();
+        Payload p;
+        p.i32(601699000); p.i32(249384000); p.i32(25000); p.u8(1);
+        expectFrame("SET_GPS_GLOBAL_ORIGIN", c, MSG_SET_GPS_GLOBAL_ORIGIN, p,
+                    "fd0d0000072abf300000b832dd23404cdd0ea8610000016e4d");
+    }
+    {
         // Parameter readback: by name, index -1. 14 characters, so NUL-padded
         // to 16 -- and the truncation strips the padding off the wire.
         Codec c = fresh();
@@ -299,6 +333,14 @@ int main() {
         check(m.u16(4) == 1500 && m.u16(10) == 1400 && m.u16(18) == 1500,
               "  channels 1, 4 and 8 read back");
         check(m.u16(38) == 0, "  and offset 38 is chan18, which is what made it look right");
+    }
+    {
+        // The FC's answer when it HAS an origin (and only then).
+        Msg m;
+        check(decode("fd0a0000070101310000b832dd23404cdd0ea8619394", m) &&
+              m.id == MSG_GPS_GLOBAL_ORIGIN, "decode GPS_GLOBAL_ORIGIN");
+        check(m.i32(0) == 601699000 && m.i32(4) == 249384000 && m.i32(8) == 25000,
+              "  lat/lon/alt read back");
     }
     {
         // ArduPilot's answer: value first, then count, index, the name, type.

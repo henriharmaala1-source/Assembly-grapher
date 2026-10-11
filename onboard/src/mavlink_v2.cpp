@@ -16,6 +16,8 @@ constexpr Row kMsgs[] = {
     { MSG_ATTITUDE,                       39,  28 },
     { MSG_LOCAL_POSITION_NED,            185,  28 },
     { MSG_GLOBAL_POSITION_INT,           104,  28 },
+    { MSG_SET_GPS_GLOBAL_ORIGIN,          41,  21 },
+    { MSG_GPS_GLOBAL_ORIGIN,              39,  20 },
     { MSG_RC_CHANNELS,                   118,  42 },
     { MSG_RC_CHANNELS_OVERRIDE,          124,  38 },
     { MSG_COMMAND_LONG,                  152,  33 },
@@ -26,6 +28,7 @@ constexpr Row kMsgs[] = {
     { MSG_VISION_SPEED_ESTIMATE,         208,  57 },
     { MSG_EKF_STATUS_REPORT,              71,  22 },
     { MSG_OBSTACLE_DISTANCE,              23, 167 },
+    { MSG_ODOMETRY,                       91, 233 },
     { MSG_STATUSTEXT,                     83,  54 },
 };
 const Row* find(uint32_t id) {

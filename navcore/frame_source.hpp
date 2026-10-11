@@ -59,6 +59,29 @@ struct ImuRaw {
     float  x = 0, y = 0, z = 0;
 };
 
+// D435i IMU TIMESTAMPS CANNOT BE TRUSTED BLINDLY. They have been reported
+// repeating, running at twice the rate and GOING BACKWARDS on a Raspberry Pi
+// host while the same sensor behaved on a desktop (realsense-ros #1756).
+// One backwards sample is enough to wreck an integrator: the step after it
+// spans the whole jump. Gyro and accelerometer are separate streams with
+// separate clocks, so each is checked against its own last sample: a repeat
+// or a small step back is dropped (counted); a big step back (> 1 s) is the
+// device clock restarting, and re-bases instead of rejecting for ever.
+struct ImuGate {
+    double lastGyroMs = -1.0, lastAccelMs = -1.0;
+    long   rejected = 0, rebased = 0;
+    bool accept(bool gyro, double tMs) {
+        double& last = gyro ? lastGyroMs : lastAccelMs;
+        if (!(tMs > last)) {                       // also catches NaN
+            if (last - tMs > 1000.0) { last = tMs; ++rebased; return true; }
+            ++rejected;
+            return false;
+        }
+        last = tMs;
+        return true;
+    }
+};
+
 struct PoseHint {
     bool  valid = false;
     bool  attitudeOnly = false;   // orientation known, translation is not

@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+step_debug.log
+step_debug.log.fault

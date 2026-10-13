@@ -117,6 +117,7 @@ class App(tk.Tk):
 
     def _setup_handlers(self) -> None:
         self.bus.subscribe("assembly_loaded",  self._handle_assembly_loaded)
+        self.bus.subscribe("import_loaded",    self._handle_assembly_loaded)
         self.bus.subscribe("fasteners_loaded", self._handle_fasteners_loaded)
         self.bus.subscribe("run_dfma",         self._handle_run_dfma)
         self.bus.subscribe("run_screw",        self._handle_run_screw)

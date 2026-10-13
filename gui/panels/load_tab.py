@@ -191,9 +191,11 @@ class LoadTab(ttk.Frame):
         _dbg("load_tab: calling _populate...")
         self._populate(result.assembly, result.warnings)
         self._assembly = result.assembly
-        _dbg("load_tab: publishing assembly_loaded (full ImportResult)...")
-        # Publish the full ImportResult so app.py can store the liaison matrix
-        self.bus.publish("assembly_loaded", result)
+        _dbg("load_tab: publishing assembly_loaded + import_loaded...")
+        # Panels expect a bare Assembly on assembly_loaded; app.py picks up the
+        # liaison matrix and shapes from the full ImportResult on import_loaded.
+        self.bus.publish("assembly_loaded", result.assembly)
+        self.bus.publish("import_loaded",   result)
         _dbg("load_tab: _load_path DONE")
 
     def _load_demo(self) -> None:

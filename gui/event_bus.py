@@ -7,6 +7,7 @@ Usage:
     bus.publish("run_dfma", payload)
 """
 
+import traceback
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -24,5 +25,10 @@ class EventBus:
         ]
 
     def publish(self, event: str, data: Any = None) -> None:
-        for cb in self._listeners[event]:
-            cb(data)
+        # One failing subscriber must not stop the others from receiving the
+        # event — otherwise app state silently never updates.
+        for cb in list(self._listeners[event]):
+            try:
+                cb(data)
+            except Exception:
+                traceback.print_exc()

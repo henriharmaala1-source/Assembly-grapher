@@ -492,6 +492,35 @@ Not yet done; this entry records the gap and the plan.
   the current CSRT/KCF baseline on the same clips before it replaces the
   flight-used path.
 
+### P6.9 — Lost-link return without a position fix: heading reversal (idea, **unscheduled**, M)
+A recovery failsafe for when the RC link is lost AND there is no position
+estimate (no GPS, VIO/flow down): fly back the way it came on heading and time
+alone, until the link returns. The target is not a point but the radio
+coverage just left, which is large -- so a crude estimate is enough.
+- **Why it is feasible:** compass + gyro heading and baro altitude are untouched
+  by RF jamming and GNSS spoofing. Rough error budget on a 1 km leg: compass
+  error 5-15 deg -> 90-260 m cross-track; 5 m/s wind -> ~300 m per minute;
+  speed mismatch out vs back 10-30 %. Lands within a few hundred metres of the
+  loss point -- normally well inside the coverage that was there.
+- **How:** record a heading/time log while kestrel flies (outbound heading per
+  segment). On RC loss: short climb (line of sight recovers links more than
+  distance does), then fly the reversed log via the existing GUIDED_NOGPS
+  attitude uplink -- heading held, constant pitch, baro altitude -- with
+  ArduPilot's `FS_OPTIONS` "continue in Guided on RC failsafe" set so its own
+  failsafe does not take over. Stop and hover when the link returns; when the
+  reversed time runs out, hover briefly, then LAND.
+- **Precedence:** a real position source wins. With VIO or flow alive, ArduPilot
+  SmartRTL (breadcrumb retrace, works on ExternalNav) is strictly better; this
+  is the fallback for when there is none. Compass: calibrate with current
+  compensation (`COMPASS_MOT`) -- the threat to it is our own motors, not EW.
+- **Honest limits:** no obstacle awareness on the way back unless the voxel
+  layer is running (low-altitude trees/wires); wind is unobserved; the
+  returning aircraft cannot be steered until the link is back.
+- **Accept:** the scenario simulator with wind, compass bias and a link drop at
+  a random point: report the fraction of runs that re-enter a given link radius,
+  over >= 4 seeds per arm (CLAUDE.md), and a SITL run showing the mode handover
+  (RC loss -> climb -> reverse -> link back -> hover).
+
 ---
 
 ## Dependency graph (summary)

@@ -619,7 +619,7 @@ void LockTracker::matchGrid(const GrayFrame& crop, const SearchGrid& g, int n,
     const int cw = crop.w;
     const float* tp[MAX_PASS];
     for (int k = 0; k < n; ++k) tp[k] = tmpl[k]->data();
-    const float floorEnergy = float(TMPL * TMPL) * nccFloor * nccFloor;   // see nccFloor
+    const float flatEnergy = float(TMPL * TMPL) * nccFlatSigma * nccFlatSigma;   // see nccFlatSigma
 
     int gy = 0;
     for (int y = g.g0; y <= g.g1 && gy < g.gw; y += g.stride, ++gy) {
@@ -654,8 +654,14 @@ void LockTracker::matchGrid(const GrayFrame& crop, const SearchGrid& g, int n,
                         for (int l = 0; l < LANES; ++l) d[k][l] += v[l] * tp[k][t0 + i + l];
                 }
             }
-            const float den = std::sqrt(laneSum(e) + floorEnergy) + 1e-6f;
+            const float energy = laneSum(e);
             gridMean_[at] = mean;
+            if (energy < flatEnergy) {                    // flat: no evidence either way
+                for (int k = 0; k < n; ++k) out[k][at] = 0.f;
+                gridDen_[at] = -1.f;                      // marks "flat" for the cache
+                continue;
+            }
+            const float den = std::sqrt(energy) + 1e-6f;
             gridDen_[at] = den;
             for (int k = 0; k < n; ++k) out[k][at] = laneSum(d[k]) / (tnorm[k] * den);
         }
@@ -676,7 +682,8 @@ void LockTracker::matchGridCached(const GrayFrame& crop, const SearchGrid& g,
         int gx = 0;
         for (int x = g.g0; x <= g.g1 && gx < g.gw; x += g.stride, ++gx) {
             const size_t at = size_t(gy) * g.gw + gx;
-            if (gridDen_[at] == 0.f) { out[at] = -2.f; continue; }
+            if (gridDen_[at] == 0.f) { out[at] = -2.f; continue; }   // outside the crop
+            if (gridDen_[at] < 0.f)  { out[at] = 0.f;  continue; }   // flat
             const int x0 = x - hh, y0 = y - hh;
             const float mean = gridMean_[at];
             float d[LANES] = {};

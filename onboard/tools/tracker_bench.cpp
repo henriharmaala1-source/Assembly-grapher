@@ -1,14 +1,14 @@
 // tracker_bench -- quality, timing and a BIT-EXACT TRACE of track::LockTracker
 // (the fused tracker) over synthetic scenarios x seeds. No camera, no OpenCV.
 //
-//   tracker_bench [trace.bin] [seeds=4]
-//   tracker_bench --ab <nccFloorB> [draws=16] [chromaNoise=0]
+//   tracker_bench [trace.bin] [seeds=4] [nccFlatSigma=0]
+//   tracker_bench --ab <nccFlatSigmaB> [draws=16] [chromaNoise=0]
 //
 // --ab is a PAIRED A/B in the style of desktop/eval_ab.py: the tracker is
 // chaotic (a tiny input change decides which frame re-locks), so one run per
 // arm proves nothing. Both arms run every scenario under the SAME perturbation
 // -- the designation jittered by U(-0.25, +0.25) px -- and the per-draw
-// difference is averaged over many draws. Arm A is plain NCC (nccFloor 0).
+// difference is averaged over many draws. Arm A is plain NCC (nccFlatSigma 0).
 //
 // Prints lock rate, mean centre error, losses and ms/frame per scenario, and
 // writes every per-frame Result (state, box, conf, prediction, aim) to
@@ -118,7 +118,7 @@ struct ScenarioResult {
     double errSum = 0; int errN = 0; int locked = 0, frames = 0, lostAt = -1; double ms = 0;
     int onTarget = 0, visible = 0;     // centre within 25 px, of frames the target is visible
 };
-struct Arm { float nccFloor = 0.f; float jx = 0.f, jy = 0.f; float chromaNoise = 0.f; };
+struct Arm { float flat = 0.f; float jx = 0.f, jy = 0.f; float chromaNoise = 0.f; };
 
 // One scenario: returns per-frame Results appended to `trace`.
 ScenarioResult runScenario(const std::string& name, uint32_t seed, bool colour,
@@ -129,7 +129,7 @@ ScenarioResult runScenario(const std::string& name, uint32_t seed, bool colour,
     sc.bg = valueNoise(sc.w * 2, sc.h * 2, 9, rb);
     sc.tex = valueNoise(sc.TEX, sc.TEX, 4, rb);
     LockTracker t;
-    t.nccFloor = arm.nccFloor;
+    t.nccFlatSigma = arm.flat;
     if (colour) t.setCues({CropFilter::EDGE, CropFilter::CHROMA, CropFilter::NONE});
     else        t.setCues({CropFilter::EDGE, CropFilter::NONE});
     const int N = 150;
@@ -199,9 +199,9 @@ double armScore(const Arm& arm, uint32_t draw, std::vector<double>* perCase) {
     return sum / n;
 }
 
-int abMain(float floorB, int draws, float chromaNoise) {
-    std::printf("paired A/B: nccFloor 0 vs %.2f, %d draws, chroma noise %.1f\n",
-                double(floorB), draws, double(chromaNoise));
+int abMain(float flatB, int draws, float chromaNoise) {
+    std::printf("paired A/B: nccFlatSigma 0 vs %.2f, %d draws, chroma noise %.1f\n",
+                double(flatB), draws, double(chromaNoise));
     std::vector<double> d;
     std::vector<std::vector<double>> caseA, caseB;
     for (int k = 0; k < draws; ++k) {
@@ -210,7 +210,7 @@ int abMain(float floorB, int draws, float chromaNoise) {
         a.jx = b.jx = (jr.next() - 0.5f) * 0.5f;      // same draw in both arms
         a.jy = b.jy = (jr.next() - 0.5f) * 0.5f;
         a.chromaNoise = b.chromaNoise = chromaNoise;
-        b.nccFloor = floorB;
+        b.flat = flatB;
         std::vector<double> ca, cb;
         const double sa = armScore(a, uint32_t(k), &ca), sb = armScore(b, uint32_t(k), &cb);
         caseA.push_back(ca); caseB.push_back(cb);
@@ -242,6 +242,8 @@ int main(int argc, char** argv) {
                       argc > 4 ? float(std::atof(argv[4])) : 0.f);
     const char* out = argc > 1 ? argv[1] : nullptr;
     const int seeds = argc > 2 ? std::atoi(argv[2]) : 4;
+    Arm arm;
+    arm.flat = argc > 3 ? float(std::atof(argv[3])) : 0.f;
     const char* const* names = kNames;
     std::vector<LockTracker::Result> trace;
     double totalMs = 0; int totalFrames = 0;
@@ -251,7 +253,7 @@ int main(int argc, char** argv) {
             const char* nm = names[ni];
             double eS = 0; int eN = 0, lk = 0, fr = 0, lost = 0; double ms = 0;
             for (int s = 0; s < seeds; ++s) {
-                const ScenarioResult r = runScenario(nm, uint32_t(1000 + s), colour, trace);
+                const ScenarioResult r = runScenario(nm, uint32_t(1000 + s), colour, trace, arm);
                 eS += r.errSum; eN += r.errN; lk += r.locked; fr += r.frames; ms += r.ms;
                 lost += r.lostAt >= 0;
             }

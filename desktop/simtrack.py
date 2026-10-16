@@ -103,6 +103,12 @@ KF_DEGEN_GUARD = int(os.environ.get('KF_DEGEN_GUARD', 1))
 #   by float rounding. The floor sends flat patches smoothly to 0 and leaves
 #   textured ones (patch sigma >> floor) essentially unchanged. 0 = plain NCC.
 NCC_FLOOR = float(os.environ.get('NCC_FLOOR', 0.0))
+# NCC_FLAT: patches whose standard deviation is below this many grey levels
+#   score exactly 0 instead of 0/0 -- the singularity alone, nothing else
+#   rescaled. Rounding-level flatness only: real sensor noise sits well above
+#   it, but a CLIPPED region (sky at 255) or a flat-coloured target in the
+#   chroma cue is flat to the last bit. 0 = off.
+NCC_FLAT = float(os.environ.get('NCC_FLAT', 0.0))
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 # ---------------------------------------------------------------- LK coasting
@@ -378,6 +384,8 @@ def ncc_map(chan, tmpl, tn, g0, g1, stride=STRIDE):
     den = np.sqrt(np.einsum('ijkl,ijkl->ij', Pc, Pc, dtype=np.float64)
                   + TMPL * TMPL * NCC_FLOOR * NCC_FLOOR)
     r = (num / (tn * (den + 1e-6))).astype(np.float32)
+    if NCC_FLAT > 0:
+        r[den < TMPL * NCC_FLAT] = 0.0      # sqrt(N * flat^2) = TMPL * flat
     idx = np.nonzero(ok)[0]
     resp[np.ix_(idx, idx)] = r
     return resp, gs
@@ -418,7 +426,10 @@ def ncc_maps(chan, tmpls, tns, g0, g1, stride=STRIDE):
     for tmpl, tn in zip(tmpls, tns):
         num = np.einsum('ijkl,kl->ij', Pc, tmpl.astype(np.float32), dtype=np.float64)
         resp = np.full((gw, gw), -2.0, np.float32)
-        resp[np.ix_(idx, idx)] = (num / (tn * (den + 1e-6))).astype(np.float32)
+        r = (num / (tn * (den + 1e-6))).astype(np.float32)
+        if NCC_FLAT > 0:
+            r[den < TMPL * NCC_FLAT] = 0.0
+        resp[np.ix_(idx, idx)] = r
         out.append(resp)
     return out, gs
 

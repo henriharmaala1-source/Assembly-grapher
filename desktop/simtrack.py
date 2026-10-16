@@ -107,8 +107,14 @@ NCC_FLOOR = float(os.environ.get('NCC_FLOOR', 0.0))
 #   score exactly 0 instead of 0/0 -- the singularity alone, nothing else
 #   rescaled. Rounding-level flatness only: real sensor noise sits well above
 #   it, but a CLIPPED region (sky at 255) or a flat-coloured target in the
-#   chroma cue is flat to the last bit. 0 = off.
-NCC_FLAT = float(os.environ.get('NCC_FLAT', 0.0))
+#   chroma cue is flat to the last bit. 0 = off. ON by default (0.05) since
+#   2026-10, in step with the C++ LockTracker::nccFlatSigma. Paired A/B over
+#   the synthetic analog battery, 16 draws: -0.21 +/- 0.66 (neutral), and in
+#   C++ it makes decisions independent of how the patch mean is rounded.
+# NCC_FLOOR above is the MEASURED-AND-REJECTED alternative: 0.5 -> -1.96 +/-
+#   0.88 (worse); 1 and 2 unresolved; it helps i_worst and z_below_floor but
+#   costs pan_shake, recede and occlusion. Kept so the result reproduces.
+NCC_FLAT = float(os.environ.get('NCC_FLAT', 0.05))
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 # ---------------------------------------------------------------- LK coasting

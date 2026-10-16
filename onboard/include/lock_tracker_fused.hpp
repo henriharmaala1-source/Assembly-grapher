@@ -68,15 +68,19 @@
 // 65 -> 54, both 0W-8L). Scaling the gates by 2 was tested there and is
 // DECISIVELY WORSE (-10.77 +/- 1.48, t = -7.28). Do not retry it.
 //
-// KNOWN FRAGILITY, FLAT PATCHES (measured 2026-10, tools/tracker_bench). On a
-// patch with no contrast NCC is 0/0, and what comes out is rounding residue --
-// on a flat-COLOURED target the chroma cue is exactly that. Its votes, and the
-// PSR of a map full of near-equal values, then hinge on float rounding: an
-// exact (double) patch mean, or scoring flat patches as 0, changed 30 of 9108
-// bench frames and moved one run 147 px (3-cue fast and occlusion scenes, mean
-// error 49.2 -> 53.6 and 7.4 -> 10.7 px). Neither was adopted: both scored
-// worse here, and the scenes are synthetic. A real fix (a noise floor in psrOf,
-// or texture-gating the chroma cue) wants the Python A/B on real footage.
+// FLAT PATCHES (fixed 2026-10, measured). On a patch with no contrast NCC is
+// 0/0, and what came out was rounding residue -- on a flat-coloured target the
+// chroma cue is exactly that, as is clipped sky. Its votes then hinged on
+// float rounding: computing the patch mean another way changed 30 of 9108
+// tools/tracker_bench frames and moved one run 147 px. nccFlatSigma scores
+// such patches exactly 0, and the same comparison then changes 0 frames.
+// Cost, paired A/B over 16 perturbation draws:
+//   desktop/simtrack.py (NCC_FLAT), synthetic analog battery: -0.21 +/- 0.66
+//   tracker_bench --ab, flat and noisy chroma: 0.00 (identical in every draw)
+// A uniform noise FLOOR in the denominator was tried first and rejected: it
+// rescales every low-contrast patch, and with it the chroma cue's weight
+// (simtrack NCC_FLOOR 0.5: -1.96 +/- 0.88, worse; 1 and 2: unresolved),
+// although it helped the hardest clips (i_worst 28 -> 46-52 %).
 //
 // The tunables below are NOT free parameters -- most were swept in simtrack.py
 // and several are non-monotonic. See android-tracker/TRACKER_PLAN.md before
@@ -115,8 +119,8 @@ public:
     // patches score exactly 0. Rounding-level flatness only: sensor noise sits
     // well above it, but a CLIPPED region (sky at 255) or a flat-coloured
     // target in the chroma cue is flat to the last bit. 0 = off (plain NCC,
-    // bit for bit). See KNOWN FRAGILITY above.
-    float nccFlatSigma  = 0.f;
+    // bit for bit). See FLAT PATCHES above for the measurements.
+    float nccFlatSigma  = 0.05f;
 
     void setCues(const std::vector<CropFilter>& c);
     const std::vector<CropFilter>& cues() const { return cues_; }

@@ -5,6 +5,18 @@
 #include <cmath>
 #include <cstring>
 
+// The file in reading order:
+//   lifecycle .......... reset, setCues, designate
+//   one frame .......... update() and its stages: advanceClock, egoMotion,
+//                        searchGrid, fuseCues, fuseHistogram, updateOcclusion,
+//                        acceptFix, coastAssist
+//   appearance model ... buildTemplates, adaptTemplates, maybeBankKeyframe
+//   histogram cue ...... histBinIndex, histCountsAt, histResponse
+//   matching ........... matchGrid, matchGridCached (the hot loop)
+//   peaks and scale .... argmax, proximity, subPixelPeak, applyDistractorPrior,
+//                        updateScale, psrOf
+//   small helpers ...... patches, crops, the Result
+
 namespace track {
 
 namespace {
@@ -12,7 +24,29 @@ inline double nowMs() {
     using namespace std::chrono;
     return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
 }
+
+// FOUR INDEPENDENT PARTIAL SUMS per accumulator, one per lane of a 128-bit SIMD
+// register (NEON on the Pi, SSE on a desktop). A single running float sum is a
+// serial dependency the compiler may not reorder (that would change rounding),
+// so it cannot vectorise it; written as four lanes it can, and does. TMPL is a
+// multiple of LANES. The lanes are combined pairwise at the end -- which also
+// rounds slightly BETTER than one long serial sum, and leaves the two-pass
+// structure (mean first, then centred products) untouched.
+constexpr int LANES = 4;
+inline float laneSum(const float a[LANES]) { return (a[0] + a[1]) + (a[2] + a[3]); }
+
+// THE EMA RATES WERE PER FRAME and are now per second. An appearance model
+// that adapts 0.08 per update forgets three times faster at 30 fps than at 10,
+// so the same footage processed on a busier machine produces a different
+// template -- and the sweep that chose 0.08 was run at 30. Converting against
+// NOMINAL_DT keeps that sweep's meaning and makes it hold at any rate.
+inline float emaRate(float perFrame, float dt, float nominalDt) {
+    return 1.f - std::pow(1.f - perFrame, dt / nominalDt);
+}
+
 }  // namespace
+
+// --- lifecycle ---------------------------------------------------------------
 
 const char* LockTracker::stateName(State s) {
     switch (s) {
@@ -79,79 +113,130 @@ void LockTracker::designate(const GrayFrame& frame, float px, float py, float si
     if (lkAssist) coast_.seed(frame, bcx_, bcy_, bsize_);
 }
 
+// --- one frame ---------------------------------------------------------------
+
 LockTracker::Result LockTracker::update(const GrayFrame& frame,
                                         double captureSec) {
     if (templates_.empty()) { stashPrev(frame); return Result{}; }
+    const float dt = advanceClock(captureSec);
 
-    // ELAPSED TIME, from the CAPTURE clock. The first frame has no predecessor
-    // so it gets the nominal; after that the gap is whatever it really was.
-    //
-    // CLAMPED, and the bound is doing real work. A clock that jumps, a process
-    // that was descheduled for a second, a recording seeked backwards -- each
-    // would otherwise multiply straight into a velocity extrapolation and
-    // throw the crop off the frame. Beyond the bound the honest reading is
-    // that the motion estimate no longer describes the target, so the gap is
-    // capped and the coast clock still advances by the full amount.
-    const double raw = haveTime_ ? (captureSec - tLast_) : double(NOMINAL_DT);
-    const float dt = float(std::min(0.5, std::max(1e-3, raw)));
-    if (!haveTime_) { tFix_ = captureSec; haveTime_ = true; }
-    tLast_ = captureSec;
-
-    // --- P1-A ego-motion feed-forward -------------------------------------
-    // Gated on flow CONSENSUS: high on a rigid pan, low under noise or a large
-    // occluder, so this fires only on a real camera pan and is a clean no-op on a
-    // static/noisy feed. Deadband drops sub-pixel jitter; the cap stops a bad
-    // estimate throwing the crop.
+    // 1. Predict: where the target should be now, camera motion included.
     const double tFlow0 = nowMs();
     float edx = 0.f, edy = 0.f;
-    if (havePrev_ && prevFrame_.w == frame.w && prevFrame_.h == frame.h) {
-        float fx = 0, fy = 0;
-        flow_.estimate(prevFrame_, frame, bcx_, bcy_, bsize_ * MARGIN * 0.5f, fx, fy);
-        if (flow_.consensus() >= EGO_CONS) {
-            if (std::fabs(fx) < EGO_DEAD) fx = 0.f;
-            if (std::fabs(fy) < EGO_DEAD) fy = 0.f;
-            const float cap = bsize_ * MARGIN * 0.4f;   // never shift >~0.4 crop
-            edx = std::min(std::max(fx, -cap), cap);
-            edy = std::min(std::max(fy, -cap), cap);
-        }
-    }
+    egoMotion(frame, edx, edy);
     stashPrev(frame);
     tFlowMs_ = 0.9f * tFlowMs_ + 0.1f * float(nowMs() - tFlow0);
-
     // Position BEFORE the prediction step, so the mode-2 assist below can
     // REPLACE the extrapolation rather than add to it.
     prex_ = cf_.x(); prey_ = cf_.y();
     float pcx = 0, pcy = 0;
     cf_.predict(edx, edy, dt, pcx, pcy);
 
-    // --- P0-A zoom the search out, but only once coasting has clearly FAILED --
+    // 2. Cut the crop around the prediction and lay the candidate grid on it.
+    const SearchGrid g = searchGrid();
+    const double tCrop0 = nowMs();
+    ensureScratch(g.cropPix * g.cropPix, frame.hasColor());
+    const GrayFrame crop = frame.cropResampleInto(
+        pcx - g.regionW / 2.f, pcy - g.regionW / 2.f, g.regionW, g.regionW,
+        g.cropPix, g.cropPix, cropD_.data(),
+        frame.hasColor() ? cropU_.data() : nullptr,
+        frame.hasColor() ? cropV_.data() : nullptr);
+    tCropMs_ = 0.9f * tCropMs_ + 0.1f * float(nowMs() - tCrop0);
+
+    // 3. Match every cue and fuse them into one response map (fused_).
+    const double tCue0 = nowMs();
+    float anyWeight = fuseCues(crop, g);
+    tCueMs_ = 0.9f * tCueMs_ + 0.1f * float(nowMs() - tCue0);
+    anyWeight += fuseHistogram(crop, g);
+
+    if (anyWeight > 0.f) applyDistractorPrior(fused_, g.gw, g.cc);
+    const float curPsr = (anyWeight > 0.f) ? psrOf(fused_, g.gw) : 0.f;
+    conf_ = (anyWeight > 0.f) ? psrToConf(curPsr) : 0.f;
+    const bool occluded = updateOcclusion(curPsr);
+
+    // 4. Accept the peak, or coast on the prediction.
+    // Re-locking from a zoomed-out search demands a STRONG match -- a coarse scan
+    // over a large area would otherwise re-lock onto background.
+    const float acceptConf = g.wide ? confLock() : confFloor();
+    if (anyWeight > 0.f && conf_ >= acceptConf) {
+        acceptFix(crop, g, pcx, pcy, dt, occluded, captureSec);
+    } else {
+        cf_.decay(COAST_TAU_S, dt);       // coast decelerates instead of flying off
+        bcx_ = pcx; bcy_ = pcy;
+        ++badFrames_;
+        // The COUNT stays a count -- "did the last frame miss" is about
+        // consecutive evidence, not elapsed time -- and the DURATION is what
+        // the timeout and the zoom-out are measured in.
+        coastSec_ += dt;
+        state_ = (coastSec_ >= LOSS_TIMEOUT_S) ? State::LOST
+               : g.wide                      ? State::SEARCHING
+                                             : State::COASTING;
+        if (state_ == State::LOST) { Result r = result(); reset(); r.state = State::LOST; return r; }
+    }
+
+    // 5. A missed frame: replace the extrapolation with measured image motion.
+    coastAssist(frame);
+
+    if (state_ == State::LOCKED) {
+        lastRawCrop_ = workingCropRaw(frame, bcx_, bcy_, bsize_);
+        haveLastCrop_ = true;
+    }
+    return result();
+}
+
+// ELAPSED TIME, from the CAPTURE clock. The first frame has no predecessor
+// so it gets the nominal; after that the gap is whatever it really was.
+//
+// CLAMPED, and the bound is doing real work. A clock that jumps, a process
+// that was descheduled for a second, a recording seeked backwards -- each
+// would otherwise multiply straight into a velocity extrapolation and
+// throw the crop off the frame. Beyond the bound the honest reading is
+// that the motion estimate no longer describes the target, so the gap is
+// capped and the coast clock still advances by the full amount.
+float LockTracker::advanceClock(double captureSec) {
+    const double raw = haveTime_ ? (captureSec - tLast_) : double(NOMINAL_DT);
+    const float dt = float(std::min(0.5, std::max(1e-3, raw)));
+    if (!haveTime_) { tFix_ = captureSec; haveTime_ = true; }
+    tLast_ = captureSec;
+    return dt;
+}
+
+// P1-A ego-motion feed-forward. Gated on flow CONSENSUS: high on a rigid pan,
+// low under noise or a large occluder, so this fires only on a real camera pan
+// and is a clean no-op on a static/noisy feed. Deadband drops sub-pixel jitter;
+// the cap stops a bad estimate throwing the crop.
+void LockTracker::egoMotion(const GrayFrame& frame, float& edx, float& edy) {
+    if (!havePrev_ || prevFrame_.w != frame.w || prevFrame_.h != frame.h) return;
+    float fx = 0, fy = 0;
+    flow_.estimate(prevFrame_, frame, bcx_, bcy_, bsize_ * MARGIN * 0.5f, fx, fy);
+    if (flow_.consensus() < EGO_CONS) return;
+    if (std::fabs(fx) < EGO_DEAD) fx = 0.f;
+    if (std::fabs(fy) < EGO_DEAD) fy = 0.f;
+    const float cap = bsize_ * MARGIN * 0.4f;   // never shift >~0.4 crop
+    edx = std::min(std::max(fx, -cap), cap);
+    edy = std::min(std::max(fy, -cap), cap);
+}
+
+LockTracker::SearchGrid LockTracker::searchGrid() const {
+    SearchGrid g;
+    // P0-A zoom the search out, but only once coasting has clearly FAILED.
     // For the first few lost frames the constant-velocity prediction still rides
     // along with the target, so the normal crop re-finds it; zooming out early
     // only adds a coarser peak and a bigger area to false-lock onto. After
     // FOV_DELAY misses, widen the FOV (to ~3x) by covering more frame area in a
     // proportionally larger buffer -- the target keeps its apparent SIZE so the
     // template still matches -- with a coarser stride to hold cost flat.
-    const bool wide = coastSec_ >= FOV_DELAY_S;
-    const float fov = wide
+    g.wide = coastSec_ >= FOV_DELAY_S;
+    g.fov = g.wide
         ? std::min(1.f + 0.3f * ((coastSec_ - FOV_DELAY_S) / NOMINAL_DT + 1.f), 3.f)
         : 1.f;
-    const int cropPix = (fov > 1.f) ? ((int(CROP * fov) / 2) * 2) : CROP;   // even
-    const int strideEff = std::max(1, int(STRIDE * fov));
-    const float regionW = bsize_ * MARGIN * fov;
-
-    const double tCrop0 = nowMs();
-    ensureScratch(cropPix * cropPix, frame.hasColor());
-    const GrayFrame crop = frame.cropResampleInto(
-        pcx - regionW / 2.f, pcy - regionW / 2.f, regionW, regionW,
-        cropPix, cropPix, cropD_.data(),
-        frame.hasColor() ? cropU_.data() : nullptr,
-        frame.hasColor() ? cropV_.data() : nullptr);
-    tCropMs_ = 0.9f * tCropMs_ + 0.1f * float(nowMs() - tCrop0);
-    const double tCue0 = nowMs();
+    g.cropPix = (g.fov > 1.f) ? ((int(CROP * g.fov) / 2) * 2) : CROP;   // even
+    g.stride = std::max(1, int(STRIDE * g.fov));
+    g.regionW = bsize_ * MARGIN * g.fov;
 
     // Search window: base + velocity, opened fully while coasting to re-find.
     const float velCrop = cf_.speed() * CROP / (bsize_ * MARGIN);
-    const int maxHalf = cropPix / 2 - TMPL / 2;
+    const int maxHalf = g.cropPix / 2 - TMPL / 2;
     const int searchHalf = (badFrames_ > 0)
         ? maxHalf
         : std::min(std::max(int(SEARCH + velCrop * 2.f), SEARCH), maxHalf);
@@ -165,14 +250,21 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame,
     // weight and the distractor prior DIRECTIONALLY. Centring error goes to 0 in
     // all three regimes. See the LATTICE_FIX note -- they ship together.
     const int searchHalfSym =
-        std::max(strideEff, (searchHalf / strideEff) * strideEff);
-    const int c0 = cropPix / 2;
-    const int g0 = c0 - searchHalfSym, g1 = c0 + searchHalfSym;
-    const int gw = (g1 - g0) / strideEff + 1;
-    const float cc = (gw - 1) / 2.f;
-    const float sigP = (badFrames_ > 0) ? gw / 1.4f : gw / 2.5f;
+        std::max(g.stride, (searchHalf / g.stride) * g.stride);
+    const int c0 = g.cropPix / 2;
+    g.g0 = c0 - searchHalfSym; g.g1 = c0 + searchHalfSym;
+    g.gw = (g.g1 - g.g0) / g.stride + 1;
+    g.cc = (g.gw - 1) / 2.f;
+    g.sigP = (badFrames_ > 0) ? g.gw / 1.4f : g.gw / 2.5f;
+    return g;
+}
 
-    std::vector<float> fused(size_t(gw) * gw, 0.f);
+// Every cue's response, weighted and summed into fused_. Returns the total
+// weight (0 = no cue was confident enough to vote).
+float LockTracker::fuseCues(const GrayFrame& crop, const SearchGrid& g) {
+    fused_.assign(g.cells(), 0.f);
+    resp_.resize(g.cells());
+    respAlt_.resize(g.cells());
     float anyWeight = 0.f;
 
     for (size_t ci = 0; ci < cues_.size(); ++ci) {
@@ -187,156 +279,139 @@ LockTracker::Result LockTracker::update(const GrayFrame& frame,
         // wide re-acquire we use the ANCHOR ALONE, because the adaptive may have
         // drifted onto background before we lost the target and letting a drifted
         // template drive a big coarse scan is how you re-lock onto junk.
-        std::vector<float> resp =
-            responseMap(cueCrop, anchors_[ci], anchorNorms_[ci], g0, g1, gw, strideEff);
-        if (!wide) {
-            const std::vector<float> respA =
-                responseMap(cueCrop, templates_[ci], tmplNorms_[ci], g0, g1, gw, strideEff);
-            for (size_t i = 0; i < resp.size(); ++i)
-                if (respA[i] > resp[i]) resp[i] = respA[i];
+        float psr = -1.f;     // psrOf(resp_), once known
+        if (g.wide) {
+            const Patch* t[1] = {&anchors_[ci]};
+            const float  n[1] = {anchorNorms_[ci]};
+            float* out[1] = {resp_.data()};
+            matchGrid(cueCrop, g, 1, t, n, out);
+        } else {
+            const Patch* t[2] = {&anchors_[ci], &templates_[ci]};
+            const float  n[2] = {anchorNorms_[ci], tmplNorms_[ci]};
+            float* out[2] = {resp_.data(), respAlt_.data()};
+            matchGrid(cueCrop, g, 2, t, n, out);
+            for (size_t i = 0; i < resp_.size(); ++i)
+                if (respAlt_[i] > resp_[i]) resp_[i] = respAlt_[i];
             // P1-B: consult diverse keyframes only as a TARGETED fallback --
             // while locked and not occluded AND the primary anchor+adaptive
             // response is weak (the pose-shift signature). An always-on max just
             // raises the response noise floor (sim: hurt occlusion and noisy).
-            if (badFrames_ == 0 && !keyframes_[ci].empty() && psrOf(resp, gw) < psrLock) {
-                for (size_t k = 0; k < keyframes_[ci].size(); ++k) {
-                    const std::vector<float> rk = responseMap(
-                        cueCrop, keyframes_[ci][k], keyframeNorms_[ci][k],
-                        g0, g1, gw, strideEff);
-                    for (size_t i = 0; i < resp.size(); ++i)
-                        if (rk[i] > resp[i]) resp[i] = rk[i];
+            if (badFrames_ == 0 && !keyframes_[ci].empty()) {
+                psr = psrOf(resp_, g.gw);
+                if (psr < psrLock) {
+                    for (size_t k = 0; k < keyframes_[ci].size(); ++k) {
+                        matchGridCached(cueCrop, g, keyframes_[ci][k],
+                                        keyframeNorms_[ci][k], respAlt_.data());
+                        for (size_t i = 0; i < resp_.size(); ++i)
+                            if (respAlt_[i] > resp_[i]) resp_[i] = respAlt_[i];
+                    }
+                    psr = -1.f;   // the map changed
                 }
             }
         }
         // Prediction-proximity: down-weight a cue whose peak drifts off-centre (a
         // distractor lock, or a confidently-wrong edge under scale -- PSR alone
         // cannot catch a sharp-but-wrong peak).
-        size_t pk = 0; float pv = resp[0];
-        for (size_t i = 0; i < resp.size(); ++i) if (resp[i] > pv) { pv = resp[i]; pk = i; }
-        const float dxp = float(pk % gw) - cc, dyp = float(pk / gw) - cc;
-        const float prox = std::exp(-(dxp * dxp + dyp * dyp) / (2.f * sigP * sigP));
-        const float cuePsr = psrOf(resp, gw);
+        const float prox = proximity(argmax(resp_), g);
+        const float cuePsr = psr >= 0.f ? psr : psrOf(resp_, g.gw);
         const float wgt = std::max(cuePsr - 3.f, 0.f) * prox;
         if (wgt <= 0.f) continue;
         anyWeight += wgt;
-        for (size_t i = 0; i < resp.size(); ++i) fused[i] += wgt * resp[i];
+        for (size_t i = 0; i < resp_.size(); ++i) fused_[i] += wgt * resp_[i];
         // Early termination: once one cue is overwhelmingly dominant the
         // remaining cues' NCC is spent for negligible marginal fusion weight.
         if (cuePsr > EARLY_TERM_PSR) break;
     }
-    tCueMs_ = 0.9f * tCueMs_ + 0.1f * float(nowMs() - tCue0);
+    return anyWeight;
+}
 
-    // STAPLE-style histogram cue -- chroma fg/bg, no spatial layout, so it
-    // survives deformation and occlusion boundaries the spatial cues cannot. Only
-    // during a normal-FOV search (the crop is CROP-sized, matching how the fg/bg
-    // masks were built) and only when the frame carries chroma; the wide
-    // re-acquire stays anchor-NCC-only. Weight is damped -- see HIST_WEIGHT_CAP.
-    if (!wide && crop.hasColor() && !histFg_.empty()) {
-        const std::vector<float> hresp = histResponse(crop, g0, g1, gw, strideEff);
-        size_t hpk = 0; float hpv = hresp[0];
-        for (size_t i = 0; i < hresp.size(); ++i)
-            if (hresp[i] > hpv) { hpv = hresp[i]; hpk = i; }
-        const float hdxp = float(hpk % gw) - cc, hdyp = float(hpk / gw) - cc;
-        const float hprox = std::exp(-(hdxp * hdxp + hdyp * hdyp) / (2.f * sigP * sigP));
-        const float hw = std::max(psrOf(hresp, gw) - 3.f, 0.f) * hprox * HIST_WEIGHT_CAP;
-        if (hw > 0.f) {
-            anyWeight += hw;
-            for (size_t i = 0; i < hresp.size(); ++i) fused[i] += hw * hresp[i];
-        }
-    }
+// STAPLE-style histogram cue -- chroma fg/bg, no spatial layout, so it
+// survives deformation and occlusion boundaries the spatial cues cannot. Only
+// during a normal-FOV search (the crop is CROP-sized, matching how the fg/bg
+// masks were built) and only when the frame carries chroma; the wide
+// re-acquire stays anchor-NCC-only. Weight is damped -- see HIST_WEIGHT_CAP.
+float LockTracker::fuseHistogram(const GrayFrame& crop, const SearchGrid& g) {
+    if (g.wide || !crop.hasColor() || histFg_.empty()) return 0.f;
+    histResponse(crop, g, resp_);
+    const float hw = std::max(psrOf(resp_, g.gw) - 3.f, 0.f)
+                   * proximity(argmax(resp_), g) * HIST_WEIGHT_CAP;
+    if (hw <= 0.f) return 0.f;
+    for (size_t i = 0; i < resp_.size(); ++i) fused_[i] += hw * resp_[i];
+    return hw;
+}
 
-    if (anyWeight > 0.f) applyDistractorPrior(fused, gw, cc);
-    const float curPsr = (anyWeight > 0.f) ? psrOf(fused, gw) : 0.f;
-    conf_ = (anyWeight > 0.f) ? psrToConf(curPsr) : 0.f;
-
-    // --- P2-B occlusion detection -----------------------------------------
-    // A sharp PSR drop against the running CLEAN baseline is the occlusion
-    // signature (the peak collapses, energy spreads). While occluded we still
-    // track the visible part for POSITION but freeze appearance adaptation,
-    // keyframe banking and scale, so the template cannot drift onto the occluder
-    // and wreck recovery.
-    //
-    // HYSTERESIS ON BOTH ENDS. Enter: a one-frame dip is sensor noise, not an
-    // occluder. Exit: the baseline could only ratchet UP, so a target that
-    // legitimately gets harder (recedes, fades) parked its PSR in the band and
-    // was flagged occluded FOREVER, adaptation frozen for the rest of the flight
-    // with no way back. An occlusion is transient by definition; a lasting drop
-    // means the target changed, so re-baseline after OCC_MAX.
+// P2-B occlusion detection. A sharp PSR drop against the running CLEAN
+// baseline is the occlusion signature (the peak collapses, energy spreads).
+// While occluded we still track the visible part for POSITION but freeze
+// appearance adaptation, keyframe banking and scale, so the template cannot
+// drift onto the occluder and wreck recovery.
+//
+// HYSTERESIS ON BOTH ENDS. Enter: a one-frame dip is sensor noise, not an
+// occluder. Exit: the baseline could only ratchet UP, so a target that
+// legitimately gets harder (recedes, fades) parked its PSR in the band and
+// was flagged occluded FOREVER, adaptation frozen for the rest of the flight
+// with no way back. An occlusion is transient by definition; a lasting drop
+// means the target changed, so re-baseline after OCC_MAX.
+bool LockTracker::updateOcclusion(float curPsr) {
     const bool low = psrEma_ > 0.f && curPsr < OCC_FRAC * psrEma_;
     occLow_ = low ? occLow_ + 1 : 0;
     if (occLow_ > OCC_MAX) { psrEma_ = curPsr; occLow_ = 0; }
     const bool occluded = occLow_ >= OCC_ENTER && occLow_ <= OCC_MAX;
     if (!occluded && curPsr > psrLock)
         psrEma_ = (psrEma_ <= 0.f) ? curPsr : 0.9f * psrEma_ + 0.1f * curPsr;
-
-    // Re-locking from a zoomed-out search demands a STRONG match -- a coarse scan
-    // over a large area would otherwise re-lock onto background.
-    const float acceptConf = wide ? confLock() : confFloor();
-    if (anyWeight > 0.f && conf_ >= acceptConf) {
-        float sx = 0, sy = 0;
-        subPixelPeak(fused, gw, sx, sy);
-        const float cxCrop = g0 + sx * strideEff;
-        const float cyCrop = g0 + sy * strideEff;
-        const float nx = pcx + (cxCrop / cropPix - 0.5f) * regionW;
-        const float ny = pcy + (cyCrop / cropPix - 0.5f) * regionW;
-        cf_.correct(nx, ny, dt);
-        // A real target cannot cross more than ~0.9x its own size per frame at
-        // 30 fps; anything faster is a noisy peak pumping the velocity.
-        cf_.clampSpeed(bsize_ * MAX_SPEED_BOX_PER_S);
-        bcx_ = cf_.x(); bcy_ = cf_.y();
-        if (!occluded) updateScale(crop, cxCrop, cyCrop);
-        if (conf_ >= confLock() && !occluded) adaptTemplates(crop, cxCrop, cyCrop, dt);
-        state_ = State::LOCKED; badFrames_ = 0; coastSec_ = 0.f;
-        tFix_ = captureSec; haveFix_ = true;
-    } else {
-        cf_.decay(COAST_TAU_S, dt);       // coast decelerates instead of flying off
-        bcx_ = pcx; bcy_ = pcy;
-        ++badFrames_;
-        // The COUNT stays a count -- "did the last frame miss" is about
-        // consecutive evidence, not elapsed time -- and the DURATION is what
-        // the timeout and the zoom-out are measured in.
-        coastSec_ += dt;
-        state_ = (coastSec_ >= LOSS_TIMEOUT_S) ? State::LOST
-               : wide                        ? State::SEARCHING
-                                             : State::COASTING;
-        if (state_ == State::LOST) { Result r = result(); reset(); r.state = State::LOST; return r; }
-    }
-
-    // LK COAST ASSIST, mode 2. The search has already had its say and come back
-    // empty; what is reported and carried forward is then pure extrapolation,
-    // and this replaces it with measured image displacement.
-    //
-    // REPLACE, do not add. This was a real defect in the reference: the coast
-    // branch has already set bcx to prev + vx + edx, and flow measures TOTAL
-    // image motion -- target plus camera -- so `bcx += d` counts the velocity
-    // step and the camera pan TWICE. Measured on a target moving exactly
-    // 5.00 px/frame, the first coast step came out at 10.12 px and over 8 forced
-    // coast frames the box finished +12.5 px PAST the target where plain
-    // coasting finished 13.9 px short.
-    if (lkAssist) {
-        if (state_ != State::LOCKED && state_ != State::IDLE && coast_.ready()) {
-            float ldx = 0, ldy = 0;
-            if (coast_.step(frame, ldx, ldy)) {
-                bcx_ = prex_ + ldx; bcy_ = prey_ + ldy;
-                cf_.setPos(bcx_, bcy_);
-            }
-        } else if (state_ == State::LOCKED) {
-            // Re-seed on EVERY locked frame: the flow reference frame only
-            // advances when the points do, so a stale seed means tracking from a
-            // frame several old exactly when the target is already hard to
-            // follow. Measured, every-4th scored 69 % against 75 %.
-            coast_.seed(frame, bcx_, bcy_, bsize_);
-        }
-    }
-
-    if (state_ == State::LOCKED) {
-        lastRawCrop_ = workingCropRaw(frame, bcx_, bcy_, bsize_);
-        haveLastCrop_ = true;
-    }
-    return result();
+    return occluded;
 }
 
-// --- fusion helpers --------------------------------------------------------
+// The fused peak was strong enough: move the filter onto it and, unless
+// occluded, let scale and appearance follow.
+void LockTracker::acceptFix(const GrayFrame& crop, const SearchGrid& g, float pcx, float pcy,
+                            float dt, bool occluded, double captureSec) {
+    float sx = 0, sy = 0;
+    subPixelPeak(fused_, g.gw, sx, sy);
+    const float cxCrop = g.g0 + sx * g.stride;
+    const float cyCrop = g.g0 + sy * g.stride;
+    const float nx = pcx + (cxCrop / g.cropPix - 0.5f) * g.regionW;
+    const float ny = pcy + (cyCrop / g.cropPix - 0.5f) * g.regionW;
+    cf_.correct(nx, ny, dt);
+    // A real target cannot cross more than ~0.9x its own size per frame at
+    // 30 fps; anything faster is a noisy peak pumping the velocity.
+    cf_.clampSpeed(bsize_ * MAX_SPEED_BOX_PER_S);
+    bcx_ = cf_.x(); bcy_ = cf_.y();
+    if (!occluded) updateScale(crop, cxCrop, cyCrop);
+    if (conf_ >= confLock() && !occluded) adaptTemplates(crop, cxCrop, cyCrop, dt);
+    state_ = State::LOCKED; badFrames_ = 0; coastSec_ = 0.f;
+    tFix_ = captureSec; haveFix_ = true;
+}
+
+// LK COAST ASSIST, mode 2. The search has already had its say and come back
+// empty; what is reported and carried forward is then pure extrapolation,
+// and this replaces it with measured image displacement.
+//
+// REPLACE, do not add. This was a real defect in the reference: the coast
+// branch has already set bcx to prev + vx + edx, and flow measures TOTAL
+// image motion -- target plus camera -- so `bcx += d` counts the velocity
+// step and the camera pan TWICE. Measured on a target moving exactly
+// 5.00 px/frame, the first coast step came out at 10.12 px and over 8 forced
+// coast frames the box finished +12.5 px PAST the target where plain
+// coasting finished 13.9 px short.
+void LockTracker::coastAssist(const GrayFrame& frame) {
+    if (!lkAssist) return;
+    if (state_ != State::LOCKED && state_ != State::IDLE && coast_.ready()) {
+        float ldx = 0, ldy = 0;
+        if (coast_.step(frame, ldx, ldy)) {
+            bcx_ = prex_ + ldx; bcy_ = prey_ + ldy;
+            cf_.setPos(bcx_, bcy_);
+        }
+    } else if (state_ == State::LOCKED) {
+        // Re-seed on EVERY locked frame: the flow reference frame only
+        // advances when the points do, so a stale seed means tracking from a
+        // frame several old exactly when the target is already hard to
+        // follow. Measured, every-4th scored 69 % against 75 %.
+        coast_.seed(frame, bcx_, bcy_, bsize_);
+    }
+}
+
+// --- appearance model --------------------------------------------------------
 
 void LockTracker::buildTemplates(const GrayFrame& rawCrop) {
     const size_t n = cues_.size();
@@ -358,15 +433,6 @@ void LockTracker::buildTemplates(const GrayFrame& rawCrop) {
     lumaNorm_ = normOf(lumaTmpl_);
     if (rawCrop.hasColor()) histCountsAt(rawCrop, CROP / 2.f, CROP / 2.f, histFg_, histBg_);
     else { histFg_.clear(); histBg_.clear(); }
-}
-
-// THE EMA RATES WERE PER FRAME and are now per second. An appearance model
-// that adapts 0.08 per update forgets three times faster at 30 fps than at 10,
-// so the same footage processed on a busier machine produces a different
-// template -- and the sweep that chose 0.08 was run at 30. Converting against
-// NOMINAL_DT keeps that sweep's meaning and makes it hold at any rate.
-static inline float emaRate(float perFrame, float dt, float nominalDt) {
-    return 1.f - std::pow(1.f - perFrame, dt / nominalDt);
 }
 
 void LockTracker::adaptTemplates(const GrayFrame& rawCrop, float cx, float cy,
@@ -444,9 +510,10 @@ void LockTracker::maybeBankKeyframe(int ci, const Patch& fresh) {
     }
 }
 
-// --- STAPLE-style histogram appearance cue ---------------------------------
+// --- histogram cue (STAPLE-style) --------------------------------------------
 
-int LockTracker::histBinIndex(const GrayFrame& crop, int idx) const {
+// 8x8 bins over centred chroma. Inline: it runs once per crop pixel.
+inline int LockTracker::histBinIndex(const GrayFrame& crop, int idx) const {
     const int cu = std::min(std::max(int((crop.cu[idx] + 128.f) / 32.f), 0), 7);
     const int cv = std::min(std::max(int((crop.cv[idx] + 128.f) / 32.f), 0), 7);
     return cu * 8 + cv;
@@ -471,8 +538,9 @@ void LockTracker::histCountsAt(const GrayFrame& crop, float cx, float cy,
 
 // Per-candidate mean fg-probability via an integral image, so cost is
 // O(crop + positions) instead of O(positions x template^2) like NCC.
-std::vector<float> LockTracker::histResponse(const GrayFrame& crop, int g0, int g1,
-                                             int gw, int stride) {
+void LockTracker::histResponse(const GrayFrame& crop, const SearchGrid& g,
+                               std::vector<float>& resp) {
+    const int g0 = g.g0, g1 = g.g1, gw = g.gw, stride = g.stride;
     const int w = crop.w, h = crop.h;
     if ((int)histBeta_.size() != w * h) histBeta_.assign(size_t(w) * h, 0.f);
     if ((int)histII_.size() != (w + 1) * (h + 1))
@@ -492,7 +560,7 @@ std::vector<float> LockTracker::histResponse(const GrayFrame& crop, int g0, int 
             histII_[(y + 1) * (w + 1) + (x + 1)] = histII_[y * (w + 1) + (x + 1)] + rowSum;
         }
     }
-    std::vector<float> resp(size_t(gw) * gw, 0.f);
+    resp.assign(g.cells(), 0.f);
     const int half = TMPL / 2;
     int gy = 0;
     for (int y = g0; y <= g1 && gy < gw; y += stride, ++gy) {
@@ -510,67 +578,138 @@ std::vector<float> LockTracker::histResponse(const GrayFrame& crop, int g0, int 
             }
         }
     }
-    return resp;
 }
 
-// NCC of a template over the search grid. Stride is passed in -- it widens while
-// coasting so the zoomed-out re-acquire costs the same as a normal locked search.
-std::vector<float> LockTracker::responseMap(const GrayFrame& crop, const Patch& t,
-                                            float tn, int g0, int g1, int gw,
-                                            int stride) const {
-    std::vector<float> resp(size_t(gw) * gw, 0.f);
-    int gy = 0;
-    for (int y = g0; y <= g1 && gy < gw; y += stride, ++gy) {
-        int gx = 0;
-        for (int x = g0; x <= g1 && gx < gw; x += stride, ++gx)
-            resp[size_t(gy) * gw + gx] = nccAt(crop, float(x), float(y), t, tn);
-    }
-    return resp;
-}
+// --- matching ----------------------------------------------------------------
 
-float LockTracker::nccAt(const GrayFrame& crop, float cx, float cy,
-                         const Patch& t, float tn) const {
+// NCC of templates over the search grid. Stride comes with the grid -- it widens
+// while coasting so the zoomed-out re-acquire costs the same as a normal locked
+// search.
+//
+// ALL TEMPLATES IN ONE PASS PER POSITION. Each candidate patch is read twice --
+// once for its mean, once to correlate the centred patch with every template
+// and take its own energy -- instead of twice per template. Each template's
+// dot product still accumulates in the same order with the same operations as
+// matching it alone, so the result is bit-identical; only the repeated mean and
+// energy work, and the repeated reads, are gone.
+//
+// TWO passes per position, deliberately. Folding them into one using
+//     sum((v-mean)*t) == sum(v*t)            (template is zero-mean)
+//     sum((v-mean)^2) == sum(v^2) - sum(v)^2/N
+// is true in exact arithmetic and UNSAFE in floating point on real inputs.
+// The template is only zero-mean to rounding, harmless until the patch is
+// FLAT: then the true numerator is zero, the denominator is zero, and the
+// rounding residual becomes the whole numerator divided by nothing. And the
+// variance identity subtracts two numbers both ~5e7 for 8-bit pixels over a
+// 28x28 patch to get a much smaller difference -- catastrophic cancellation
+// exactly on low-contrast patches. Measured on real frames in the Python
+// mirror: off by 2.9e+08 in the worst position, a spurious peak the argmax
+// would take. Real crops are full of flat regions (sky, saturated ground), so
+// this is a live failure mode.
+//
+// A candidate whose patch would leave the crop scores -2 (never the peak).
+void LockTracker::matchGrid(const GrayFrame& crop, const SearchGrid& g, int n,
+                            const Patch* const tmpl[], const float tnorm[],
+                            float* const out[]) {
+    static_assert(TMPL % LANES == 0, "TMPL must be a multiple of LANES");
+    gridMean_.resize(g.cells());
+    gridDen_.resize(g.cells());
     const int hh = TMPL / 2;
-    const int x0 = int(cx - hh), y0 = int(cy - hh);
-    if (x0 < 0 || y0 < 0 || x0 + TMPL > crop.w || y0 + TMPL > crop.h) return -2.f;
-    // TWO passes, deliberately. Folding them into one using
-    //     sum((v-mean)*t) == sum(v*t)            (template is zero-mean)
-    //     sum((v-mean)^2) == sum(v^2) - sum(v)^2/N
-    // is true in exact arithmetic and UNSAFE in floating point on real inputs.
-    // The template is only zero-mean to rounding, harmless until the patch is
-    // FLAT: then the true numerator is zero, the denominator is zero, and the
-    // rounding residual becomes the whole numerator divided by nothing. And the
-    // variance identity subtracts two numbers both ~5e7 for 8-bit pixels over a
-    // 28x28 patch to get a much smaller difference -- catastrophic cancellation
-    // exactly on low-contrast patches. Measured on real frames in the Python
-    // mirror: off by 2.9e+08 in the worst position, a spurious peak the argmax
-    // would take. Real crops are full of flat regions (sky, saturated ground), so
-    // this is a live failure mode. The saving was one read-only pass; not worth it.
     const float* cd = crop.d;
     const int cw = crop.w;
-    float sum = 0.f;
-    for (int j = 0; j < TMPL; ++j) {
-        const float* row = cd + size_t(y0 + j) * cw + x0;
-        for (int i = 0; i < TMPL; ++i) sum += row[i];
-    }
-    const float mean = sum / (TMPL * TMPL);
-    float d = 0.f, pn = 0.f;
-    int ti = 0;
-    for (int j = 0; j < TMPL; ++j) {
-        const float* row = cd + size_t(y0 + j) * cw + x0;
-        for (int i = 0; i < TMPL; ++i, ++ti) {
-            const float v = row[i] - mean;
-            d += v * t[ti];
-            pn += v * v;
+    const float* tp[MAX_PASS];
+    for (int k = 0; k < n; ++k) tp[k] = tmpl[k]->data();
+
+    int gy = 0;
+    for (int y = g.g0; y <= g.g1 && gy < g.gw; y += g.stride, ++gy) {
+        int gx = 0;
+        for (int x = g.g0; x <= g.g1 && gx < g.gw; x += g.stride, ++gx) {
+            const size_t at = size_t(gy) * g.gw + gx;
+            const int x0 = x - hh, y0 = y - hh;
+            if (x0 < 0 || y0 < 0 || x0 + TMPL > crop.w || y0 + TMPL > crop.h) {
+                for (int k = 0; k < n; ++k) out[k][at] = -2.f;
+                gridDen_[at] = 0.f;                       // marks "outside" for the cache
+                continue;
+            }
+            // Pass 1: the patch mean.
+            float s[LANES] = {};
+            for (int j = 0; j < TMPL; ++j) {
+                const float* row = cd + size_t(y0 + j) * cw + x0;
+                for (int i = 0; i < TMPL; i += LANES)
+                    for (int l = 0; l < LANES; ++l) s[l] += row[i + l];
+            }
+            const float mean = laneSum(s) / (TMPL * TMPL);
+            // Pass 2: the centred patch against every template, and its energy.
+            float d[MAX_PASS][LANES] = {};
+            float e[LANES] = {};
+            for (int j = 0; j < TMPL; ++j) {
+                const float* row = cd + size_t(y0 + j) * cw + x0;
+                const int t0 = j * TMPL;
+                for (int i = 0; i < TMPL; i += LANES) {
+                    float v[LANES];
+                    for (int l = 0; l < LANES; ++l) v[l] = row[i + l] - mean;
+                    for (int l = 0; l < LANES; ++l) e[l] += v[l] * v[l];
+                    for (int k = 0; k < n; ++k)
+                        for (int l = 0; l < LANES; ++l) d[k][l] += v[l] * tp[k][t0 + i + l];
+                }
+            }
+            const float den = std::sqrt(laneSum(e)) + 1e-6f;
+            gridMean_[at] = mean;
+            gridDen_[at] = den;
+            for (int k = 0; k < n; ++k) out[k][at] = laneSum(d[k]) / (tnorm[k] * den);
         }
     }
-    return d / (tn * (std::sqrt(pn) + 1e-6f));
+}
+
+// One more template on the grid matchGrid just scanned (the same crop and
+// grid): the patch means and denominators are already known, so this is the
+// dot products alone -- the same lanes, the same result as a full match.
+void LockTracker::matchGridCached(const GrayFrame& crop, const SearchGrid& g,
+                                  const Patch& tmpl, float tnorm, float* out) const {
+    const int hh = TMPL / 2;
+    const float* cd = crop.d;
+    const int cw = crop.w;
+    const float* t = tmpl.data();
+    int gy = 0;
+    for (int y = g.g0; y <= g.g1 && gy < g.gw; y += g.stride, ++gy) {
+        int gx = 0;
+        for (int x = g.g0; x <= g.g1 && gx < g.gw; x += g.stride, ++gx) {
+            const size_t at = size_t(gy) * g.gw + gx;
+            if (gridDen_[at] == 0.f) { out[at] = -2.f; continue; }
+            const int x0 = x - hh, y0 = y - hh;
+            const float mean = gridMean_[at];
+            float d[LANES] = {};
+            for (int j = 0; j < TMPL; ++j) {
+                const float* row = cd + size_t(y0 + j) * cw + x0;
+                const int t0 = j * TMPL;
+                for (int i = 0; i < TMPL; i += LANES)
+                    for (int l = 0; l < LANES; ++l) d[l] += (row[i + l] - mean) * t[t0 + i + l];
+            }
+            out[at] = laneSum(d) / (tnorm * gridDen_[at]);
+        }
+    }
+}
+
+// --- peaks and scale ---------------------------------------------------------
+
+// First index of the largest value (ties keep the earliest).
+size_t LockTracker::argmax(const std::vector<float>& v) {
+    size_t pk = 0; float pv = v[0];
+    for (size_t i = 0; i < v.size(); ++i) if (v[i] > pv) { pv = v[i]; pk = i; }
+    return pk;
+}
+
+// How close a map's peak lies to the prediction (the grid centre): 1 on it,
+// falling off as a Gaussian of width g.sigP cells.
+float LockTracker::proximity(size_t peak, const SearchGrid& g) {
+    const float dxp = float(peak % g.gw) - g.cc, dyp = float(peak / g.gw) - g.cc;
+    return std::exp(-(dxp * dxp + dyp * dyp) / (2.f * g.sigP * g.sigP));
 }
 
 void LockTracker::subPixelPeak(const std::vector<float>& resp, int gw,
                                float& sx, float& sy) {
-    size_t pk = 0; float peak = resp[0];
-    for (size_t i = 0; i < resp.size(); ++i) if (resp[i] > peak) { peak = resp[i]; pk = i; }
+    const size_t pk = argmax(resp);
+    const float peak = resp[pk];
     const int px = int(pk % gw), py = int(pk / gw);
     float dx = 0.f, dy = 0.f;
     if (px >= 1 && px < gw - 1) {
@@ -595,8 +734,8 @@ void LockTracker::subPixelPeak(const std::vector<float>& resp, int gw,
 // when a rival is present, so it never fights a lone target under scale.
 void LockTracker::applyDistractorPrior(std::vector<float>& fused, int gw,
                                        float cc) const {
-    size_t pk = 0; float pv = fused[0];
-    for (size_t i = 0; i < fused.size(); ++i) if (fused[i] > pv) { pv = fused[i]; pk = i; }
+    const size_t pk = argmax(fused);
+    const float pv = fused[pk];
     if (pv <= 0.1f) return;
     const int px = int(pk % gw), py = int(pk / gw);
     float pv2 = -1e9f; long pk2 = -1;
@@ -624,7 +763,7 @@ void LockTracker::updateScale(const GrayFrame& crop, float cx, float cy) {
         const GrayFrame patch = crop.cropResample(cx - ts / 2.f, cy - ts / 2.f,
                                                   ts, ts, TMPL, TMPL);
         const Patch p = meanSub(patch.d, TMPL * TMPL);
-        const float ncc = dot(p, lumaTmpl_) / (normOf(lumaTmpl_) * (normOf(p) + 1e-6f));
+        const float ncc = dot(p, lumaTmpl_) / (lumaNorm_ * (normOf(p) + 1e-6f));
         if (s == 1.f) ncc1 = ncc;
         if (ncc > best) { best = ncc; bestS = s; }
     }
@@ -636,11 +775,11 @@ void LockTracker::updateScale(const GrayFrame& crop, float cx, float cy) {
     bsize_ = std::min(std::max(bsize_ * (1.f + (bestS - 1.f) * 0.5f), 36.f), lim);
 }
 
-// --- shared ----------------------------------------------------------------
+// --- small helpers -----------------------------------------------------------
 
 float LockTracker::psrOf(const std::vector<float>& resp, int gw) {
-    size_t pk = 0; float peak = resp[0];
-    for (size_t i = 0; i < resp.size(); ++i) if (resp[i] > peak) { peak = resp[i]; pk = i; }
+    const size_t pk = argmax(resp);
+    const float peak = resp[pk];
     const int px = int(pk % gw), py = int(pk / gw);
     float sum = 0, sum2 = 0; int n = 0;
     for (int y = 0; y < gw; ++y)
@@ -682,9 +821,9 @@ float LockTracker::dot(const Patch& a, const Patch& b) {
 
 LockTracker::Patch LockTracker::normPatch(const GrayFrame& g, float cx, float cy,
                                           int size) const {
-    // LATTICE_FIX. The -0.5 puts the samples on the INTEGER lattice nccAt slices
+    // LATTICE_FIX. The -0.5 puts the samples on the INTEGER lattice matchGrid slices
     // from, instead of on pixel CENTRES half a pixel to the right of it.
-    // cropResample samples centres (rx + i + 0.5) while nccAt indexes integer
+    // cropResample samples centres (rx + i + 0.5) while matchGrid indexes integer
     // rows, so without this every template was a half-pixel bilinear BLUR of the
     // source, offset half a pixel from every candidate it is compared against.
     //

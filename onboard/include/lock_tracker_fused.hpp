@@ -55,16 +55,28 @@
 // suppress the rest -- android's list was REVERSED vs the reference and cost
 // 25.8 points on the low-contrast clip. Reference order is edge, chroma, none.
 //
-// STILL MISSING: the shared template-independent NCC factorisation across the
-// appearance bank (reference commit 2fb40f3). Pure throughput, no behaviour
-// change -- the anchor, adaptive and keyframe matches all recompute the same
-// per-position patch mean and norm, which depend only on the crop.
+// SHARED NCC FACTORISATION across the appearance bank (reference commit
+// 2fb40f3): the anchor and adaptive templates are matched in ONE pass per search
+// position, and the per-position patch mean and energy are cached for the
+// keyframe pass. Pure throughput -- the arithmetic per template is unchanged and
+// in the same order, so results are bit-identical to matching one template at
+// a time (checked against a recorded per-frame trace).
 //
 // KNOWN UNCLOSED REGRESSION from LATTICE_FIX: PSR roughly doubles, so the
 // ABSOLUTE psrWarn/psrLock gates are effectively half as strict and lock is held
 // longer on an empty scene (reference: z_below_floor 15 -> 1, g_occlusion
 // 65 -> 54, both 0W-8L). Scaling the gates by 2 was tested there and is
 // DECISIVELY WORSE (-10.77 +/- 1.48, t = -7.28). Do not retry it.
+//
+// KNOWN FRAGILITY, FLAT PATCHES (measured 2026-10, tools/tracker_bench). On a
+// patch with no contrast NCC is 0/0, and what comes out is rounding residue --
+// on a flat-COLOURED target the chroma cue is exactly that. Its votes, and the
+// PSR of a map full of near-equal values, then hinge on float rounding: an
+// exact (double) patch mean, or scoring flat patches as 0, changed 30 of 9108
+// bench frames and moved one run 147 px (3-cue fast and occlusion scenes, mean
+// error 49.2 -> 53.6 and 7.4 -> 10.7 px). Neither was adopted: both scored
+// worse here, and the scenes are synthetic. A real fix (a noise floor in psrOf,
+// or texture-gating the chroma cue) wants the Python A/B on real footage.
 //
 // The tunables below are NOT free parameters -- most were swept in simtrack.py
 // and several are non-monotonic. See android-tracker/TRACKER_PLAN.md before
@@ -175,22 +187,52 @@ private:
 
     using Patch = std::vector<float>;
 
+    // Where this frame searches: the crop it cuts and the candidate grid in it.
+    struct SearchGrid {
+        bool  wide = false;      // zoomed-out re-acquire (SEARCHING)
+        float fov = 1.f;         // crop area multiplier, 1..3
+        int   cropPix = CROP;    // crop side, px
+        int   stride = STRIDE;   // grid step, crop px
+        float regionW = 0.f;     // crop side, FRAME px
+        int   g0 = 0, g1 = 0;    // first/last candidate centre, crop px
+        int   gw = 0;            // candidates per side
+        float cc = 0.f;          // grid index of the prediction (centre)
+        float sigP = 0.f;        // proximity prior width, grid cells
+        size_t cells() const { return size_t(gw) * gw; }
+    };
+
+    // --- the stages of update(), in order ---
+    float      advanceClock(double captureSec);
+    void       egoMotion(const GrayFrame& frame, float& edx, float& edy);
+    SearchGrid searchGrid() const;
+    float      fuseCues(const GrayFrame& crop, const SearchGrid& g);
+    float      fuseHistogram(const GrayFrame& crop, const SearchGrid& g);
+    bool       updateOcclusion(float curPsr);
+    void       acceptFix(const GrayFrame& crop, const SearchGrid& g, float pcx, float pcy,
+                         float dt, bool occluded, double captureSec);
+    void       coastAssist(const GrayFrame& frame);
+
     void  buildTemplates(const GrayFrame& rawCrop);
     void  adaptTemplates(const GrayFrame& rawCrop, float cx, float cy, float dt);
     void  maybeBankKeyframe(int ci, const Patch& fresh);
     void  updateScale(const GrayFrame& crop, float cx, float cy);
     void  applyDistractorPrior(std::vector<float>& fused, int gw, float cc) const;
 
-    std::vector<float> responseMap(const GrayFrame& crop, const Patch& t, float tn,
-                                   int g0, int g1, int gw, int stride) const;
-    float nccAt(const GrayFrame& crop, float cx, float cy,
-                const Patch& t, float tn) const;
-    std::vector<float> histResponse(const GrayFrame& crop, int g0, int g1,
-                                    int gw, int stride);
+    // NCC of up to MAX_PASS templates over the grid, one pass per position; also
+    // caches each position's patch mean and NCC denominator (gridMean_,
+    // gridDen_) for matchGridCached, which then needs only dot products.
+    static constexpr int MAX_PASS = 2;
+    void  matchGrid(const GrayFrame& crop, const SearchGrid& g, int n,
+                    const Patch* const tmpl[], const float tnorm[], float* const out[]);
+    void  matchGridCached(const GrayFrame& crop, const SearchGrid& g,
+                          const Patch& tmpl, float tnorm, float* out) const;
+    void  histResponse(const GrayFrame& crop, const SearchGrid& g, std::vector<float>& resp);
     int   histBinIndex(const GrayFrame& crop, int idx) const;
     void  histCountsAt(const GrayFrame& crop, float cx, float cy,
                        Patch& fg, Patch& bg) const;
 
+    static size_t argmax(const std::vector<float>& v);
+    static float  proximity(size_t peak, const SearchGrid& g);
     static void  subPixelPeak(const std::vector<float>& resp, int gw,
                               float& sx, float& sy);
     static float psrOf(const std::vector<float>& resp, int gw);
@@ -252,6 +294,9 @@ private:
     // Exactly-sized crop scratch (see GrayFrame::cropResampleInto).
     std::vector<float> cropD_, cropU_, cropV_, filtBuf_;
     void ensureScratch(int n, bool colour);
+    // Per-frame grid scratch, reused: response maps and the fused map, and the
+    // per-position patch statistics matchGrid shares with matchGridCached.
+    std::vector<float> resp_, respAlt_, fused_, gridMean_, gridDen_;
 };
 
 }  // namespace track

@@ -22,23 +22,38 @@ GrayFrame GrayFrame::cropResampleInto(float rx, float ry, float rw, float rh,
     }
 
     const float sx = rw / outW, sy = rh / outH;
+    // The horizontal sample position depends only on the COLUMN, so it is
+    // worked out once per column rather than once per pixel -- the same
+    // arithmetic, so the same result, a sixth of the work per output pixel.
+    struct Col { int x0, x1; float tx; };
+    std::vector<Col> cols(static_cast<size_t>(outW));
+    for (int i = 0; i < outW; ++i) {
+        float fx = rx + (i + 0.5f) * sx;
+        fx = std::min(std::max(fx, 0.f), float(w - 1));
+        const int x0 = int(fx);
+        cols[size_t(i)] = {x0, std::min(x0 + 1, w - 1), fx - x0};
+    }
     for (int j = 0; j < outH; ++j) {
         float fy = ry + (j + 0.5f) * sy;
         fy = std::min(std::max(fy, 0.f), float(h - 1));
         const int y0 = int(fy);
         const int y1 = std::min(y0 + 1, h - 1);
         const float ty = fy - y0;
+        const int row = j * outW;
         for (int i = 0; i < outW; ++i) {
-            float fx = rx + (i + 0.5f) * sx;
-            fx = std::min(std::max(fx, 0.f), float(w - 1));
-            const int x0 = int(fx);
-            const int x1 = std::min(x0 + 1, w - 1);
-            const float tx = fx - x0;
-            const int off = j * outW + i;
-            o.d[off] = bilerp(d, w, x0, x1, y0, y1, tx, ty);
-            if (o.cu) o.cu[off] = bilerp(cu, w, x0, x1, y0, y1, tx, ty);
-            if (o.cv) o.cv[off] = bilerp(cv, w, x0, x1, y0, y1, tx, ty);
+            const Col& c = cols[size_t(i)];
+            o.d[row + i] = bilerp(d, w, c.x0, c.x1, y0, y1, c.tx, ty);
         }
+        if (o.cu)
+            for (int i = 0; i < outW; ++i) {
+                const Col& c = cols[size_t(i)];
+                o.cu[row + i] = bilerp(cu, w, c.x0, c.x1, y0, y1, c.tx, ty);
+            }
+        if (o.cv)
+            for (int i = 0; i < outW; ++i) {
+                const Col& c = cols[size_t(i)];
+                o.cv[row + i] = bilerp(cv, w, c.x0, c.x1, y0, y1, c.tx, ty);
+            }
     }
     return o;
 }

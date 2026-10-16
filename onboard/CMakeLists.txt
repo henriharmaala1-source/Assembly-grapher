@@ -129,6 +129,12 @@ if(OpenCV_calib3d_FOUND OR TARGET opencv_calib3d)
   endif()
 endif()
 
+# The fused tracker over synthetic scenarios: quality, ms/frame, and a per-frame
+# trace that refactors must reproduce byte for byte (tools/tracker_bench.cpp).
+add_executable(tracker_bench tools/tracker_bench.cpp src/lock_tracker_fused.cpp
+               src/gray_frame.cpp src/crop_filters.cpp src/optical_flow.cpp)
+target_include_directories(tracker_bench PRIVATE include)
+
 # Cortex-A76 tuning when building natively on the Pi 5.
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag("-mcpu=cortex-a76" HAS_A76)

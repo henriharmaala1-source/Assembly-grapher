@@ -109,6 +109,14 @@ public:
     // run at 30, and that could not express 150 ms at all once it did not.
     float latencySec    = 0.15f;  // output aim leads the estimate by this
     bool  lkAssist      = true;   // LK coast assist (mode 2)
+    // NCC NOISE FLOOR, grey levels (regularised NCC: the denominator is
+    // sqrt(patch energy + N * floor^2)). A FLAT patch -- the inside of a
+    // flat-coloured target in the chroma cue, sky, saturated ground -- has no
+    // shape to correlate, and plain NCC returns 0/0 there: rounding residue,
+    // which then decides whatever it feeds. The floor sends flat patches
+    // smoothly to 0 and leaves textured ones (patch sigma >> floor) as they
+    // were. 0 = plain NCC, bit for bit. See KNOWN FRAGILITY above.
+    float nccFloor      = 0.f;
 
     void setCues(const std::vector<CropFilter>& c);
     const std::vector<CropFilter>& cues() const { return cues_; }

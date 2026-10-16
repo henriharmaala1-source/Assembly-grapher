@@ -96,6 +96,13 @@ GRID_SYM    = int(os.environ.get('GRID_SYM', 1))
 #   the bank exists for -- rectifying every negative correlation to 0 and
 #   corrupting the sidelobe statistics psr_of measures.
 KF_DEGEN_GUARD = int(os.environ.get('KF_DEGEN_GUARD', 1))
+# NCC_FLOOR: a noise floor in the NCC denominator, in grey levels (regularised
+#   NCC: sqrt(sum((v-mean)^2) + N*floor^2)). On a FLAT patch -- the inside of a
+#   flat-coloured target in the chroma cue, sky, saturated ground -- plain NCC
+#   is 0/0 and returns rounding residue, so whatever decision it feeds is made
+#   by float rounding. The floor sends flat patches smoothly to 0 and leaves
+#   textured ones (patch sigma >> floor) essentially unchanged. 0 = plain NCC.
+NCC_FLOOR = float(os.environ.get('NCC_FLOOR', 0.0))
 EARLY_TERM_PSR = 10.0                         # skip remaining cues once one is this dominant
 
 # ---------------------------------------------------------------- LK coasting
@@ -368,7 +375,8 @@ def ncc_map(chan, tmpl, tn, g0, g1, stride=STRIDE):
     # cache, and it is exact.
     Pc = P - P.mean((2, 3), keepdims=True)
     num = np.einsum('ijkl,kl->ij', Pc, tmpl.astype(np.float32), dtype=np.float64)
-    den = np.sqrt(np.einsum('ijkl,ijkl->ij', Pc, Pc, dtype=np.float64))
+    den = np.sqrt(np.einsum('ijkl,ijkl->ij', Pc, Pc, dtype=np.float64)
+                  + TMPL * TMPL * NCC_FLOOR * NCC_FLOOR)
     r = (num / (tn * (den + 1e-6))).astype(np.float32)
     idx = np.nonzero(ok)[0]
     resp[np.ix_(idx, idx)] = r
@@ -403,7 +411,8 @@ def ncc_maps(chan, tmpls, tns, g0, g1, stride=STRIDE):
     ys = gs[ok] - h
     P = win[np.ix_(ys, ys)].astype(np.float32)
     Pc = P - P.mean((2, 3), keepdims=True)          # shared: centring
-    den = np.sqrt(np.einsum('ijkl,ijkl->ij', Pc, Pc, dtype=np.float64))   # shared: norm
+    den = np.sqrt(np.einsum('ijkl,ijkl->ij', Pc, Pc, dtype=np.float64)    # shared: norm
+                  + TMPL * TMPL * NCC_FLOOR * NCC_FLOOR)
     idx = np.nonzero(ok)[0]
     out = []
     for tmpl, tn in zip(tmpls, tns):

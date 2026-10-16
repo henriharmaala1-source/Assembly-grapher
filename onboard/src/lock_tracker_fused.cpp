@@ -619,6 +619,7 @@ void LockTracker::matchGrid(const GrayFrame& crop, const SearchGrid& g, int n,
     const int cw = crop.w;
     const float* tp[MAX_PASS];
     for (int k = 0; k < n; ++k) tp[k] = tmpl[k]->data();
+    const float floorEnergy = float(TMPL * TMPL) * nccFloor * nccFloor;   // see nccFloor
 
     int gy = 0;
     for (int y = g.g0; y <= g.g1 && gy < g.gw; y += g.stride, ++gy) {
@@ -653,7 +654,7 @@ void LockTracker::matchGrid(const GrayFrame& crop, const SearchGrid& g, int n,
                         for (int l = 0; l < LANES; ++l) d[k][l] += v[l] * tp[k][t0 + i + l];
                 }
             }
-            const float den = std::sqrt(laneSum(e)) + 1e-6f;
+            const float den = std::sqrt(laneSum(e) + floorEnergy) + 1e-6f;
             gridMean_[at] = mean;
             gridDen_[at] = den;
             for (int k = 0; k < n; ++k) out[k][at] = laneSum(d[k]) / (tnorm[k] * den);

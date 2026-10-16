@@ -1,0 +1,57 @@
+# kestrel bench --worlds maze --seeds 101 112 --steps 3000 --policies freeM [--oracle] [--stereo]
+## os (o1 = --oracle, s1 = --stereo)
+freeM    maze     101   flew the whole budget     287.4     17.4    263   16.5x      0.80
+freeM    maze     102   flew the whole budget     168.5     27.6     75    6.1x      0.85
+freeM    maze     103   flew the whole budget     273.0     39.1    187    7.0x      0.69
+freeM    maze     104   flew the whole budget     242.0     42.5    162    5.7x      0.76
+freeM    maze     105   flew the whole budget     287.4     37.3    233    7.7x      0.74
+freeM    maze     106   flew the whole budget     138.1     11.5     13   12.0x      0.70
+freeM    maze     107   flew the whole budget     212.9     32.4    153    6.6x      0.84
+freeM    maze     108   flew the whole budget     287.2     12.1    128   23.7x      0.82
+freeM    maze     109   flew the whole budget     238.9     43.2    191    5.5x      0.77
+freeM    maze     110   flew the whole budget     139.5      9.8     16   14.2x      0.66
+freeM    maze     111   flew the whole budget     200.9     17.4    116   11.5x      0.70
+freeM    maze     112   flew the whole budget     226.8     39.5    162    5.7x      0.83
+  -> freeM    runs 12  collisions 0  mean travel 225.2 m  net 27.5 m  cells 142  loops 8.2x
+## os1 (o1 = --oracle, s1 = --stereo)
+freeM    maze     101   flew the whole budget     286.3      5.6    206   51.4x      0.80
+freeM    maze     102   flew the whole budget     161.4     19.3     62    8.4x      0.86
+freeM    maze     103   flew the whole budget     137.3      9.7     14   14.2x      0.81
+freeM    maze     104   flew the whole budget     124.7      2.1     27   60.0x      0.84
+freeM    maze     105   flew the whole budget     271.5     28.9    212    9.4x      0.93
+freeM    maze     106   flew the whole budget     137.8     11.4     13   12.0x      0.91
+freeM    maze     107   flew the whole budget     168.2     23.2     71    7.3x      0.84
+freeM    maze     108   flew the whole budget     259.7     20.5    189   12.7x      0.82
+freeM    maze     109   flew the whole budget     185.2      2.8     80   66.5x      0.77
+freeM    maze     110   flew the whole budget     135.4      7.5      9   18.1x      0.97
+freeM    maze     111   flew the whole budget     214.5     19.9    155   10.8x      0.78
+freeM    maze     112   flew the whole budget     286.9     19.3    126   14.8x      0.83
+  -> freeM    runs 12  collisions 0  mean travel 197.4 m  net 14.2 m  cells 97  loops 13.9x
+## o1s (o1 = --oracle, s1 = --stereo)
+freeM    maze     101   flew the whole budget     287.5     19.0    225   15.1x      0.80
+freeM    maze     102   flew the whole budget     148.6     14.7     36   10.1x      0.86
+freeM    maze     103   flew the whole budget     287.4    236.3    259    1.2x      0.81
+freeM    maze     104   flew the whole budget     287.5    152.0    249    1.9x      0.69
+freeM    maze     105   flew the whole budget     287.5     29.6    213    9.7x      0.71
+freeM    maze     106   flew the whole budget     172.9     14.1     81   12.2x      0.79
+freeM    maze     107   flew the whole budget     286.8    120.7    271    2.4x      0.84
+freeM    maze     108   flew the whole budget     287.2      8.9    127   32.3x      0.82
+freeM    maze     109   flew the whole budget     287.5     11.8    132   24.4x      0.69
+freeM    maze     110   flew the whole budget     136.0      7.7      9   17.6x      0.72
+freeM    maze     111   flew the whole budget     286.6    236.6    259    1.2x      0.78
+freeM    maze     112   flew the whole budget     287.3     29.2    130    9.9x      0.83
+  -> freeM    runs 12  collisions 0  mean travel 253.6 m  net 73.4 m  cells 166  loops 3.5x
+## o1s1 (o1 = --oracle, s1 = --stereo)
+freeM    maze     101   flew the whole budget     287.5     19.0    225   15.1x      0.80
+freeM    maze     102   flew the whole budget     148.6     14.7     36   10.1x      0.86
+freeM    maze     103   flew the whole budget     287.4    236.3    259    1.2x      0.81
+freeM    maze     104   flew the whole budget     287.5    152.0    249    1.9x      0.69
+freeM    maze     105   flew the whole budget     287.5     29.6    213    9.7x      0.71
+freeM    maze     106   flew the whole budget     172.9     14.1     81   12.2x      0.79
+freeM    maze     107   flew the whole budget     286.8    120.7    271    2.4x      0.84
+freeM    maze     108   flew the whole budget     287.2      8.9    127   32.3x      0.82
+freeM    maze     109   flew the whole budget     287.5     11.8    132   24.4x      0.69
+freeM    maze     110   flew the whole budget     136.0      7.7      9   17.6x      0.72
+freeM    maze     111   flew the whole budget     286.6    236.6    259    1.2x      0.78
+freeM    maze     112   flew the whole budget     287.3     29.2    130    9.9x      0.83
+  -> freeM    runs 12  collisions 0  mean travel 253.6 m  net 73.4 m  cells 166  loops 3.5x

@@ -453,8 +453,8 @@ def write_report(args, p0, p, L, batt_x, parts, dummies, stock, stand, beds, sli
     a("")
     a(f"The wing sits where it does on the full-size plane (leading edge {L.x_le:.1f} mm from the nose, "
       f"{L.x_le * s:.1f} mm on the model) and the battery at its full-size station ({batt_x:.1f} mm, "
-      f"{batt_x * s:.1f} mm). Only the walls, the trailing edges and the boom socket's sleeve are thicker, "
-      "inwards, so the outside is the full-size plane's shape.\n")
+      f"{batt_x * s:.1f} mm). Only the walls, the trailing edges, the boom socket's sleeve and the servo "
+      "fairings' shells are thicker, inwards, so the outside is the full-size plane's shape.\n")
 
     a("## Rods to cut\n")
     a("The holes are drilled for these stock sizes plus the fit clearance, not scaled.\n")
@@ -491,7 +491,8 @@ def write_report(args, p0, p, L, batt_x, parts, dummies, stock, stand, beds, sli
       f"wherever it comes within {args.gap:g} mm of a printed part (cut by the part's material near it, moved "
       f"{args.gap:g} mm in 26 directions), so it drops into its pocket without forcing. The prop is 1.6 times "
       "thicker along the shaft (aft of its hub, with a recess for the prop nut) and the antenna 1.6 times "
-      "thicker (the lid's hole is opened up for it), so they print.\n")
+      "thicker (the lid's hole is opened up for it), so they print. A gap of 0 is a face the dummy rests or "
+      "is glued on, like the motor on its mount.\n")
     a("| dummy | full-size part, mm | trimmed off | gap to the nearest printed part |")
     a("|---|---|---|---|")
     for n, d in dummies.items():
@@ -517,6 +518,7 @@ def write_report(args, p0, p, L, batt_x, parts, dummies, stock, stand, beds, sli
             a("Thin features: printed solid, every part fills at least 90 % of its volume in PrusaSlicer, so "
               "nothing is too thin to print.")
         a("")
+        a("Over 100 % is the slicer's lines overlapping a little.\n")
         a("| part | solid fill |")
         a("|---|---|")
         for n, r in sliced.items():

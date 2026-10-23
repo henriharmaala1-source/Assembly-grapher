@@ -900,6 +900,60 @@ against any of the other three builds.
 |---|---|
 | ![Both planes](variants/figures/extreme-models.png) | ![From above](variants/figures/extreme-models-top.png) |
 
+## The 1:2 desk model
+
+`python3 airframe/mini.py` makes a half-size single boom to print: to check how
+the parts go together before printing the full-size plane, and to show it. It
+doesn't fly. It writes `variants/single-boom-mini/`: STLs, a STEP and GLB of
+the model on its stand, [REPORT.md](variants/single-boom-mini/REPORT.md) and a
+viewer page with an exploded view.
+
+![Desk model](variants/single-boom-mini/preview/hero.png)
+
+- **Same parts, same split.** The 16 printed parts are the full-size plane's,
+  scaled. The wing and the battery stay where the full-size plane has them.
+- **Thick enough to print.** Before scaling, the fuselage walls, the trailing
+  edges, the boom socket's sleeve and the servo fairings' shells are rebuilt
+  thicker, inwards, so they are still 0.8 mm (two lines) at half size. The
+  tail plates come out at 1 mm. Sliced solid in PrusaSlicer, every part
+  fills at least 99 % of its volume, so nothing is too thin to print.
+- **Stock rods, not scaled holes.** Scaled, a hole would be the scaled rod plus
+  half the full-size clearance, too tight to print. So the holes are drilled
+  again for stock sizes plus 0.25 mm:
+
+  | Rod | Full size | Model | Length |
+  |---|---|---|---|
+  | Boom | 10 x 9 mm carbon tube | 5 mm tube (carbon, aluminium or a wooden dowel) | 161 mm |
+  | Main spar | 3 mm carbon rod | 1.5 mm rod or steel wire | 238 mm |
+  | Rear spar | 2 mm carbon rod | 1 mm rod, steel wire or a paper clip | 238 mm |
+
+- **Printed dummies for the bought parts.** The four servos, the motor, prop,
+  FC, ESC, receiver, VTX, camera, antenna and battery are one solid each, made
+  from the detailed models without their wires and pads. Each is trimmed
+  wherever it comes within 0.15 mm of a printed part, so it drops into its
+  pocket. The prop and the antenna are 1.6 times thicker so they print; the
+  prop gets a recess for the motor's prop nut and the lid's antenna hole is
+  opened up.
+- **A stand.** A base, a post and a cradle cut to the fuselage's belly, under
+  the balance point, with the name engraved in the base.
+- **Checked.** Nothing overlaps: dummies, rods and stand against every printed
+  part. Every file fits the A1 mini.
+
+The 30 files print in about 8 h 35 min (0.12 mm layers, 100 g of PLA): 4 h 45
+min for the wing, its ailerons and fairings, 1 h 20 min for the fuselage and
+lid, 30 min for the tail and motor cap, 1 h 05 min for the dummies and an hour
+for the stand. Left off: the wiring, the pushrods and the hinges (glue
+the control surfaces at neutral, or hinge them with tape).
+
+| Exploded | Inside the fuselage, lid off |
+|---|---|
+| ![Exploded](variants/single-boom-mini/preview/exploded.png) | ![Bay](variants/single-boom-mini/preview/bay.png) |
+| **On the stand** | **The tail** |
+| ![Side](variants/single-boom-mini/preview/side.png) | ![Tail](variants/single-boom-mini/preview/tail.png) |
+
+`--scale`, `--fit`, `--gap` and the rod sizes (`--boom`, `--spar`,
+`--rear-spar`) are options.
+
 ## Known limitations
 
 - The weights are estimates. LW-PLA density depends heavily on print

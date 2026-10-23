@@ -95,6 +95,10 @@
   .pass { color: var(--ok); font-weight: 600; }
   ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; max-width: 72ch; }
   footer { font: 12px/1.5 var(--mono); color: var(--muted); }
+  body.shot .wrap { max-width: none; padding: 0; }
+  body.shot header, body.shot .rail, body.shot section, body.shot footer, body.shot .bar, body.shot .explode { display: none !important; }
+  body.shot .top { display: block; }
+  body.shot .stage { border: 0; border-radius: 0; aspect-ratio: auto; height: 100vh; }
 </style>
 
 <div class="wrap">
@@ -193,6 +197,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 const $ = (id) => document.getElementById(id);
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const params = new URLSearchParams(location.search);
+if (params.has("shot")) document.body.classList.add("shot");
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
 
@@ -272,11 +277,11 @@ meshes.forEach((m, n) => {
   m.userData.out = explodeVec(n, c);
 });
 
-let grid;
+let grid, explode = 0;
 function buildGrid() {
   if (grid) scene.remove(grid);
   grid = new THREE.GridHelper(0.4, 40, new THREE.Color(css("--grid-major")), new THREE.Color(css("--grid-minor")));
-  grid.position.set(center.x, box.min.y - 0.002, center.z);
+  grid.position.set(center.x, box.min.y - 0.002 - 0.034 * explode, center.z);
   scene.add(grid);
 }
 buildGrid();
@@ -289,10 +294,10 @@ function applyVis() {
   });
   if (grid) grid.visible = show.stand;
 }
-let explode = 0;
 function applyExplode(e) {
   explode = e;
   meshes.forEach((m) => m.position.copy(m.userData.home).addScaledVector(m.userData.out, e));
+  if (grid) grid.position.y = box.min.y - 0.002 - 0.034 * e;          // under the stand as it drops
   $("explode-v").textContent = `${Math.round(e * 100)} %`;
 }
 $("explode").addEventListener("input", (ev) => applyExplode(Number(ev.target.value)));
@@ -304,7 +309,7 @@ const VIEWS = {
   under: { dir: [-0.55, -0.75, 0.75], hide: ["stand"] },
   bay: { dir: [-0.3, 1, 0.5], fit: ["dummy_camera", "dummy_vtx", "dummy_fc", "dummy_battery", "dummy_servo_elev"], pad: 1.3,
          hide: ["lid", "wing_centre", "wing_R", "wing_L", "aileron_R", "aileron_L", "rod_spar_main", "rod_spar_rear",
-                "fairing_ail_R", "fairing_ail_L", "dummy_servo_ail_R", "dummy_servo_ail_L", "dummy_antenna"] },
+                "fairing_ail_R", "fairing_ail_L", "dummy_servo_ail_R", "dummy_servo_ail_L", "dummy_antenna", "stand"] },
   tail: { dir: [0.75, 0.45, 0.6], fit: ["rudder", "fin", "tail_mount", "stab", "elevator", "dummy_prop"], pad: 1.15 },
 };
 function frame(names) {

@@ -1,0 +1,589 @@
+{
+ "ratio": "2",
+ "scale": 0.5,
+ "gap": 0.15,
+ "fit": 0.25,
+ "span": 242.5,
+ "length": 272.50325326679297,
+ "height_on_stand": 70.67463312060426,
+ "minutes": 515.1,
+ "grams": 100.1,
+ "prints": [
+  {
+   "file": "wing_centre.stl",
+   "group": "printed",
+   "swatch": "#dbded6",
+   "colour": "white",
+   "bed": [
+    48.5,
+    6.4,
+    67.5
+   ],
+   "minutes": 71.8,
+   "grams": 12.79
+  },
+  {
+   "file": "wing_R.stl",
+   "group": "printed",
+   "swatch": "#edede6",
+   "colour": "white",
+   "bed": [
+    48.5,
+    6.1,
+    87.5
+   ],
+   "minutes": 93.5,
+   "grams": 17.98
+  },
+  {
+   "file": "wing_L.stl",
+   "group": "printed",
+   "swatch": "#edede6",
+   "colour": "white",
+   "bed": [
+    48.5,
+    6.1,
+    87.5
+   ],
+   "minutes": 94.2,
+   "grams": 18.02
+  },
+  {
+   "file": "aileron_R.stl",
+   "group": "printed",
+   "swatch": "#f5731a",
+   "colour": "orange",
+   "bed": [
+    12.0,
+    79.0,
+    3.3
+   ],
+   "minutes": 4.5,
+   "grams": 1.94
+  },
+  {
+   "file": "aileron_L.stl",
+   "group": "printed",
+   "swatch": "#f5731a",
+   "colour": "orange",
+   "bed": [
+    12.0,
+    79.0,
+    3.3
+   ],
+   "minutes": 4.5,
+   "grams": 1.94
+  },
+  {
+   "file": "tail_mount.stl",
+   "group": "printed",
+   "swatch": "#333840",
+   "colour": "dark grey",
+   "bed": [
+    12.0,
+    6.3,
+    14.9
+   ],
+   "minutes": 11.1,
+   "grams": 0.5
+  },
+  {
+   "file": "stab.stl",
+   "group": "printed",
+   "swatch": "#edede6",
+   "colour": "white",
+   "bed": [
+    15.4,
+    87.0,
+    1.0
+   ],
+   "minutes": 4.0,
+   "grams": 1.76
+  },
+  {
+   "file": "elevator.stl",
+   "group": "printed",
+   "swatch": "#f5731a",
+   "colour": "orange",
+   "bed": [
+    8.3,
+    86.9,
+    3.4
+   ],
+   "minutes": 2.5,
+   "grams": 0.9
+  },
+  {
+   "file": "fin.stl",
+   "group": "printed",
+   "swatch": "#edede6",
+   "colour": "white",
+   "bed": [
+    15.2,
+    39.5,
+    1.0
+   ],
+   "minutes": 2.0,
+   "grams": 0.79
+  },
+  {
+   "file": "rudder.stl",
+   "group": "printed",
+   "swatch": "#f5731a",
+   "colour": "orange",
+   "bed": [
+    8.5,
+    39.2,
+    4.8
+   ],
+   "minutes": 1.6,
+   "grams": 0.42
+  },
+  {
+   "file": "motor_mount.stl",
+   "group": "printed",
+   "swatch": "#333840",
+   "colour": "dark grey",
+   "bed": [
+    10.0,
+    10.0,
+    7.0
+   ],
+   "minutes": 5.8,
+   "grams": 0.32
+  },
+  {
+   "file": "fairing_ail_R.stl",
+   "group": "printed",
+   "swatch": "#edede6",
+   "colour": "white",
+   "bed": [
+    26.9,
+    19.4,
+    10.5
+   ],
+   "minutes": 8.0,
+   "grams": 0.9
+  },
+  {
+   "file": "fairing_ail_L.stl",
+   "group": "printed",
+   "swatch": "#edede6",
+   "colour": "white",
+   "bed": [
+    26.9,
+    19.4,
+    10.5
+   ],
+   "minutes": 8.1,
+   "grams": 0.9
+  },
+  {
+   "file": "fuselage_front.stl",
+   "group": "printed",
+   "swatch": "#333840",
+   "colour": "dark grey",
+   "bed": [
+    63.0,
+    19.2,
+    12.4
+   ],
+   "minutes": 11.3,
+   "grams": 2.22
+  },
+  {
+   "file": "fuselage_rear.stl",
+   "group": "printed",
+   "swatch": "#333840",
+   "colour": "dark grey",
+   "bed": [
+    12.4,
+    19.2,
+    79.6
+   ],
+   "minutes": 62.2,
+   "grams": 4.14
+  },
+  {
+   "file": "lid.stl",
+   "group": "printed",
+   "swatch": "#474c57",
+   "colour": "grey",
+   "bed": [
+    87.4,
+    19.2,
+    4.0
+   ],
+   "minutes": 5.5,
+   "grams": 2.28
+  },
+  {
+   "file": "dummy_servo_ail_R.stl",
+   "group": "dummy",
+   "swatch": "#2961d9",
+   "colour": "any",
+   "bed": [
+    16.2,
+    15.4,
+    9.9
+   ],
+   "minutes": 7.7,
+   "grams": 1.27
+  },
+  {
+   "file": "dummy_servo_ail_L.stl",
+   "group": "dummy",
+   "swatch": "#2961d9",
+   "colour": "any",
+   "bed": [
+    16.2,
+    15.4,
+    9.9
+   ],
+   "minutes": 7.7,
+   "grams": 1.26
+  },
+  {
+   "file": "dummy_servo_elev.stl",
+   "group": "dummy",
+   "swatch": "#2961d9",
+   "colour": "any",
+   "bed": [
+    16.2,
+    15.4,
+    8.7
+   ],
+   "minutes": 6.5,
+   "grams": 0.89
+  },
+  {
+   "file": "dummy_servo_rud.stl",
+   "group": "dummy",
+   "swatch": "#2961d9",
+   "colour": "any",
+   "bed": [
+    16.2,
+    15.4,
+    8.7
+   ],
+   "minutes": 6.6,
+   "grams": 0.89
+  },
+  {
+   "file": "dummy_motor.stl",
+   "group": "dummy",
+   "swatch": "#9ea3ad",
+   "colour": "any",
+   "bed": [
+    9.9,
+    9.0,
+    9.0
+   ],
+   "minutes": 8.1,
+   "grams": 0.72
+  },
+  {
+   "file": "dummy_prop.stl",
+   "group": "dummy",
+   "swatch": "#1a6bd9",
+   "colour": "any",
+   "bed": [
+    5.3,
+    50.8,
+    4.1
+   ],
+   "minutes": 4.5,
+   "grams": 0.52
+  },
+  {
+   "file": "dummy_camera.stl",
+   "group": "dummy",
+   "swatch": "#1a1a1c",
+   "colour": "any",
+   "bed": [
+    8.1,
+    7.0,
+    7.0
+   ],
+   "minutes": 5.5,
+   "grams": 0.48
+  },
+  {
+   "file": "dummy_vtx.stl",
+   "group": "dummy",
+   "swatch": "#0d4c29",
+   "colour": "any",
+   "bed": [
+    9.5,
+    10.8,
+    1.5
+   ],
+   "minutes": 1.5,
+   "grams": 0.15
+  },
+  {
+   "file": "dummy_antenna.stl",
+   "group": "dummy",
+   "swatch": "#141417",
+   "colour": "any",
+   "bed": [
+    17.6,
+    13.5,
+    2.7
+   ],
+   "minutes": 2.0,
+   "grams": 0.16
+  },
+  {
+   "file": "dummy_fc.stl",
+   "group": "dummy",
+   "swatch": "#14171c",
+   "colour": "any",
+   "bed": [
+    16.0,
+    13.0,
+    8.2
+   ],
+   "minutes": 6.5,
+   "grams": 1.02
+  },
+  {
+   "file": "dummy_receiver.stl",
+   "group": "dummy",
+   "swatch": "#121a33",
+   "colour": "any",
+   "bed": [
+    5.0,
+    5.0,
+    1.3
+   ],
+   "minutes": 0.7,
+   "grams": 0.04
+  },
+  {
+   "file": "dummy_esc.stl",
+   "group": "dummy",
+   "swatch": "#17171a",
+   "colour": "any",
+   "bed": [
+    11.9,
+    7.2,
+    1.4
+   ],
+   "minutes": 1.2,
+   "grams": 0.12
+  },
+  {
+   "file": "dummy_battery.stl",
+   "group": "dummy",
+   "swatch": "#2b4799",
+   "colour": "any",
+   "bed": [
+    29.0,
+    15.5,
+    8.9
+   ],
+   "minutes": 7.5,
+   "grams": 1.67
+  },
+  {
+   "file": "stand.stl",
+   "group": "stand",
+   "swatch": "#737880",
+   "colour": "grey",
+   "bed": [
+    110.0,
+    84.0,
+    24.0
+   ],
+   "minutes": 58.3,
+   "grams": 23.12
+  }
+ ],
+ "rods": [
+  {
+   "name": "boom",
+   "label": "Boom",
+   "full": "10 x 9 mm carbon tube",
+   "d": 5.0,
+   "kind": "carbon tube (or an aluminium tube or wooden dowel)",
+   "length": 161.4,
+   "hole": 5.25,
+   "through": [
+    "tail_mount",
+    "motor_mount",
+    "fuselage_rear"
+   ]
+  },
+  {
+   "name": "spar_main",
+   "label": "Main spar",
+   "full": "3 mm carbon rod",
+   "d": 1.5,
+   "kind": "carbon rod (or steel wire)",
+   "length": 237.5,
+   "hole": 1.75,
+   "through": [
+    "wing_centre",
+    "wing_R",
+    "wing_L"
+   ]
+  },
+  {
+   "name": "spar_rear",
+   "label": "Rear spar",
+   "full": "2 mm carbon rod",
+   "d": 1.0,
+   "kind": "carbon rod (or steel wire, a paper clip)",
+   "length": 237.5,
+   "hole": 1.25,
+   "through": [
+    "wing_centre",
+    "wing_R",
+    "wing_L"
+   ]
+  }
+ ],
+ "dummies": [
+  {
+   "name": "servo_ail_R",
+   "full": [
+    32.3,
+    30.8,
+    20.1
+   ],
+   "trimmed": 2.7,
+   "gap": 0.1
+  },
+  {
+   "name": "servo_ail_L",
+   "full": [
+    32.3,
+    30.8,
+    20.1
+   ],
+   "trimmed": 2.7,
+   "gap": 0.1
+  },
+  {
+   "name": "servo_elev",
+   "full": [
+    32.3,
+    30.8,
+    17.5
+   ],
+   "trimmed": 0.2,
+   "gap": 0.11
+  },
+  {
+   "name": "servo_rud",
+   "full": [
+    32.3,
+    30.8,
+    17.5
+   ],
+   "trimmed": 0.2,
+   "gap": 0.11
+  },
+  {
+   "name": "motor",
+   "full": [
+    19.8,
+    18.0,
+    18.0
+   ],
+   "trimmed": 1.7,
+   "gap": 0.0
+  },
+  {
+   "name": "prop",
+   "full": [
+    5.6,
+    101.6,
+    10.6
+   ],
+   "trimmed": 0.0,
+   "gap": null
+  },
+  {
+   "name": "camera",
+   "full": [
+    16.2,
+    14.0,
+    14.0
+   ],
+   "trimmed": 0.0,
+   "gap": 0.2
+  },
+  {
+   "name": "vtx",
+   "full": [
+    3.0,
+    21.6,
+    19.0
+   ],
+   "trimmed": 0.0,
+   "gap": 0.2
+  },
+  {
+   "name": "antenna",
+   "full": [
+    22.1,
+    3.4,
+    27.0
+   ],
+   "trimmed": 0.0,
+   "gap": 0.2
+  },
+  {
+   "name": "fc",
+   "full": [
+    32.0,
+    26.0,
+    16.5
+   ],
+   "trimmed": 0.1,
+   "gap": 0.1
+  },
+  {
+   "name": "receiver",
+   "full": [
+    10.0,
+    2.6,
+    10.0
+   ],
+   "trimmed": 0.1,
+   "gap": 0.11
+  },
+  {
+   "name": "esc",
+   "full": [
+    23.8,
+    14.5,
+    2.9
+   ],
+   "trimmed": 0.7,
+   "gap": 0.15
+  },
+  {
+   "name": "battery",
+   "full": [
+    58.0,
+    31.0,
+    18.0
+   ],
+   "trimmed": 1.4,
+   "gap": 0.15
+  }
+ ],
+ "checks": {
+  "hits": [],
+  "thin": {},
+  "thin_ok": true,
+  "thin_min": [
+   "fuselage_rear",
+   0.992
+  ],
+  "fits": true
+ }
+}

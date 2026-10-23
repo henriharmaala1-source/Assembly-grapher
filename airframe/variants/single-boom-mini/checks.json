@@ -1,0 +1,186 @@
+{
+ "hits": [],
+ "gaps": {
+  "servo_ail_R": 0.1,
+  "servo_ail_L": 0.1,
+  "servo_elev": 0.11,
+  "servo_rud": 0.11,
+  "motor": 0.0,
+  "prop": Infinity,
+  "camera": 0.2,
+  "vtx": 0.2,
+  "antenna": 0.2,
+  "fc": 0.1,
+  "receiver": 0.11,
+  "esc": 0.15,
+  "battery": 0.15
+ },
+ "sliced": {
+  "wing_centre": {
+   "seconds": 4310,
+   "grams": 12.79,
+   "cm3": 10.32,
+   "fill": 1.046
+  },
+  "wing_R": {
+   "seconds": 5610,
+   "grams": 17.98,
+   "cm3": 14.5,
+   "fill": 1.111
+  },
+  "wing_L": {
+   "seconds": 5652,
+   "grams": 18.02,
+   "cm3": 14.53,
+   "fill": 1.115
+  },
+  "aileron_R": {
+   "seconds": 271,
+   "grams": 1.94,
+   "cm3": 1.57,
+   "fill": 1.113
+  },
+  "aileron_L": {
+   "seconds": 269,
+   "grams": 1.94,
+   "cm3": 1.57,
+   "fill": 1.113
+  },
+  "tail_mount": {
+   "seconds": 666,
+   "grams": 0.5,
+   "cm3": 0.4,
+   "fill": 1.012
+  },
+  "stab": {
+   "seconds": 242,
+   "grams": 1.76,
+   "cm3": 1.42,
+   "fill": 1.069
+  },
+  "elevator": {
+   "seconds": 153,
+   "grams": 0.9,
+   "cm3": 0.73,
+   "fill": 1.192
+  },
+  "fin": {
+   "seconds": 118,
+   "grams": 0.79,
+   "cm3": 0.64,
+   "fill": 1.071
+  },
+  "rudder": {
+   "seconds": 98,
+   "grams": 0.42,
+   "cm3": 0.34,
+   "fill": 1.178
+  },
+  "motor_mount": {
+   "seconds": 351,
+   "grams": 0.32,
+   "cm3": 0.26,
+   "fill": 1.029
+  },
+  "fairing_ail_R": {
+   "seconds": 480,
+   "grams": 0.9,
+   "cm3": 0.72,
+   "fill": 1.155
+  },
+  "fairing_ail_L": {
+   "seconds": 486,
+   "grams": 0.9,
+   "cm3": 0.72,
+   "fill": 1.155
+  },
+  "fuselage_front": {
+   "seconds": 678,
+   "grams": 2.22,
+   "cm3": 1.79,
+   "fill": 1.006
+  },
+  "fuselage_rear": {
+   "seconds": 3734,
+   "grams": 4.14,
+   "cm3": 3.33,
+   "fill": 0.992
+  },
+  "lid": {
+   "seconds": 330,
+   "grams": 2.28,
+   "cm3": 1.84,
+   "fill": 1.175
+  },
+  "dummy_servo_ail_R": {
+   "seconds": 461,
+   "grams": 1.27,
+   "cm3": 1.03
+  },
+  "dummy_servo_ail_L": {
+   "seconds": 460,
+   "grams": 1.26,
+   "cm3": 1.02
+  },
+  "dummy_servo_elev": {
+   "seconds": 393,
+   "grams": 0.89,
+   "cm3": 0.72
+  },
+  "dummy_servo_rud": {
+   "seconds": 396,
+   "grams": 0.89,
+   "cm3": 0.72
+  },
+  "dummy_motor": {
+   "seconds": 487,
+   "grams": 0.72,
+   "cm3": 0.58
+  },
+  "dummy_prop": {
+   "seconds": 267,
+   "grams": 0.52,
+   "cm3": 0.42
+  },
+  "dummy_camera": {
+   "seconds": 333,
+   "grams": 0.48,
+   "cm3": 0.39
+  },
+  "dummy_vtx": {
+   "seconds": 90,
+   "grams": 0.15,
+   "cm3": 0.12
+  },
+  "dummy_antenna": {
+   "seconds": 120,
+   "grams": 0.16,
+   "cm3": 0.13
+  },
+  "dummy_fc": {
+   "seconds": 391,
+   "grams": 1.02,
+   "cm3": 0.82
+  },
+  "dummy_receiver": {
+   "seconds": 40,
+   "grams": 0.04,
+   "cm3": 0.03
+  },
+  "dummy_esc": {
+   "seconds": 70,
+   "grams": 0.12,
+   "cm3": 0.1
+  },
+  "dummy_battery": {
+   "seconds": 452,
+   "grams": 1.67,
+   "cm3": 1.34
+  },
+  "stand": {
+   "seconds": 3498,
+   "grams": 23.12,
+   "cm3": 18.65
+  }
+ }
+}

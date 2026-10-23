@@ -6,6 +6,7 @@
 //   node airframe/tools/render.mjs --video [--ffmpeg path/to/ffmpeg] [--fps 30]
 //   node airframe/tools/render.mjs --variant single-boom [--video]   (variants/<name>/preview/)
 //   node airframe/tools/render.mjs --variant extreme                 (no assembly video: no bill of process yet)
+//   node airframe/tools/render.mjs --variant single-boom-mini        (the 1:2 desk model from mini.py)
 //
 // --video steps the viewer's assembly animation frame by frame and encodes
 // preview/assembly.mp4 (H.264) with ffmpeg.
@@ -82,7 +83,16 @@ if (process.argv.includes("--video")) {
   server.close();
   process.exit(0);
 }
-const shots = variant === "single-boom" || variant === "extreme" ? [
+const shots = variant === "single-boom-mini" ? [
+  ["hero", "view=quarter", 1600, 1000],
+  ["exploded", "view=quarter&explode=1", 1600, 1000],
+  ["top", "view=top&stand=0", 1400, 1000],
+  ["side", "view=side", 1600, 800],
+  ["under", "view=under", 1400, 900],
+  ["bay", "view=bay", 1400, 900],
+  ["tail", "view=tail", 1400, 900],
+  ["parts", "view=quarter&explode=1&dummies=0", 1600, 1000],
+] : variant === "single-boom" || variant === "extreme" ? [
   ["hero", "view=quarter", 1600, 1000],
   ["top", "view=top", 1400, 1000],
   ["side", "view=side", 1600, 700],

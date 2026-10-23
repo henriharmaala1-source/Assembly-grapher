@@ -443,6 +443,7 @@ python3 airframe/build.py --variant optimized   # the optimized variant in varia
 python3 airframe/build.py --variant single-boom # the single-boom variant in variants/single-boom/
 python3 aero/extreme.py                         # the extreme-aero design study (aero/study/EXTREME.md)
 python3 airframe/build.py --variant extreme     # what it picks, in variants/extreme/
+python3 airframe/mini.py                        # the 1:2 desk model of the single boom, in variants/single-boom-mini/
 
 python3 airframe/process.py     # BOP.md, DFMA.md, viewer/process.json (slices with prusa-slicer if installed)
 python3 airframe/process.py --variant single-boom   # the same for variants/single-boom/
@@ -455,6 +456,7 @@ node airframe/tools/render.mjs
 node airframe/tools/render.mjs --video --ffmpeg /path/to/ffmpeg
 node airframe/tools/render.mjs --variant single-boom [--video]   # into variants/single-boom/preview/
 node airframe/tools/render.mjs --variant extreme                  # into variants/extreme/preview/
+node airframe/tools/render.mjs --variant single-boom-mini         # the desk model's previews
 node airframe/tools/shoot-variants.mjs   # the comparison page's figures (after aero/variants.py)
 ```
 

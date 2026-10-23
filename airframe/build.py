@@ -1406,7 +1406,9 @@ def build(p: Params = Params(), k: Kit = Kit()):
     return r
 
 
-def build_at(p: Params, k: Kit, x_le: float):
+def build_at(p: Params, k: Kit, x_le: float, batt_x: float = None):
+    """The plane with its wing at x_le. The battery goes where the CAD masses
+    balance it, or at batt_x if given (mini.py: the full-size plane's station)."""
     x_le = round(x_le, 1)
     L = Layout(p, x_le, k)
     sec = Section(p, L)
@@ -1476,10 +1478,11 @@ def build_at(p: Params, k: Kit, x_le: float):
             items.append(("motor_wires", motor_wire_mass(L.x_mp - L.esc_x), (L.esc_x + L.x_mp) / 2, 0.0))
         return items
 
-    others = [i for i in mass_items() if i[0] != "battery"]
-    target = L.cg_x
-    m = sum(i[1] for i in others)
-    batt_x = round((target * (m + k.battery) - sum(i[1] * i[2] for i in others)) / k.battery, 1)
+    if batt_x is None:
+        others = [i for i in mass_items() if i[0] != "battery"]
+        target = L.cg_x
+        m = sum(i[1] for i in others)
+        batt_x = round((target * (m + k.battery) - sum(i[1] * i[2] for i in others)) / k.battery, 1)
     parts.update(body(batt_x))
     refs = bought(p, k, L, sec, batt_x)
     return p, k, L, sec, parts, refs, mass_items(), batt_x

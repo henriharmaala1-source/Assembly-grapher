@@ -102,7 +102,7 @@ text menu rather than dying. A build without OpenCV highgui does the same.
 
   kestrel sitl [--connect tcp:127.0.0.1:5760] [--world gallery|hall]
                [--seed N] [--seconds S] [--alt M] [--script FILE.kms]
-               [--lowres] [--keep-going] [--speedup X] [--csv FILE]
+               [--lowres] [--keep-going] [--speedup X] [--vio] [--csv FILE]
                [--shot PREFIX]
         THE SAME AUTONOMY FLYING ARDUPILOT. Everything `mission sim` flies --
         onboard's voxel module, MissionController, SCRIPT mode -- but the
@@ -120,6 +120,16 @@ text menu rather than dying. A build without OpenCV highgui does the same.
         clock (x --speedup, which must equal SITL's own), and frames that
         render late are counted and reported. --csv appends one row per run;
         --shot writes PREFIX_mission.png, _chase.png, _depth.png.
+        --vio flies GNSS-DENIED: the simulated left IR image is rendered too,
+        kestrel's own VIO runs on it inside the voxel module as aboard, and
+        every valid pose goes to ArduPilot as ODOMETRY -- from the ground, since
+        an FC with no GPS will not take GUIDED or arm until it has a position.
+        The EKF origin is set from SITL's first fix. Start SITL with
+        nav-sim\sitl\kestrel_vio.parm for this (GPS off, vision as the EKF's
+        position source). The report adds the VIO's and the EKF's worst
+        horizontal error against SITL's truth.
+        Every run also reports how well the aircraft HOLDS STILL while the
+        mission commands zero velocity (THINK/SCAN): the true speed's RMS.
         Needs a SITL running first -- see ARDUPILOT SITL just below.
 
   kestrel train [args...]
@@ -179,10 +189,18 @@ were late; `--lowres` (424x240) is about twice as fast. Measured on the
 author's 4-core cloud box with SITL alongside: 848x480 42 % late, 424x240
 0-1 % late.
 
-WHAT IT DOES NOT DO YET: no VIO. The FC navigates on SITL's simulated GPS,
-not on kestrel's vision odometry, and the camera gives depth only (no IR
-pair). And SITL has no walls: a collision is counted here, and ArduPilot
-flies on through it.
+GNSS-DENIED (--vio): add the vision parameters when starting SITL, e.g. in
+WSL2
+
+       build/sitl/bin/arducopter --model + --speedup 1 -I0 -w \
+           --defaults Tools/autotest/default_params/copter.parm,/mnt/c/<where>/nav-sim/sitl/kestrel_vio.parm
+
+(-w wipes SITL's saved parameters so the files take effect.) GPS1_TYPE 0 means
+there is no GPS at all; ArduPilot's position is kestrel's VIO and nothing else.
+
+WHAT IT DOES NOT DO: SITL has no walls -- a collision is counted here, and
+ArduPilot flies on through it. Not lockstep (see --speedup). No right IR
+image (DepthVio uses the left one and depth; ORB-SLAM3's stereo would need it).
 
 ---------------------------------------------------------------------
 

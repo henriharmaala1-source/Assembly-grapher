@@ -17,8 +17,11 @@ constexpr float kBodyR = 0.3f;     // the airframe; the planner's 0.6 m has marg
 class FlightShow::Source : public sim::FrameSource {
 public:
     Source(const sim::VoxelWorld& w, const sim::CamParams& p, bool stereo,
-           const sim::CamPose* truth)
-        : sim_(w, p, /*truth depth*/ !stereo), truth_(truth) {}
+           const sim::CamPose* truth, bool ir)
+        : sim_(w, p, /*truth depth*/ !stereo), truth_(truth) {
+        if (ir) sim_.enableIR(false);       // the left IR image, for VIO
+    }
+    bool intensity(cv::Mat& out) const override { return sim_.intensity(out); }
     const char* name() const override { return "sim-d435i-attitude-only"; }
     bool ok() const override { return true; }
     const sim::CamParams& params() const override { return sim_.params(); }
@@ -87,9 +90,11 @@ FlightShow::FlightShow(const FlightParams& p)
     mp.useVoxel = true; mp.useMap = false;
     VoxelNavModule::Params vp;
     vp.stillSpeedMs = mp.settleSpeedMs;
+    vp.vio = p.vio;
+    vp.emitter = sim::EmitterMode::Off;
     vp.legMaxM = std::max(mp.stepM + mp.voxStopMarginM, 1.f);
 
-    src_ = new Source(*world_, cp, p.stereo, &truth_);
+    src_ = new Source(*world_, cp, p.stereo, &truth_, p.vio);
     mod_.reset(new VoxelNavModule(std::unique_ptr<sim::FrameSource>(src_), vp));
     mission_.reset(new MissionController(mp));
     mission_->enable(true);
@@ -143,21 +148,42 @@ float FlightShow::clearance(float px, float py, float pz, float upTo) const {
     return best;
 }
 
-void FlightShow::tick() {
-    const float dt = kDt;
-    if (p_.plant && !p_.plant->ready(truth_)) return;     // not airborne yet
-    // Telemetry the aircraft would have (test_voxel_nav's closed loop).
+// Telemetry the aircraft would have (test_voxel_nav's closed loop).
+void FlightShow::telemetry() {
     wm_.with([&](WorldState& s) {
         s.tickMonoS = monoNowS();
         s.vehYawDeg = truth_.yawDeg; s.vehGroundspeed = std::fabs(v_);
         s.estValid = true; s.estPe = truth_.e; s.estPn = truth_.n;
         s.estSpeed = std::fabs(v_); s.missionGo = true;
         s.vehAltM = truth_.u - floorZ_;
+        if (p_.vio) { s.vehRollDeg = truth_.rollDeg; s.vehPitchDeg = truth_.pitchDeg; }
     });
+}
+
+// Each NEW valid VIO pose to the plant, once (fc_odometry.hpp, as main.cpp).
+void FlightShow::feedVision() {
+    if (!p_.plant || !p_.vio) return;
+    const WorldState s = wm_.snapshot();
+    VisionOdom v;
+    if (s.vioStampS == lastVisionS_ || !visionOdomFromWorld(s, v)) return;
+    lastVisionS_ = s.vioStampS;
+    p_.plant->vision(v);
+}
+
+void FlightShow::tick() {
+    const float dt = kDt;
+    if (p_.plant && !p_.plant->ready(truth_)) {           // not airborne yet
+        // ...but the VIO runs, and is sent: a GNSS-denied FC arms on it.
+        if (p_.vio) { telemetry(); mod_->run(cv::Mat(), wm_); feedVision(); }
+        return;
+    }
+    telemetry();
     // The think tier runs at camera rate while a vantage is open, and
-    // occasionally otherwise (it must still say "moving").
+    // occasionally otherwise (it must still say "moving"). With VIO, every
+    // tick: an odometry fed at 3 Hz is not one.
     const std::string ph = wm_.snapshot().missionPhase;
-    if (ph == "THINK" || ph == "SCAN" || ticks_ % 6 == 0) mod_->run(cv::Mat(), wm_);
+    if (p_.vio || ph == "THINK" || ph == "SCAN" || ticks_ % 6 == 0) mod_->run(cv::Mat(), wm_);
+    feedVision();
     if (mod_->resets() != lastResets_) {       // a new vantage: a new map, here
         lastResets_ = mod_->resets();
         vantage_ = truth_;

@@ -69,3 +69,21 @@ inline bool vioLocalEstimate(double nowS, WorldState& s, double maxAgeS = 0.5) {
     s.estFeedingFc = false;
     return true;
 }
+
+// VIO as the FC gets it (ODOMETRY via sendVisionOdometry): WorldState's
+// vio* -> VisionOdom. VALID frames only -- a coasting pose is a guess, and an
+// EKF fed guesses as measurements is the failure this avoids -- so false, and
+// `v` untouched, when the VIO has nothing. Quality from the tracked count:
+// ArduPilot's VISO_QUAL_MIN and the source-switching scripts act on it. ONE
+// implementation: the aircraft (main.cpp) and `kestrel sitl` both send this.
+inline bool visionOdomFromWorld(const WorldState& ps, VisionOdom& v) {
+    if (!ps.vioValid) return false;
+    v.e = ps.vioPe; v.n = ps.vioPn; v.u = ps.vioPu;
+    v.ve = ps.vioVe; v.vn = ps.vioVn;
+    v.rollDeg = ps.vehRollDeg; v.pitchDeg = ps.vehPitchDeg;
+    v.yawDeg = ps.vioYawDeg;
+    v.resets = ps.vioResets;
+    v.stampS = ps.vioStampS;
+    vioQualityFromTracked(ps.vioTracked, v);
+    return true;
+}

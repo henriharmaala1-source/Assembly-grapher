@@ -640,6 +640,7 @@ struct Cfg {
     int   sConn = 0, sWorld = 0, sSeed = 101, sSecs = 1, sAlt = 0, sSpeed = 0;
     int   sScript = -1;
     bool  sLowres = false, sKeep = false, sCsv = true, sShot = true;
+    bool  sVio = false;           // --vio: GNSS-denied, kestrel's VIO is the FC's position
 };
 
 const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor", "playground", "scenarios"};
@@ -816,6 +817,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 a.push_back("--script"); a.push_back(g_missions[size_t(c.sScript)]);
             }
             if (c.sLowres) a.push_back("--lowres");
+            if (c.sVio) a.push_back("--vio");
             if (c.sKeep) a.push_back("--keep-going");
             if (c.sCsv) { a.push_back("--csv"); a.push_back("sitl.csv"); }
             if (c.sShot) { a.push_back("--shot"); a.push_back("sitl"); }
@@ -977,7 +979,7 @@ enum {
     ID_M_RUNS_M = 940, ID_M_RUNS_P, ID_M_SEED_M, ID_M_SEED_P, ID_M_TARGET, ID_M_VIDEO, ID_M_SHOW,
     ID_M_ALT = 950, ID_M_DIST, ID_M_WIND, ID_M_DROP, ID_M_LAT,
     ID_S_CONN = 1000, ID_S_WORLD, ID_S_SEED_M, ID_S_SEED_P, ID_S_SECS, ID_S_ALT,
-    ID_S_SPEED, ID_S_SCRIPT, ID_S_LOWRES, ID_S_KEEP, ID_S_CSV, ID_S_SHOT,
+    ID_S_SPEED, ID_S_SCRIPT, ID_S_LOWRES, ID_S_KEEP, ID_S_CSV, ID_S_SHOT, ID_S_VIO,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -1545,6 +1547,7 @@ const FlagBtn FLAG_BTNS[] = {
     {MISSION, ID_M_LOWRES,  "--lowres"},
     {SITL,  ID_S_LOWRES,    "--lowres"},
     {SITL,  ID_S_KEEP,      "--keep-going"},
+    {SITL,  ID_S_VIO,       "--vio"},
     {MISSION, ID_M_SHOW,    "--show"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
     {BENCH, ID_BENCH_STEREO, "--stereo"},
@@ -1756,6 +1759,8 @@ void panelSitl(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   ID_S_SCRIPT, haveScript});
     bs.push_back({cv::Rect(x + 370, 300, 180, 36), c.sLowres ? "424x240 (sees less)" : "848x480 (as flown)",
                   ID_S_LOWRES, c.sLowres});
+    bs.push_back({cv::Rect(x + 560, 300, 200, 36), c.sVio ? "GNSS-denied: VIO" : "FC on SITL's GPS",
+                  ID_S_VIO, c.sVio});
     bs.push_back({cv::Rect(x, 350, 250, 36), c.sKeep ? "fly on through contact" : "first contact ends it",
                   ID_S_KEEP, c.sKeep});
     bs.push_back({cv::Rect(x + 260, 350, 140, 36), c.sCsv ? "sitl.csv row" : "no csv", ID_S_CSV, c.sCsv});
@@ -1770,6 +1775,10 @@ void panelSitl(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
             "LAND.", x, 452, 0.42, DIM);
     txt(im, "Pictures: sitl_mission.png, _chase.png, _depth.png. The script button "
             "cycles ./missions.", x, 478, 0.42, DIM);
+    txt(im, "GNSS-denied: start SITL with nav-sim/sitl/kestrel_vio.parm (GPS off, "
+            "vision as the EKF's", x, 504, 0.42, DIM);
+    txt(im, "position); the VIO on the simulated IR is then all ArduPilot navigates "
+            "on.", x, 522, 0.42, DIM);
 }
 
 // ------------------------------------------------------------------- compose
@@ -1905,6 +1914,7 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     if (id == ID_S_KEEP)   { c.sKeep = !c.sKeep; return; }
     if (id == ID_S_CSV)    { c.sCsv = !c.sCsv; return; }
     if (id == ID_S_SHOT)   { c.sShot = !c.sShot; return; }
+    if (id == ID_S_VIO)    { c.sVio = !c.sVio; return; }
     if (id >= ID_D_MODEL && id < ID_D_MODEL + 30) {
         c.dModel = id - ID_D_MODEL - 1;      // the first entry is "none"
         return;

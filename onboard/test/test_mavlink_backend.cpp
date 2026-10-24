@@ -151,7 +151,7 @@ std::vector<PV> identityParams() {
         {"WPNAV_SPEED", 1000}, {"WPNAV_SPEED_UP", 150}, {"WPNAV_SPEED_DN", 150},
         {"GUID_OPTIONS", 0},
         {"VISO_TYPE", 3}, {"VISO_QUAL_MIN", 0}, {"VISO_DELAY_MS", 50}, {"EK3_SRC1_YAW", 1},
-        {"EK3_SRC1_VELZ", 0}, {"FS_EKF_ACTION", 1}};
+        {"EK3_SRC1_VELZ", 0}, {"EK3_SRC1_VELXY", 0}, {"FS_EKF_ACTION", 1}};
     static const char* rc[4][5] = {
         {"RC1_MIN", "RC1_TRIM", "RC1_MAX", "RC1_DZ", "RC1_REVERSED"},
         {"RC2_MIN", "RC2_TRIM", "RC2_MAX", "RC2_DZ", "RC2_REVERSED"},
@@ -438,12 +438,12 @@ int main() {
         CHECK(!fc.paramsResolved());
         const int asked = serveParams(mfd, fc, identityParams());
         CHECK(fc.paramsResolved());
-        CHECK(asked >= 45);                       // every one asked for, by name
+        CHECK(asked >= 46);                       // every one asked for, by name
         const std::string rep = fc.paramReport();
-        CHECK(rep.find("45 of 45") != std::string::npos);
+        CHECK(rep.find("46 of 46") != std::string::npos);
         CHECK(rep.find("matches ours") != std::string::npos);
         CHECK(rep.find("!!") == std::string::npos);
-        std::printf("  parameters: %d requests, 45 answers, control held until then\n", asked);
+        std::printf("  parameters: %d requests, 46 answers, control held until then\n", asked);
     }
 
     // --- ACRO: mid stick is not "hold height", so no sticks at all -----------
@@ -826,14 +826,17 @@ int main() {
         fc.setExpectVision(true);
         fcParam(mfd, "VISO_TYPE", 1);
         fcParam(mfd, "EK3_SRC1_VELZ", 6);
+        fcParam(mfd, "EK3_SRC1_VELXY", 6);         // measured to oscillate (SITL)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         fc.tick();
         const std::string rep = fc.paramReport();
         CHECK(rep.find("!! VISO_TYPE 1") != std::string::npos);
         CHECK(rep.find("!! EK3_SRC1_VELZ 6") != std::string::npos);
+        CHECK(rep.find("!! EK3_SRC1_VELXY 6") != std::string::npos);
         CHECK(rep.find("EKF origin") != std::string::npos);       // its state is reported
         fcParam(mfd, "VISO_TYPE", 3);
         fcParam(mfd, "EK3_SRC1_VELZ", 0);
+        fcParam(mfd, "EK3_SRC1_VELXY", 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         fc.tick();
         CHECK(fc.paramReport().find("!!") == std::string::npos);

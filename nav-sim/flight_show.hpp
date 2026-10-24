@@ -39,6 +39,7 @@
 #include "frame_source.hpp"
 #include "voxel_world.hpp"
 
+#include "fc_odometry.hpp"  // onboard: visionOdomFromWorld
 #include "mission.hpp"      // onboard
 #include "mission_program.hpp"  // onboard
 #include "script_mode.hpp"  // onboard
@@ -67,6 +68,9 @@ public:
     virtual void step(const ControlCmd& c, float dt, sim::CamPose& truth, float& speed) = 0;
     // The script handed the flight to the FC (LAND / RTL).
     virtual void handOff(WorldState::FcRequest r) = 0;
+    // A fresh VIO pose, as the aircraft would send it to its FC (FlightParams
+    // vio). The kinematic plant has no estimator to feed.
+    virtual void vision(const VisionOdom& v) { (void)v; }
 };
 
 struct FlightParams {
@@ -100,6 +104,13 @@ struct FlightParams {
     std::shared_ptr<const kms::Program> script;
     // Null: the kinematic plant. Otherwise this flies (`kestrel sitl`).
     std::shared_ptr<Plant> plant;
+    // VIO: navcore's DepthVio on the simulated LEFT IR image, inside the
+    // module as aboard (VoxelNavModule::Params::vio), run on EVERY tick, and
+    // its valid poses handed to the plant as ODOMETRY would be -- including
+    // on the ground: a GNSS-denied FC will not take GUIDED or arm until it
+    // has a position, and that position is this. Emitter off (no dots to
+    // track as zero motion).
+    bool vio = false;
 };
 
 struct FlightStats {
@@ -177,6 +188,9 @@ private:
     int   ticks_ = 0, lastResets_ = -1;
     std::string phase_;
     bool  inContact_ = false;
+    double lastVisionS_ = -1e9;            // vioStampS last handed to the plant
+    void  telemetry();
+    void  feedVision();
     bool  plantLastSet_ = false;           // a Plant's pose at the last tick's end
     float plantLastE_ = 0.f, plantLastN_ = 0.f;
     sim::CamPose vantage_;

@@ -201,6 +201,24 @@ int main() {
         std::printf("  FC local position: used only when EKF3 vouches, fresh\n");
     }
 
+    // VIO -> what the FC is sent: valid frames only, every field from its own
+    // vio*/veh* source, quality from the tracked count. main.cpp and
+    // `kestrel sitl` both build ODOMETRY through this.
+    {
+        WorldState s;
+        VisionOdom v; v.e = 99.f;
+        s.vioValid = false; s.vioPe = 1.f;
+        CHECK(!visionOdomFromWorld(s, v) && v.e == 99.f);        // a guess is not sent
+        s.vioValid = true; s.vioPe = 1.f; s.vioPn = 2.f; s.vioPu = 0.5f;
+        s.vioVe = 0.3f; s.vioVn = -0.2f; s.vioYawDeg = 87.f; s.vioResets = 2;
+        s.vehRollDeg = 3.f; s.vehPitchDeg = -4.f; s.vioTracked = 120; s.vioStampS = 12.5;
+        CHECK(visionOdomFromWorld(s, v));
+        CHECK(v.e == 1.f && v.n == 2.f && v.u == 0.5f && v.ve == 0.3f && v.vn == -0.2f);
+        CHECK(v.yawDeg == 87.f && v.rollDeg == 3.f && v.pitchDeg == -4.f && v.resets == 2);
+        CHECK(v.stampS == 12.5 && v.quality == 100 && std::fabs(v.posSigmaM - 0.05f) < 1e-6f);
+        std::printf("  VIO -> ODOMETRY: valid frames only, fields and quality carried\n");
+    }
+
     std::printf("test_fc_link: %s (%d failures)\n", fails ? "FAIL" : "OK", fails);
     return fails ? 1 : 0;
 }

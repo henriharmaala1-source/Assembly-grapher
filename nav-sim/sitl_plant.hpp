@@ -42,6 +42,11 @@ struct SitlParams {
     std::string connect = "tcp:127.0.0.1:5760";   // ArduPilot SITL's SERIAL0
     float takeoffM = 1.5f;     // above the ground; FlightParams::altM
     double startTimeoutS = 120.0;
+    // GNSS-DENIED: kestrel's VIO is the FC's position (ODOMETRY into EKF3).
+    // SITL must be started with nav-sim/sitl/kestrel_vio.parm, which turns
+    // its GPS off and makes ExternalNav the EKF source; the EKF origin is set
+    // from SITL's own first fix, as fc.origin_* is aboard.
+    bool vio = false;
     bool verbose = true;
 };
 
@@ -56,6 +61,8 @@ public:
     bool ready(sim::CamPose& truth) override;
     void step(const ControlCmd& c, float dt, sim::CamPose& truth, float& speed) override;
     void handOff(WorldState::FcRequest r) override;
+    void vision(const VisionOdom& v) override;
+    long visionSent() const { return visSent_; }
 
     // LAND, and service the link until the FC is down and disarmed (or the
     // timeout). For the end of a run.
@@ -77,6 +84,7 @@ private:
     std::string failure_;
     double t0_ = 0, stageT_ = 0, lastAskS_ = -1e9;
     long textSeen_ = 0;
+    long visSent_ = 0;
     // Truth origin (the first fix) and where it lands in the world.
     bool originSet_ = false;
     double lat0_ = 0, lon0_ = 0;

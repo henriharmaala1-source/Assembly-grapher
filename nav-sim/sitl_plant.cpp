@@ -11,6 +11,10 @@ namespace ksitl {
 namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kMPerDegLat = 111319.49;   // WGS84 equatorial, as ArduPilot's own
+// The D435i above SITL's reference point. SITL puts that point AT the ground
+// when landed, and a camera there would sit in the floor slab and see half a
+// floor -- nothing for VIO to track before takeoff.
+constexpr float kCamAboveRefM = 0.15f;
 double nowS() {
     using namespace std::chrono;
     return duration<double>(steady_clock::now().time_since_epoch()).count();
@@ -38,6 +42,7 @@ bool SitlPlant::connect() {
         return false;
     }
     fc_.requestSimTruth(50);
+    fc_.setExpectVision(p_.vio);       // the parameter report then checks VISO_* / EK3_*
     t0_ = stageT_ = nowS();
     return true;
 }
@@ -75,7 +80,7 @@ void SitlPlant::truthToPose(sim::CamPose& out) const {
     const double dE = (t.lonDeg - lon0_) * kMPerDegLat * std::cos(lat0_ * kPi / 180.0);
     out.e = spawnE_ + float(dE);
     out.n = spawnN_ + float(dN);
-    out.u = floorZ_ + (t.altMslM - alt0_);
+    out.u = floorZ_ + kCamAboveRefM + (t.altMslM - alt0_);
     // Same conventions both sides: yaw clockwise from North, nose-up pitch and
     // right-wing-down roll positive (depth_camera.cpp camToWorld).
     float yaw = float(t.yawRad * 180.0 / kPi);
@@ -110,6 +115,9 @@ bool SitlPlant::ready(sim::CamPose& truth) {
             // The origin: where SITL has the aircraft standing, before it moves.
             lat0_ = st.latDeg; lon0_ = st.lonDeg; alt0_ = st.altMslM;
             originSet_ = true;
+            // With no GPS the EKF has no origin, and GUIDED nothing to work
+            // in: give it where SITL says it is, as fc.origin_* does aboard.
+            if (p_.vio) fc_.setEkfOrigin(lat0_, lon0_, alt0_);
             if (p_.verbose) std::printf("%s", fc_.paramReport().c_str());
             next(Stage::GUIDED);
         } else if (t - stageT_ > 10.0 && !st.valid && fc_.linkUp() && ask) {
@@ -152,6 +160,10 @@ void SitlPlant::step(const ControlCmd& c, float, sim::CamPose& truth, float& spe
     // Signed along the nose, as the kinematic plant's v.
     const float a = truth.yawDeg * float(kPi) / 180.f;
     speed = t.vN * std::cos(a) + t.vE * std::sin(a);
+}
+
+void SitlPlant::vision(const VisionOdom& v) {
+    if (p_.vio && fc_.sendVisionOdometry(v)) ++visSent_;
 }
 
 void SitlPlant::handOff(WorldState::FcRequest r) {

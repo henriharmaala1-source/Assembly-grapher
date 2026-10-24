@@ -173,7 +173,8 @@ public:
     // dropped). The ENU->NED swap happens here and nowhere else. On the way the
     // pose goes through VioFrameAligner: continuous across VIO re-anchors (the
     // reset_counter sent never changes) and its yaw held to the FC's.
-    // ArduPilot: VISO_TYPE=3, EK3_SRC1_POSXY=6, EK3_SRC1_VELXY=6, firmware
+    // ArduPilot: VISO_TYPE=3, EK3_SRC1_POSXY=6, EK3_SRC1_VELXY=0 (NOT 6:
+    // gnss-denied-setup.md section 11, measured in SITL), firmware
     // 4.7.1+ (onboard/docs/gnss-denied-setup.md section 11).
     bool sendVisionOdometry(const VisionOdom& v) override;
     // The FC will be asked to fuse vision: the parameter report then flags
@@ -315,7 +316,7 @@ private:
 
     // Parameter readback. Fixed table, no allocation on the link thread.
     struct Param { const char* name; float v; bool have; int tries; };
-    static constexpr int kNParams = 52;     // 45 meanings + 7 renamed in 4.7
+    static constexpr int kNParams = 53;     // 46 meanings + 7 renamed in 4.7
     Param    params_[kNParams];
     bool     paramsStarted_ = false, paramsDone_ = false;
     bool     renamedSeen_ = false;          // answered under a 4.7 name

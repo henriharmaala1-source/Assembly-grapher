@@ -566,20 +566,9 @@ int main(int argc, char** argv) {
             const WorldState ps = wm.snapshot();
             if (ps.voxProxN > 0)
                 fcLink.proximity(ps.voxProx, ps.voxProxN, ps.voxProxStampS);
-            // VIO into EKF3, VALID frames only: a coasting pose is a guess, and
-            // an EKF fed guesses as measurements is the failure this avoids.
-            if (vioToFc && ps.vioValid) {
-                VisionOdom v;
-                v.e = ps.vioPe; v.n = ps.vioPn; v.u = ps.vioPu;
-                v.ve = ps.vioVe; v.vn = ps.vioVn;
-                v.rollDeg = ps.vehRollDeg; v.pitchDeg = ps.vehPitchDeg;
-                v.yawDeg = ps.vioYawDeg;
-                v.resets = ps.vioResets;
-                // ODOMETRY's quality: ArduPilot's VISO_QUAL_MIN and the
-                // source-switching scripts act on it.
-                vioQualityFromTracked(ps.vioTracked, v);
-                fcLink.vision(v, ps.vioStampS);
-            }
+            // VIO into EKF3, VALID frames only (fc_odometry.hpp).
+            VisionOdom v;
+            if (vioToFc && visionOdomFromWorld(ps, v)) fcLink.vision(v, ps.vioStampS);
         }
 
         // ---- target designation: mouse click (display) or AUX switch (in-flight).

@@ -315,6 +315,22 @@ int main() {
         check(m.u16(26) == 18000, "  hdg = 180.00 deg");
     }
     {
+        // SIM_STATE from pymavlink (common v2.0), the shape ArduPilot's
+        // SIM::sim_state_send fills: q = 30 deg yaw, roll 0.05 pitch -0.1 rad,
+        // lat/lon as floats holding deg*1e7 AND as the int32 extensions, alt
+        // 600.5 m MSL, vn 1.5 ve -2 vd 0.25. Only SITL sends it: it is the
+        // simulator's truth, which nav-sim renders the cameras from.
+        Msg m;
+        check(decode("fd5c00000001016c0000ea46773f0000000000000000ee83843ecdcc4c3dcdccccbd920a063f"
+                     "cdcccc3dcdcc4c3ecdcc1cc10ad7233c0ad7a33c8fc2f53c0ba0a8cd9ed1b14e00201644000000"
+                     "00000000000000c03f000000c00000803e93feebea16cfe858c064", m)
+              && m.id == MSG_SIM_STATE, "decode SIM_STATE");
+        check(std::fabs(m.f32(12) - 0.258819f) < 1e-5f && m.f32(4) == 0.f, "  q1..q4 (w first)");
+        check(std::fabs(m.f32(24) - 0.523599f) < 1e-5f, "  yaw at offset 24");
+        check(m.i32(84) == -353632621 && m.i32(88) == 1491652374, "  lat_int/lon_int extensions");
+        check(m.f32(60) == 600.5f && m.f32(72) == 1.5f && m.f32(80) == 0.25f, "  alt, vn, vd");
+    }
+    {
         Msg m;
         check(decode("fd1e0000072abf180000d202964900000000871cd623f8dbd30ec0d401009600c800f4012823030b3f26", m)
               && m.id == MSG_GPS_RAW_INT, "decode GPS_RAW_INT");

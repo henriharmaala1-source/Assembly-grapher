@@ -26,6 +26,7 @@ constexpr Row kMsgs[] = {
     { MSG_SET_POSITION_TARGET_LOCAL_NED, 143,  53 },
     { MSG_VISION_POSITION_ESTIMATE,      158, 117 },
     { MSG_VISION_SPEED_ESTIMATE,         208,  57 },
+    { MSG_SIM_STATE,                      32,  92 },
     { MSG_EKF_STATUS_REPORT,              71,  22 },
     { MSG_OBSTACLE_DISTANCE,              23, 167 },
     { MSG_ODOMETRY,                       91, 233 },

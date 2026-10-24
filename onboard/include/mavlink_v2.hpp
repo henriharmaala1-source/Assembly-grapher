@@ -65,6 +65,7 @@ enum : uint32_t {
     MSG_SET_POSITION_TARGET_LOCAL_NED = 84,
     MSG_VISION_POSITION_ESTIMATE      = 102,
     MSG_VISION_SPEED_ESTIMATE         = 103,
+    MSG_SIM_STATE                     = 108,   // SITL only: the TRUE state
     MSG_EKF_STATUS_REPORT             = 193,
     MSG_OBSTACLE_DISTANCE             = 330,
     MSG_ODOMETRY                      = 331,
@@ -73,6 +74,7 @@ enum : uint32_t {
 
 // MAV_CMD values used with COMMAND_LONG.
 enum : uint16_t {
+    CMD_NAV_TAKEOFF          = 22,
     CMD_DO_SET_MODE          = 176,
     CMD_COMPONENT_ARM_DISARM = 400,
     CMD_SET_MESSAGE_INTERVAL = 511,

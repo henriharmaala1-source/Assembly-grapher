@@ -74,6 +74,10 @@ public:
     bool setMode(FcMode m) override;
     bool arm(bool force) override;
     bool disarm() override;
+    // MAV_CMD_NAV_TAKEOFF to `altM` above home. ArduCopter takes it only in
+    // GUIDED, armed, on the ground -- the SITL runner's way into the air; a
+    // pilot does this with the sticks.
+    bool takeoff(float altM);
 
     void setAssistMode(bool on) override { assist_ = on; }
     void latchBaseline() override;
@@ -215,6 +219,25 @@ public:
     // VELOCITY path is this, with ControlCmd scaled by the StickScale.
     bool sendVelocityBody(float vFwd, float vRight, float vDown, float yawRateRadS);
 
+    // SITL TRUTH. ArduPilot's simulator reports its own true state as SIM_STATE
+    // (108); a real aircraft never sends it. nav-sim's SITL bridge asks for it
+    // and renders the cameras from it, so the onboard stack sees the world from
+    // where the simulated aircraft really IS -- not from where its EKF believes
+    // it is, which is the very thing under test. Off unless asked for.
+    struct SimTruth {
+        bool   valid = false;
+        double stampS = 0;                        // receipt time, steady clock
+        long   count = 0;                         // frames received
+        float  qw = 1, qx = 0, qy = 0, qz = 0;    // body FRD -> NED
+        float  rollRad = 0, pitchRad = 0, yawRad = 0;
+        float  accel[3] = {}, gyroRadS[3] = {};   // body frame
+        double latDeg = 0, lonDeg = 0;
+        float  altMslM = 0;
+        float  vN = 0, vE = 0, vD = 0;            // m/s, NED
+    };
+    void requestSimTruth(int hz) { simTruthHz_ = hz; if (link_.isOpen()) requestStreams(); }
+    const SimTruth& simTruth() const { return simTruth_; }
+
     // What the FC says it is doing right now. The pilot's ACRO and our GUIDED
     // are both visible here, which is how the OS knows whether it is flying.
     uint32_t copterMode() const { return copterMode_; }
@@ -288,9 +311,10 @@ private:
 
     // Parameter readback. Fixed table, no allocation on the link thread.
     struct Param { const char* name; float v; bool have; int tries; };
-    static constexpr int kNParams = 45;
+    static constexpr int kNParams = 52;     // 45 meanings + 7 renamed in 4.7
     Param    params_[kNParams];
     bool     paramsStarted_ = false, paramsDone_ = false;
+    bool     renamedSeen_ = false;          // answered under a 4.7 name
     double   paramsT0_ = 0, lastParamReqS_ = -1e9;
     double   paramTimeoutS_ = 3.0;
     float    pv(const char* name, float def) const;
@@ -311,6 +335,9 @@ private:
     // RTL -> LAND when the FC does not take RTL.
     double   specialReqS_ = -1e9, modeConfirmS_ = 2.5;
     bool     specialSeen_ = false;
+
+    int      simTruthHz_ = 0;
+    SimTruth simTruth_;
 
     bool   originValid_ = false;
     double originLat_ = 0, originLon_ = 0;

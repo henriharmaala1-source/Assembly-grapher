@@ -39,7 +39,33 @@ constexpr const char* kParamNames[] = {
     // Vision into EKF3: which backend, what it fuses, what it drops.
     "VISO_TYPE", "VISO_QUAL_MIN", "VISO_DELAY_MS", "EK3_SRC1_YAW", "EK3_SRC1_VELZ",
     "FS_EKF_ACTION",
+    // ArduPilot 4.7 renamed the ones above that carried centi-units and moved
+    // them to SI. Asked for too; an answer is converted into the old name's
+    // units (kRenamed), so nothing downstream knows which firmware answered.
+    "LOIT_SPEED_MS", "PILOT_SPD_UP", "PILOT_SPD_DN", "ATC_ANGLE_MAX",
+    "WP_SPD", "WP_SPD_UP", "WP_SPD_DN",
 };
+
+// 4.7 name -> pre-4.7 name, and what to multiply the 4.7 value by. Found by
+// flying the backend against ArduCopter 4.7 SITL: every one of these went
+// unanswered under its old name, and the stick and climb calibration quietly
+// fell back to unscaled.
+struct Renamed { const char* now; const char* was; float toOld; };
+constexpr Renamed kRenamed[] = {
+    {"LOIT_SPEED_MS", "LOIT_SPEED",     100.f},   // m/s  -> cm/s
+    {"PILOT_SPD_UP",  "PILOT_SPEED_UP", 100.f},
+    {"PILOT_SPD_DN",  "PILOT_SPEED_DN", 100.f},
+    {"ATC_ANGLE_MAX", "ANGLE_MAX",      100.f},   // deg  -> centideg
+    {"WP_SPD",        "WPNAV_SPEED",    100.f},
+    {"WP_SPD_UP",     "WPNAV_SPEED_UP", 100.f},
+    {"WP_SPD_DN",     "WPNAV_SPEED_DN", 100.f},
+};
+// The pre-4.7 name a 4.7 name replaces; null if `n` is not one.
+const char* renamedFrom(const char* n) {
+    for (const Renamed& r : kRenamed) if (std::strcmp(r.now, n) == 0) return r.was;
+    return nullptr;
+}
+bool isRenamedNew(const char* n) { return renamedFrom(n) != nullptr; }
 
 const char* copterModeName(uint32_t m) {
     switch (m) {
@@ -169,6 +195,8 @@ void MavlinkBackend::requestStreams() {
     };
     for (const auto& w : want)
         commandLong(mav::CMD_SET_MESSAGE_INTERVAL, float(w.id), 1e6f / float(w.hz));
+    if (simTruthHz_ > 0)
+        commandLong(mav::CMD_SET_MESSAGE_INTERVAL, float(mav::MSG_SIM_STATE), 1e6f / float(simTruthHz_));
     lastStreamReqS_ = nowS();
 }
 
@@ -182,6 +210,11 @@ void MavlinkBackend::tick() {
     // nothing would ever ask again. Re-request periodically while nothing is
     // arriving; this is idempotent and costs five frames a minute.
     if (!linkUp_ && t - lastStreamReqS_ > 5.0) requestStreams();
+    // ...and a link that is up on heartbeats alone, with no ATTITUDE, has had
+    // its requests dropped: an FC still booting accepts the connection and
+    // loses SET_MESSAGE_INTERVAL. Seen against ArduCopter SITL, whose first
+    // run after start flew a whole flight with attitude never arriving.
+    else if (linkUp_ && t - lastAttS_ > 2.0 && t - lastStreamReqS_ > 3.0) requestStreams();
 
     linkUp_ = link_.isOpen() && everRx_ && (t - lastRxS_) < 2.0;
     tel_.linkUp = linkUp_;
@@ -222,8 +255,15 @@ void MavlinkBackend::tick() {
 void MavlinkBackend::serviceParams(double now) {
     if (paramsDone_ || !linkUp_) return;
     if (!paramsStarted_) { paramsStarted_ = true; paramsT0_ = now; }
+    // A meaning answered under either of its names is answered: a 4.7 FC
+    // never answers the old name, an older one never the new.
+    float dummy;
+    auto settled = [&](const Param& q) {
+        const char* was = renamedFrom(q.name);
+        return q.have || (was && param(was, dummy));
+    };
     bool all = true;
-    for (const Param& q : params_) all = all && q.have;
+    for (const Param& q : params_) all = all && settled(q);
     if (all || now - paramsT0_ >= paramTimeoutS_) {
         paramsDone_ = true;
         std::printf("%s", paramReport().c_str());
@@ -232,7 +272,7 @@ void MavlinkBackend::serviceParams(double now) {
     if (now - lastParamReqS_ < 0.5) return;
     lastParamReqS_ = now;
     for (Param& q : params_) {
-        if (q.have) continue;
+        if (settled(q)) continue;
         mav::Payload p;
         p.i16(-1);                                 // by name, not index
         p.u8(tgtSys_); p.u8(tgtComp_);
@@ -249,6 +289,12 @@ void MavlinkBackend::onParamValue(const mav::Msg& m) {
     for (int i = 0; i < 16; ++i) id[i] = char(m.u8(8 + i));
     for (Param& q : params_)
         if (std::strcmp(q.name, id) == 0) { q.v = m.f32(0); q.have = true; }
+    for (const Renamed& r : kRenamed) {
+        if (std::strcmp(r.now, id) != 0) continue;
+        renamedSeen_ = true;
+        for (Param& q : params_)
+            if (std::strcmp(q.name, r.was) == 0) { q.v = m.f32(0) * r.toOld; q.have = true; }
+    }
 }
 
 bool MavlinkBackend::rcMapOk() const {
@@ -269,9 +315,15 @@ std::string MavlinkBackend::paramReport() const {
             r += b;
         }
     };
-    int have = 0;
-    for (const Param& q : params_) have += q.have;
-    line("[mavlink] ArduPilot parameters: %d of %d answered\n", have, kNParams);
+    // Counted by meaning: a 4.7 name and the old one it fills are one entry.
+    int have = 0, total = 0;
+    for (const Param& q : params_) {
+        if (isRenamedNew(q.name)) continue;
+        ++total;
+        have += q.have;
+    }
+    line("[mavlink] ArduPilot parameters: %d of %d answered%s\n", have, total,
+         renamedSeen_ ? " (4.7 SI names: LOIT_SPEED_MS, PILOT_SPD_*, WP_SPD* converted)" : "");
 
     float v;
     const float our = float(codec_.sysid());
@@ -390,6 +442,25 @@ void MavlinkBackend::onMessage(const mav::Msg& m) {
     case mav::MSG_PARAM_VALUE:
         if (m.sysid == tgtSys_) onParamValue(m);
         break;
+    case mav::MSG_SIM_STATE: {
+        if (m.sysid != tgtSys_) break;
+        SimTruth& t = simTruth_;
+        t.qw = m.f32(0); t.qx = m.f32(4); t.qy = m.f32(8); t.qz = m.f32(12);
+        t.rollRad = m.f32(16); t.pitchRad = m.f32(20); t.yawRad = m.f32(24);
+        for (int i = 0; i < 3; ++i) { t.accel[i] = m.f32(28 + 4 * i); t.gyroRadS[i] = m.f32(40 + 4 * i); }
+        // The float lat/lon hold deg*1e7, and a float has 24 bits: ~1.4 m
+        // steps at 149 deg. The int32 extensions are exact; a sender that
+        // predates them leaves them zero, and only then is the float used.
+        const int32_t latI = m.i32(84), lonI = m.i32(88);
+        t.latDeg = (latI || lonI) ? latI * 1e-7 : double(m.f32(52)) * 1e-7;
+        t.lonDeg = (latI || lonI) ? lonI * 1e-7 : double(m.f32(56)) * 1e-7;
+        t.altMslM = m.f32(60);
+        t.vN = m.f32(72); t.vE = m.f32(76); t.vD = m.f32(80);
+        t.stampS = nowS();
+        t.valid = true;
+        ++t.count;
+        break;
+    }
     case mav::MSG_HEARTBEAT: {
         // Only the autopilot's own heartbeat, not another GCS's. Without this
         // check a ground station on the same link would set our idea of the
@@ -997,6 +1068,10 @@ bool MavlinkBackend::arm(bool force) {
     // pre-arm checks. It exists for a reason and is not a convenience: pass
     // force only where a human has already decided.
     return commandLong(mav::CMD_COMPONENT_ARM_DISARM, 1.f, force ? 21196.f : 0.f);
+}
+
+bool MavlinkBackend::takeoff(float altM) {
+    return commandLong(mav::CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, altM);
 }
 
 bool MavlinkBackend::disarm() {

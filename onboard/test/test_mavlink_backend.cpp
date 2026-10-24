@@ -282,6 +282,34 @@ void testSocketTransports() {
     }
 }
 
+// A booting FC accepts the link and drops SET_MESSAGE_INTERVAL. Seen against
+// ArduCopter SITL: heartbeats arrived, ATTITUDE never did, and nothing asked
+// again because the link counted as up. Now a link up without ATTITUDE
+// re-requests its streams.
+void testStreamsReRequested() {
+    int mfd = -1, sfd = -1;
+    char name[128];
+    if (openpty(&mfd, &sfd, name, nullptr, nullptr) != 0) return;
+    fcntl(mfd, F_SETFL, O_NONBLOCK);
+    close(sfd);
+    MavlinkBackend fc;
+    CHECK(fc.connect(name, 115200));
+    drainMaster(mfd);                                  // the requests the FC "lost"
+    int again = 0;
+    for (int k = 0; k < 40; ++k) {                     // 4 s of heartbeats, no ATTITUDE
+        fcHeartbeat(mfd, mav::COPTER_STABILIZE, false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        fc.tick();
+        for (const mav::Msg& m : decodeAll(drainMaster(mfd, 0)))
+            if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_SET_MESSAGE_INTERVAL
+                && m.f32(0) == float(mav::MSG_ATTITUDE)) ++again;
+    }
+    CHECK(fc.linkUp());
+    CHECK(again >= 1);
+    std::printf("  link up without ATTITUDE: streams re-requested (%d)\n", again);
+    close(mfd);
+}
+
 }  // namespace
 
 int main() {
@@ -361,6 +389,38 @@ int main() {
                 double(t.battV), double(t.battPct * 100), t.rcCount);
 
     drainMaster(mfd);   // discard heartbeats so far
+
+    // --- SITL truth: asked for only on request, decoded field for field ------
+    {
+        CHECK(!fc.simTruth().valid);
+        fc.requestSimTruth(50);
+        int asked = 0;
+        for (const mav::Msg& m : decodeAll(drainMaster(mfd)))
+            if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_SET_MESSAGE_INTERVAL
+                && m.f32(0) == float(mav::MSG_SIM_STATE) && m.f32(4) == 20000.f) ++asked;
+        CHECK(asked == 1);
+        mav::Payload p;                            // ArduPilot's sim_state_send shape
+        const float q[4] = {0.9659258f, 0.f, 0.f, 0.2588190f};   // yaw 30 deg
+        for (float v : q) p.f32(v);
+        p.f32(0.05f); p.f32(-0.1f); p.f32(0.5235988f);
+        p.f32(0.1f); p.f32(0.2f); p.f32(-9.8f);
+        p.f32(0.01f); p.f32(0.02f); p.f32(0.03f);
+        p.f32(-353632620.f); p.f32(1491652370.f); p.f32(600.5f);
+        p.f32(0); p.f32(0);
+        p.f32(1.5f); p.f32(-2.f); p.f32(0.25f);
+        p.i32(-353632621); p.i32(1491652374);
+        fcSend(mfd, mav::MSG_SIM_STATE, p);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        const auto& s = fc.simTruth();
+        CHECK(s.valid && s.count == 1);
+        CHECK(std::fabs(s.qz - 0.258819f) < 1e-6f && std::fabs(s.yawRad - 0.5235988f) < 1e-6f);
+        CHECK(std::fabs(s.latDeg + 35.3632621) < 1e-9 && std::fabs(s.lonDeg - 149.1652374) < 1e-9);
+        CHECK(s.altMslM == 600.5f && s.vN == 1.5f && s.vE == -2.f && s.vD == 0.25f);
+        CHECK(s.gyroRadS[2] == 0.03f && s.accel[2] == -9.8f);
+        std::printf("  SITL truth: SIM_STATE requested at 50 Hz, decoded (int32 lat/lon)\n");
+        drainMaster(mfd);
+    }
 
     // --- no control until ArduPilot's parameters are known ------------------
     {
@@ -548,6 +608,38 @@ int main() {
         fc.tick();
         CHECK(fc.sendControl(c));
         drainMaster(mfd);
+
+        // ARDUPILOT 4.7 NAMES. 4.7 renamed the centi-unit parameters and moved
+        // them to SI (LOIT_SPEED cm/s -> LOIT_SPEED_MS m/s, PILOT_SPEED_UP ->
+        // PILOT_SPD_UP m/s); found flying against 4.7 SITL, where every one of
+        // them went unanswered. The same calibration served under the new
+        // names must give the same pulses -- here 6 m/s and 1 / 0.5 m/s, so
+        // a missed conversion (x100) or a stale old value shows.
+        for (const PV& q : std::vector<PV>{{"LOIT_SPEED_MS", 6.f}, {"PILOT_SPD_UP", 1.f},
+                                           {"PILOT_SPD_DN", 0.5f}})
+            fcParam(mfd, q.n, q.v);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        fc.tick();
+        float worst47 = 0;
+        for (const Case& k : cases) {
+            ControlCmd c47; c47.valid = true;
+            c47.pitch = k.pitch * 0.5f; c47.throttle = k.thr; c47.yaw = 0;
+            CHECK(fc.sendControl(c47));
+            auto h = decodeAll(drainMaster(mfd));
+            const mav::Msg* o = lastOverride(h);
+            CHECK(o != nullptr);
+            if (!o) continue;
+            const float vFwd = -apAngle(o->u16(2), 1100, 1500, 1900, 20) * 6.f;
+            const float clmb =  apClimb(o->u16(4), 1100, 1900, 30, 100, 1.f, 0.5f);
+            worst47 = std::max({worst47, std::fabs(vFwd - c47.pitch * 4.f),
+                                std::fabs(clmb - std::max(-0.5f, std::min(1.f, k.thr * 1.5f)))});
+        }
+        CHECK(worst47 < 0.05f);
+        float lv = 0;
+        CHECK(fc.param("LOIT_SPEED", lv) && lv == 600.f);          // in the old units
+        CHECK(fc.paramReport().find("4.7 SI names") != std::string::npos);
+        std::printf("  4.7 parameter names (SI) converted: worst %.3f m/s\n", double(worst47));
+
         // Back to the identity numbers for everything below.
         for (const PV& q : identityParams()) fcParam(mfd, q.n, q.v);
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
@@ -757,8 +849,9 @@ int main() {
         CHECK(fc.setMode(FcMode::OFFBOARD));
         CHECK(fc.arm(false));
         CHECK(fc.disarm());
+        CHECK(fc.takeoff(2.5f));
         auto msgs = decodeAll(drainMaster(mfd));
-        int setMode = 0, armed = 0, disarmed = 0;
+        int setMode = 0, armed = 0, disarmed = 0, takeoffs = 0;
         for (const mav::Msg& m : msgs) {
             if (m.id != mav::MSG_COMMAND_LONG) continue;
             const uint16_t cmd = m.u16(28);
@@ -769,10 +862,13 @@ int main() {
             } else if (cmd == mav::CMD_COMPONENT_ARM_DISARM) {
                 if (m.f32(0) > 0.5f) ++armed; else ++disarmed;
                 CHECK(std::fabs(m.f32(4)) < 1e-6f);                  // NOT forced
+            } else if (cmd == mav::CMD_NAV_TAKEOFF) {
+                ++takeoffs;
+                CHECK(m.f32(24) == 2.5f);                            // param7: altitude
             }
         }
-        CHECK(setMode == 1 && armed == 1 && disarmed == 1);
-        std::printf("  commands: OFFBOARD -> GUIDED(4), arm/disarm unforced\n");
+        CHECK(setMode == 1 && armed == 1 && disarmed == 1 && takeoffs == 1);
+        std::printf("  commands: OFFBOARD -> GUIDED(4), arm/disarm unforced, takeoff 2.5 m\n");
     }
 
     // --- body-frame velocity setpoint --------------------------------------
@@ -1010,6 +1106,7 @@ int main() {
     close(mfd);
 
     testSocketTransports();
+    testStreamsReRequested();
 
     std::printf("%s (%d failure%s)\n", fails ? "FAILED" : "all checks passed",
                 fails, fails == 1 ? "" : "s");

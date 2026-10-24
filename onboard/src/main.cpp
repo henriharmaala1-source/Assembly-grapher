@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
         "{detect-labels  | drone,bird | comma-separated class labels }"
         "{road           | true  | enable appearance road-follow module }"
         "{fc             | none  | flight controller: none|msp|mavlink|sim }"
-        "{fc-port        | /dev/ttyAMA0 | FC serial device }"
+        "{fc-port        | /dev/ttyAMA0 | FC link: serial device, or tcp:HOST:PORT / udpout:HOST:PORT / udp:PORT (ArduPilot SITL: tcp:127.0.0.1:5760) }"
         "{fc-baud        | 115200 | FC serial baud }"
         "{fc-uplink      |       | MAVLink: auto|rc|attitude|velocity -- auto picks by the FC's mode (fc.uplink) }"
         "{auto           | false | autonomous move-stop-sense cycle (hover→think→plan→move) }"

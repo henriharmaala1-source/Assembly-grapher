@@ -32,6 +32,7 @@ add_executable(kestrel
   src/controller.cpp
   src/state_estimator.cpp
   src/serial_port.cpp
+  src/byte_link.cpp
   src/msp_backend.cpp
   src/mavlink_v2.cpp
   src/mavlink_backend.cpp
@@ -88,7 +89,8 @@ add_executable(rc_probe
   tools/rc_probe.cpp
   src/mavlink_backend.cpp
   src/mavlink_v2.cpp
-  src/serial_port.cpp)
+  src/serial_port.cpp
+  src/byte_link.cpp)
 target_include_directories(rc_probe PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(rc_probe PRIVATE Threads::Threads)
@@ -193,7 +195,7 @@ if(BUILD_TESTS)
   # The backend over a PTY: proves it USES the codec correctly, which is a
   # different failure mode from the codec being right.
   kestrel_test(test_mavlink_backend src/mavlink_backend.cpp src/mavlink_v2.cpp
-               src/serial_port.cpp)
+               src/serial_port.cpp src/byte_link.cpp)
   target_link_libraries(test_mavlink_backend PRIVATE util)   # openpty
   kestrel_test(test_config src/config.cpp src/controller.cpp
                src/mission.cpp src/nav_map.cpp src/control_mode.cpp src/world_model.cpp

@@ -6,7 +6,7 @@
 #include "flight_controller.hpp"
 #include "mavlink_v2.hpp"
 #include "vio_frame_align.hpp"
-#include "serial_port.hpp"
+#include "byte_link.hpp"
 
 // ---------------------------------------------------------------------------
 // ArduPilot MAVLink backend.
@@ -64,7 +64,7 @@ public:
     const char* name() const override { return "mavlink"; }
 
     bool connect(const std::string& port, int baud) override;
-    void disconnect() override { serial_.close(); linkUp_ = false; }
+    void disconnect() override { link_.close(); linkUp_ = false; }
     bool linkUp() const override { return linkUp_; }
 
     void tick() override;
@@ -257,7 +257,8 @@ private:
     // Default sysid 255 -- see the SYSID note above. compid 191 is
     // MAV_COMP_ID_ONBOARD_COMPUTER.
     mav::Codec  codec_{255, 191};
-    SerialPort  serial_;
+    // Serial on the aircraft, tcp:/udp: against ArduPilot SITL (byte_link.hpp).
+    ByteLink    link_;
     FcTelemetry tel_;
 
     uint8_t  tgtSys_ = 1, tgtComp_ = 1;      // ArduPilot's defaults

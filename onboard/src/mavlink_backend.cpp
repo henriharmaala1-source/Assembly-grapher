@@ -98,10 +98,11 @@ float MavlinkBackend::pv(const char* name, float def) const {
 }
 
 bool MavlinkBackend::connect(const std::string& port, int baud) {
-    if (!serial_.open(port, baud)) {
+    if (!link_.open(port, baud)) {
         std::fprintf(stderr, "[mavlink] cannot open %s @ %d\n", port.c_str(), baud);
         return false;
     }
+    std::printf("[mavlink] link: %s\n", link_.kind());
     // NO STARTUP GRACE PERIOD, unlike the MSP backend. There, a grace period is
     // reasonable: MSP is request/response, so nothing arrives until we ask and
     // an immediate "link down" would be a startup race. ArduPilot heartbeats at
@@ -124,10 +125,10 @@ bool MavlinkBackend::connect(const std::string& port, int baud) {
 }
 
 void MavlinkBackend::send(uint32_t msgid, const mav::Payload& p) {
-    if (!serial_.isOpen()) return;
+    if (!link_.isOpen()) return;
     uint8_t buf[300];
     const int n = codec_.frame(msgid, p, buf);
-    if (n > 0) serial_.write(buf, n);
+    if (n > 0) link_.write(buf, n);
 }
 
 void MavlinkBackend::sendHeartbeat() {
@@ -146,7 +147,7 @@ void MavlinkBackend::sendHeartbeat() {
 
 bool MavlinkBackend::commandLong(uint16_t cmd, float p1, float p2, float p3, float p4,
                                  float p5, float p6, float p7) {
-    if (!serial_.isOpen()) return false;
+    if (!link_.isOpen()) return false;
     mav::Payload p;
     p.f32(p1); p.f32(p2); p.f32(p3); p.f32(p4); p.f32(p5); p.f32(p6); p.f32(p7);
     p.u16(cmd); p.u8(tgtSys_); p.u8(tgtComp_); p.u8(0);   // confirmation
@@ -182,7 +183,7 @@ void MavlinkBackend::tick() {
     // arriving; this is idempotent and costs five frames a minute.
     if (!linkUp_ && t - lastStreamReqS_ > 5.0) requestStreams();
 
-    linkUp_ = serial_.isOpen() && everRx_ && (t - lastRxS_) < 2.0;
+    linkUp_ = link_.isOpen() && everRx_ && (t - lastRxS_) < 2.0;
     tel_.linkUp = linkUp_;
 
     serviceParams(t);
@@ -362,10 +363,10 @@ std::string MavlinkBackend::paramReport() const {
 }
 
 void MavlinkBackend::drainRx() {
-    if (!serial_.isOpen()) return;
+    if (!link_.isOpen()) return;
     uint8_t buf[512];
     for (;;) {
-        const int n = serial_.read(buf, sizeof(buf));
+        const int n = link_.read(buf, sizeof(buf));
         if (n <= 0) break;
         mav::Msg m;
         for (int i = 0; i < n; ++i)
@@ -619,7 +620,7 @@ bool MavlinkBackend::sendAttitudeTarget(const ControlCmd& cmd) {
 
 bool MavlinkBackend::sendObstacleDistance(const float* distM, int n,
                                           float minM, float maxM) {
-    if (!serial_.isOpen() || !distM || n <= 0) return false;
+    if (!link_.isOpen() || !distM || n <= 0) return false;
 
     mav::Payload p;
     p.u64(uint64_t(nowS() * 1e6));
@@ -701,7 +702,7 @@ const char* MavlinkBackend::controlTag() const {
 }
 
 bool MavlinkBackend::sendStatusText(const char* text) {
-    if (!serial_.isOpen() || !text) return false;
+    if (!link_.isOpen() || !text) return false;
     mav::Payload p;
     p.u8(6);                                       // MAV_SEVERITY_INFO
     char t[50]{};
@@ -712,7 +713,7 @@ bool MavlinkBackend::sendStatusText(const char* text) {
 }
 
 bool MavlinkBackend::sendControl(const ControlCmd& cmd) {
-    if (!serial_.isOpen() || !cmd.valid) return false;
+    if (!link_.isOpen() || !cmd.valid) return false;
     // Nothing until ArduPilot's own numbers are known (or known absent): the
     // first frame is calibrated or there is no first frame.
     if (!paramsDone_) return false;
@@ -799,7 +800,7 @@ bool MavlinkBackend::sendVelocity(const ControlCmd& cmd) {
 
 bool MavlinkBackend::sendVelocityBody(float vFwd, float vRight, float vDown,
                                       float yawRateRadS) {
-    if (!serial_.isOpen()) return false;
+    if (!link_.isOpen()) return false;
     // type_mask 0x05C7: ignore position (bits 0-2), acceleration (6-8) and
     // absolute yaw (10); USE velocity (3-5) and yaw rate (11 CLEAR). It was
     // 0x0DC7, whose bit 11 is YAW_RATE_IGNORE: every turn silently dropped.
@@ -833,7 +834,7 @@ void MavlinkBackend::feedVisionPose(float xN, float yE, float zD,
 }
 
 bool MavlinkBackend::sendVisionOdometry(const VisionOdom& v) {
-    if (!serial_.isOpen()) return false;
+    if (!link_.isOpen()) return false;
     constexpr float kD2R = float(kPi / 180.0);
     const double t = v.stampS > 0.0 ? v.stampS : nowS();
 
@@ -929,7 +930,7 @@ void MavlinkBackend::feedVisionSpeed(float vN, float vE, float vD) {
 }
 
 bool MavlinkBackend::feedExternalGps(const ExtGps& fix) {
-    if (!serial_.isOpen()) return false;
+    if (!link_.isOpen()) return false;
     if (fix.fixType < 3) return false;
     if (!originValid_) {
         originLat_ = fix.lat; originLon_ = fix.lon; originAlt_ = fix.altMslM;

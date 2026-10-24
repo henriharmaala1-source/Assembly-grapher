@@ -14,8 +14,11 @@
 // parameter readback and the uplink each flight mode selects, with the stick
 // mapping checked against a forward model of ArduCopter's own stick handling.
 
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <pty.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -172,6 +175,111 @@ void enterMode(int mfd, MavlinkBackend& fc, uint32_t mode) {
     fcHeartbeat(mfd, mode, true);
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     fc.tick();
+}
+
+// ---- the same backend over a socket, the way it meets ArduPilot SITL -------
+// The autopilot side of the socket: frames from it, decoded frames to it.
+struct SockPeer {
+    int fd = -1;
+    sockaddr_in to{};          // UDP: where to send (the backend)
+    bool udp = false;
+    void sendMsg(uint32_t id, const mav::Payload& p) {
+        static mav::Codec fc(1, 1);
+        uint8_t buf[300];
+        const int n = fc.frame(id, p, buf);
+        if (udp) sendto(fd, buf, n, 0, (sockaddr*)&to, sizeof(to));
+        else     CHECK(send(fd, buf, n, 0) == n);
+    }
+    std::vector<mav::Msg> drain(int waitMs = 40) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+        std::vector<uint8_t> b;
+        uint8_t tmp[2048];
+        for (;;) {
+            const ssize_t n = recv(fd, tmp, sizeof(tmp), MSG_DONTWAIT);
+            if (n <= 0) break;
+            b.insert(b.end(), tmp, tmp + n);
+        }
+        return decodeAll(b);
+    }
+};
+
+void heartbeatOver(SockPeer& p, uint32_t mode) {
+    mav::Payload hb;
+    hb.u32(mode); hb.u8(2); hb.u8(3); hb.u8(0x81); hb.u8(4); hb.u8(3);
+    p.sendMsg(mav::MSG_HEARTBEAT, hb);
+}
+
+// Link comes up from the autopilot's heartbeat, the mode is decoded, and the
+// backend's own heartbeat reaches the autopilot.
+void checkSocketLink(const char* what, MavlinkBackend& fc, SockPeer& ap) {
+    bool sawOurHeartbeat = false;
+    for (int k = 0; k < 40 && !(fc.linkUp() && sawOurHeartbeat); ++k) {
+        heartbeatOver(ap, mav::COPTER_LOITER);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        for (const mav::Msg& m : ap.drain(5))
+            if (m.id == mav::MSG_HEARTBEAT) sawOurHeartbeat = true;
+    }
+    CHECK(fc.linkUp());
+    CHECK(fc.copterMode() == mav::COPTER_LOITER);
+    CHECK(sawOurHeartbeat);
+    std::printf("  %s: link up, LOITER decoded, our heartbeat delivered\n", what);
+}
+
+void testSocketTransports() {
+    // TCP client -- how SITL serves SERIAL0 (tcp:127.0.0.1:5760).
+    {
+        const int ls = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        CHECK(bind(ls, (sockaddr*)&a, sizeof(a)) == 0 && listen(ls, 1) == 0);
+        socklen_t al = sizeof(a); getsockname(ls, (sockaddr*)&a, &al);
+        const std::string spec = "tcp:127.0.0.1:" + std::to_string(ntohs(a.sin_port));
+        MavlinkBackend fc;
+        CHECK(fc.connect(spec, 0));
+        SockPeer ap; ap.fd = accept(ls, nullptr, nullptr);
+        CHECK(ap.fd >= 0);
+        checkSocketLink("tcp", fc, ap);
+        // The peer going away is a cut wire: the link closes, silence follows.
+        CHECK(fc.sendStatusText("before"));
+        close(ap.fd);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        fc.tick();
+        CHECK(!fc.sendStatusText("after"));              // link closed, nothing sent
+        std::printf("  tcp: peer gone -> link closed, sends refused\n");
+        close(ls);
+    }
+    // udpout: the backend sends to a fixed address and reads the replies.
+    {
+        SockPeer ap; ap.udp = true;
+        ap.fd = socket(AF_INET, SOCK_DGRAM, 0);
+        sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        CHECK(bind(ap.fd, (sockaddr*)&a, sizeof(a)) == 0);
+        socklen_t al = sizeof(a); getsockname(ap.fd, (sockaddr*)&a, &al);
+        MavlinkBackend fc;
+        CHECK(fc.connect("udpout:127.0.0.1:" + std::to_string(ntohs(a.sin_port)), 0));
+        // Learn the backend's address from its first datagram (its heartbeat).
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        uint8_t tmp[512]; socklen_t fl = sizeof(ap.to);
+        CHECK(recvfrom(ap.fd, tmp, sizeof(tmp), 0, (sockaddr*)&ap.to, &fl) > 0);
+        checkSocketLink("udpout", fc, ap);
+        close(ap.fd);
+    }
+    // udp:PORT: the backend listens; replies go to whoever spoke last.
+    {
+        const int probe = socket(AF_INET, SOCK_DGRAM, 0);
+        sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        bind(probe, (sockaddr*)&a, sizeof(a));
+        socklen_t al = sizeof(a); getsockname(probe, (sockaddr*)&a, &al);
+        const int port = ntohs(a.sin_port);
+        close(probe);                                   // free the port for the backend
+        MavlinkBackend fc;
+        CHECK(fc.connect("udp:" + std::to_string(port), 0));
+        SockPeer ap; ap.udp = true;
+        ap.fd = socket(AF_INET, SOCK_DGRAM, 0);
+        ap.to = a;
+        checkSocketLink("udp (listen)", fc, ap);
+        close(ap.fd);
+    }
 }
 
 }  // namespace
@@ -900,6 +1008,8 @@ int main() {
     CHECK(fc.crcErrors() == 0);
     fc.disconnect();
     close(mfd);
+
+    testSocketTransports();
 
     std::printf("%s (%d failure%s)\n", fails ? "FAILED" : "all checks passed",
                 fails, fails == 1 ? "" : "s");

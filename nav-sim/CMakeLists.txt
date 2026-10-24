@@ -363,6 +363,13 @@ set(KESTREL_AUTONOMY_SRC
   # mission (`kestrel mission sim`) on the aircraft's own interpreter.
   ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/script_mode.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/mission_program.cpp)
+# termios where there is one; on Windows a SerialPort that says to use tcp:
+# instead (SITL is reached over a socket there, never a COM port).
+if(WIN32)
+  set(KESTREL_SERIAL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/serial_port_none.cpp)
+else()
+  set(KESTREL_SERIAL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/src/serial_port.cpp)
+endif()
 add_executable(kestrel
   kestrel.cpp
   kestrel_gui.cpp
@@ -382,6 +389,14 @@ add_executable(kestrel
   # The showcase flight: the AIRCRAFT'S OWN voxel module and mission, compiled
   # from onboard/src -- not a copy -- flown against a simulated D435i.
   flight_show.cpp
+  # `kestrel sitl`: the same flight with ArduPilot SITL as the airframe, over
+  # onboard's own MAVLink backend (serial or tcp:/udp:, byte_link.hpp).
+  kestrel_sitl.cpp
+  sitl_plant.cpp
+  ../onboard/src/mavlink_backend.cpp
+  ../onboard/src/mavlink_v2.cpp
+  ../onboard/src/byte_link.cpp
+  ${KESTREL_SERIAL_SRC}
   # ... and its pictures, drawn from snapshots of it; read-only.
   flight_view.cpp
   ${KESTREL_AUTONOMY_SRC}
@@ -396,6 +411,9 @@ target_include_directories(kestrel PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../onboard/include
   ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(kestrel PRIVATE ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
+if(WIN32)
+  target_link_libraries(kestrel PRIVATE ws2_32)   # byte_link.cpp's sockets
+endif()
 # The visual mission editor and the example missions travel with the exe, so
 # `kestrel mission editor` and the window's mission list find them beside it.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mission_editor.html

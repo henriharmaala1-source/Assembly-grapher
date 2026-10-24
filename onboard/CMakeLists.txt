@@ -197,6 +197,10 @@ if(BUILD_TESTS)
   kestrel_test(test_mavlink_backend src/mavlink_backend.cpp src/mavlink_v2.cpp
                src/serial_port.cpp src/byte_link.cpp)
   target_link_libraries(test_mavlink_backend PRIVATE util)   # openpty
+  # The no-termios SerialPort nav-sim's Windows build links: compiled here so
+  # the file the dev machine never runs is still a file it builds.
+  add_library(serial_port_none_check OBJECT src/serial_port_none.cpp)
+  target_include_directories(serial_port_none_check PRIVATE include)
   kestrel_test(test_config src/config.cpp src/controller.cpp
                src/mission.cpp src/nav_map.cpp src/control_mode.cpp src/world_model.cpp
                src/rc_command.cpp)

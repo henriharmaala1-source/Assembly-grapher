@@ -100,6 +100,28 @@ text menu rather than dying. A build without OpenCV highgui does the same.
                      tune the PD loop, record moves (control_playground.html,
                      needs internet for three.js)
 
+  kestrel sitl [--connect tcp:127.0.0.1:5760] [--world gallery|hall]
+               [--seed N] [--seconds S] [--alt M] [--script FILE.kms]
+               [--lowres] [--keep-going] [--speedup X] [--csv FILE]
+               [--shot PREFIX]
+        THE SAME AUTONOMY FLYING ARDUPILOT. Everything `mission sim` flies --
+        onboard's voxel module, MissionController, SCRIPT mode -- but the
+        airframe is ArduCopter SITL: the commands go through onboard's own
+        MAVLink backend (the code that flies the aircraft, over a socket
+        instead of a UART) and the simulated D435i depth is rendered from
+        ArduPilot's TRUE pose (SIM_STATE). It connects, waits for the
+        parameter readback, asks for GUIDED, arms (never forced), takes off
+        to --alt, flies --seconds, then LANDs and waits for the disarm.
+        Prints FC messages as they come ("PreArm: ..."), so a refusal says why.
+        Scored as everything here is: metres flown before a collision, the
+        collision, net displacement, cells. SITL has no walls, so contact is
+        judged against the true voxels and the first one ENDS the run
+        (--keep-going to fly on). Not lockstep: the loop paces to the wall
+        clock (x --speedup, which must equal SITL's own), and frames that
+        render late are counted and reported. --csv appends one row per run;
+        --shot writes PREFIX_mission.png, _chase.png, _depth.png.
+        Needs a SITL running first -- see ARDUPILOT SITL just below.
+
   kestrel train [args...]
         RL training. This is the one command that leaves the process, and
         that is not a packaging failure: the trainer is PyTorch and
@@ -111,6 +133,56 @@ text menu rather than dying. A build without OpenCV highgui does the same.
 Video support is optional. Without OpenCV's videoio, `track` still runs over
 an IMAGE SEQUENCE -- deterministic and diffable where a video decode is
 neither, so it is the better thing to regression-test against.
+
+ARDUPILOT SITL (for `kestrel sitl`)
+-----------------------------------
+kestrel does not start ArduPilot; it connects to one that is running. Three
+ways to have one on a Windows machine, easiest first. ArduCopter 4.7 or later
+(the vision-odometry setup in onboard/docs/gnss-denied-setup.md needs it too).
+
+1. MISSION PLANNER'S SIMULATOR. Simulation tab -> Multirotor -> pick the
+   stable firmware. Mission Planner downloads a Windows build of ArduCopter,
+   starts it and connects itself on tcp:5760. That port is taken, so kestrel
+   uses the simulator's SECOND MAVLink port (SITL's SERIAL1, tcp:5762 by default):
+
+       kestrel sitl --connect tcp:127.0.0.1:5762
+
+   Both talk to the FC as system 255. ArduPilot takes commands from either,
+   so do not change modes in Mission Planner during a run; watching the map
+   is fine, and it is the best way to see the flight from ArduPilot's side.
+
+2. WSL2 (Ubuntu), building ArduPilot yourself -- what the author tested:
+
+       git clone --recurse-submodules https://github.com/ArduPilot/ardupilot
+       cd ardupilot
+       Tools/environment_install/install-prereqs-ubuntu.sh -y   (then re-open the shell)
+       ./waf configure --board sitl && ./waf copter
+       build/sitl/bin/arducopter --model + --speedup 1 -I0 \
+           --defaults Tools/autotest/default_params/copter.parm
+
+   It prints "Waiting for connection" on tcp:5760 and does nothing until
+   something connects. WSL2 forwards localhost to Windows, so from Windows:
+
+       kestrel sitl                       (tcp:127.0.0.1:5760, the default)
+
+   The first run from a fresh SITL needs ~5-30 s before ArduPilot will arm
+   (EKF settling, GPS lock); kestrel keeps asking and prints why it is
+   refused. Up to 120 s, then it gives up and says where it stuck.
+
+3. sim_vehicle.py with MAVProxy (in WSL2): `Tools/autotest/sim_vehicle.py
+   -v ArduCopter --out=udp:127.0.0.1:14550`, then `kestrel sitl --connect
+   udp:14550`. Adds a console, costs a hop.
+
+--speedup must match SITL's own (`--speedup 1` above). At 848x480 a modest
+CPU can fall behind real time -- the end-of-run line says how many frames
+were late; `--lowres` (424x240) is about twice as fast. Measured on the
+author's 4-core cloud box with SITL alongside: 848x480 42 % late, 424x240
+0-1 % late.
+
+WHAT IT DOES NOT DO YET: no VIO. The FC navigates on SITL's simulated GPS,
+not on kestrel's vision odometry, and the camera gives depth only (no IR
+pair). And SITL has no walls: a collision is counted here, and ArduPilot
+flies on through it.
 
 ---------------------------------------------------------------------
 

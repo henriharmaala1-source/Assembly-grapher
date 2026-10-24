@@ -29,6 +29,8 @@ struct Actions {
     std::function<int(std::vector<std::string>)> report;
     // Behaviour scripts: check / compile / sim / editor (kestrel_mission.cpp).
     std::function<int(std::vector<std::string>)> mission;
+    // ArduPilot SITL as the airframe (kestrel_sitl.cpp).
+    std::function<int(std::vector<std::string>)> sitl;
     // The interpreter listing. No arguments -- it reports, it does not act.
     std::function<int()> pythons;
 };

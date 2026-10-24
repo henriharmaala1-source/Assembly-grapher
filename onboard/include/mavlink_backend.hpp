@@ -235,6 +235,10 @@ public:
         float  altMslM = 0;
         float  vN = 0, vE = 0, vD = 0;            // m/s, NED
     };
+    // The FC's own STATUSTEXT ("PreArm: ...", "EKF3 IMU0 is using GPS"): the
+    // newest one and how many have arrived, for whoever wants to show them.
+    const std::string& fcText() const { return fcText_; }
+    long fcTextCount() const { return fcTextCount_; }
     void requestSimTruth(int hz) { simTruthHz_ = hz; if (link_.isOpen()) requestStreams(); }
     const SimTruth& simTruth() const { return simTruth_; }
 
@@ -336,6 +340,8 @@ private:
     double   specialReqS_ = -1e9, modeConfirmS_ = 2.5;
     bool     specialSeen_ = false;
 
+    std::string fcText_;
+    long     fcTextCount_ = 0;
     int      simTruthHz_ = 0;
     SimTruth simTruth_;
 

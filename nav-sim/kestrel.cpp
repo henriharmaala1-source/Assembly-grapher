@@ -52,6 +52,7 @@
 #include "kestrel_demo.hpp"
 #include "kestrel_gui.hpp"
 #include "kestrel_mission.hpp"
+#include "kestrel_sitl.hpp"
 #include "kestrel_report.hpp"
 #include "kestrel_python.hpp"
 #include "lock_tracker_fused.hpp"
@@ -661,6 +662,7 @@ int gui(const std::string& dir) {
     a.watch = [dir](std::vector<std::string> v) { return cmdWatch(dir, v); };
     a.report = [dir](std::vector<std::string> v) { return cmdReport(dir, v); };
     a.mission = [dir](std::vector<std::string> v) { return kmission::run(v, dir); };
+    a.sitl  = [](std::vector<std::string> v) { return ksitl::run(v); };
     a.eval  = [dir](std::vector<std::string> v) { return cmdEval(dir, v); };
     a.pythons = [dir]() { kpy::report(kpy::discover(dir), dir); return 0; };
     return kgui::run(a, dir);
@@ -688,6 +690,7 @@ int main(int argc, char** argv) {
     if (cmd == "evaluate" || cmd == "eval") return cmdEval(dir, rest);
     if (cmd == "report") return cmdReport(dir, rest);
     if (cmd == "mission") return kmission::run(rest, dir);
+    if (cmd == "sitl") return ksitl::run(rest);
     if (cmd == "gui") {
         // --shot renders the panels to PNG with no display attached. The
         // window is the only thing in this binary that cannot be checked over
@@ -704,7 +707,7 @@ int main(int argc, char** argv) {
     if (cmd == "python") { kpy::report(kpy::discover(dir), dir); return 0; }
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         std::printf(
-            "kestrel [track|bench|sim|demo|mission|train|watch|evaluate|report|gui|menu|python]\n"
+            "kestrel [track|bench|sim|demo|mission|sitl|train|watch|evaluate|report|gui|menu|python]\n"
             "  no arguments opens the window; `menu` is the text one, for a\n"
             "  headless box or over ssh. Every button in the window prints the\n"
             "  command it runs, so anything you can click you can also type.\n"
@@ -735,6 +738,9 @@ int main(int argc, char** argv) {
             "                        throttle, record the moves, export them\n"
             "                    States, triggers (`when seen door -> approach`), the\n"
             "                    tracker hand-off, moves: onboard/docs/mission-scripts.md\n"
+            "  sitl              the same autonomy flying ArduPilot SITL: commands over\n"
+            "                    onboard's MAVLink backend, the simulated D435i rendered\n"
+            "                    from ArduPilot's true pose. `kestrel sitl --help`.\n"
             "  train --install   pip the RL stack into the interpreter that can\n"
             "                    load voxelenv, named by absolute path\n"
             "  python            list every python found here and say which one\n"

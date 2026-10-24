@@ -419,6 +419,15 @@ int main() {
         CHECK(s.altMslM == 600.5f && s.vN == 1.5f && s.vE == -2.f && s.vD == 0.25f);
         CHECK(s.gyroRadS[2] == 0.03f && s.accel[2] == -9.8f);
         std::printf("  SITL truth: SIM_STATE requested at 50 Hz, decoded (int32 lat/lon)\n");
+        mav::Payload tx;                           // the FC saying why it will not arm
+        tx.u8(3);
+        const char* say = "PreArm: Need Position Estimate";
+        for (int i = 0; i < 50; ++i) tx.u8(i < int(std::strlen(say)) ? uint8_t(say[i]) : 0);
+        tx.u16(0); tx.u8(0);
+        fcSend(mfd, mav::MSG_STATUSTEXT, tx);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        CHECK(fc.fcText() == say && fc.fcTextCount() == 1);
         drainMaster(mfd);
     }
 

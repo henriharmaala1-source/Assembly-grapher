@@ -442,6 +442,14 @@ void MavlinkBackend::onMessage(const mav::Msg& m) {
     case mav::MSG_PARAM_VALUE:
         if (m.sysid == tgtSys_) onParamValue(m);
         break;
+    case mav::MSG_STATUSTEXT: {
+        if (m.sysid != tgtSys_) break;
+        char txt[51]{};
+        for (int i = 0; i < 50; ++i) txt[i] = char(m.u8(1 + i));
+        fcText_ = txt;
+        ++fcTextCount_;
+        break;
+    }
     case mav::MSG_SIM_STATE: {
         if (m.sysid != tgtSys_) break;
         SimTruth& t = simTruth_;

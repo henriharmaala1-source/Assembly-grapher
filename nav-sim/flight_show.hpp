@@ -47,6 +47,28 @@
 
 namespace kshow {
 
+// THE AIRFRAME: what turns a ControlCmd into motion. Without one (the
+// default) FlightShow flies its own kinematic plant -- test_voxel_nav's, below.
+// `kestrel sitl` puts ArduPilot here (sitl_plant.hpp): the same commands go to
+// a real flight stack over MAVLink and the true pose comes back from its
+// simulator, so the camera is rendered from where ArduPilot's physics put the
+// aircraft. Everything above the plant -- the module, the mission, the script,
+// the collision count -- is the one implementation either way.
+class Plant {
+public:
+    virtual ~Plant() = default;
+    virtual const char* name() const = 0;
+    // Once, with the spawn pose in the world frame and the floor under it.
+    virtual void start(const sim::CamPose& spawn, float floorZ) = 0;
+    // Before each tick. False: not flyable yet (taking off) -- the autonomy
+    // does not run this tick; `truth` may still move.
+    virtual bool ready(sim::CamPose& truth) = 0;
+    // One tick of `c`: the true pose and forward speed afterwards.
+    virtual void step(const ControlCmd& c, float dt, sim::CamPose& truth, float& speed) = 0;
+    // The script handed the flight to the FC (LAND / RTL).
+    virtual void handOff(WorldState::FcRequest r) = 0;
+};
+
 struct FlightParams {
     std::string world = "gallery";   // gallery | hall
     unsigned    seed  = 101;
@@ -76,6 +98,8 @@ struct FlightParams {
     // aircraft's own SCRIPT mode (script_mode.hpp) on the same stack. GO is
     // pressed at the first tick. `kestrel mission sim`.
     std::shared_ptr<const kms::Program> script;
+    // Null: the kinematic plant. Otherwise this flies (`kestrel sitl`).
+    std::shared_ptr<Plant> plant;
 };
 
 struct FlightStats {
@@ -153,6 +177,8 @@ private:
     int   ticks_ = 0, lastResets_ = -1;
     std::string phase_;
     bool  inContact_ = false;
+    bool  plantLastSet_ = false;           // a Plant's pose at the last tick's end
+    float plantLastE_ = 0.f, plantLastN_ = 0.f;
     sim::CamPose vantage_;
     FlightStats stats_;
     std::vector<char> visited_;

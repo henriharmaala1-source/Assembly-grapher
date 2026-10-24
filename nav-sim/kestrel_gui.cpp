@@ -43,7 +43,7 @@ namespace kgui {
 namespace {
 
 const char* WIN = "kestrel";
-const int W = 1060, H = 660;
+const int W = 1060, H = 706;   // 706: ten mode buttons and RUN under them
 
 // THE LOOK. BGR. A dark app palette: one accent (blue) for "selected", one
 // (green) for the action, and everything else in greys, so colour always
@@ -335,9 +335,9 @@ void refreshPy(const std::string& dir) {
 }
 
 // ----------------------------------------------------------------- settings
-enum Mode { TRACK = 0, BENCH, SIM, DEMO, TRAIN, WATCH, EVAL, REPORT, MISSION, NMODES };
+enum Mode { TRACK = 0, BENCH, SIM, DEMO, TRAIN, WATCH, EVAL, REPORT, MISSION, SITL, NMODES };
 const char* MODE_NAME[NMODES] = {"track", "bench", "sim", "demo", "train",
-                                 "watch", "evaluate", "report", "mission"};
+                                 "watch", "evaluate", "report", "mission", "sitl"};
 
 // 0 means FOREVER -- run until stopped by hand, saving on the way out. The
 // rest are close enough together that a run can be sized without dropping to
@@ -635,6 +635,11 @@ struct Cfg {
     int   mRuns = 6, mSeed = 1, mTarget = 0;   // mTarget: index into SCEN_TARGET
     bool  mVideo = true, mShow = false;
     int   mAlt = 0, mDist = 0, mWind = 0, mDrop = 0, mLat = 0;   // indices into the presets
+    // sitl: ArduPilot SITL as the airframe (kestrel_sitl.cpp). Indices into
+    // the SITL_* presets; sScript -1 is AUTONOMY, else an index into g_missions.
+    int   sConn = 0, sWorld = 0, sSeed = 101, sSecs = 1, sAlt = 0, sSpeed = 0;
+    int   sScript = -1;
+    bool  sLowres = false, sKeep = false, sCsv = true, sShot = true;
 };
 
 const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor", "playground", "scenarios"};
@@ -652,6 +657,13 @@ const char* SCEN_LAT[]     = {"0", "2", "4"};
 // Actions that open a page in the browser and take no mission file.
 bool missionOpensPage(int a) { return a == 3 || a == 4; }
 const char* MISSION_WORLD[] = {"gallery", "hall"};
+// `kestrel sitl` presets. SERIAL0 of a plain arducopter is tcp:5760; MAVProxy
+// and Mission Planner's simulator hand out udp:14550 / tcp:5762 instead.
+const char* SITL_CONN[] = {"tcp:127.0.0.1:5760", "tcp:127.0.0.1:5762", "udp:14550"};
+const int NSITL_CONN = 3;
+const char* SITL_SECS[] = {"60", "120", "300", "600"};
+const char* SITL_ALT[] = {"1.5", "2", "3"};
+const char* SITL_SPEED[] = {"1", "2", "4"};
 
 const int PANE_PX[] = {240, 320, 420, 520};
 const int NPANE_PX = int(sizeof PANE_PX / sizeof *PANE_PX);
@@ -792,6 +804,21 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 if (c.mLowres) a.push_back("--lowres");
                 if (c.mShot) { a.push_back("--shot"); a.push_back("mission"); }
             }
+            break;
+        case SITL:
+            a.push_back("--connect"); a.push_back(SITL_CONN[c.sConn]);
+            a.push_back("--world");   a.push_back(MISSION_WORLD[c.sWorld]);
+            a.push_back("--seed");    a.push_back(std::to_string(c.sSeed));
+            a.push_back("--seconds"); a.push_back(SITL_SECS[c.sSecs]);
+            a.push_back("--alt");     a.push_back(SITL_ALT[c.sAlt]);
+            if (c.sSpeed) { a.push_back("--speedup"); a.push_back(SITL_SPEED[c.sSpeed]); }
+            if (c.sScript >= 0 && c.sScript < int(g_missions.size())) {
+                a.push_back("--script"); a.push_back(g_missions[size_t(c.sScript)]);
+            }
+            if (c.sLowres) a.push_back("--lowres");
+            if (c.sKeep) a.push_back("--keep-going");
+            if (c.sCsv) { a.push_back("--csv"); a.push_back("sitl.csv"); }
+            if (c.sShot) { a.push_back("--shot"); a.push_back("sitl"); }
             break;
         case WATCH:
             a.push_back("--panes");  a.push_back(std::to_string(c.panes));
@@ -949,6 +976,8 @@ enum {
     ID_M_WORLD = 930, ID_M_LOWRES, ID_M_SHOT,
     ID_M_RUNS_M = 940, ID_M_RUNS_P, ID_M_SEED_M, ID_M_SEED_P, ID_M_TARGET, ID_M_VIDEO, ID_M_SHOW,
     ID_M_ALT = 950, ID_M_DIST, ID_M_WIND, ID_M_DROP, ID_M_LAT,
+    ID_S_CONN = 1000, ID_S_WORLD, ID_S_SEED_M, ID_S_SEED_P, ID_S_SECS, ID_S_ALT,
+    ID_S_SPEED, ID_S_SCRIPT, ID_S_LOWRES, ID_S_KEEP, ID_S_CSV, ID_S_SHOT,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -1514,6 +1543,8 @@ const FlagBtn FLAG_BTNS[] = {
     {REPORT, ID_R_STEREO,   "--stereo"},
     {DEMO,  ID_D_MIRROR,    "--no-mirror"},
     {MISSION, ID_M_LOWRES,  "--lowres"},
+    {SITL,  ID_S_LOWRES,    "--lowres"},
+    {SITL,  ID_S_KEEP,      "--keep-going"},
     {MISSION, ID_M_SHOW,    "--show"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
     {BENCH, ID_BENCH_STEREO, "--stereo"},
@@ -1696,6 +1727,51 @@ void panelMission(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     }
 }
 
+void panelSitl(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
+    const int x = 266;
+    txt(im, "ArduPilot SITL as the airframe", x, 106, 0.66, INK, 2);
+    txt(im, "The aircraft's own autonomy, as in demo and mission sim -- but the commands",
+        x, 128, 0.44, DIM);
+    txt(im, "go to ArduCopter over onboard's MAVLink backend, and the simulated D435i is",
+        x, 146, 0.44, DIM);
+    txt(im, "rendered from ArduPilot's TRUE pose. Start SITL first: RUN_ME_windows.txt.",
+        x, 164, 0.44, DIM);
+
+    bs.push_back({cv::Rect(x, 200, 250, 36), std::string("FC at ") + SITL_CONN[c.sConn],
+                  ID_S_CONN, c.sConn != 0});
+    bs.push_back({cv::Rect(x + 260, 200, 160, 36), std::string("world: ") + MISSION_WORLD[c.sWorld],
+                  ID_S_WORLD, c.sWorld != 0});
+    stepper(im, bs, x + 452, 200, "seed", std::to_string(c.sSeed), ID_S_SEED_M, ID_S_SEED_P,
+            nullptr, 90);
+    bs.push_back({cv::Rect(x, 250, 160, 36), std::string("fly ") + SITL_SECS[c.sSecs] + " s",
+                  ID_S_SECS, c.sSecs != 1});
+    bs.push_back({cv::Rect(x + 170, 250, 160, 36), std::string("height ") + SITL_ALT[c.sAlt] + " m",
+                  ID_S_ALT, c.sAlt != 0});
+    bs.push_back({cv::Rect(x + 340, 250, 200, 36),
+                  std::string("SITL speedup x") + SITL_SPEED[c.sSpeed], ID_S_SPEED, c.sSpeed != 0});
+    const bool haveScript = c.sScript >= 0 && c.sScript < int(g_missions.size());
+    bs.push_back({cv::Rect(x, 300, 360, 36),
+                  haveScript ? "script: " + fs::path(g_missions[size_t(c.sScript)]).filename().string()
+                             : std::string("AUTONOMY (no script)"),
+                  ID_S_SCRIPT, haveScript});
+    bs.push_back({cv::Rect(x + 370, 300, 180, 36), c.sLowres ? "424x240 (sees less)" : "848x480 (as flown)",
+                  ID_S_LOWRES, c.sLowres});
+    bs.push_back({cv::Rect(x, 350, 250, 36), c.sKeep ? "fly on through contact" : "first contact ends it",
+                  ID_S_KEEP, c.sKeep});
+    bs.push_back({cv::Rect(x + 260, 350, 140, 36), c.sCsv ? "sitl.csv row" : "no csv", ID_S_CSV, c.sCsv});
+    bs.push_back({cv::Rect(x + 410, 350, 190, 36), c.sShot ? "write the pictures" : "no pictures",
+                  ID_S_SHOT, c.sShot});
+
+    txt(im, "Scored as everything here is: metres flown before a collision, the "
+            "collision, net", x, 416, 0.42, DIM);
+    txt(im, "displacement and cells. SITL knows nothing of the walls, so contact is "
+            "judged against the", x, 434, 0.42, DIM);
+    txt(im, "true voxels. Not lockstep: a frame rendered late is reported as late. Then "
+            "LAND.", x, 452, 0.42, DIM);
+    txt(im, "Pictures: sitl_mission.png, _chase.png, _depth.png. The script button "
+            "cycles ./missions.", x, 478, 0.42, DIM);
+}
+
 // ------------------------------------------------------------------- compose
 // ONE FUNCTION DRAWS THE WHOLE WINDOW and hands back the buttons it drew, so
 // hit-testing cannot disagree with what is on screen. It also means the layout
@@ -1750,6 +1826,7 @@ cv::Mat compose(const Cfg& c, const std::vector<TrackInput>& inputs,
         case EVAL:  panelEval(im, bs, c); break;
         case REPORT: panelReport(im, bs, c); break;
         case MISSION: panelMission(im, bs, c); break;
+        case SITL:  panelSitl(im, bs, c); break;
         default:    panelTrain(im, bs, c); break;
     }
 
@@ -1813,6 +1890,21 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     if (id == ID_M_WORLD)  { c.mWorld = (c.mWorld + 1) % 2; return; }
     if (id == ID_M_LOWRES) { c.mLowres = !c.mLowres; return; }
     if (id == ID_M_SHOT)   { c.mShot = !c.mShot; return; }
+    if (id == ID_S_CONN)   { c.sConn = (c.sConn + 1) % NSITL_CONN; return; }
+    if (id == ID_S_WORLD)  { c.sWorld = (c.sWorld + 1) % 2; return; }
+    if (id == ID_S_SEED_M) { c.sSeed = std::max(1, c.sSeed - 1); return; }
+    if (id == ID_S_SEED_P) { c.sSeed = std::min(999, c.sSeed + 1); return; }
+    if (id == ID_S_SECS)   { c.sSecs = (c.sSecs + 1) % 4; return; }
+    if (id == ID_S_ALT)    { c.sAlt = (c.sAlt + 1) % 3; return; }
+    if (id == ID_S_SPEED)  { c.sSpeed = (c.sSpeed + 1) % 3; return; }
+    if (id == ID_S_SCRIPT) {                 // AUTONOMY, then each mission in turn
+        c.sScript = c.sScript + 1 >= int(g_missions.size()) ? -1 : c.sScript + 1;
+        return;
+    }
+    if (id == ID_S_LOWRES) { c.sLowres = !c.sLowres; return; }
+    if (id == ID_S_KEEP)   { c.sKeep = !c.sKeep; return; }
+    if (id == ID_S_CSV)    { c.sCsv = !c.sCsv; return; }
+    if (id == ID_S_SHOT)   { c.sShot = !c.sShot; return; }
     if (id >= ID_D_MODEL && id < ID_D_MODEL + 30) {
         c.dModel = id - ID_D_MODEL - 1;      // the first entry is "none"
         return;
@@ -2097,6 +2189,7 @@ int run(const Actions& act, const std::string& exeDir) {
             // default only catches TRAIN.
             case REPORT: rc = act.report(args); break;
             case MISSION: rc = act.mission ? act.mission(args) : 2; break;
+            case SITL:  rc = act.sitl ? act.sitl(args) : 2; break;
             default:    rc = act.train(args); break;
         }
         // The listing is read in the terminal, so hold the window closed until
@@ -2119,6 +2212,7 @@ int run(const Actions& act, const std::string& exeDir) {
         refreshModels(exeDir);
         refreshMissions(exeDir);
         if (c.mFile >= int(g_missions.size())) c.mFile = 0;
+        if (c.sScript >= int(g_missions.size())) c.sScript = -1;
         if (c.dModel >= int(g_models.size())) c.dModel = -1;
         if (c.input >= int(inputs.size())) c.input = inputs.empty() ? -1 : 0;
         if (c.replay >= int(recs.size()))  c.replay = recs.empty() ? -1 : 0;

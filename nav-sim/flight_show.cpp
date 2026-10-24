@@ -113,6 +113,7 @@ FlightShow::FlightShow(const FlightParams& p)
     const int n = int(g.sizeM);
     visited_.assign(size_t(n) * size_t(n), 0);
     trail_.push_back({truth_.e, truth_.n, truth_.u});
+    if (p_.plant) p_.plant->start(truth_, floorZ_);
 }
 
 FlightShow::~FlightShow() = default;
@@ -144,6 +145,7 @@ float FlightShow::clearance(float px, float py, float pz, float upTo) const {
 
 void FlightShow::tick() {
     const float dt = kDt;
+    if (p_.plant && !p_.plant->ready(truth_)) return;     // not airborne yet
     // Telemetry the aircraft would have (test_voxel_nav's closed loop).
     wm_.with([&](WorldState& s) {
         s.tickMonoS = monoNowS();
@@ -169,7 +171,10 @@ void FlightShow::tick() {
             ControlCtx cx;
             cx.dt = dt; cx.frameW = p_.camW; cx.frameH = p_.camH;
             c = script_->update(s, cx);
-            if (s.fcRequest != WorldState::FcRequest::NONE) scriptEnded_ = true;
+            if (s.fcRequest != WorldState::FcRequest::NONE) {
+                scriptEnded_ = true;
+                if (p_.plant) p_.plant->handOff(s.fcRequest);
+            }
         });
         if (!c.valid) c = ControlCmd();                // released: hover
         if (script_->finished()) scriptEnded_ = true;
@@ -187,18 +192,30 @@ void FlightShow::tick() {
     phase_ = s.missionPhase;
     if (phase_ == "STUCK") { stats_.stuck = true; return; }
 
-    // The airframe: pitch -> forward speed (lagged), yaw -> yaw rate.
-    const float tau = 0.35f, vPerPitch = 1.f / MissionController::Params().cruise;
-    truth_.yawDeg += c.yaw * 90.f * dt;
-    while (truth_.yawDeg >= 360.f) truth_.yawDeg -= 360.f;
-    while (truth_.yawDeg < 0.f) truth_.yawDeg += 360.f;
-    v_ += (c.pitch * vPerPitch - v_) * dt / tau;
-    // A script's height changes: 0.8 m/s at full stick, up or down -- never
-    // into the floor slab.
-    truth_.u = std::max(floorZ_ + 0.2f, truth_.u + c.throttle * 0.8f * dt);
-    const float a = truth_.yawDeg * kPi / 180.f;
-    const float stepE = std::sin(a) * v_ * dt, stepN = std::cos(a) * v_ * dt;
-    truth_.e += stepE; truth_.n += stepN;
+    float stepE, stepN;
+    if (p_.plant) {
+        // From where the LAST tick ended, not where this one began: ready()
+        // has already moved truth_ to the plant's newest pose (the frame is
+        // rendered from it), and measuring across step() alone counted only
+        // the few milliseconds inside it -- 6.5 m reported for ~20 flown.
+        if (!plantLastSet_) { plantLastE_ = truth_.e; plantLastN_ = truth_.n; plantLastSet_ = true; }
+        p_.plant->step(c, dt, truth_, v_);
+        stepE = truth_.e - plantLastE_; stepN = truth_.n - plantLastN_;
+        plantLastE_ = truth_.e; plantLastN_ = truth_.n;
+    } else {
+        // The airframe: pitch -> forward speed (lagged), yaw -> yaw rate.
+        const float tau = 0.35f, vPerPitch = 1.f / MissionController::Params().cruise;
+        truth_.yawDeg += c.yaw * 90.f * dt;
+        while (truth_.yawDeg >= 360.f) truth_.yawDeg -= 360.f;
+        while (truth_.yawDeg < 0.f) truth_.yawDeg += 360.f;
+        v_ += (c.pitch * vPerPitch - v_) * dt / tau;
+        // A script's height changes: 0.8 m/s at full stick, up or down -- never
+        // into the floor slab.
+        truth_.u = std::max(floorZ_ + 0.2f, truth_.u + c.throttle * 0.8f * dt);
+        const float a = truth_.yawDeg * kPi / 180.f;
+        stepE = std::sin(a) * v_ * dt; stepN = std::cos(a) * v_ * dt;
+        truth_.e += stepE; truth_.n += stepN;
+    }
     ++ticks_;
 
     stats_.timeS += dt;

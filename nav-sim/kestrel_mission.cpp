@@ -48,30 +48,6 @@ std::string swapExt(const std::string& path, const char* ext) {
 
 bool fileExists(const std::string& p) { std::ifstream f(p); return bool(f); }
 
-// A .kms is compiled (and its diagnostics printed); a .kmb is loaded and
-// verified exactly as the Pi would.
-bool loadAny(const std::string& path, kms::Program& out, bool quietOk) {
-    if (endsWith(path, ".kmb")) {
-        std::string err;
-        if (!kms::loadProgram(path, out, &err)) {
-            std::fprintf(stderr, "%s: %s\n", path.c_str(), err.c_str());
-            return false;
-        }
-        return true;
-    }
-    const kms::CompileResult r = kms::compileFile(path);
-    const std::string rep = r.report(path);
-    if (!rep.empty() && (!r.ok || !quietOk)) std::fputs(rep.c_str(), stderr);
-    if (!r.ok) {
-        int n = 0;
-        for (const auto& d : r.diags) n += d.error;
-        std::fprintf(stderr, "%d error%s: nothing was compiled.\n", n, n == 1 ? "" : "s");
-        return false;
-    }
-    out = r.program;
-    return true;
-}
-
 int usage() {
     std::fprintf(stderr,
         "kestrel mission check   FILE.kms\n"
@@ -218,6 +194,30 @@ int openPage(const std::vector<std::string>& a, const std::string& exeDir, const
 }
 
 }  // namespace
+
+// A .kms is compiled (and its diagnostics printed); a .kmb is loaded and
+// verified exactly as the Pi would.
+bool loadAny(const std::string& path, kms::Program& out, bool quietOk) {
+    if (endsWith(path, ".kmb")) {
+        std::string err;
+        if (!kms::loadProgram(path, out, &err)) {
+            std::fprintf(stderr, "%s: %s\n", path.c_str(), err.c_str());
+            return false;
+        }
+        return true;
+    }
+    const kms::CompileResult r = kms::compileFile(path);
+    const std::string rep = r.report(path);
+    if (!rep.empty() && (!r.ok || !quietOk)) std::fputs(rep.c_str(), stderr);
+    if (!r.ok) {
+        int n = 0;
+        for (const auto& d : r.diags) n += d.error;
+        std::fprintf(stderr, "%d error%s: nothing was compiled.\n", n, n == 1 ? "" : "s");
+        return false;
+    }
+    out = r.program;
+    return true;
+}
 
 int run(const std::vector<std::string>& args, const std::string& exeDir) {
     if (args.empty()) return usage();

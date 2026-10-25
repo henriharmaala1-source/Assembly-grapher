@@ -97,9 +97,19 @@ IMU) found each reason in turn:
    part of the frame id (`mapId = map * 4 + stage`), and onboard re-anchors on
    it as on a new map.
 
-With all three: both inertial BAs completed, 30 s GNSS-denied flight, 0
-collisions, SLAM within 0.32 m and the EKF within 0.36 m of SITL's truth
-(one seed). Stereo alone needs none of this and is still the default.
+With all three, MEASURED over four seeds (ArduCopter 4.7.2 SITL, GPS off,
+848x480, `--fast 12 5`, 30 s each, raw: nav-sim/docs/sitl_orbslam3_4.7.2.csv):
+
+| | collisions | worst SLAM error | worst EKF error | hold RMS | flown |
+|---|---|---|---|---|---|
+| stereo (`--slam`) | 0 (0/4 runs) | 0.11-0.13 m | 0.13-0.17 m | 0.07 m/s | 11.1 m |
+| stereo-inertial (`--slam-inertial`) | 0 (0/4 runs) | 0.15-0.76 m | 0.25-1.10 m | 0.16 m/s | 13.0 m |
+
+Both fly the aircraft GNSS-denied without touching anything. Over 30 s of
+slow, hovering flight the IMU buys nothing and costs some accuracy (the
+inertial BAs re-anchor the frame twice early on); it is for faster flight,
+where stereo alone loses track. Four seeds of one world: not a verdict on
+either. Stereo alone needs none of the patches and is still the default.
 
 Config keys: `nav.vox_slam`, `nav.vox_slam_socket` (default
 `/tmp/kestrel-slam.sock`), `nav.vox_slam_inertial`, `nav.vox_emitter`

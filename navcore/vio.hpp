@@ -145,8 +145,12 @@ private:
     int       resets_  = 0;
     CamPose   pose_;               // current estimate
     CamPose   kfPose_;             // pose at the current keyframe
-    float     lastImuYaw_ = 0.f;
-    bool      imuRef_ = false;       // lastImuYaw_ holds a real IMU reading
+    // The current rotation as a MATRIX (pose_'s angles are for reporting),
+    // the keyframe's, and the heading correction against the IMU: rotation
+    // = rotUp(yawCorrDeg_) * IMU attitude (vio.cpp, the prior).
+    cv::Matx33d R_ = cv::Matx33d::eye(), kfR_ = cv::Matx33d::eye();
+    double    yawCorrDeg_ = 0.0;
+    bool      imuRef_ = false;       // yawCorrDeg_ has been fixed against the IMU
     float     vel_[3] = {0, 0, 0};   // per FRAME, ENU; frames assumed evenly spaced
     bool      lastValid_ = false;
     cv::Mat   prevImg_;

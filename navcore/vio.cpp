@@ -26,10 +26,37 @@ cv::Matx33d rotWc(const CamPose& p) {
     return R;
 }
 
-// Yaw (clockwise from North) of a camera->world rotation: where the optical
-// axis points, projected onto the horizontal.
-float yawOf(const cv::Matx33d& Rwc) {
-    return float(std::atan2(Rwc(0, 2), Rwc(1, 2)) / kDeg);
+// A rotation about the WORLD VERTICAL by `deg`, clockwise seen from above --
+// camToWorld's yaw, as a matrix acting on ENU vectors.
+cv::Matx33d rotUp(double deg) {
+    const double c = std::cos(deg * kDeg), s = std::sin(deg * kDeg);
+    return cv::Matx33d(c, s, 0, -s, c, 0, 0, 0, 1);
+}
+
+// The CamPose (yaw, pitch, roll) of a camera->world rotation: rotWc inverted.
+// Straight down or up is a gimbal lock -- yaw and roll then turn the image
+// about the same (vertical) axis -- and there roll is 0 and yaw takes it all.
+// Only for REPORTING: nothing inside the solve goes through these angles.
+void eulerOf(const cv::Matx33d& R, CamPose& p) {
+    const double sp = std::max(-1.0, std::min(1.0, R(2, 2)));
+    const double pitch = std::asin(sp), cp = std::cos(pitch);
+    double yaw, roll;
+    if (cp > 1e-6) {
+        yaw = std::atan2(R(0, 2), R(1, 2));
+        const double sr = -R(2, 0) / cp;
+        const double cr = R(0, 0) * std::cos(yaw) - R(1, 0) * std::sin(yaw);
+        roll = std::atan2(sr, cr);
+    } else {
+        roll = 0.0;
+        yaw = std::atan2(sp < 0 ? -R(1, 0) : R(1, 0), R(0, 0));
+    }
+    p.yawDeg = float(yaw / kDeg); p.pitchDeg = float(pitch / kDeg); p.rollDeg = float(roll / kDeg);
+}
+
+// The angle of a rotation, degrees.
+double angleOf(const cv::Matx33d& R) {
+    const double c = std::max(-1.0, std::min(1.0, (R(0, 0) + R(1, 1) + R(2, 2) - 1.0) * 0.5));
+    return std::acos(c) / kDeg;
 }
 
 // Depth in a (2R+1)^2 window around (u,v) stays within a relative band of the
@@ -88,6 +115,8 @@ void DepthVio::init(const DepthCamera& cam, const VioParams& p) {
 void DepthVio::reset(const CamPose& start) {
     pose_ = start;
     kfPose_ = start;
+    R_ = rotWc(start);
+    kfR_ = R_;
     imuRef_ = false;
     vel_[0] = vel_[1] = vel_[2] = 0.f;
     lastValid_ = false;
@@ -115,7 +144,7 @@ void DepthVio::makeKeyframe(const cv::Mat& ir8, const cv::Mat& depthM) {
     if (want > 0) {
         std::vector<cv::Point2f> fresh;
         cv::goodFeaturesToTrack(ir8, fresh, want, p_.quality, p_.minDistPx, mask);
-        const cv::Matx33d Rwc = rotWc(pose_);
+        const cv::Matx33d& Rwc = R_;
         for (const cv::Point2f& q : fresh) {
             const int u = int(q.x + 0.5f), v = int(q.y + 0.5f);
             if (u < 0 || v < 0 || u >= depthM.cols || v >= depthM.rows) continue;
@@ -138,6 +167,7 @@ void DepthVio::makeKeyframe(const cv::Mat& ir8, const cv::Mat& depthM) {
         }
     }
     kfPose_ = pose_;
+    kfR_ = R_;
 }
 
 VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
@@ -152,15 +182,27 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
         reset(start);
     }
 
-    // The IMU's rotation since the last frame, applied to our own yaw: the
-    // prior. Roll and pitch are taken from the IMU outright.
-    if (!imuRef_) { lastImuYaw_ = attitude.yawDeg; imuRef_ = true; }
+    // THE PRIOR ROTATION: the IMU's whole attitude, turned about the world
+    // vertical by our accumulated correction yawCorr_ (vision's opinion of
+    // heading against the IMU's, whose yaw may have any zero). Roll and pitch
+    // are thereby the IMU's outright. In angles this is exactly what it used to
+    // be -- our yaw plus the IMU's yaw change, the IMU's roll and pitch -- but
+    // held as a matrix it has no singularity: a DOWNWARD camera sits at pitch
+    // -90, where yaw and roll are one rotation and 0.3 deg of IMU noise swung
+    // their split by tens of degrees a frame (6.5 % drift level, 0.04 % with
+    // no noise: nav-sim/test/downvio_sweep.cpp).
+    const cv::Matx33d Rimu = rotWc(attitude);
+    if (!imuRef_) {
+        // Fix the correction so the prior starts AT the current pose: the
+        // vertical rotation taking the IMU's attitude onto ours.
+        const cv::Matx33d M = R_ * Rimu.t();
+        yawCorrDeg_ = std::atan2(M(0, 1), M(0, 0)) / kDeg;
+        imuRef_ = true;
+    }
     CamPose prior = pose_;
-    prior.yawDeg   = pose_.yawDeg + wrap180(attitude.yawDeg - lastImuYaw_);
-    prior.rollDeg  = attitude.rollDeg;
-    prior.pitchDeg = attitude.pitchDeg;
+    const cv::Matx33d Rprior = rotUp(yawCorrDeg_) * Rimu;
+    eulerOf(Rprior, prior);
     prior.e += vel_[0]; prior.n += vel_[1]; prior.u += vel_[2];
-    lastImuYaw_ = attitude.yawDeg;
 
     if (prevImg_.empty() || prevPts_.empty()) {
         // First frame (or just re-anchored after a loss): nothing to track
@@ -183,7 +225,7 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
     const cv::Matx33d K(cam_->fpx(), 0, cam_->ppx(), 0, cam_->fy(), cam_->ppy(), 0, 0, 1);
     std::vector<cv::Point2f> cur(prevPts_), back(prevPts_);
     {
-        const cv::Matx33d Rcw = rotWc(prior).t();
+        const cv::Matx33d Rcw = Rprior.t();
         const cv::Vec3d C(prior.e, prior.n, prior.u);
         for (size_t i = 0; i < prevPts_.size(); ++i) {
             const cv::Vec3d pc = Rcw * (cv::Vec3d(worldPts_[i].x, worldPts_[i].y,
@@ -220,7 +262,10 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
     // 6-DOF PnP left free to trade tilt against translation is exactly what
     // produced wild solutions here. Outliers: Huber weights first, then a hard
     // residual gate and a clean re-solve on the survivors.
+    // The solved rotation is Rprior turned by dYaw about the world vertical.
     CamPose est = prior;
+    double dYaw = 0.0;                     // degrees
+    auto rotEst = [&](double d) { return rotUp(yawCorrDeg_ + d) * Rimu; };
     std::vector<int> inl;
     bool ok = false;
     double rms = 0;
@@ -228,11 +273,10 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
         std::vector<char> use(img.size(), 1);
         auto solve = [&](int iters, double huber) {
             for (int it = 0; it < iters; ++it) {
-                const cv::Matx33d Rcw = rotWc(est).t();
+                const cv::Matx33d Rcw = rotEst(dYaw).t();
                 // d(Rcw)/d(yaw) by a small finite step: one definition of the
-                // attitude convention, rotWc, and no hand-derived copy of it.
-                CamPose ey = est; ey.yawDeg += 0.01f;
-                const cv::Matx33d dRcw = (rotWc(ey).t() - Rcw) * (1.0 / (0.01 * kDeg));
+                // rotation, rotEst, and no hand-derived copy of it.
+                const cv::Matx33d dRcw = (rotEst(dYaw + 0.01).t() - Rcw) * (1.0 / (0.01 * kDeg));
                 const cv::Vec3d C(est.e, est.n, est.u);
                 cv::Matx44d H = cv::Matx44d::zeros();
                 cv::Vec4d g(0, 0, 0, 0);
@@ -258,12 +302,12 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
                 }
                 // The gyro's yaw, as one more (angular) observation.
                 const double sy = double(p_.gyroYawSigmaDeg) * kDeg;
-                const double eyaw = double(wrap180(est.yawDeg - prior.yawDeg)) * kDeg;
+                const double eyaw = dYaw * kDeg;
                 H(0, 0) += 1.0 / (sy * sy);
                 g[0]    += eyaw / (sy * sy);
                 cv::Vec4d dx;
                 if (!cv::solve(H, -g, dx, cv::DECOMP_CHOLESKY)) return false;
-                est.yawDeg += float(dx[0] / kDeg);
+                dYaw += dx[0] / kDeg;
                 est.e += float(dx[1]); est.n += float(dx[2]); est.u += float(dx[3]);
                 if (std::fabs(dx[0]) < 1e-6 && std::fabs(dx[1]) + std::fabs(dx[2]) +
                     std::fabs(dx[3]) < 1e-5) break;
@@ -280,7 +324,7 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
         };
         ok = solve(10, 1.5);
         if (ok) {
-            const cv::Matx33d Rcw = rotWc(est).t();
+            const cv::Matx33d Rcw = rotEst(dYaw).t();
             inl.clear();
             for (size_t k = 0; k < img.size(); ++k) {
                 use[k] = residual(k, Rcw) <= p_.ransacPx;
@@ -289,7 +333,7 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
             ok = int(inl.size()) >= p_.minInliers && solve(5, 0.0);
         }
         if (ok) {
-            const cv::Matx33d Rcw = rotWc(est).t();
+            const cv::Matx33d Rcw = rotEst(dYaw).t();
             double se = 0;
             inl.clear();
             for (size_t k = 0; k < img.size(); ++k) {
@@ -302,14 +346,16 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
             // beats confidently wrong -- downstream fuses what we say.
             const float jump = std::hypot(std::hypot(est.e - pose_.e, est.n - pose_.n),
                                           est.u - pose_.u);
-            const float yawDev = std::fabs(wrap180(est.yawDeg - prior.yawDeg));
+            const float yawDev = float(std::fabs(dYaw));
             ok = int(inl.size()) >= p_.minInliers && jump <= p_.maxJumpM &&
                  yawDev <= p_.maxYawDevDeg;
         }
     }
 
     if (ok) {
-        est.yawDeg = wrap180(est.yawDeg);
+        yawCorrDeg_ = wrap180(float(yawCorrDeg_ + dYaw));
+        R_ = rotUp(yawCorrDeg_) * Rimu;
+        eulerOf(R_, est);
         // Velocity: measured only across two consecutive good frames; after a
         // loss the previous pose was a coast, and differencing it would feed
         // the guess back in as a measurement.
@@ -329,6 +375,7 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
         // coasting down -- and say so: the pose is not a measurement. Re-anchor from this frame, which
         // is a discontinuity in everything downstream of the anchor.
         pose_ = prior;
+        R_ = Rprior;
         for (float& v : vel_) v *= p_.coastDecay;
         prevPts_.clear(); worldPts_.clear();
         ++resets_;
@@ -338,7 +385,7 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
     // 4. Keyframe policy.
     const float moved = std::hypot(std::hypot(pose_.e - kfPose_.e, pose_.n - kfPose_.n),
                                    pose_.u - kfPose_.u);
-    const float turned = std::fabs(wrap180(pose_.yawDeg - kfPose_.yawDeg));
+    const float turned = float(angleOf(kfR_.t() * R_));
     if (!ok || int(prevPts_.size()) < p_.kfMinTracked || moved > p_.kfDistM ||
         turned > p_.kfYawDeg) {
         makeKeyframe(ir8, depthM);

@@ -46,7 +46,8 @@ struct SitlParams {
     // SITL must be started with nav-sim/sitl/kestrel_vio.parm, which turns
     // its GPS off and makes ExternalNav the EKF source; the EKF origin is set
     // from SITL's own first fix, as fc.origin_* is aboard.
-    bool vio = false;
+    bool vio = false;          // ...from DepthVio or (FlightParams::slam) ORB-SLAM3
+    bool imu = false;          // stream HIGHRES_IMU at 200 Hz (stereo-inertial SLAM)
     bool verbose = true;
 };
 
@@ -63,6 +64,21 @@ public:
     void handOff(WorldState::FcRequest r) override;
     void vision(const VisionOdom& v) override;
     long visionSent() const { return visSent_; }
+    // OBSTACLE_DISTANCE from the module's frame, at most 10 Hz of SITL time:
+    // ArduPilot's own avoidance (GUIDED adjusts velocity on it) then sees the
+    // virtual walls through kestrel's depth, as it would aboard. Needs
+    // PRX1_TYPE 2 (nav-sim/sitl/kestrel_sitl.parm).
+    void proximity(const float* distM, int n) override;
+    long proximitySent() const { return proxSent_; }
+    // SITL's simulated clock (ATTITUDE time_boot_ms), -1 before it is known.
+    double timeS() const override;
+    // ArduPilot's HIGHRES_IMU, body FRD -> the camera's axes (it looks along
+    // the nose: x right = body y, y down = body z, z forward = body x).
+    // Requested only with SitlParams::imu.
+    void takeImu(std::vector<sim::ImuRaw>& out) override;
+    // CONTACT: motors off in the air, so the airframe falls as a real one
+    // would after hitting a wall SITL cannot see.
+    void crash();
 
     // LAND, and service the link until the FC is down and disarmed (or the
     // timeout). For the end of a run.
@@ -83,8 +99,10 @@ private:
     Stage stage_ = Stage::LINK;
     std::string failure_;
     double t0_ = 0, stageT_ = 0, lastAskS_ = -1e9;
+    double simT0_ = -1.0;                  // SITL's clock when first seen
     long textSeen_ = 0;
-    long visSent_ = 0;
+    long visSent_ = 0, proxSent_ = 0;
+    double lastProxT_ = -1e9;
     // Truth origin (the first fix) and where it lands in the world.
     bool originSet_ = false;
     double lat0_ = 0, lon0_ = 0;

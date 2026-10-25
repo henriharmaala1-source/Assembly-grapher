@@ -640,7 +640,10 @@ struct Cfg {
     int   sConn = 0, sWorld = 0, sSeed = 101, sSecs = 1, sAlt = 0, sSpeed = 0;
     int   sScript = -1;
     bool  sLowres = false, sKeep = false, sCsv = true, sShot = true;
-    bool  sVio = false;           // --vio: GNSS-denied, kestrel's VIO is the FC's position
+    // The FC's position: 0 SITL's GPS, 1 --vio (DepthVio), 2 --slam (ORB-SLAM3
+    // stereo), 3 --slam-inertial (ORB-SLAM3 on ArduPilot's IMU too).
+    int   sEst = 0;
+    bool  sRealtime = false;      // --realtime: no soft lockstep
 };
 
 const char* MISSION_ACTION[] = {"check", "compile", "sim", "editor", "playground", "scenarios"};
@@ -817,7 +820,10 @@ std::vector<std::string> buildArgs(const Cfg& c,
                 a.push_back("--script"); a.push_back(g_missions[size_t(c.sScript)]);
             }
             if (c.sLowres) a.push_back("--lowres");
-            if (c.sVio) a.push_back("--vio");
+            if (c.sEst == 1) a.push_back("--vio");
+            if (c.sEst == 2) a.push_back("--slam");
+            if (c.sEst == 3) a.push_back("--slam-inertial");
+            if (c.sRealtime) a.push_back("--realtime");
             if (c.sKeep) a.push_back("--keep-going");
             if (c.sCsv) { a.push_back("--csv"); a.push_back("sitl.csv"); }
             if (c.sShot) { a.push_back("--shot"); a.push_back("sitl"); }
@@ -979,7 +985,7 @@ enum {
     ID_M_RUNS_M = 940, ID_M_RUNS_P, ID_M_SEED_M, ID_M_SEED_P, ID_M_TARGET, ID_M_VIDEO, ID_M_SHOW,
     ID_M_ALT = 950, ID_M_DIST, ID_M_WIND, ID_M_DROP, ID_M_LAT,
     ID_S_CONN = 1000, ID_S_WORLD, ID_S_SEED_M, ID_S_SEED_P, ID_S_SECS, ID_S_ALT,
-    ID_S_SPEED, ID_S_SCRIPT, ID_S_LOWRES, ID_S_KEEP, ID_S_CSV, ID_S_SHOT, ID_S_VIO,
+    ID_S_SPEED, ID_S_SCRIPT, ID_S_LOWRES, ID_S_KEEP, ID_S_CSV, ID_S_SHOT, ID_S_VIO, ID_S_RT,
 };
 
 void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
@@ -1547,7 +1553,9 @@ const FlagBtn FLAG_BTNS[] = {
     {MISSION, ID_M_LOWRES,  "--lowres"},
     {SITL,  ID_S_LOWRES,    "--lowres"},
     {SITL,  ID_S_KEEP,      "--keep-going"},
-    {SITL,  ID_S_VIO,       "--vio"},
+    // Four-state (GPS / --vio / --slam / --slam-inertial): lit for any, no one name.
+    {SITL,  ID_S_VIO,       ""},
+    {SITL,  ID_S_RT,        "--realtime"},
     {MISSION, ID_M_SHOW,    "--show"},
     {DEMO,  ID_D_EMITTER,   "--no-emitter"},
     {BENCH, ID_BENCH_STEREO, "--stereo"},
@@ -1759,26 +1767,32 @@ void panelSitl(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
                   ID_S_SCRIPT, haveScript});
     bs.push_back({cv::Rect(x + 370, 300, 180, 36), c.sLowres ? "424x240 (sees less)" : "848x480 (as flown)",
                   ID_S_LOWRES, c.sLowres});
-    bs.push_back({cv::Rect(x + 560, 300, 200, 36), c.sVio ? "GNSS-denied: VIO" : "FC on SITL's GPS",
-                  ID_S_VIO, c.sVio});
+    bs.push_back({cv::Rect(x + 560, 300, 200, 36),
+                  c.sEst == 3 ? "no GPS: SLAM + IMU" : c.sEst == 2 ? "no GPS: ORB-SLAM3"
+                  : c.sEst == 1 ? "no GPS: VIO" : "FC on SITL's GPS",
+                  ID_S_VIO, c.sEst != 0});
     bs.push_back({cv::Rect(x, 350, 250, 36), c.sKeep ? "fly on through contact" : "first contact ends it",
                   ID_S_KEEP, c.sKeep});
     bs.push_back({cv::Rect(x + 260, 350, 140, 36), c.sCsv ? "sitl.csv row" : "no csv", ID_S_CSV, c.sCsv});
     bs.push_back({cv::Rect(x + 410, 350, 190, 36), c.sShot ? "write the pictures" : "no pictures",
                   ID_S_SHOT, c.sShot});
+    bs.push_back({cv::Rect(x + 610, 350, 150, 36), c.sRealtime ? "real time" : "soft lockstep",
+                  ID_S_RT, c.sRealtime});
 
     txt(im, "Scored as everything here is: metres flown before a collision, the "
             "collision, net", x, 416, 0.42, DIM);
     txt(im, "displacement and cells. SITL knows nothing of the walls, so contact is "
             "judged against the", x, 434, 0.42, DIM);
-    txt(im, "true voxels. Not lockstep: a frame rendered late is reported as late. Then "
-            "LAND.", x, 452, 0.42, DIM);
+    txt(im, "true voxels and proximity goes to ArduPilot's own avoidance. Contact cuts "
+            "the motors.", x, 452, 0.42, DIM);
     txt(im, "Pictures: sitl_mission.png, _chase.png, _depth.png. The script button "
             "cycles ./missions.", x, 478, 0.42, DIM);
-    txt(im, "GNSS-denied: start SITL with nav-sim/sitl/kestrel_vio.parm (GPS off, "
-            "vision as the EKF's", x, 504, 0.42, DIM);
-    txt(im, "position); the VIO on the simulated IR is then all ArduPilot navigates "
-            "on.", x, 522, 0.42, DIM);
+    txt(im, "No GPS: start SITL with nav-sim/sitl/kestrel_vio.parm too; the VIO (or "
+            "ORB-SLAM3, via a", x, 504, 0.42, DIM);
+    txt(im, "running kestrel-orbslam --fast 12 5) is then all ArduPilot navigates on. "
+            "Lockstep slows SITL", x, 522, 0.42, DIM);
+    txt(im, "(SIM_SPEEDUP) to what this machine renders, so no frame is late.",
+        x, 540, 0.42, DIM);
 }
 
 // ------------------------------------------------------------------- compose
@@ -1914,7 +1928,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
     if (id == ID_S_KEEP)   { c.sKeep = !c.sKeep; return; }
     if (id == ID_S_CSV)    { c.sCsv = !c.sCsv; return; }
     if (id == ID_S_SHOT)   { c.sShot = !c.sShot; return; }
-    if (id == ID_S_VIO)    { c.sVio = !c.sVio; return; }
+    if (id == ID_S_VIO)    { c.sEst = (c.sEst + 1) % 4; return; }
+    if (id == ID_S_RT)     { c.sRealtime = !c.sRealtime; return; }
     if (id >= ID_D_MODEL && id < ID_D_MODEL + 30) {
         c.dModel = id - ID_D_MODEL - 1;      // the first entry is "none"
         return;

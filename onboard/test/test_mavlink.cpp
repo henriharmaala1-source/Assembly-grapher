@@ -267,6 +267,19 @@ int main() {
                     "0101015cd0");
     }
 
+    {
+        // PARAM_SET SIM_SPEEDUP = 0.5 (REAL32) to 1/1: how `kestrel sitl`
+        // slows SITL's clock to what it can render (soft lockstep).
+        Codec c = fresh();
+        Payload p;
+        p.f32(0.5f); p.u8(1); p.u8(1);
+        const char id[16] = "SIM_SPEEDUP";
+        for (char ch : id) p.u8(uint8_t(ch));
+        p.u8(9);
+        expectFrame("PARAM_SET SIM_SPEEDUP 0.5", c, MSG_PARAM_SET, p,
+                    "fd170000072abf1700000000003f010153494d5f53504545445550000000000009b544");
+    }
+
     // --- DECODE ------------------------------------------------------------
     // Same goldens driven the other way: bytes an autopilot would send us.
     auto decode = [](const char* h, Msg& m) {
@@ -313,6 +326,17 @@ int main() {
               && m.id == MSG_GLOBAL_POSITION_INT, "decode GLOBAL_POSITION_INT");
         check(m.i32(4) == 601234567 && m.i32(8) == 248765432, "  lat/lon read back");
         check(m.u16(26) == 18000, "  hdg = 180.00 deg");
+    }
+    {
+        // HIGHRES_IMU from pymavlink (common v2.0): time 123456789 us, acc
+        // 0.1 -0.2 -9.8, gyro 0.01 -0.02 0.03, temperature 25; the zero tail
+        // (id) TRUNCATED on the wire, 61 of 63 bytes -- zero-extension again.
+        Msg m;
+        check(decode("fd3d000000010169000015cd5b0700000000cdcccc3dcdcc4cbecdcc1cc10ad7233c0ad7a3bc8fc2f53c"
+                     "0000000000000000000000000000000000000000000000000000c8413f69f0", m)
+              && m.id == MSG_HIGHRES_IMU, "decode HIGHRES_IMU");
+        check(m.u32(0) == 123456789u && m.u32(4) == 0u, "  time_usec");
+        check(m.f32(16) == -9.8f && m.f32(28) == 0.03f, "  zacc, zgyro");
     }
     {
         // SIM_STATE from pymavlink (common v2.0), the shape ArduPilot's

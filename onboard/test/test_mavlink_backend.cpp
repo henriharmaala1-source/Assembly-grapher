@@ -428,6 +428,45 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         fc.tick();
         CHECK(fc.fcText() == say && fc.fcTextCount() == 1);
+        // The FC's clock comes from ATTITUDE's time_boot_ms (SITL: sim time).
+        CHECK(fc.fcTimeMs() == 1000u);
+        CHECK(fc.setParam("SIM_SPEEDUP", 0.5f));
+        CHECK(fc.forceDisarm());
+        int sets = 0, forced = 0;
+        for (const mav::Msg& m : decodeAll(drainMaster(mfd))) {
+            if (m.id == mav::MSG_PARAM_SET) {
+                char pid[17]{};
+                for (int i = 0; i < 16; ++i) pid[i] = char(m.u8(6 + i));
+                if (std::string(pid) == "SIM_SPEEDUP" && m.f32(0) == 0.5f && m.u8(4) == 1
+                    && m.u8(22) == 9) ++sets;
+            }
+            if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_COMPONENT_ARM_DISARM
+                && m.f32(0) == 0.f && m.f32(4) == 21196.f) ++forced;
+        }
+        CHECK(sets == 1 && forced == 1);
+        // IMU for a stereo-inertial SLAM: asked for on request, ringed, drained.
+        fc.requestImu(200);
+        int imuAsk = 0;
+        for (const mav::Msg& m : decodeAll(drainMaster(mfd)))
+            if (m.id == mav::MSG_COMMAND_LONG && m.u16(28) == mav::CMD_SET_MESSAGE_INTERVAL
+                && m.f32(0) == float(mav::MSG_HIGHRES_IMU) && m.f32(4) == 5000.f) ++imuAsk;
+        CHECK(imuAsk == 1);
+        for (int k = 0; k < 3; ++k) {
+            mav::Payload p;
+            p.u64(uint64_t(1000000 + 5000 * k));
+            p.f32(0.1f); p.f32(-0.2f); p.f32(-9.8f); p.f32(0.01f); p.f32(-0.02f); p.f32(0.03f * k);
+            for (int j = 0; j < 7; ++j) p.f32(0);
+            p.u16(0x3f); p.u8(0);
+            fcSend(mfd, mav::MSG_HIGHRES_IMU, p);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        std::vector<MavlinkBackend::ImuSample> imu;
+        fc.takeImu(imu);
+        CHECK(imu.size() == 3 && imu[0].tS == 1.0 && std::fabs(imu[2].tS - 1.01) < 1e-9);
+        CHECK(imu[1].acc[2] == -9.8f && imu[2].gyro[2] == 0.06f);
+        fc.takeImu(imu);
+        CHECK(imu.empty());
         drainMaster(mfd);
     }
 
@@ -620,7 +659,7 @@ int main() {
 
         // ARDUPILOT 4.7 NAMES. 4.7 renamed the centi-unit parameters and moved
         // them to SI (LOIT_SPEED cm/s -> LOIT_SPEED_MS m/s, PILOT_SPEED_UP ->
-        // PILOT_SPD_UP m/s); found flying against 4.7 SITL, where every one of
+        // PILOT_SPD_UP m/s); found flying against SITL (4.8.0-dev; 4.7.2 has the same names), where every one of
         // them went unanswered. The same calibration served under the new
         // names must give the same pulses -- here 6 m/s and 1 / 0.5 m/s, so
         // a missed conversion (x100) or a stale old value shows.

@@ -3,7 +3,7 @@
 // kestrel-orbslam -- ORB-SLAM3 as a separate process behind SlamLink.
 //
 //   kestrel-orbslam --vocab ORBvoc.txt [--socket /tmp/kestrel-slam.sock]
-//                   [--features 1000] [--settings-out FILE]
+//                   [--features 1000] [--fast INI MIN] [--settings-out FILE]
 //
 // Serves one client at a time on a local socket (navcore/slam_link.hpp):
 // a stereo IR pair (+ IMU) in, the left camera's pose and ORB-SLAM3's tracking
@@ -46,6 +46,14 @@ namespace {
 struct Options {
     std::string vocab, socket = "/tmp/kestrel-slam.sock", settingsOut;
     int features = 1000;
+    // ORB's FAST corner thresholds: per image cell, `ini` first, `min` where
+    // ini finds none. ORB-SLAM3's defaults, 20 / 7, are for a lit scene. With
+    // the projector OFF (or the dark half of the strobe) indoor IR is dim and
+    // low-contrast: measured on nav-sim's IR model, 848x480 at 1.5 m, 20 finds
+    // ZERO corners in every view and 7 finds 220-700 -- under the 500 that
+    // stereo initialisation needs, so the map never starts. 5 finds 940-1490.
+    // `--fast 12 5` for dark IR; on hardware, check with the real camera.
+    int fastIni = 20, fastMin = 7;
 };
 
 // ORB-SLAM3 "1.0" settings for a RECTIFIED stereo pair. IMU noise is the
@@ -55,7 +63,7 @@ struct Options {
 // depth origin to within millimetres and librealsense already reports it in
 // the depth frame's axes, so T_b_c1 is identity plus ORB-SLAM3's D435i offset.
 std::string writeSettings(const slamlink::FrameHeader& h, bool inertial, int features,
-                          const std::string& outPath) {
+                          int fastIni, int fastMin, const std::string& outPath) {
     std::string path = outPath;
     if (path.empty()) {
         char tmpl[] = "/tmp/kestrel-orbslam-XXXXXX.yaml";
@@ -83,7 +91,7 @@ std::string writeSettings(const slamlink::FrameHeader& h, bool inertial, int fea
           << "IMU.GyroWalk: 1e-6\nIMU.AccWalk: 1e-4\nIMU.Frequency: 200.0\n";
     f << "ORBextractor.nFeatures: " << features << "\n"
       << "ORBextractor.scaleFactor: 1.2\nORBextractor.nLevels: 8\n"
-      << "ORBextractor.iniThFAST: 20\nORBextractor.minThFAST: 7\n"
+      << "ORBextractor.iniThFAST: " << fastIni << "\nORBextractor.minThFAST: " << fastMin << "\n"
       << "Viewer.KeyFrameSize: 0.05\nViewer.KeyFrameLineWidth: 1.0\n"
       << "Viewer.GraphLineWidth: 0.9\nViewer.PointSize: 2.0\n"
       << "Viewer.CameraSize: 0.08\nViewer.CameraLineWidth: 3.0\n"
@@ -101,6 +109,11 @@ bool parse(int argc, char** argv, Options& o) {
         else if (a == "--socket" && next(v)) o.socket = v;
         else if (a == "--settings-out" && next(v)) o.settingsOut = v;
         else if (a == "--features" && next(v)) o.features = std::atoi(v.c_str());
+        else if (a == "--fast" && next(v)) {
+            o.fastIni = std::atoi(v.c_str());
+            if (!next(v)) return false;
+            o.fastMin = std::atoi(v.c_str());
+        }
         else return false;
     }
     return !o.vocab.empty();
@@ -127,7 +140,7 @@ int main(int argc, char** argv) {
     Options opt;
     if (!parse(argc, argv, opt)) {
         std::fprintf(stderr, "usage: kestrel-orbslam --vocab ORBvoc.txt [--socket PATH] "
-                             "[--features N] [--settings-out FILE]\n");
+                             "[--features N] [--fast INI MIN] [--settings-out FILE]\n");
         return 2;
     }
     std::string err;
@@ -158,6 +171,7 @@ int main(int argc, char** argv) {
                 first = h;
                 inertial = (h.flags & slamlink::kFlagInertial) != 0;
                 const std::string yaml = writeSettings(h, inertial, opt.features,
+                                                       opt.fastIni, opt.fastMin,
                                                        opt.settingsOut);
                 slam.reset(new ORB_SLAM3::System(
                     opt.vocab, yaml,

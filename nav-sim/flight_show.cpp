@@ -17,11 +17,19 @@ constexpr float kBodyR = 0.3f;     // the airframe; the planner's 0.6 m has marg
 class FlightShow::Source : public sim::FrameSource {
 public:
     Source(const sim::VoxelWorld& w, const sim::CamParams& p, bool stereo,
-           const sim::CamPose* truth, bool ir)
-        : sim_(w, p, /*truth depth*/ !stereo), truth_(truth) {
-        if (ir) sim_.enableIR(false);       // the left IR image, for VIO
+           const sim::CamPose* truth, bool ir, bool irPair, Plant* plant)
+        : sim_(w, p, /*truth depth*/ !stereo), truth_(truth), plant_(plant) {
+        // The left IR image for VIO; the pair, a baseline apart, for a stereo SLAM.
+        if (ir || irPair) sim_.enableIR(irPair);
     }
     bool intensity(cv::Mat& out) const override { return sim_.intensity(out); }
+    bool intensityRight(cv::Mat& out) const override { return sim_.intensityRight(out); }
+    double intensityTimeS() const override { return sim_.intensityTimeS(); }
+    void setTimeS(double t) { sim_.setTimeS(t); }
+    // The airframe's IMU, when the plant has one (a stereo-inertial SLAM).
+    void takeImu(std::vector<sim::ImuRaw>& out) override {
+        if (plant_) plant_->takeImu(out); else out.clear();
+    }
     const char* name() const override { return "sim-d435i-attitude-only"; }
     bool ok() const override { return true; }
     const sim::CamParams& params() const override { return sim_.params(); }
@@ -47,6 +55,7 @@ public:
 private:
     sim::SimFrameSource sim_;
     const sim::CamPose* truth_;
+    Plant* plant_ = nullptr;
 };
 
 FlightShow::FlightShow(const FlightParams& p)
@@ -91,10 +100,13 @@ FlightShow::FlightShow(const FlightParams& p)
     VoxelNavModule::Params vp;
     vp.stillSpeedMs = mp.settleSpeedMs;
     vp.vio = p.vio;
+    vp.slam = p.slam;
+    vp.slamSocket = p.slamSocket;
+    vp.slamInertial = p.slamInertial;
     vp.emitter = sim::EmitterMode::Off;
     vp.legMaxM = std::max(mp.stepM + mp.voxStopMarginM, 1.f);
 
-    src_ = new Source(*world_, cp, p.stereo, &truth_, p.vio);
+    src_ = new Source(*world_, cp, p.stereo, &truth_, p.vio, p.slam, p.plant.get());
     mod_.reset(new VoxelNavModule(std::unique_ptr<sim::FrameSource>(src_), vp));
     mission_.reset(new MissionController(mp));
     mission_->enable(true);
@@ -156,13 +168,22 @@ void FlightShow::telemetry() {
         s.estValid = true; s.estPe = truth_.e; s.estPn = truth_.n;
         s.estSpeed = std::fabs(v_); s.missionGo = true;
         s.vehAltM = truth_.u - floorZ_;
-        if (p_.vio) { s.vehRollDeg = truth_.rollDeg; s.vehPitchDeg = truth_.pitchDeg; }
+        if (p_.vio || p_.slam) { s.vehRollDeg = truth_.rollDeg; s.vehPitchDeg = truth_.pitchDeg; }
     });
 }
 
-// Each NEW valid VIO pose to the plant, once (fc_odometry.hpp, as main.cpp).
+// Each NEW valid VIO/SLAM pose to the plant, once (fc_odometry.hpp, as
+// main.cpp), and the module's proximity with it (main.cpp's FcLink path).
 void FlightShow::feedVision() {
-    if (!p_.plant || !p_.vio) return;
+    if (!p_.plant) return;
+    {
+        const WorldState s = wm_.snapshot();
+        if (s.voxProxN > 0 && s.voxProxStampS != lastProxS_) {
+            lastProxS_ = s.voxProxStampS;
+            p_.plant->proximity(s.voxProx, s.voxProxN);
+        }
+    }
+    if (!p_.vio && !p_.slam) return;
     const WorldState s = wm_.snapshot();
     VisionOdom v;
     if (s.vioStampS == lastVisionS_ || !visionOdomFromWorld(s, v)) return;
@@ -172,9 +193,17 @@ void FlightShow::feedVision() {
 
 void FlightShow::tick() {
     const float dt = kDt;
+    // The frame time a SLAM is handed: the plant's clock (SITL's sim time),
+    // else the tick's.
+    const double tS = p_.plant && p_.plant->timeS() >= 0.0 ? p_.plant->timeS()
+                                                            : double(ticks_) * kDt;
+    src_->setTimeS(tS);
+    const bool track = p_.vio || p_.slam;
     if (p_.plant && !p_.plant->ready(truth_)) {           // not airborne yet
-        // ...but the VIO runs, and is sent: a GNSS-denied FC arms on it.
-        if (p_.vio) { telemetry(); mod_->run(cv::Mat(), wm_); feedVision(); }
+        // ...but the module runs, as aboard, and what it makes is sent: the
+        // FC's pre-arm checks want the proximity sensor ("PRX1: No Data"),
+        // and a GNSS-denied FC arms only on the VIO.
+        telemetry(); mod_->run(cv::Mat(), wm_); feedVision();
         return;
     }
     telemetry();
@@ -182,7 +211,10 @@ void FlightShow::tick() {
     // occasionally otherwise (it must still say "moving"). With VIO, every
     // tick: an odometry fed at 3 Hz is not one.
     const std::string ph = wm_.snapshot().missionPhase;
-    if (p_.vio || ph == "THINK" || ph == "SCAN" || ticks_ % 6 == 0) mod_->run(cv::Mat(), wm_);
+    // With a plant the module runs every tick, as aboard on its own thread:
+    // the proximity the FC's avoidance gets is per frame.
+    if (track || p_.plant || ph == "THINK" || ph == "SCAN" || ticks_ % 6 == 0)
+        mod_->run(cv::Mat(), wm_);
     feedVision();
     if (mod_->resets() != lastResets_) {       // a new vantage: a new map, here
         lastResets_ = mod_->resets();

@@ -59,10 +59,22 @@ for rectified stereo.
 ## Run
 
 ```bash
-onboard/orbslam/build/kestrel-orbslam \
+onboard/orbslam/build/kestrel-orbslam --fast 12 5 \
     --vocab onboard/orbslam/third_party/ORB_SLAM3/Vocabulary/ORBvoc.txt &
 ./build/kestrel --voxel --voxel-fps=30 --voxel-slam --voxel-vio-fc --fc=mavlink --auto
 ```
+
+**Dark IR: `--fast 12 5`.** ORB's FAST corner thresholds default to 20 / 7
+(ORB-SLAM3's, for lit scenes). With the projector off -- or on the dark half
+of the strobe, which is the half SLAM gets -- indoor IR is dim and
+low-contrast, and stereo initialisation needs more than 500 corners in one
+frame. Measured on nav-sim's IR model at 1.5 m (424x240 / 848x480, four
+headings): threshold 20 finds **0** corners in every view; 7 finds 1-10 /
+220-700; 5 finds 30-50 / 940-1490. So at 848x480 `--fast 12 5` initialises
+(`kestrel sitl --slam`, ArduCopter SITL, GPS off: "New Map created with 526
+points", then armed and flew on it) and the defaults do not; at 424x240
+nothing does. Check on the real camera before trusting either number:
+`--settings-out FILE` keeps the YAML the bridge wrote.
 
 Config keys: `nav.vox_slam`, `nav.vox_slam_socket` (default
 `/tmp/kestrel-slam.sock`), `nav.vox_slam_inertial`, `nav.vox_emitter`

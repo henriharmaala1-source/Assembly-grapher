@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "flight_controller.hpp"
 #include "mavlink_v2.hpp"
@@ -78,6 +79,18 @@ public:
     // GUIDED, armed, on the ground -- the SITL runner's way into the air; a
     // pilot does this with the sticks.
     bool takeoff(float altM);
+    // Motors off NOW, in the air too (ArduPilot's 21196 "forced" disarm). For
+    // a simulated crash -- `kestrel sitl` ends a run on contact with it, so
+    // the airframe falls as it would -- never for a flight.
+    bool forceDisarm();
+    // PARAM_SET, REAL32. Fire and forget: ArduPilot answers with PARAM_VALUE,
+    // which the readback above picks up if the name is one it tracks. For the
+    // SITL runner (SIM_SPEEDUP); the aircraft's own parameters are the
+    // pilot's, set from a ground station, never from here.
+    bool setParam(const char* name, float value);
+    // The FC's clock: time_boot_ms of the newest ATTITUDE, 0 before one. On
+    // SITL it is SIMULATED time, which is what `kestrel sitl` paces itself to.
+    uint32_t fcTimeMs() const { return fcTimeMs_; }
 
     void setAssistMode(bool on) override { assist_ = on; }
     void latchBaseline() override;
@@ -240,6 +253,16 @@ public:
     // newest one and how many have arrived, for whoever wants to show them.
     const std::string& fcText() const { return fcText_; }
     long fcTextCount() const { return fcTextCount_; }
+    // THE FC'S IMU, for a stereo-inertial SLAM: HIGHRES_IMU -- calibrated,
+    // noisy, what the EKF itself integrates -- with its microsecond time on
+    // the FC's clock (SITL: simulated time). Body FRD, m/s^2 (specific force:
+    // -9.8 on z at rest) and rad/s. Off unless asked for; kept in a fixed ring
+    // of the newest kImuRing, drained by takeImu().
+    struct ImuSample { double tS = 0; float acc[3] = {}, gyro[3] = {}; };
+    void requestImu(int hz) { imuHz_ = hz; if (link_.isOpen()) requestStreams(); }
+    // Every sample since the last call, oldest first (`out` cleared first).
+    void takeImu(std::vector<ImuSample>& out);
+    long imuDropped() const { return imuDropped_; }
     void requestSimTruth(int hz) { simTruthHz_ = hz; if (link_.isOpen()) requestStreams(); }
     const SimTruth& simTruth() const { return simTruth_; }
 
@@ -344,6 +367,12 @@ private:
     std::string fcText_;
     long     fcTextCount_ = 0;
     int      simTruthHz_ = 0;
+    uint32_t fcTimeMs_ = 0;
+    int      imuHz_ = 0;
+    static constexpr int kImuRing = 512;
+    ImuSample imuRing_[kImuRing];
+    int      imuHead_ = 0, imuCount_ = 0;
+    long     imuDropped_ = 0;              // overwritten before being taken
     SimTruth simTruth_;
 
     bool   originValid_ = false;

@@ -102,35 +102,55 @@ text menu rather than dying. A build without OpenCV highgui does the same.
 
   kestrel sitl [--connect tcp:127.0.0.1:5760] [--world gallery|hall]
                [--seed N] [--seconds S] [--alt M] [--script FILE.kms]
-               [--lowres] [--keep-going] [--speedup X] [--vio] [--csv FILE]
-               [--shot PREFIX]
+               [--lowres] [--keep-going] [--speedup X] [--realtime]
+               [--vio | --slam [--slam-socket PATH]] [--csv FILE] [--shot PREFIX]
         THE SAME AUTONOMY FLYING ARDUPILOT. Everything `mission sim` flies --
         onboard's voxel module, MissionController, SCRIPT mode -- but the
         airframe is ArduCopter SITL: the commands go through onboard's own
         MAVLink backend (the code that flies the aircraft, over a socket
-        instead of a UART) and the simulated D435i depth is rendered from
-        ArduPilot's TRUE pose (SIM_STATE). It connects, waits for the
-        parameter readback, asks for GUIDED, arms (never forced), takes off
-        to --alt, flies --seconds, then LANDs and waits for the disarm.
-        Prints FC messages as they come ("PreArm: ..."), so a refusal says why.
-        Scored as everything here is: metres flown before a collision, the
-        collision, net displacement, cells. SITL has no walls, so contact is
-        judged against the true voxels and the first one ENDS the run
-        (--keep-going to fly on). Not lockstep: the loop paces to the wall
-        clock (x --speedup, which must equal SITL's own), and frames that
-        render late are counted and reported. --csv appends one row per run;
-        --shot writes PREFIX_mission.png, _chase.png, _depth.png.
-        --vio flies GNSS-DENIED: the simulated left IR image is rendered too,
-        kestrel's own VIO runs on it inside the voxel module as aboard, and
-        every valid pose goes to ArduPilot as ODOMETRY -- from the ground, since
-        an FC with no GPS will not take GUIDED or arm until it has a position.
-        The EKF origin is set from SITL's first fix. Start SITL with
-        nav-sim\sitl\kestrel_vio.parm for this (GPS off, vision as the EKF's
-        position source). The report adds the VIO's and the EKF's worst
-        horizontal error against SITL's truth.
-        Every run also reports how well the aircraft HOLDS STILL while the
-        mission commands zero velocity (THINK/SCAN): the true speed's RMS.
-        Needs a SITL running first -- see ARDUPILOT SITL just below.
+        instead of a UART) and the simulated D435i is rendered from
+        ArduPilot's TRUE pose (SIM_STATE). It connects (waiting up to 30 s for
+        SITL to come up), waits for the parameter readback, asks for GUIDED,
+        arms (never forced), takes off to --alt, flies --seconds, then LANDs
+        and waits for the disarm. Prints FC messages as they come
+        ("PreArm: ..."), so a refusal says why.
+        WALLS. SITL has none, so two things stand in for them, as aboard:
+        the voxel module's per-frame obstacle distances go to ArduPilot as
+        OBSTACLE_DISTANCE -- its OWN avoidance (GUIDED adjusts velocity on it)
+        sees the virtual walls through kestrel's depth -- and contact is
+        judged against the true voxels: the first one CUTS THE MOTORS (forced
+        disarm) and the airframe falls, as off a real wall. --keep-going flies
+        on instead. Start SITL with nav-sim\sitl\kestrel_sitl.parm
+        (PRX1_TYPE 2) or ArduPilot refuses to arm ("PRX1: No Data" means the
+        file is loaded and nothing is sending; without it there is no check).
+        SOFT LOCKSTEP (default). SITL keeps its own clock; kestrel paces on it
+        (one tick per 50 ms of SIMULATED time) and sets SIM_SPEEDUP to what
+        this machine can render, re-measured as it flies. A slow PC slows the
+        simulated world instead of making the frames late: GNSS-denied at
+        848x480 here ran SITL at x0.3 with DepthVio and x0.05 with ORB-SLAM3.
+        Arming, take-off and timeouts all run on SITL's clock too. --speedup
+        is the fastest it may go; --realtime turns lockstep off (pace to the
+        wall, late frames counted).
+        GNSS-DENIED: --vio or --slam. The simulated IR is rendered too, the
+        estimator runs inside the voxel module as aboard, and every valid pose
+        goes to ArduPilot as ODOMETRY -- from the ground, since an FC with no
+        GPS will not take GUIDED or arm until it has a position. The EKF origin
+        is set from SITL's first fix. Add nav-sim\sitl\kestrel_vio.parm when
+        starting SITL (GPS off, vision as the EKF's position source).
+          --vio    kestrel's DepthVio on the left IR image and depth
+          --slam   ORB-SLAM3 on the STEREO IR pair, through a running
+                   kestrel-orbslam (onboard/orbslam; GPLv3, its own process;
+                   Linux or WSL2). Fly it at 848x480 with the bridge on
+                   `--fast 12 5`: emitter-off IR is dark, and at ORB's default
+                   thresholds the map never initialises (README there).
+        The report adds the estimator's and the EKF's worst horizontal error
+        against SITL's truth.
+        Every run reports how well the aircraft HOLDS STILL while the mission
+        commands zero velocity (THINK/SCAN): the true speed's RMS. --csv
+        appends one row per run; --shot writes PREFIX_mission.png, _chase.png,
+        _depth.png. Exit: 0 flown clean, 1 contact, 2 usage, 3 SITL not
+        reached or not airborne.
+        Needs a SITL running -- see ARDUPILOT SITL just below.
 
   kestrel train [args...]
         RL training. This is the one command that leaves the process, and
@@ -148,7 +168,9 @@ ARDUPILOT SITL (for `kestrel sitl`)
 -----------------------------------
 kestrel does not start ArduPilot; it connects to one that is running. Three
 ways to have one on a Windows machine, easiest first. ArduCopter 4.7 or later
-(the vision-odometry setup in onboard/docs/gnss-denied-setup.md needs it too).
+(the vision-odometry setup in onboard/docs/gnss-denied-setup.md needs it too);
+CI flies the 4.7.2 release (.github/workflows/sitl-linux.yml). Always load
+nav-sim\sitl\kestrel_sitl.parm (kestrel's depth as the proximity sensor).
 
 1. MISSION PLANNER'S SIMULATOR. Simulation tab -> Multirotor -> pick the
    stable firmware. Mission Planner downloads a Windows build of ArduCopter,
@@ -167,40 +189,48 @@ ways to have one on a Windows machine, easiest first. ArduCopter 4.7 or later
        cd ardupilot
        Tools/environment_install/install-prereqs-ubuntu.sh -y   (then re-open the shell)
        ./waf configure --board sitl && ./waf copter
-       build/sitl/bin/arducopter --model + --speedup 1 -I0 \
-           --defaults Tools/autotest/default_params/copter.parm
+       build/sitl/bin/arducopter --model + --speedup 1 -I0 -w \
+           --defaults Tools/autotest/default_params/copter.parm,/mnt/c/<where>/nav-sim/sitl/kestrel_sitl.parm
 
-   It prints "Waiting for connection" on tcp:5760 and does nothing until
+   (-w wipes SITL's saved parameters so the files take effect.) It prints "Waiting for connection" on tcp:5760 and does nothing until
    something connects. WSL2 forwards localhost to Windows, so from Windows:
 
        kestrel sitl                       (tcp:127.0.0.1:5760, the default)
 
    The first run from a fresh SITL needs ~5-30 s before ArduPilot will arm
    (EKF settling, GPS lock); kestrel keeps asking and prints why it is
-   refused. Up to 120 s, then it gives up and says where it stuck.
+   refused. Up to 120 s of SITL's time, then it gives up and says where.
 
 3. sim_vehicle.py with MAVProxy (in WSL2): `Tools/autotest/sim_vehicle.py
    -v ArduCopter --out=udp:127.0.0.1:14550`, then `kestrel sitl --connect
    udp:14550`. Adds a console, costs a hop.
 
---speedup must match SITL's own (`--speedup 1` above). At 848x480 a modest
-CPU can fall behind real time -- the end-of-run line says how many frames
-were late; `--lowres` (424x240) is about twice as fast. Measured on the
-author's 4-core cloud box with SITL alongside: 848x480 42 % late, 424x240
-0-1 % late.
+Start SITL at --speedup 1; soft lockstep then slows it as needed (the
+run's last lines say to what). --realtime only: --speedup must match SITL's.
 
-GNSS-DENIED (--vio): add the vision parameters when starting SITL, e.g. in
-WSL2
+GNSS-DENIED (--vio / --slam): add the vision parameters too, e.g. in WSL2
 
-       build/sitl/bin/arducopter --model + --speedup 1 -I0 -w \
-           --defaults Tools/autotest/default_params/copter.parm,/mnt/c/<where>/nav-sim/sitl/kestrel_vio.parm
+       build/sitl/bin/arducopter --model + --speedup 1 -I0 -w --defaults \
+           Tools/autotest/default_params/copter.parm,<nav-sim>/sitl/kestrel_sitl.parm,<nav-sim>/sitl/kestrel_vio.parm
 
-(-w wipes SITL's saved parameters so the files take effect.) GPS1_TYPE 0 means
-there is no GPS at all; ArduPilot's position is kestrel's VIO and nothing else.
+GPS1_TYPE 0 means there is no GPS at all; ArduPilot's position is kestrel's
+VIO (or ORB-SLAM3) and nothing else. For --slam, first, in WSL2 or Linux:
 
-WHAT IT DOES NOT DO: SITL has no walls -- a collision is counted here, and
-ArduPilot flies on through it. Not lockstep (see --speedup). No right IR
-image (DepthVio uses the left one and depth; ORB-SLAM3's stereo would need it).
+       onboard/orbslam/fetch_orbslam3.sh          (once: fetch, patch, build)
+       cmake -S onboard/orbslam -B onboard/orbslam/build \
+             -DORB_SLAM3_DIR=onboard/orbslam/third_party/ORB_SLAM3
+       cmake --build onboard/orbslam/build -j4
+       onboard/orbslam/build/kestrel-orbslam --fast 12 5 --features 1500 \
+             --vocab onboard/orbslam/third_party/ORB_SLAM3/Vocabulary/ORBvoc.txt
+
+and run `kestrel sitl --slam` on the same machine (a Unix socket: kestrel
+must be the Linux build too -- in WSL2, not kestrel.exe).
+
+WHAT IT DOES NOT DO: SITL's physics never touch the walls -- contact is
+judged here, from the true voxels. Lockstep is soft (SITL is slowed, not
+stepped): ArduPilot's JSON backend would step it exactly but replaces its
+multicopter model with one of ours. ORB-SLAM3 runs stereo, not
+stereo-inertial (SITL's IMU is not wired to the bridge).
 
 ---------------------------------------------------------------------
 

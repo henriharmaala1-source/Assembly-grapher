@@ -35,14 +35,23 @@ SitlPlant::SitlPlant(const SitlParams& p) : p_(p) {
 SitlPlant::~SitlPlant() = default;
 
 bool SitlPlant::connect() {
-    if (!fc_.connect(p_.connect, 115200)) {
+    // SITL may still be starting (CI starts both at once; so does a person):
+    // a refused connection is retried for 30 s before it is a failure.
+    bool ok = fc_.connect(p_.connect, 115200);
+    for (int i = 0; !ok && i < 30; ++i) {
+        if (i == 0) std::printf("[sitl] waiting for SITL at %s ...\n", p_.connect.c_str());
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        ok = fc_.connect(p_.connect, 115200);
+    }
+    if (!ok) {
         failure_ = "nothing answered at " + p_.connect +
                    " -- is ArduPilot SITL running? (nav-sim/RUN_ME_windows.txt, SITL)";
         stage_ = Stage::FAILED;
         return false;
     }
     fc_.requestSimTruth(50);
-    fc_.setExpectVision(p_.vio);       // the parameter report then checks VISO_* / EK3_*
+    fc_.setExpectVision(p_.vio);
+    if (p_.imu) fc_.requestImu(200);       // the parameter report then checks VISO_* / EK3_*
     t0_ = stageT_ = nowS();
     return true;
 }
@@ -96,14 +105,24 @@ bool SitlPlant::ready(sim::CamPose& truth) {
     if (stage_ == Stage::FLYING) { truthToPose(truth); return true; }
     if (stage_ == Stage::FAILED) return false;
 
-    const double t = nowS();
+    // ON SITL'S CLOCK once it is known. Under soft lockstep SITL can run at
+    // x0.05: 120 s of wall is 6 s of ArduPilot's time, too short for its GPS
+    // lock and its 10 s accel-consistency window, so a wall-clock timeout
+    // failed every slow run ("Accels inconsistent", "waiting for home").
+    // The retries below are paced on the same clock, so they are not spam.
+    const double sim = timeS();
+    if (sim >= 0.0 && simT0_ < 0.0) { simT0_ = sim; stageT_ = sim; lastAskS_ = -1e9; }
+    const double t = sim >= 0.0 ? sim : nowS();
+    const double elapsed = sim >= 0.0 ? sim - simT0_ : t - t0_;
     const auto next = [&](Stage s) {
         stage_ = s; stageT_ = t; lastAskS_ = -1e9;
-        if (p_.verbose) std::printf("[sitl] %.1f s: %s\n", t - t0_, stageName());
+        if (p_.verbose) std::printf("[sitl] %.1f s%s: %s\n", elapsed, sim >= 0.0 ? " (SITL time)" : "",
+                                    stageName());
     };
-    if (t - t0_ > p_.startTimeoutS) {
+    if (elapsed > p_.startTimeoutS) {
         failure_ = std::string("not airborne after ") + std::to_string(int(p_.startTimeoutS)) +
-                   " s (stuck at: " + stageName() + "; last FC message: \"" + fc_.fcText() + "\")";
+                   " s of " + (sim >= 0.0 ? "SITL" : "wall") + " time (stuck at: " + stageName() +
+                   "; last FC message: \"" + fc_.fcText() + "\")";
         stage_ = Stage::FAILED;
         return false;
     }
@@ -162,8 +181,49 @@ void SitlPlant::step(const ControlCmd& c, float, sim::CamPose& truth, float& spe
     speed = t.vN * std::cos(a) + t.vE * std::sin(a);
 }
 
+double SitlPlant::timeS() const {
+    return fc_.fcTimeMs() ? double(fc_.fcTimeMs()) * 1e-3 : -1.0;
+}
+
+void SitlPlant::takeImu(std::vector<sim::ImuRaw>& out) {
+    out.clear();
+    std::vector<MavlinkBackend::ImuSample> s;
+    fc_.takeImu(s);
+    for (const MavlinkBackend::ImuSample& q : s) {
+        sim::ImuRaw g; g.tS = q.tS; g.gyro = true;
+        g.x = q.gyro[1]; g.y = q.gyro[2]; g.z = q.gyro[0];
+        sim::ImuRaw a; a.tS = q.tS; a.gyro = false;
+        a.x = q.acc[1]; a.y = q.acc[2]; a.z = q.acc[0];
+        out.push_back(g); out.push_back(a);
+    }
+}
+
+void SitlPlant::proximity(const float* distM, int n) {
+    // SITL's clock once it is known, the wall's before. The two are different
+    // clocks: a time that went BACKWARDS is the switch, not "too soon" -- held
+    // as too soon, nothing was ever sent again and ArduPilot refused to arm
+    // ("PRX1: No Data").
+    const double t = timeS() >= 0.0 ? timeS() : nowS();
+    if (t >= lastProxT_ && t - lastProxT_ < 0.1) return;
+    lastProxT_ = t;
+    if (fc_.sendProximity(distM, n)) ++proxSent_;
+}
+
+void SitlPlant::crash() {
+    fc_.forceDisarm();
+    if (p_.verbose) std::printf("[sitl] contact: motors cut (forced disarm), the airframe falls\n");
+}
+
 void SitlPlant::vision(const VisionOdom& v) {
-    if (p_.vio && fc_.sendVisionOdometry(v)) ++visSent_;
+    if (!p_.vio) return;
+    // IN SITL'S CLOCK. Under soft lockstep SITL runs slower than the wall,
+    // and ArduPilot maps a companion's timestamps onto its own clock by their
+    // offset (jitter correction): two clocks at different rates would drift
+    // apart and every frame would land at the wrong time. The frame was
+    // rendered this tick, so SITL's time now is its time.
+    VisionOdom w = v;
+    if (timeS() >= 0.0) w.stampS = timeS();
+    if (fc_.sendVisionOdometry(w)) ++visSent_;
 }
 
 void SitlPlant::handOff(WorldState::FcRequest r) {

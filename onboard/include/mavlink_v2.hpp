@@ -51,6 +51,7 @@ enum : uint32_t {
     MSG_SYS_STATUS                    = 1,
     MSG_PARAM_REQUEST_READ            = 20,
     MSG_PARAM_VALUE                   = 22,
+    MSG_PARAM_SET                     = 23,
     MSG_GPS_RAW_INT                   = 24,
     MSG_ATTITUDE                      = 30,
     MSG_LOCAL_POSITION_NED            = 32,
@@ -65,6 +66,7 @@ enum : uint32_t {
     MSG_SET_POSITION_TARGET_LOCAL_NED = 84,
     MSG_VISION_POSITION_ESTIMATE      = 102,
     MSG_VISION_SPEED_ESTIMATE         = 103,
+    MSG_HIGHRES_IMU                   = 105,
     MSG_SIM_STATE                     = 108,   // SITL only: the TRUE state
     MSG_EKF_STATUS_REPORT             = 193,
     MSG_OBSTACLE_DISTANCE             = 330,

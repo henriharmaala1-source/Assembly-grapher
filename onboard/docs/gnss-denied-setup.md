@@ -258,7 +258,7 @@ flags the ones that matter with `!!`; bench-check before flight):
 | `VISO_POS_M_NSE` | 0.1-0.2 | the FLOOR under the sigma the Pi sends (5 cm well-tracked to 0.5 m barely); set from logs |
 | `VISO_QUAL_MIN` | 0 | frames below it are dropped; the Pi already sends nothing when lost |
 | `EK3_SRC1_POSXY` | 6 (ExternalNav) | |
-| `EK3_SRC1_VELXY` | **0 (None)** | position only. **Not 6**: measured in ArduCopter 4.7 SITL (`kestrel sitl --vio`, 4 seeds, below), fusing kestrel's VIO velocity -- smoothed over ~0.3 s -- made the position hold oscillate at 1.07 m/s RMS against 0.08 with 0. 5 if a flow sensor is fitted |
+| `EK3_SRC1_VELXY` | **0 (None)** | position only. **Not 6**: measured in ArduCopter SITL (`kestrel sitl --vio`, 4 seeds, below), fusing kestrel's VIO velocity -- smoothed over ~0.3 s -- made the position hold oscillate at 1.07 m/s RMS against 0.08 with 0. 5 if a flow sensor is fitted |
 | `EK3_SRC1_POSZ` | 1 (Baro) | VIO height drifts; baro does not walk |
 | `EK3_SRC1_VELZ` | 0 (None) | the VIO sends no vertical velocity; 6 would fuse a constant 0 |
 | `EK3_SRC1_YAW` | 1 (Compass) | the Pi holds the VIO heading to it |
@@ -266,7 +266,7 @@ flags the ones that matter with `!!`; bench-check before flight):
 | `MAVx_OPTIONS` | 2 (4.7+) | do not forward 30 Hz odometry to the GCS link (was `SERIALx_OPTIONS` 1024) |
 
 **VELXY 6 OSCILLATES, MEASURED.** `kestrel sitl --vio` flies this stack
-against ArduCopter 4.7 SITL with GPS off (nav-sim/sitl/kestrel_vio.parm),
+against ArduCopter SITL (4.8.0-dev, master of 2026-10-24) with GPS off (nav-sim/sitl/kestrel_vio.parm),
 the VIO on the simulated IR the only horizontal source. 40 s, seeds 101-104 (raw: nav-sim/docs/sitl_vio_velxy_ab.csv),
 fresh SITL per run, true speed while the mission commands zero (THINK/SCAN):
 

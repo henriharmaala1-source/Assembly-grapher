@@ -71,6 +71,16 @@ public:
     // A fresh VIO pose, as the aircraft would send it to its FC (FlightParams
     // vio). The kinematic plant has no estimator to feed.
     virtual void vision(const VisionOdom& v) { (void)v; }
+    // The module's 72-bearing obstacle distances (OBSTACLE_DISTANCE aboard,
+    // ArduPilot's own avoidance consumes them). Nothing to feed by default.
+    virtual void proximity(const float* distM, int n) { (void)distM; (void)n; }
+    // The plant's clock, seconds: the time stamped on IR frames for a SLAM.
+    // SITL's is SIMULATED time; the kinematic plant has none (-1: tick time).
+    virtual double timeS() const { return -1.0; }
+    // IMU samples since the last call, in the CAMERA's axes (x right, y down,
+    // z forward -- librealsense's, which the SLAM bridge's extrinsics assume)
+    // and on timeS()'s clock, for a stereo-inertial SLAM. None by default.
+    virtual void takeImu(std::vector<sim::ImuRaw>& out) { out.clear(); }
 };
 
 struct FlightParams {
@@ -111,6 +121,14 @@ struct FlightParams {
     // has a position, and that position is this. Emitter off (no dots to
     // track as zero motion).
     bool vio = false;
+    // ORB-SLAM3 instead (VoxelNavModule::Params::slam): the simulated stereo
+    // IR PAIR goes to a running kestrel-orbslam over `slamSocket`, its poses
+    // come back as vio*, and everything above -- the ODOMETRY to the plant
+    // included -- is unchanged. Start onboard/orbslam's bridge first.
+    bool slam = false;
+    std::string slamSocket = "/tmp/kestrel-slam.sock";
+    // ...stereo-INERTIAL, on the plant's IMU (SITL: ArduPilot's HIGHRES_IMU).
+    bool slamInertial = false;
 };
 
 struct FlightStats {
@@ -189,6 +207,7 @@ private:
     std::string phase_;
     bool  inContact_ = false;
     double lastVisionS_ = -1e9;            // vioStampS last handed to the plant
+    double lastProxS_ = -1e9;              // ...and voxProxStampS
     void  telemetry();
     void  feedVision();
     bool  plantLastSet_ = false;           // a Plant's pose at the last tick's end

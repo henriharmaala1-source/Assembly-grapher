@@ -48,7 +48,8 @@ constexpr const char* kParamNames[] = {
 };
 
 // 4.7 name -> pre-4.7 name, and what to multiply the 4.7 value by. Found by
-// flying the backend against ArduCopter 4.7 SITL: every one of these went
+// flying the backend against ArduCopter SITL (4.8.0-dev; the names are the
+// same in the 4.7.2 release): every one of these went
 // unanswered under its old name, and the stick and climb calibration quietly
 // fell back to unscaled.
 struct Renamed { const char* now; const char* was; float toOld; };
@@ -198,6 +199,8 @@ void MavlinkBackend::requestStreams() {
         commandLong(mav::CMD_SET_MESSAGE_INTERVAL, float(w.id), 1e6f / float(w.hz));
     if (simTruthHz_ > 0)
         commandLong(mav::CMD_SET_MESSAGE_INTERVAL, float(mav::MSG_SIM_STATE), 1e6f / float(simTruthHz_));
+    if (imuHz_ > 0)
+        commandLong(mav::CMD_SET_MESSAGE_INTERVAL, float(mav::MSG_HIGHRES_IMU), 1e6f / float(imuHz_));
     lastStreamReqS_ = nowS();
 }
 
@@ -399,7 +402,7 @@ std::string MavlinkBackend::paramReport() const {
             line("  EK3_SRC1_YAW %.0f: VIO heading is held to the FC's (slewed, 2 deg/s max)\n",
                  double(v));
     }
-    // Measured in ArduCopter 4.7 SITL (gnss-denied-setup.md section 11): the
+    // Measured in ArduCopter SITL (gnss-denied-setup.md section 11): the
     // VIO's velocity is smoothed over ~0.3 s, and fused it makes the position
     // hold oscillate (1.07 m/s RMS against 0.08 position-only, 4 seeds).
     if (expectVision_ && param("EK3_SRC1_VELXY", v) && int(v) == 6)
@@ -457,6 +460,16 @@ void MavlinkBackend::onMessage(const mav::Msg& m) {
         ++fcTextCount_;
         break;
     }
+    case mav::MSG_HIGHRES_IMU: {
+        if (m.sysid != tgtSys_) break;
+        // time_usec (u64), then xacc yacc zacc xgyro ygyro zgyro as floats.
+        ImuSample& q = imuRing_[(imuHead_ + imuCount_) % kImuRing];
+        if (imuCount_ == kImuRing) { imuHead_ = (imuHead_ + 1) % kImuRing; ++imuDropped_; }
+        else ++imuCount_;
+        q.tS = double(uint64_t(m.u32(0)) | (uint64_t(m.u32(4)) << 32)) * 1e-6;
+        for (int i = 0; i < 3; ++i) { q.acc[i] = m.f32(8 + 4 * i); q.gyro[i] = m.f32(20 + 4 * i); }
+        break;
+    }
     case mav::MSG_SIM_STATE: {
         if (m.sysid != tgtSys_) break;
         SimTruth& t = simTruth_;
@@ -500,6 +513,7 @@ void MavlinkBackend::onMessage(const mav::Msg& m) {
         tel_.yawRateDps   = m.f32(24) * 180.f / kPi;
         tel_.attFresh     = true;
         lastAttS_         = nowS();
+        fcTimeMs_         = m.u32(0);
         break;
     case mav::MSG_EKF_STATUS_REPORT:
         // Floats first, flags last -- MAVLink v2 orders fields by descending
@@ -1087,6 +1101,29 @@ bool MavlinkBackend::arm(bool force) {
 
 bool MavlinkBackend::takeoff(float altM) {
     return commandLong(mav::CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, altM);
+}
+
+void MavlinkBackend::takeImu(std::vector<ImuSample>& out) {
+    out.clear();
+    for (int i = 0; i < imuCount_; ++i) out.push_back(imuRing_[(imuHead_ + i) % kImuRing]);
+    imuHead_ = 0; imuCount_ = 0;
+}
+
+bool MavlinkBackend::forceDisarm() {
+    return commandLong(mav::CMD_COMPONENT_ARM_DISARM, 0.f, 21196.f);
+}
+
+bool MavlinkBackend::setParam(const char* name, float value) {
+    if (!link_.isOpen()) return false;
+    mav::Payload p;
+    p.f32(value);
+    p.u8(tgtSys_); p.u8(tgtComp_);
+    char id[16]{};
+    std::strncpy(id, name, sizeof(id));          // 16 bytes, NUL only if shorter
+    for (char c : id) p.u8(uint8_t(c));
+    p.u8(9);                                     // MAV_PARAM_TYPE_REAL32
+    send(mav::MSG_PARAM_SET, p);
+    return true;
 }
 
 bool MavlinkBackend::disarm() {

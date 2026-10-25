@@ -570,6 +570,16 @@ target_include_directories(loop_closure_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(loop_closure_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME loop_closure_check COMMAND loop_closure_check)
 
+# VIO from a DOWNWARD camera: tilt, rotation rate, field of view, speed,
+# height, ground (test/downvio_sweep.cpp; the grid: test/downvio_sweep.sh).
+add_executable(downvio_sweep test/downvio_sweep.cpp)
+target_link_libraries(downvio_sweep PRIVATE navcore)
+target_include_directories(downvio_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(downvio_sweep PRIVATE ${OpenCV_LIBS})
+# The one thing in it that is not navcore's: the body -> downward-camera
+# rotation, checked against navcore's own projection (gimbal lock included).
+add_test(NAME downvio_sweep_selftest COMMAND downvio_sweep --selftest)
+
 add_executable(rl_env_check
   test/rl_env_check.cpp
   rl_env.cpp

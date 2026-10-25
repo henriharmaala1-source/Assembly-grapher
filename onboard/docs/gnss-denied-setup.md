@@ -258,17 +258,36 @@ flags the ones that matter with `!!`; bench-check before flight):
 | `VISO_POS_M_NSE` | 0.1-0.2 | the FLOOR under the sigma the Pi sends (5 cm well-tracked to 0.5 m barely); set from logs |
 | `VISO_QUAL_MIN` | 0 | frames below it are dropped; the Pi already sends nothing when lost |
 | `EK3_SRC1_POSXY` | 6 (ExternalNav) | |
-| `EK3_SRC1_VELXY` | **0 (None)** | position only. **Not 6**: measured in ArduCopter SITL (`kestrel sitl --vio`, 4 seeds, below), fusing kestrel's VIO velocity -- smoothed over ~0.3 s -- made the position hold oscillate at 1.07 m/s RMS against 0.08 with 0. 5 if a flow sensor is fitted |
+| `EK3_SRC1_VELXY` | **0 (None)** | position only. **Not 6**: measured in ArduCopter 4.7.2 SITL (`kestrel sitl --vio`, 4 seeds, below), fusing kestrel's VIO velocity -- smoothed over ~0.3 s -- made the EKF diverge (20-141 m) and the aircraft hit walls in every run; 0 hit nothing. 5 if a flow sensor is fitted |
 | `EK3_SRC1_POSZ` | 1 (Baro) | VIO height drifts; baro does not walk |
 | `EK3_SRC1_VELZ` | 0 (None) | the VIO sends no vertical velocity; 6 would fuse a constant 0 |
 | `EK3_SRC1_YAW` | 1 (Compass) | the Pi holds the VIO heading to it |
 | `FS_EKF_ACTION` | 1 (Land), or 2 (AltHold) with a pilot | with VIO gone there is no position: RTL is impossible |
 | `MAVx_OPTIONS` | 2 (4.7+) | do not forward 30 Hz odometry to the GCS link (was `SERIALx_OPTIONS` 1024) |
 
-**VELXY 6 OSCILLATES, MEASURED.** `kestrel sitl --vio` flies this stack
-against ArduCopter SITL (4.8.0-dev, master of 2026-10-24) with GPS off (nav-sim/sitl/kestrel_vio.parm),
-the VIO on the simulated IR the only horizontal source. 40 s, seeds 101-104 (raw: nav-sim/docs/sitl_vio_velxy_ab.csv),
-fresh SITL per run, true speed while the mission commands zero (THINK/SCAN):
+**VELXY 6 FAILS, MEASURED TWICE.** `kestrel sitl --vio` flies this stack
+against ArduCopter SITL with GPS off (nav-sim/sitl/kestrel_vio.parm), the VIO
+on the simulated IR the only horizontal source; seeds 101-104, 40 s, fresh
+SITL per run, `--keep-going` so a contact does not end the run.
+
+On the RELEASE, Copter-4.7.2, with soft lockstep (no late frames) and
+kestrel's depth as ArduPilot's proximity sensor
+(raw: nav-sim/docs/sitl_vio_velxy_ab_4.7.2.csv):
+
+| | collisions | worst EKF error | hold, true speed RMS | net |
+|---|---|---|---|---|
+| GPS (control) | 0 (0/4 runs) | 0.1 m | 0.04 m/s | 8.4 m |
+| VIO, `EK3_SRC1_VELXY` 6 | **14 (4/4 runs)** | **20-141 m** | 0.47 m/s | 38.9 m |
+| VIO, `EK3_SRC1_VELXY` 0 | **0 (0/4 runs)** | 0.7-4.1 m | 0.15 m/s | 9.7 m |
+
+With 6 the EKF DIVERGES -- tens of metres from the truth -- and the aircraft
+runs away: its large net displacement is the runaway, not exploration (every
+run also hit walls 3-5 times). With 0, net is indistinguishable from GPS
+(+1.3 +/- 1.0 m, paired) and the EKF stays within 4 m.
+
+On 4.8.0-dev (master of 2026-10-24), paced to the wall clock (frames late),
+no proximity, the same arms failed differently (raw:
+nav-sim/docs/sitl_vio_velxy_ab.csv):
 
 | | hold, true speed RMS | net displacement | cells | collisions |
 |---|---|---|---|---|
@@ -276,14 +295,14 @@ fresh SITL per run, true speed while the mission commands zero (THINK/SCAN):
 | VIO, `EK3_SRC1_VELXY` 6 | **1.07 m/s** | 3.5 m | 10.5 | 0/4 |
 | VIO, `EK3_SRC1_VELXY` 0 | **0.08 m/s** | 10.5 m | 22 | 0/4 |
 
-Paired by seed, 6 is worse by 1.00 +/- 0.09 m/s on the hold (4/4 seeds) and
-7.0 +/- 2.2 m on net displacement; 0 is indistinguishable from GPS on net
-(+2.4 +/- 3.1 m). The VIO itself was fine in both (worst error 0.2-4 m over
-40 s); what went wrong is that VisualPose's velocity is an EXPONENTIALLY
-SMOOTHED finite difference (~0.3 s), and fused as a measurement it puts 0.3 s
-of lag inside the FC's velocity loop. With 0 the EKF takes velocity from its
-own IMU between position fixes. An unsmoothed velocity might make 6 work; that
-is a separate experiment, not a setting to fly.
+-- a ~1 m/s oscillation in the hold (1.00 +/- 0.09 worse, 4/4 seeds).
+Two firmware versions, two timing regimes, two failure modes, one cause:
+VisualPose's velocity is an EXPONENTIALLY SMOOTHED finite difference
+(~0.3 s), and fused as a measurement it puts that lag inside the FC's
+velocity loop and its filter. The VIO itself was fine in every arm. With 0
+the EKF takes velocity from its own IMU between position fixes. An
+unsmoothed velocity might make 6 work; that is a separate experiment, not a
+setting to fly.
 
 **When VIO fails, RTL cannot work** -- ArduPilot refuses RTL without a
 position estimate. kestrel's own failsafe asks for RTL; if the FC has not

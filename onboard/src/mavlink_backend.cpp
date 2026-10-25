@@ -402,12 +402,12 @@ std::string MavlinkBackend::paramReport() const {
             line("  EK3_SRC1_YAW %.0f: VIO heading is held to the FC's (slewed, 2 deg/s max)\n",
                  double(v));
     }
-    // Measured in ArduCopter SITL (gnss-denied-setup.md section 11): the
-    // VIO's velocity is smoothed over ~0.3 s, and fused it makes the position
-    // hold oscillate (1.07 m/s RMS against 0.08 position-only, 4 seeds).
+    // Measured in ArduCopter SITL (gnss-denied-setup.md section 11): the VIO's
+    // velocity is smoothed over ~0.3 s, and fused, on 4.7.2 the EKF diverged
+    // (20-141 m) and every run hit walls; on 4.8-dev the hold oscillated.
     if (expectVision_ && param("EK3_SRC1_VELXY", v) && int(v) == 6)
-        line("!! EK3_SRC1_VELXY 6: fusing kestrel's VIO velocity made the hold OSCILLATE "
-             "in SITL (~1 m/s). Set 0: position only.\n");
+        line("!! EK3_SRC1_VELXY 6: fusing kestrel's VIO velocity made the EKF DIVERGE in "
+             "SITL (4.7.2: 20-141 m, walls hit every run). Set 0: position only.\n");
     if (expectVision_ && param("EK3_SRC1_VELZ", v) && int(v) == 6)
         line("!! EK3_SRC1_VELZ 6: kestrel's VIO sends no vertical velocity (it would read "
              "as 0). Set 0.\n");

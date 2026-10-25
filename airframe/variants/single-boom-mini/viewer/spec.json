@@ -1,13 +1,13 @@
 {
  "ratio": "2",
  "scale": 0.5,
- "gap": 0.15,
- "fit": 0.25,
+ "gap": 0.25,
+ "fit": 0.3,
  "span": 242.5,
- "length": 272.50325326679297,
- "height_on_stand": 70.67463312060426,
- "minutes": 515.1,
- "grams": 100.1,
+ "length": 272.45325326679273,
+ "height_on_stand": 70.87464748051389,
+ "minutes": 634.6,
+ "grams": 116.0,
  "prints": [
   {
    "file": "wing_centre.stl",
@@ -19,8 +19,8 @@
     6.4,
     67.5
    ],
-   "minutes": 71.8,
-   "grams": 12.79
+   "minutes": 108.8,
+   "grams": 18.39
   },
   {
    "file": "wing_R.stl",
@@ -32,8 +32,8 @@
     6.1,
     87.5
    ],
-   "minutes": 93.5,
-   "grams": 17.98
+   "minutes": 111.0,
+   "grams": 16.97
   },
   {
    "file": "wing_L.stl",
@@ -45,8 +45,8 @@
     6.1,
     87.5
    ],
-   "minutes": 94.2,
-   "grams": 18.02
+   "minutes": 107.8,
+   "grams": 16.98
   },
   {
    "file": "aileron_R.stl",
@@ -80,12 +80,12 @@
    "swatch": "#333840",
    "colour": "dark grey",
    "bed": [
-    12.0,
-    6.3,
+    12.2,
+    6.7,
     14.9
    ],
-   "minutes": 11.1,
-   "grams": 0.5
+   "minutes": 10.9,
+   "grams": 0.59
   },
   {
    "file": "stab.stl",
@@ -123,8 +123,8 @@
     39.5,
     1.0
    ],
-   "minutes": 2.0,
-   "grams": 0.79
+   "minutes": 1.9,
+   "grams": 0.78
   },
   {
    "file": "rudder.stl",
@@ -133,7 +133,7 @@
    "colour": "orange",
    "bed": [
     8.5,
-    39.2,
+    39.4,
     4.8
    ],
    "minutes": 1.6,
@@ -149,8 +149,8 @@
     10.0,
     7.0
    ],
-   "minutes": 5.8,
-   "grams": 0.32
+   "minutes": 5.7,
+   "grams": 0.34
   },
   {
    "file": "fairing_ail_R.stl",
@@ -162,8 +162,8 @@
     19.4,
     10.5
    ],
-   "minutes": 8.0,
-   "grams": 0.9
+   "minutes": 7.9,
+   "grams": 0.88
   },
   {
    "file": "fairing_ail_L.stl",
@@ -175,8 +175,8 @@
     19.4,
     10.5
    ],
-   "minutes": 8.1,
-   "grams": 0.9
+   "minutes": 8.0,
+   "grams": 0.88
   },
   {
    "file": "fuselage_front.stl",
@@ -184,12 +184,12 @@
    "swatch": "#333840",
    "colour": "dark grey",
    "bed": [
-    63.0,
+    58.8,
     19.2,
     12.4
    ],
-   "minutes": 11.3,
-   "grams": 2.22
+   "minutes": 11.0,
+   "grams": 2.18
   },
   {
    "file": "fuselage_rear.stl",
@@ -202,7 +202,7 @@
     79.6
    ],
    "minutes": 62.2,
-   "grams": 4.14
+   "grams": 4.19
   },
   {
    "file": "lid.stl",
@@ -210,109 +210,174 @@
    "swatch": "#474c57",
    "colour": "grey",
    "bed": [
-    87.4,
+    87.0,
     19.2,
-    4.0
+    3.8
    ],
-   "minutes": 5.5,
-   "grams": 2.28
+   "minutes": 5.3,
+   "grams": 2.22
+  },
+  {
+   "file": "rod_boom.stl",
+   "group": "rod",
+   "swatch": "#1f1f21",
+   "colour": "black",
+   "bed": [
+    161.4,
+    4.8,
+    4.3
+   ],
+   "minutes": 10.0,
+   "grams": 3.84
+  },
+  {
+   "file": "rod_spar_main_R.stl",
+   "group": "rod",
+   "swatch": "#1f1f21",
+   "colour": "black",
+   "bed": [
+    118.7,
+    3.0,
+    2.7
+   ],
+   "minutes": 4.0,
+   "grams": 1.25
+  },
+  {
+   "file": "rod_spar_main_L.stl",
+   "group": "rod",
+   "swatch": "#1f1f21",
+   "colour": "black",
+   "bed": [
+    118.7,
+    3.0,
+    2.7
+   ],
+   "minutes": 4.0,
+   "grams": 1.25
+  },
+  {
+   "file": "rod_spar_rear_R.stl",
+   "group": "rod",
+   "swatch": "#1f1f21",
+   "colour": "black",
+   "bed": [
+    118.7,
+    1.8,
+    1.6
+   ],
+   "minutes": 2.0,
+   "grams": 0.55
+  },
+  {
+   "file": "rod_spar_rear_L.stl",
+   "group": "rod",
+   "swatch": "#1f1f21",
+   "colour": "black",
+   "bed": [
+    118.7,
+    1.8,
+    1.6
+   ],
+   "minutes": 2.0,
+   "grams": 0.55
   },
   {
    "file": "dummy_servo_ail_R.stl",
    "group": "dummy",
    "swatch": "#2961d9",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     16.2,
     15.4,
-    9.9
+    9.8
    ],
-   "minutes": 7.7,
-   "grams": 1.27
+   "minutes": 7.5,
+   "grams": 1.25
   },
   {
    "file": "dummy_servo_ail_L.stl",
    "group": "dummy",
    "swatch": "#2961d9",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     16.2,
     15.4,
-    9.9
+    9.8
    ],
-   "minutes": 7.7,
-   "grams": 1.26
+   "minutes": 7.5,
+   "grams": 1.24
   },
   {
    "file": "dummy_servo_elev.stl",
    "group": "dummy",
    "swatch": "#2961d9",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     16.2,
     15.4,
-    8.7
+    8.6
    ],
-   "minutes": 6.5,
-   "grams": 0.89
+   "minutes": 5.9,
+   "grams": 0.81
   },
   {
    "file": "dummy_servo_rud.stl",
    "group": "dummy",
    "swatch": "#2961d9",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     16.2,
     15.4,
-    8.7
+    8.6
    ],
-   "minutes": 6.6,
-   "grams": 0.89
+   "minutes": 5.9,
+   "grams": 0.81
   },
   {
    "file": "dummy_motor.stl",
    "group": "dummy",
    "swatch": "#9ea3ad",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     9.9,
     9.0,
     9.0
    ],
-   "minutes": 8.1,
-   "grams": 0.72
+   "minutes": 8.2,
+   "grams": 0.71
   },
   {
    "file": "dummy_prop.stl",
    "group": "dummy",
    "swatch": "#1a6bd9",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     5.3,
     50.8,
     4.1
    ],
-   "minutes": 4.5,
+   "minutes": 4.4,
    "grams": 0.52
   },
   {
    "file": "dummy_camera.stl",
    "group": "dummy",
    "swatch": "#1a1a1c",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     8.1,
     7.0,
     7.0
    ],
-   "minutes": 5.5,
-   "grams": 0.48
+   "minutes": 5.7,
+   "grams": 0.5
   },
   {
    "file": "dummy_vtx.stl",
    "group": "dummy",
    "swatch": "#0d4c29",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     9.5,
     10.8,
@@ -325,7 +390,7 @@
    "file": "dummy_antenna.stl",
    "group": "dummy",
    "swatch": "#141417",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     17.6,
     13.5,
@@ -338,7 +403,7 @@
    "file": "dummy_fc.stl",
    "group": "dummy",
    "swatch": "#14171c",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     16.0,
     13.0,
@@ -351,7 +416,7 @@
    "file": "dummy_receiver.stl",
    "group": "dummy",
    "swatch": "#121a33",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     5.0,
     5.0,
@@ -364,27 +429,27 @@
    "file": "dummy_esc.stl",
    "group": "dummy",
    "swatch": "#17171a",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     11.9,
     7.2,
-    1.4
+    1.3
    ],
-   "minutes": 1.2,
-   "grams": 0.12
+   "minutes": 0.9,
+   "grams": 0.09
   },
   {
    "file": "dummy_battery.stl",
    "group": "dummy",
    "swatch": "#2b4799",
-   "colour": "any",
+   "colour": "as you like",
    "bed": [
     29.0,
     15.5,
     8.9
    ],
-   "minutes": 7.5,
-   "grams": 1.67
+   "minutes": 7.4,
+   "grams": 1.65
   },
   {
    "file": "stand.stl",
@@ -396,8 +461,21 @@
     84.0,
     24.0
    ],
-   "minutes": 58.3,
-   "grams": 23.12
+   "minutes": 58.2,
+   "grams": 23.1
+  },
+  {
+   "file": "fit_test.stl",
+   "group": "test",
+   "swatch": "#737880",
+   "colour": "any",
+   "bed": [
+    80.0,
+    46.6,
+    5.0
+   ],
+   "minutes": 32.5,
+   "grams": 5.17
   }
  ],
  "rods": [
@@ -405,45 +483,95 @@
    "name": "boom",
    "label": "Boom",
    "full": "10 x 9 mm carbon tube",
-   "d": 5.0,
-   "kind": "carbon tube (or an aluminium tube or wooden dowel)",
+   "d": 4.8,
+   "printed": true,
+   "kind": "printed PLA",
+   "files": [
+    "rod_boom"
+   ],
    "length": 161.4,
-   "hole": 5.25,
+   "hole": 5.1,
    "through": [
     "tail_mount",
     "motor_mount",
     "fuselage_rear"
-   ]
+   ],
+   "walls": {
+    "tail_mount": 0.8,
+    "motor_mount": 0.96,
+    "fuselage_rear": 0.8
+   }
   },
   {
    "name": "spar_main",
    "label": "Main spar",
    "full": "3 mm carbon rod",
-   "d": 1.5,
-   "kind": "carbon rod (or steel wire)",
+   "d": 3.0,
+   "printed": true,
+   "kind": "printed PLA",
+   "files": [
+    "rod_spar_main_R",
+    "rod_spar_main_L"
+   ],
    "length": 237.5,
-   "hole": 1.75,
+   "hole": 3.3,
    "through": [
     "wing_centre",
     "wing_R",
     "wing_L"
-   ]
+   ],
+   "walls": {
+    "wing_centre": 1.06,
+    "wing_R": 1.07,
+    "wing_L": 1.07
+   }
   },
   {
    "name": "spar_rear",
    "label": "Rear spar",
    "full": "2 mm carbon rod",
-   "d": 1.0,
-   "kind": "carbon rod (or steel wire, a paper clip)",
+   "d": 1.8,
+   "printed": true,
+   "kind": "printed PLA",
+   "files": [
+    "rod_spar_rear_R",
+    "rod_spar_rear_L"
+   ],
    "length": 237.5,
-   "hole": 1.25,
+   "hole": 2.1,
    "through": [
     "wing_centre",
     "wing_R",
     "wing_L"
-   ]
+   ],
+   "walls": {
+    "wing_centre": 0.88,
+    "wing_R": 0.88,
+    "wing_L": 0.88
+   }
   }
  ],
+ "slip": {
+  "lid": {
+   "into": [
+    "fuselage_front",
+    "fuselage_rear"
+   ],
+   "trimmed": 2.62
+  },
+  "fin": {
+   "into": [
+    "tail_mount"
+   ],
+   "trimmed": 3.12
+  },
+  "fuselage_front": {
+   "into": [
+    "fuselage_rear"
+   ],
+   "trimmed": 1.7
+  }
+ },
  "dummies": [
   {
    "name": "servo_ail_R",
@@ -452,8 +580,8 @@
     30.8,
     20.1
    ],
-   "trimmed": 2.7,
-   "gap": 0.1
+   "trimmed": 5.8,
+   "gap": 0.14
   },
   {
    "name": "servo_ail_L",
@@ -462,8 +590,8 @@
     30.8,
     20.1
    ],
-   "trimmed": 2.7,
-   "gap": 0.1
+   "trimmed": 5.8,
+   "gap": 0.14
   },
   {
    "name": "servo_elev",
@@ -472,8 +600,8 @@
     30.8,
     17.5
    ],
-   "trimmed": 0.2,
-   "gap": 0.11
+   "trimmed": 1.8,
+   "gap": 0.18
   },
   {
    "name": "servo_rud",
@@ -482,8 +610,8 @@
     30.8,
     17.5
    ],
-   "trimmed": 0.2,
-   "gap": 0.11
+   "trimmed": 1.8,
+   "gap": 0.18
   },
   {
    "name": "motor",
@@ -492,7 +620,7 @@
     18.0,
     18.0
    ],
-   "trimmed": 1.7,
+   "trimmed": 2.9,
    "gap": 0.0
   },
   {
@@ -512,8 +640,8 @@
     14.0,
     14.0
    ],
-   "trimmed": 0.0,
-   "gap": 0.2
+   "trimmed": 0.5,
+   "gap": 0.25
   },
   {
    "name": "vtx",
@@ -522,8 +650,8 @@
     21.6,
     19.0
    ],
-   "trimmed": 0.0,
-   "gap": 0.2
+   "trimmed": 0.3,
+   "gap": 0.25
   },
   {
    "name": "antenna",
@@ -542,8 +670,8 @@
     26.0,
     16.5
    ],
-   "trimmed": 0.1,
-   "gap": 0.1
+   "trimmed": 0.2,
+   "gap": 0.17
   },
   {
    "name": "receiver",
@@ -552,8 +680,8 @@
     2.6,
     10.0
    ],
-   "trimmed": 0.1,
-   "gap": 0.11
+   "trimmed": 0.6,
+   "gap": 0.18
   },
   {
    "name": "esc",
@@ -562,8 +690,8 @@
     14.5,
     2.9
    ],
-   "trimmed": 0.7,
-   "gap": 0.15
+   "trimmed": 2.1,
+   "gap": 0.25
   },
   {
    "name": "battery",
@@ -572,8 +700,8 @@
     31.0,
     18.0
    ],
-   "trimmed": 1.4,
-   "gap": 0.15
+   "trimmed": 2.8,
+   "gap": 0.18
   }
  ],
  "checks": {
@@ -581,9 +709,10 @@
   "thin": {},
   "thin_ok": true,
   "thin_min": [
-   "fuselage_rear",
-   0.992
+   "tail_mount",
+   0.982
   ],
+  "min_wall": 0.8,
   "fits": true
  }
 }

@@ -18,9 +18,10 @@
   instead of 9.7. A comparison page shows any two of the four side by side,
   with what their weight differences cost in flight
   ([airframe/variants/](airframe/variants/index.html)). A 1:2 desk model of the
-  single boom (`airframe/mini.py`) prints its parts at half size, with printed
-  dummies for the bought parts, stock rods and a stand, to check the assembly
-  and to show the plane.
+  single boom (`airframe/mini.py`) prints everything at half size on the A1 mini,
+  rods, dummies of the bought parts and a stand included, with its fits re-cut
+  for printing and a fit test to print first, to check the assembly and to show
+  the plane.
 - [`frames/mark4-v2-10/`](frames/mark4-v2-10/README.md): 2D drawings of the Mark4 V2 10" FPV
   frame, taken exactly from its STEP model: one DXF profile per part, dimensioned A4
   sheets with hole tables, and a check that the eight standoff holes line up through

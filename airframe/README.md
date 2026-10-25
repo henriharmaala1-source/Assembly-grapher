@@ -902,48 +902,70 @@ against any of the other three builds.
 
 ## The 1:2 desk model
 
-`python3 airframe/mini.py` makes a half-size single boom to print: to check how
-the parts go together before printing the full-size plane, and to show it. It
-doesn't fly. It writes `variants/single-boom-mini/`: STLs, a STEP and GLB of
-the model on its stand, [REPORT.md](variants/single-boom-mini/REPORT.md) and a
-viewer page with an exploded view.
+`python3 airframe/mini.py` makes a half-size single boom to print, every part
+of it on the A1 mini: to check how the parts go together before printing the
+full-size plane, and to show it. It doesn't fly. It writes
+`variants/single-boom-mini/`: STLs, a STEP and GLB of the model on its stand,
+[REPORT.md](variants/single-boom-mini/REPORT.md) and a viewer page with an
+exploded view.
 
 ![Desk model](variants/single-boom-mini/preview/hero.png)
 
 - **Same parts, same split.** The 16 printed parts are the full-size plane's,
   scaled. The wing and the battery stay where the full-size plane has them.
-- **Thick enough to print.** Before scaling, the fuselage walls, the trailing
-  edges, the boom socket's sleeve and the servo fairings' shells are rebuilt
-  thicker, inwards, so they are still 0.8 mm (two lines) at half size. The
-  tail plates come out at 1 mm. Sliced solid in PrusaSlicer, every part
-  fills at least 99 % of its volume, so nothing is too thin to print.
-- **Stock rods, not scaled holes.** Scaled, a hole would be the scaled rod plus
-  half the full-size clearance, too tight to print. So the holes are drilled
-  again for stock sizes plus 0.25 mm:
+- **Thick enough to print.** At half size the thin features would be 0.2 to
+  0.6 mm. So before scaling, these are rebuilt to 0.8 mm (two lines) at half
+  size:
+  - inwards: the fuselage walls, the trailing edges and the servo fairings'
+    shells;
+  - outwards: the boom sleeves and the tail mount's collar and fin socket.
 
-  | Rod | Full size | Model | Length |
-  |---|---|---|---|
-  | Boom | 10 x 9 mm carbon tube | 5 mm tube (carbon, aluminium or a wooden dowel) | 161 mm |
-  | Main spar | 3 mm carbon rod | 1.5 mm rod or steel wire | 238 mm |
-  | Rear spar | 2 mm carbon rod | 1 mm rod, steel wire or a paper clip | 238 mm |
+  The tail plates come out at 1 mm. Sliced solid in PrusaSlicer, every part
+  fills at least 98 % of its volume, so nothing is too thin to print.
+- **Printed rods.** The carbon boom and spars are printed too, solid, lying on
+  a small flat:
 
+  | Rod | Full size | Model | Hole | Thinnest wall round it |
+  |---|---|---|---|---|
+  | Boom | 10 x 9 mm carbon tube | 4.8 mm, 161 mm long | 5.1 mm | 0.80 mm |
+  | Main spar | 3 mm carbon rod | 3.0 mm, two 119 mm halves | 3.3 mm | 1.06 mm |
+  | Rear spar | 2 mm carbon rod | 1.8 mm, two 119 mm halves | 2.1 mm | 0.88 mm |
+
+  The spars are as thick as the wing allows with 0.8 mm of wall round the hole,
+  so they are stiffer than the scaled carbon would be. Each is two halves that
+  meet inside the wing centre, so each half fits the bed. `--stock-rods` uses
+  bought 5 mm, 1.5 mm and 1 mm rods instead.
+- **Fits cut again for printing.** Scaling halves every full-size clearance,
+  so each fit is re-cut for a printed part going into a printed part:
+  - rods in their holes: 0.3 mm on the diameter, every hole vertical on the
+    bed so it prints round;
+  - the lid, the fin and the fuselage halves' joint: 0.25 mm a side;
+  - the dummies in their pockets: 0.25 mm a side;
+  - the glued joints touch, and nothing overlaps.
+- **Print `stl/fit_test.stl` first.** It has each rod's hole at 0.1 mm tighter
+  and looser, slots for the tail plates likewise, and a stub of each rod to
+  try. If the stubs only go into the loose holes, run
+  `python3 airframe/mini.py --fit 0.4 --gap 0.35`.
 - **Printed dummies for the bought parts.** The four servos, the motor, prop,
   FC, ESC, receiver, VTX, camera, antenna and battery are one solid each, made
-  from the detailed models without their wires and pads. Each is trimmed
-  wherever it comes within 0.15 mm of a printed part, so it drops into its
-  pocket. The prop and the antenna are 1.6 times thicker so they print; the
-  prop gets a recess for the motor's prop nut and the lid's antenna hole is
-  opened up.
+  from the detailed models without their wires and pads, and trimmed to clear
+  their pockets. The prop and the antenna are 1.6 times thicker so they print.
 - **A stand.** A base, a post and a cradle cut to the fuselage's belly, under
   the balance point, with the name engraved in the base.
-- **Checked.** Nothing overlaps: dummies, rods and stand against every printed
-  part. Every file fits the A1 mini.
 
-The 30 files print in about 8 h 35 min (0.12 mm layers, 100 g of PLA): 4 h 45
-min for the wing, its ailerons and fairings, 1 h 20 min for the fuselage and
-lid, 30 min for the tail and motor cap, 1 h 05 min for the dummies and an hour
-for the stand. Left off: the wiring, the pushrods and the hinges (glue
-the control surfaces at neutral, or hinge them with tape).
+Making it found three overlaps in the full-size CAD, fixed now in every
+variant, and `build.py` now checks printed parts against each other:
+- the single boom's rudder ran into the motor cap's cone; it is notched round
+  it;
+- the aileron servo fairings ran into the wing centre's flat underside; they
+  are cut clear of it;
+- the twin's lid corners ran into the pod's rounded nose; they are rounded to
+  match.
+
+The 36 files print in about 10 h 35 min (0.12 mm layers, 116 g of PLA), the fit
+test included (33 min).
+Left off: the wiring, the pushrods and the hinges (glue the control surfaces
+at neutral, or hinge them with tape).
 
 | Exploded | Inside the fuselage, lid off |
 |---|---|
@@ -951,8 +973,8 @@ the control surfaces at neutral, or hinge them with tape).
 | **On the stand** | **The tail** |
 | ![Side](variants/single-boom-mini/preview/side.png) | ![Tail](variants/single-boom-mini/preview/tail.png) |
 
-`--scale`, `--fit`, `--gap` and the rod sizes (`--boom`, `--spar`,
-`--rear-spar`) are options.
+`--scale`, `--fit`, `--gap`, `--stock-rods` and the rod sizes (`--boom`,
+`--spar`, `--rear-spar`) are options.
 
 ## Known limitations
 

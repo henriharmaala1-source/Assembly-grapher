@@ -106,8 +106,8 @@
     <div class="eyebrow">Kipinä single boom · desk model · 3D printed</div>
     <h1>Kipinä <span id="h-scale">1:2</span></h1>
     <p class="lede" id="lede">The single-boom FPV pusher at half size, to print: the full-size plane's parts, split the
-      same way and scaled, with printed dummies for the bought parts and stock rods for the boom and spars. Print it
-      to check how everything goes together before printing the real one, and to show it.</p>
+      same way and scaled, with printed dummies for the bought parts and printed rods for the carbon boom and spars.
+      Print it to check how everything goes together before printing the real one, and to show it.</p>
   </header>
 
   <div class="top">
@@ -149,10 +149,12 @@
   </section>
 
   <section>
-    <h2>Rods to cut</h2>
-    <div class="prose"><p>The holes are drilled for these stock sizes plus the fit clearance, not scaled: a scaled hole would
-      be the scaled rod plus half the full-size clearance, too tight to print.</p></div>
-    <div class="scroll"><table id="rods"><thead><tr><th>Rod</th><th>Full size</th><th>Use</th><th>Length</th><th>Hole</th><th>Through</th></tr></thead><tbody></tbody></table></div>
+    <h2>The rods</h2>
+    <div class="prose"><p>The carbon boom and spars are printed too, solid, lying on a small flat. The holes are drilled again
+      for them plus the fit clearance: a scaled hole would be the scaled rod plus half the full-size clearance, too tight
+      to print. The spars are as thick as the wing allows with 0.8 mm of wall round the hole, and each is two halves
+      that meet inside the wing centre, so they fit the bed.</p></div>
+    <div class="scroll"><table id="rods"><thead><tr><th>Rod</th><th>Full size</th><th>Model</th><th>Length</th><th>Hole</th><th>Through (thinnest wall)</th></tr></thead><tbody></tbody></table></div>
   </section>
 
   <section>
@@ -206,7 +208,8 @@ const LABEL = {
   fuselage_front: "Fuselage, front", fuselage_rear: "Fuselage, rear", lid: "Lid", tail_mount: "Tail mount",
   stab: "Stabiliser", elevator: "Elevator", fin: "Fin", rudder: "Rudder", motor_mount: "Motor cap",
   fairing_ail_R: "Servo fairing R", fairing_ail_L: "Servo fairing L", stand: "Stand",
-  rod_boom: "Boom (stock tube)", rod_spar_main: "Main spar (stock rod)", rod_spar_rear: "Rear spar (stock rod)",
+  rod_boom: "Boom", rod_spar_main: "Main spar", rod_spar_rear: "Rear spar", rod_spar_main_R: "Main spar R",
+  rod_spar_main_L: "Main spar L", rod_spar_rear_R: "Rear spar R", rod_spar_rear_L: "Rear spar L", fit_test: "Fit test",
   dummy_servo_ail_R: "Aileron servo R", dummy_servo_ail_L: "Aileron servo L", dummy_servo_elev: "Elevator servo",
   dummy_servo_rud: "Rudder servo", dummy_motor: "Motor", dummy_prop: "Prop", dummy_camera: "Camera", dummy_vtx: "VTX",
   dummy_antenna: "Antenna", dummy_fc: "Flight controller", dummy_receiver: "Receiver", dummy_esc: "ESC", dummy_battery: "Battery",
@@ -379,7 +382,7 @@ const facts = [
 $("facts").innerHTML = facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
 const byGroup = (g) => spec.prints.filter((p) => p.group === g);
 const sum = (rows, k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
-$("tiles").innerHTML = [["Airframe", "printed"], ["Dummies", "dummy"], ["Stand", "stand"]].map(([t, g]) => {
+$("tiles").innerHTML = [["Airframe", "printed"], ["Rods", "rod"], ["Dummies", "dummy"], ["Stand", "stand"], ["Fit test, first", "test"]].map(([t, g]) => {
   const rows = byGroup(g);
   return `<div class="tile"><span class="k">${t}</span><span class="v">${rows.length} ${rows.length === 1 ? "file" : "files"}</span>
           <span class="s">${spec.minutes ? fmtMin(sum(rows, "minutes")) + " · " + sum(rows, "grams").toFixed(0) + " g" : ""}</span></div>`;
@@ -389,24 +392,28 @@ $("prints").querySelector("tbody").innerHTML = spec.prints.map((p) => `<tr><td><
   <td class="num">${p.bed.map((v) => v.toFixed(0)).join(" × ")}</td><td class="num">${p.minutes ? fmtMin(p.minutes) : "–"}</td>
   <td class="num">${p.grams ? p.grams.toFixed(1) : "–"}</td></tr>`).join("");
 $("rods").querySelector("tbody").innerHTML = spec.rods.map((r) => `<tr><td>${esc(r.label)}</td><td>${esc(r.full)}</td>
-  <td><b>${r.d} mm</b> ${esc(r.kind)}</td><td class="num"><b>${r.length.toFixed(0)} mm</b></td><td class="num">${r.hole} mm</td>
-  <td>${r.through.map(label).map(esc).join(", ")}</td></tr>`).join("");
+  <td><b>${r.d} mm</b> ${esc(r.kind)}</td><td class="num">${r.length.toFixed(0)} mm${r.files.length > 1 ? " in two halves" : ""}</td>
+  <td class="num">${r.hole} mm</td>
+  <td>${r.through.map((n) => esc(label(n)) + (r.walls[n] !== undefined ? ` (${r.walls[n].toFixed(2)} mm)` : "")).join(", ")}</td></tr>`).join("");
 const c = spec.checks;
 $("checks").innerHTML = [
   c.hits.length ? `<p>Overlaps: ${c.hits.map((h) => `${esc(label(h[0]))} and ${esc(label(h[1]))} (${h[2]} mm³)`).join("; ")}.</p>`
-    : `<p><span class="pass">No overlaps.</span> The dummies, the stock rods and the stand overlap no printed part.</p>`,
+    : `<p><span class="pass">No overlaps.</span> No two printed parts overlap, and the dummies, the rods and the stand overlap none of them.</p>`,
   c.thin_ok === null ? "" : c.thin_ok
     ? `<p><span class="pass">Nothing too thin.</span> Sliced solid in PrusaSlicer, every printed part fills at least 90 % of its volume (the lowest, ${esc(label(c.thin_min[0]))}, ${Math.round(c.thin_min[1] * 100)} %).</p>`
     : `<p>Sliced solid, some parts lose detail: ${Object.entries(c.thin).map(([n, f]) => `${esc(label(n))} ${Math.round(f * 100)} %`).join(", ")}.</p>`,
-  `<p>Every file fits the A1 mini's 180 mm cube: ${c.fits ? '<span class="pass">yes</span>' : "no"}. Each dummy is trimmed wherever it came
-   within ${spec.gap} mm of a printed part; a gap of 0 below is a face it rests or is glued on.</p>`,
+  c.min_wall === null ? "" : `<p>Thinnest wall round any rod hole: <b>${c.min_wall.toFixed(2)} mm</b>.</p>`,
+  `<p>Fits: rods in their holes <b>${spec.fit} mm</b> on the diameter; the lid, the fin and the fuselage joint <b>${spec.gap} mm</b> a side;
+   each dummy trimmed wherever it came within ${spec.gap} mm of a printed part (a gap of 0 below is a face it rests or is glued on).
+   Print <code>stl/fit_test.stl</code> first: holes and slots at 0.1 mm less and more, with a stub of each rod to try.</p>`,
+  `<p>Every file fits the A1 mini's 180 mm cube: ${c.fits ? '<span class="pass">yes</span>' : "no"}.</p>`,
 ].join("");
 $("gaps").querySelector("tbody").innerHTML = spec.dummies.map((d) => `<tr><td>${esc(label("dummy_" + d.name))}</td>
   <td class="num">${d.full.join(" × ")}</td><td class="num">${d.trimmed} %</td><td class="num">${d.gap === null ? "–" : d.gap.toFixed(2) + " mm"}</td></tr>`).join("");
 
-const order = [...spec.prints.map((p) => p.file.replace(/\.stl$/, "")), ...spec.rods.map((r) => "rod_" + r.name)];
+const order = [...spec.prints.map((p) => p.file.replace(/\.stl$/, "")), ...spec.rods.filter((r) => !r.printed).map((r) => "rod_" + r.name)];
 $("parts").innerHTML = order.filter((n) => meshes.has(n)).map((n) =>
-  `<li><button data-part="${n}" aria-pressed="false"><span>${esc(label(n))}</span><span>${n.startsWith("rod_") ? "stock" : n.startsWith("dummy_") ? "dummy" : n === "stand" ? "stand" : "part"}</span></button></li>`).join("");
+  `<li><button data-part="${n}" aria-pressed="false"><span>${esc(label(n))}</span><span>${n.startsWith("rod_") ? "rod" : n.startsWith("dummy_") ? "dummy" : n === "stand" ? "stand" : "part"}</span></button></li>`).join("");
 document.querySelectorAll(".parts button").forEach((b) => b.addEventListener("click", () => select(b.dataset.part)));
 
 function resize() {

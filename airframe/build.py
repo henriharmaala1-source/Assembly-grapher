@@ -264,7 +264,8 @@ def make_lid(p: Params, L: Layout):
     x0, x1 = lid_start(p), lid_end(L)
     zt, y = L.z_top, L.half_w - p.wall - 0.2
     lid = box(x0, x1, -y, y, zt - 0.8, zt)
-    return cut(lid, cyl_z(1.0, zt - 3, zt + 2, L.ant_x, L.ant_y))   # VTX antenna coax
+    return cut(lid, cyl_z(1.0, zt - 3, zt + 2, L.ant_x, L.ant_y),   # VTX antenna coax
+               *nose_cuts(p, L, p.wall + 0.2, 4.0))                  # front corners round, clear of the nose's
 
 
 def make_wing_centre(p: Params, L: Layout, sec: Section):
@@ -663,8 +664,9 @@ def servo_fairing(p: Params, L: Layout, s: dict, k: Kit, surface, above, x_limit
     return out
 
 
-def fairings(p: Params, L: Layout, sec: Section, k: Kit) -> dict:
-    """Fairings for the two aileron servos and the elevator and rudder servos."""
+def fairings(p: Params, L: Layout, sec: Section, k: Kit, centre=None) -> dict:
+    """Fairings for the two aileron servos and the elevator and rudder servos. The aileron servos'
+    run inboard under the wing centre's flat underside: they are cut clear of `centre`."""
     out = {}
     ail = aileron_servo(p, L, sec, k)
     y0, y1 = (L.y_break if L.tapered else p.centre_w / 2), p.span / 2
@@ -681,7 +683,7 @@ def fairings(p: Params, L: Layout, sec: Section, k: Kit) -> dict:
                  cq.Solid.extrudeLinear(cq.Face.makeFromWires(above_at(y0 - 5)), V(0, 5.5, 0)))
     out["fairing_ail_R"] = servo_fairing(
         p, L, ail, k, lambda x: ls.lower_z(x) + 0.2, above, ls.x_at(p.hinge_pos) - 1.5,
-        (xh + 2.1, ail["link"][1], lk.lower_z(xh + 1.8) - 7.8))
+        (xh + 2.1, ail["link"][1], lk.lower_z(xh + 1.8) - 7.8), () if centre is None else (centre,))
     out["fairing_ail_L"] = out["fairing_ail_R"].mirror("XZ")
     if L.single:
         return out
@@ -878,11 +880,12 @@ def make_tail_mount_single(p: Params, L: Layout):
     that hold the stabiliser low enough for the elevator to swing up past the
     boom. The elevator pushrod runs between the pylons."""
     x0, x1 = L.x_stab + 0.5, L.x_hinge - 0.5
-    r_out, g = L.r_hole + 1.2, 0.15
+    r_out, g, cw = L.r_hole + p.collar_wall, 0.15, p.collar_wall
+    t = p.plate / 2                                                       # the fin's half thickness
     body = [cyl_x(r_out, x0, x1, 0, 0),
-            box(x0, x1, -(1.0 + g), 1.0 + g, L.r_hole, L.fin_z0)]          # flat seat for the fin's root
+            box(x0, x1, -(t + g), t + g, L.r_hole, L.fin_z0)]              # flat seat for the fin's root
     for s in (1, -1):
-        body.append(box(x0, x1, min(s * (1.0 + g), s * (2.2 + g)), max(s * (1.0 + g), s * (2.2 + g)),
+        body.append(box(x0, x1, min(s * (t + g), s * (t + g + cw)), max(s * (t + g), s * (t + g + cw)),
                         L.r_hole, L.fin_z0 + 6.0))                        # socket cheeks
         body.append(prism_z([(x0, s * 4.2), (x0 + 5.0, s * 2.2), (x1, s * 2.2), (x1, s * 6.2), (x0 + 5.0, s * 6.2)],
                             L.tail_z, -2.5))                               # pylons, wedge-nosed
@@ -933,11 +936,21 @@ def make_rudder_single(p: Params, L: Layout):
                   box(xr, xr + 6.0, hy - 1.6, y0 + 0.1, z0, z0 + 1.6))
     cuts = [prism_z([(xr - 0.1, y0 - 0.1), (xr + 2.0, y0 - 0.1), (xr - 0.1, y0 + t - 0.6)], z0 - 1, z1 + 1),
             prism_z([(x_te - 7, y0 + t + 0.1), (x_te + 0.1, y0 + t + 0.1), (x_te + 0.1, y0 + t - 1.3)], z0 - 1, z1 + 1),
-            cyl_z(0.55, z0 - 1, z0 + 3, hx, hy)]
+            cyl_z(0.55, z0 - 1, z0 + 3, hx, hy),
+            motor_cap_envelope(L, 1.0)]       # its trailing edge runs over the motor cap's cone: notch it
     return cut(rudder, *cuts)
 
 
 MOTOR_PLATE_R = 10.0
+
+
+def motor_cap_envelope(L: Layout, grow: float = 0.0):
+    """The motor cap's outside (its cone and plate), `grow` bigger all round. The rudder is notched
+    round it: it rotates about a vertical hinge ahead of the cone, so every deflection moves it
+    further from the boom's axis and the neutral position is the closest."""
+    xm = L.x_mp
+    cone = cq.Solid.makeCone(L.r_boss + grow, MOTOR_PLATE_R + grow, 11.6, V(xm - 14.0, 0, 0), V(1, 0, 0))
+    return fuse(cone, cyl_x(MOTOR_PLATE_R + grow, xm - 2.4 - grow, xm + grow, 0, 0))
 
 
 def make_motor_mount(p: Params, L: Layout):
@@ -1445,7 +1458,7 @@ def build_at(p: Params, k: Kit, x_le: float, batt_x: float = None):
             parts["bellcrank"] = make_bellcrank(p, L)
         parts["lid"] = make_lid(p, L)
     if p.fairings:
-        parts.update(fairings(p, L, sec, k))
+        parts.update(fairings(p, L, sec, k, parts["wing_centre"]))
     if p.joiner_sleeves and p.rudders and not L.single:
         parts.update(make_joiner_sleeves(p, L))
 
@@ -1620,7 +1633,8 @@ def write_report(p, k, L, parts, items, batt_x, out: Path, hits=(), variant="bas
         f"Sizing check with CAD weights: stall {perf['stall']:.2f} m/s against the "
         f"{p.stall_limit} m/s limit: **{'passes' if perf['stall'] <= p.stall_limit else 'FAILS'}**.",
         "",
-        "Interference check (bought parts and wire runs against everything; pushrods in their horns, "
+        "Interference check (printed parts against each other, bought parts and wire runs against everything; "
+        "pushrods in their horns, "
         "wires at their own ends and wires against wires excluded): " + ("**" + "; ".join(f"{a} / {b} {v} mm^3" for a, b, v in hits) + "**"
                          if hits else "no overlaps."),
         "",
@@ -1779,14 +1793,13 @@ def wiring_report(refs, out: Path):
 
 
 def interference(parts, refs, tol=0.05):
-    """Pairs of bodies that overlap by more than tol mm^3."""
+    """Pairs of bodies that overlap by more than tol mm^3: printed parts against each other (glued
+    joints touch, they don't overlap) and bought parts and wire runs against everything."""
     bodies = [(n, s) for n, s in parts.items()] + [(r.name, r.shape) for r in refs]
     boxes = {n: s.BoundingBox() for n, s in bodies}
     hits = []
     for i, (a, sa) in enumerate(bodies):
         for b, sb in bodies[i + 1:]:
-            if a in parts and b in parts:
-                continue                                   # printed parts are glued, not checked
             if component(a) == component(b) or frozenset((a, b)) in LINKS \
                     or frozenset((component(a), component(b))) in LINKS \
                     or (a.startswith("harness_") and b.startswith("harness_")):   # wires bundle together

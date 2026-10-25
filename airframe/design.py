@@ -102,6 +102,7 @@ class Params:
     belly_ch: float = 2.0          # 45 deg chamfer on the fuselage's bottom long edges
     cone: float = 48.0             # tail cone from the full section down to the boom socket
     elevator_up: float = 20.0      # elevator travel the stabiliser's drop below the boom allows, degrees
+    collar_wall: float = 1.2       # the tail mount's collar round the boom, its fin seat and socket cheeks
     bay_stretch: float = 0.0       # extra fuselage between the servo bay and the ESC: moves the ESC and the
                                    # tail cone aft, so a wing that balances further aft still sits on the full section
 
@@ -385,7 +386,7 @@ class Layout:
         self.r_boss = self.r_hole + p.boss_wall
         self.z_top = self.r_boss                     # the wing seat is flush with the boom socket's top
         self.tail_z = -(p.boom_od / 2 + 0.8 + self.c_e * math.sin(math.radians(p.elevator_up)))
-        self.fin_z0 = self.r_hole + 1.2              # top of the tail mount's collar
+        self.fin_z0 = self.r_hole + p.collar_wall    # top of the tail mount's collar
         self.rudder_z0 = p.boom_od / 2 + 2.0         # rudder clears the boom behind the collar
         self.fin_z1 = self.fin_z0 + self.fin_h
         # servo bay right behind the battery: elevator servo, then rudder servo,

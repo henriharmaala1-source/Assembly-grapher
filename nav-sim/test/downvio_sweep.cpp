@@ -57,6 +57,7 @@
 #include "depth_camera.hpp"
 #include "vio.hpp"
 #include "voxel_world.hpp"
+#include "ground_texture.hpp"
 
 namespace {
 
@@ -136,6 +137,12 @@ struct Opt {
     int   w = 640, h = 400;
     unsigned seed = 1;
     std::string depth = "plane", world = "flat", dump;
+    // --ground SCENE: real ground photographs under the sun (ground_texture.hpp)
+    // instead of navcore's IR noise model ("noise", the default).
+    std::string ground = "noise", texDir = "nav-sim/textures";
+    float sunElev = 45.f, sunAz = 135.f, exposureMs = 0.f;
+    float checkDrift = -1.f;      // > 0: exit 1 if the drift % exceeds it (ctest)
+    bool droneShadow = false, castShadows = true;
 };
 
 float floorTop = 0.1f;   // the floor slab's top, metres
@@ -192,6 +199,14 @@ bool parse(int argc, char** argv, Opt& o, bool& header) {
         else if (a == "--depth" && i + 1 < argc) o.depth = argv[++i];
         else if (a == "--world" && i + 1 < argc) o.world = argv[++i];
         else if (a == "--dump" && i + 1 < argc) o.dump = argv[++i];
+        else if (a == "--ground" && i + 1 < argc) o.ground = argv[++i];
+        else if (a == "--tex-dir" && i + 1 < argc) o.texDir = argv[++i];
+        else if (a == "--sun-elev") f(o.sunElev);
+        else if (a == "--sun-az") f(o.sunAz);
+        else if (a == "--exposure-ms") f(o.exposureMs);
+        else if (a == "--drone-shadow") o.droneShadow = true;
+        else if (a == "--no-cast-shadows") o.castShadows = false;
+        else if (a == "--check-drift") f(o.checkDrift);
         else if (a == "--header") header = true;
         else { std::fprintf(stderr, "downvio_sweep: unknown argument %s\n", a.c_str()); return false; }
     }
@@ -232,11 +247,25 @@ int main(int argc, char** argv) {
     if (!parse(argc, argv, o, header)) return 2;
     const char* cols = "depth,world,fov,tilt,wobble,wobble_hz,peak_rate_dps,speed,alt,att_bias,"
                        "seed,frames,drift_pct,final_err_m,max_err_m,lost_pct,mean_inliers,"
-                       "ground_frac,ms_per_frame";
+                       "ground_frac,ms_per_frame,ground,sun_elev,drone_shadow,exposure_ms";
     if (header) { std::printf("%s\n", cols); return 0; }
 
     sim::VoxelWorld world;
     buildWorld(world, o, o.dist);
+    kground::GroundRenderer ground;
+    if (o.ground != "noise") {
+        std::string err;
+        if (!ground.load(o.texDir, &err)) {
+            std::fprintf(stderr, "downvio_sweep: %s\n", err.c_str());
+            return o.checkDrift > 0 ? 77 : 2;          // a check without its data: skipped
+        }
+        if (!ground.setScene(o.ground, o.seed, floorTop)) {
+            std::fprintf(stderr, "downvio_sweep: --ground takes noise|%s\n", kground::GroundRenderer::sceneNames());
+            return 2;
+        }
+        ground.light.sunElevDeg = o.sunElev; ground.light.sunAzDeg = o.sunAz;
+        ground.light.castShadows = o.castShadows;
+    }
     sim::CamParams cp;
     cp.width = o.w; cp.height = o.h; cp.hfovDeg = o.fov;
     cp.baselineM = 0.05f; cp.irBandLimit = true; cp.maxRangeM = std::max(30.f, 2.f * reachM(o));
@@ -273,10 +302,11 @@ int main(int argc, char** argv) {
 
     for (int k = 0; k < frames; ++k) {
         const double t = k * dt;
-        const V3 pos{0.0, along(t), u0};
         // Body attitude: nose-down cruise tilt plus the wobble on both axes.
-        const double pitch = -o.tilt + o.wobble * std::sin(2 * kPi * o.wobbleHz * t + ph1);
-        const double roll = o.wobble * std::sin(2 * kPi * o.wobbleHz * 0.83 * t + ph2);
+        auto pitchAt = [&](double tt) { return -o.tilt + o.wobble * std::sin(2 * kPi * o.wobbleHz * tt + ph1); };
+        auto rollAt = [&](double tt) { return o.wobble * std::sin(2 * kPi * o.wobbleHz * 0.83 * tt + ph2); };
+        const V3 pos{0.0, along(t), u0};
+        const double pitch = pitchAt(t), roll = rollAt(t);
         const double yaw = 0.0;
         const sim::CamPose truth = downCam(pos, yaw, pitch, roll);
 
@@ -286,7 +316,23 @@ int main(int argc, char** argv) {
         const sim::CamPose imuCam = downCam(pos, yaw, pitchI, rollI);
 
         const auto t0 = std::chrono::steady_clock::now();
-        const cv::Mat ir = cam.renderIR(world, truth);
+        cv::Mat ir;
+        if (o.ground == "noise") {
+            ir = cam.renderIR(world, truth);
+        } else {
+            // Motion blur: the poses across the exposure, ending at this frame.
+            std::vector<sim::CamPose> blur;
+            if (o.exposureMs > 0.f) {
+                const int K = ground.camera.blurSubFrames;
+                for (int j = 0; j < K; ++j) {
+                    const double tj = t - 1e-3 * o.exposureMs * double(K - 1 - j) / double(K - 1);
+                    blur.push_back(downCam(V3{0.0, along(std::max(0.0, tj)), u0}, yaw, pitchAt(tj), rollAt(tj)));
+                }
+            }
+            kground::DroneShadow sh;
+            sh.on = o.droneShadow; sh.e = float(pos.e); sh.n = float(pos.n); sh.u = float(pos.u);
+            ir = ground.render(world, cam, truth, blur, sh);
+        }
         cv::Mat depth;
         if (o.depth == "truth") {
             depth = cam.renderTruth(world, truth);
@@ -337,6 +383,10 @@ int main(int argc, char** argv) {
             cv::Mat d8; depth.convertTo(d8, CV_8U, 255.0 / 15.0);
             cv::imwrite(o.dump + "_depth.png", d8);
         }
+        if (std::getenv("DOWNVIO_TRACE"))
+            std::fprintf(stderr, "k %d valid %d tracked %d inliers %d kf %d err %.3f\n", k,
+                         int(res.valid), res.tracked, res.inliers, int(res.newKeyframe),
+                         std::hypot(vio.pose().e - truth.e, vio.pose().n - truth.n));
         if (k == 0) continue;
         if (!res.valid) ++lost; else { sumIn += res.inliers; ++nIn; }
         const sim::CamPose& est = vio.pose();
@@ -344,11 +394,17 @@ int main(int argc, char** argv) {
         maxErr = std::max(maxErr, err);
         finalErr = err;
     }
-    std::printf("%s,%s,%.0f,%.0f,%.0f,%.2f,%.0f,%.1f,%.1f,%.1f,%u,%d,%.2f,%.3f,%.3f,%.1f,%.0f,%.2f,%.0f\n",
+    std::printf("%s,%s,%.0f,%.0f,%.0f,%.2f,%.0f,%.1f,%.1f,%.1f,%u,%d,%.2f,%.3f,%.3f,%.1f,%.0f,%.2f,%.0f,%s,%.0f,%d,%.1f\n",
                 o.depth.c_str(), o.world.c_str(), double(o.fov), double(o.tilt), double(o.wobble),
                 double(o.wobbleHz), peakRate, double(o.speed), double(o.alt), double(o.attBias),
                 o.seed, frames, 100.0 * finalErr / std::max(1e-6, along((frames - 1) * dt)), finalErr, maxErr,
                 100.0 * lost / std::max(1, frames - 1), nIn ? sumIn / nIn : 0.0,
-                groundSum / frames, msSum / frames);
+                groundSum / frames, msSum / frames, o.ground.c_str(), double(o.sunElev),
+                o.droneShadow ? 1 : 0, double(o.exposureMs));
+    const double drift = 100.0 * finalErr / std::max(1e-6, along((frames - 1) * dt));
+    if (o.checkDrift > 0 && drift > o.checkDrift) {
+        std::fprintf(stderr, "downvio_sweep: drift %.2f %% > %.2f %%\n", drift, double(o.checkDrift));
+        return 1;
+    }
     return 0;
 }

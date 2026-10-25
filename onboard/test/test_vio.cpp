@@ -177,24 +177,34 @@ sim::CamPose downCam(float e, float n, float u, double yawD, double pitchD, doub
 }
 
 // Level and straight, 1.5 m over the floor, IMU noise as everywhere else here.
-Score flyDown(const sim::VoxelWorld& w, const sim::DepthCamera& cam, bool stereo, float dt) {
+// `blankFrom`/`blankN`: frames whose image is BLANK (a flare, a cable fault):
+// the track is lost and must be found again at speed.
+Score flyDown(const sim::VoxelWorld& w, const sim::DepthCamera& cam, bool stereo, float dt,
+              float speed = 1.f, int blankFrom = -1, int blankN = 0, float distM = 6.f,
+              float startN = 7.f, int lkLevels = 3) {
     sim::DepthVio vio;
-    vio.init(cam);
+    sim::VioParams vp;
+    vp.lkLevels = lkLevels;
+    vio.init(cam, vp);
     std::mt19937 rng(23);
     std::normal_distribution<double> N(0.0, 1.0);
     Score sc;
-    const int n = int(6.f / dt);                       // 6 m at 1 m/s
+    const int n = int(distM / (speed * dt));
     for (int i = 0; i <= n; ++i) {
-        const float north = 7.f + float(i) * dt;
+        // From a hover: the speed ramps up over the first second.
+        const float tt = float(i) * dt;
+        const float north = startN + (tt < 1.f ? 0.5f * speed * tt * tt : speed * (tt - 0.5f));
         const sim::CamPose truth = downCam(10.f, north, 1.6f, 0.0, 0.0, 0.0);
         if (i == 0) vio.reset(truth);
         cv::Mat ir = cam.renderIR(w, truth);
         cv::Mat d = stereo ? cam.renderStereo(w, truth, nullptr) : cam.renderTruth(w, truth);
+        if (i >= blankFrom && i < blankFrom + blankN) ir.setTo(cv::Scalar(90));
         const sim::CamPose imu = downCam(10.f, north, 1.6f, 0.5 * i * dt, 0.3 * N(rng), 0.3 * N(rng));
         const sim::VioResult r = vio.step(ir, d, imu);
         if (!r.valid && i > 0) ++sc.lost;
         if (r.newKeyframe) ++sc.keyframes;
-        sc.pathM = float(i) * dt;
+        sc.pathM = north - startN;
+        sc.yawErr = r.valid ? 0.f : 1.f;               // (here: was the LAST frame valid)
         const float err = std::hypot(r.pose.e - truth.e, r.pose.n - truth.n);
         sc.maxErr = std::max(sc.maxErr, err);
         sc.finalErr = err;
@@ -281,6 +291,22 @@ int main() {
                     drift, s.maxErr, s.lost, s.frames);
         CHECK(drift < (stereo ? 6.f : 3.f));
         CHECK(s.lost <= s.frames / 20);
+    }
+    // RE-ACQUIRING at speed: 3 m/s, 1.6 m up, six blank frames mid-flight.
+    // Lost there, as it must be; then found again. NOTE this passes with or
+    // without VioParams::reacquireFrames: this floor has texture at every
+    // scale, and the tracker's coarse pyramid levels catch even a bad search
+    // start. The case that needs it -- fine-only texture, real gravel -- is
+    // nav-sim's downvio_gravel_reacquire (ctest, with the real ground photos).
+    for (bool stereo : {false, true}) {
+        const Score s = flyDown(w, cam, stereo, 1.f / 15.f, 3.f, 25, 6, 9.f);
+        const float drift = 100.f * s.finalErr / std::max(0.1f, s.pathM);
+        std::printf("  %-6s %-30s path %5.1f m  final err %.2f m (%.1f %%)  lost %d/%d  last frame %s\n",
+                    stereo ? "stereo" : "truth", "DOWNWARD, 3 m/s, 6 blank", s.pathM, s.finalErr,
+                    drift, s.lost, s.frames, s.yawErr == 0.f ? "valid" : "LOST");
+        CHECK(s.yawErr == 0.f);                    // tracking again by the end
+        CHECK(s.lost <= 6 + 3);                    // the blackout, and little more
+        CHECK(drift < 10.f);
     }
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;

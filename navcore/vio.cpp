@@ -119,6 +119,8 @@ void DepthVio::reset(const CamPose& start) {
     kfR_ = R_;
     imuRef_ = false;
     vel_[0] = vel_[1] = vel_[2] = 0.f;
+    velHold_[0] = velHold_[1] = velHold_[2] = 0.f;
+    lostRun_ = 0;
     lastValid_ = false;
     prevImg_.release();
     prevPts_.clear();
@@ -203,6 +205,13 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
     const cv::Matx33d Rprior = rotUp(yawCorrDeg_) * Rimu;
     eulerOf(Rprior, prior);
     prior.e += vel_[0]; prior.n += vel_[1]; prior.u += vel_[2];
+    // Where to LOOK (the track's prediction and the solve's start): the prior,
+    // except shortly after a loss, when the last measured velocity says more
+    // than the decayed coast does (VioParams::reacquireFrames).
+    CamPose seek = prior;
+    if (lostRun_ > 0 && lostRun_ <= p_.reacquireFrames) {
+        seek.e = pose_.e + velHold_[0]; seek.n = pose_.n + velHold_[1]; seek.u = pose_.u + velHold_[2];
+    }
 
     if (prevImg_.empty() || prevPts_.empty()) {
         // First frame (or just re-anchored after a loss): nothing to track
@@ -226,7 +235,7 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
     std::vector<cv::Point2f> cur(prevPts_), back(prevPts_);
     {
         const cv::Matx33d Rcw = Rprior.t();
-        const cv::Vec3d C(prior.e, prior.n, prior.u);
+        const cv::Vec3d C(seek.e, seek.n, seek.u);
         for (size_t i = 0; i < prevPts_.size(); ++i) {
             const cv::Vec3d pc = Rcw * (cv::Vec3d(worldPts_[i].x, worldPts_[i].y,
                                                    worldPts_[i].z) - C);
@@ -263,7 +272,7 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
     // produced wild solutions here. Outliers: Huber weights first, then a hard
     // residual gate and a clean re-solve on the survivors.
     // The solved rotation is Rprior turned by dYaw about the world vertical.
-    CamPose est = prior;
+    CamPose est = seek;
     double dYaw = 0.0;                     // degrees
     auto rotEst = [&](double d) { return rotUp(yawCorrDeg_ + d) * Rimu; };
     std::vector<int> inl;
@@ -381,6 +390,8 @@ VioResult DepthVio::step(const cv::Mat& irRaw, const cv::Mat& depthM,
         ++resets_;
     }
     lastValid_ = ok;
+    if (ok) { for (int a = 0; a < 3; ++a) velHold_[a] = vel_[a]; lostRun_ = 0; }
+    else ++lostRun_;
 
     // 4. Keyframe policy.
     const float moved = std::hypot(std::hypot(pose_.e - kfPose_.e, pose_.n - kfPose_.n),

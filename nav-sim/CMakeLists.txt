@@ -572,13 +572,20 @@ add_test(NAME loop_closure_check COMMAND loop_closure_check)
 
 # VIO from a DOWNWARD camera: tilt, rotation rate, field of view, speed,
 # height, ground (test/downvio_sweep.cpp; the grid: test/downvio_sweep.sh).
-add_executable(downvio_sweep test/downvio_sweep.cpp)
+add_executable(downvio_sweep test/downvio_sweep.cpp ground_texture.cpp)
 target_link_libraries(downvio_sweep PRIVATE navcore)
 target_include_directories(downvio_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(downvio_sweep PRIVATE ${OpenCV_LIBS})
 # The one thing in it that is not navcore's: the body -> downward-camera
 # rotation, checked against navcore's own projection (gimbal lock included).
 add_test(NAME downvio_sweep_selftest COMMAND downvio_sweep --selftest)
+# DepthVio RE-ACQUIRING over real gravel: lost for a few frames at 49 px of
+# flow, then found again (28 % drift before VioParams::reacquireFrames, 1.1 %
+# after). Needs nav-sim/textures/fetch_ground_textures.sh; skipped without.
+add_test(NAME downvio_gravel_reacquire
+         COMMAND downvio_sweep --ground gravel --tex-dir ${CMAKE_CURRENT_SOURCE_DIR}/textures
+                 --alt 1.5 --fov 60 --tilt 20 --speed 4 --dist 20 --seed 1 --check-drift 5)
+set_tests_properties(downvio_gravel_reacquire PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(rl_env_check
   test/rl_env_check.cpp

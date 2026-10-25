@@ -98,6 +98,14 @@ struct VioParams {
     // per-frame velocity, and a LOST frame coasts on it, decaying by this
     // factor per frame, instead of stopping dead.
     float  coastDecay  = 0.85f;
+    // RE-ACQUIRING after a loss: the tracker's search (and the solve's start)
+    // assumes the aircraft still moves at its last MEASURED velocity, for up to
+    // this many frames -- an aircraft cannot stop in a second. The reported
+    // coast still decays (coastDecay); this only says where to look. Without
+    // it, a loss at speed was permanent: the decayed prior put the search
+    // where the floor would be had the aircraft stopped, 49 px from where it
+    // was, every frame after (nav-sim downvio_sweep over gravel, 4 m/s at 1.5 m).
+    int    reacquireFrames = 30;
     int    minInliers  = 20;     // below this the frame is LOST
     int    kfMinTracked = 80;    // re-anchor when the track thins below this
     float  kfDistM     = 0.6f;   // ...or the camera has moved this far
@@ -152,6 +160,8 @@ private:
     double    yawCorrDeg_ = 0.0;
     bool      imuRef_ = false;       // yawCorrDeg_ has been fixed against the IMU
     float     vel_[3] = {0, 0, 0};   // per FRAME, ENU; frames assumed evenly spaced
+    float     velHold_[3] = {0, 0, 0};   // the last MEASURED velocity, for re-acquiring
+    int       lostRun_ = 0;              // frames since the last valid one
     bool      lastValid_ = false;
     cv::Mat   prevImg_;
     std::vector<cv::Point2f> prevPts_;   // tracked corners, previous frame

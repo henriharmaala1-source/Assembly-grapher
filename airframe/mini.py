@@ -426,7 +426,7 @@ def slicer_options(name: str) -> list[str]:
         opts += ["--support-material", "--support-material-auto", "--support-material-threshold", "40"]
     if name.startswith("rod_"):                           # solid, so it is as stiff as it can be
         opts[opts.index("15%")] = "100%"
-        opts += ["--brim-width", "3"]
+        opts += ["--fill-pattern", "rectilinear", "--brim-width", "3"]
     return opts
 
 
@@ -657,7 +657,9 @@ def write_report(args, p0, p, L, batt_x, parts, dummies, stock, stand, slip, wal
     a("| Glued joints | wing panels on the centre, stabiliser under the tail mount, wing on the fuselage, "
       "fairings under the wing | 0 (faces touch) | as designed; nothing overlaps |")
     a("")
-    a("**Print `stl/fit_test.stl` first** (about 15 minutes). It has a hole for each rod at "
+    ft = sliced.get("fit_test")
+    ft_time = f" ({fmt_min(ft['seconds'])}, with the same settings as the model)" if ft else ""
+    a(f"**Print `stl/fit_test.stl` first**{ft_time}. It has a hole for each rod at "
       f"{args.fit - 0.1:g}, {args.fit:g} and {args.fit + 0.1:g} mm (one, two and three dots), slots for the "
       f"{p.plate * s:g} mm tail plates at {args.gap - 0.1:g}, {args.gap:g} and {args.gap + 0.1:g} mm a side, "
       "and a stub of each rod and a tail-plate tab to try in them:\n")

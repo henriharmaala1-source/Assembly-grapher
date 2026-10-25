@@ -15,9 +15,9 @@
   "joiner_sleeves": true
  },
  "auw": 226,
- "auw_g": 225.8,
+ "auw_g": 225.76,
  "printed": 101,
- "printed_g": 100.97,
+ "printed_g": 100.93,
  "loading": 48.0,
  "stall": 8.9,
  "cruise": 12.9,
@@ -28,16 +28,25 @@
  "cruise_a": 2.1,
  "full_a": 9.5,
  "vv": 0.045,
- "x_le": 175.4,
- "x_te": 272.4,
- "pod_len": 275.4,
- "x_stab": 459.2,
+ "x_le": 175.3,
+ "x_te": 272.3,
+ "pod_len": 275.3,
+ "x_stab": 459.1,
  "c_h": 48.00510204081633,
- "cg_x": 202.6,
+ "cg_x": 202.5,
  "cg_pct": 28,
  "np_pct": 41,
- "np_x": 215.4,
- "battery_x": 91.1,
+ "np_x": 215.3,
+ "battery_x": 90.8,
+ "c_tip": 97.0,
+ "mac": 97.0,
+ "aspect_ratio": 5.0,
+ "panels": 1,
+ "taper": 1.0,
+ "washout": 0.0,
+ "y_break": 242.5,
+ "spar": "3",
+ "boom_tube": "10x9",
  "battery_len": 58.0,
  "batt_range": [
   83,
@@ -48,9 +57,9 @@
  "tube_spacing": 140.0,
  "b_h": 175.0,
  "fin_h": 39,
- "tube_x0": 190.0,
- "tube_x1": 488.0,
- "x_prop": 290.2,
+ "tube_x0": 189.9,
+ "tube_x1": 487.9,
+ "x_prop": 290.1,
  "prop_r": 50.8,
  "split_x": 138,
  "stall_limit": 9.0,
@@ -364,12 +373,12 @@
   {
    "name": "fin_R",
    "g": 1.2,
-   "x": 475
+   "x": 474
   },
   {
    "name": "fin_L",
    "g": 1.2,
-   "x": 475
+   "x": 474
   },
   {
    "name": "rudder_R",
@@ -389,7 +398,7 @@
   {
    "name": "lid",
    "g": 6.7,
-   "x": 96
+   "x": 95
   },
   {
    "name": "fairing_ail_R",

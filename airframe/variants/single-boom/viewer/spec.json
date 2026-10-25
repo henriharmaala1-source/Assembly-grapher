@@ -15,9 +15,9 @@
   "joiner_sleeves": false
  },
  "auw": 227,
- "auw_g": 227.36,
+ "auw_g": 227.31,
  "printed": 100,
- "printed_g": 100.3,
+ "printed_g": 100.25,
  "loading": 48.3,
  "stall": 8.9,
  "cruise": 13.0,
@@ -28,16 +28,25 @@
  "cruise_a": 2.2,
  "full_a": 9.6,
  "vv": 0.045,
- "x_le": 188.8,
- "x_te": 285.8,
+ "x_le": 188.7,
+ "x_te": 285.7,
  "pod_len": 277.2,
- "x_stab": 472.6,
+ "x_stab": 472.5,
  "c_h": 48.00510204081633,
- "cg_x": 216.0,
+ "cg_x": 215.9,
  "cg_pct": 28,
  "np_pct": 41,
- "np_x": 228.9,
- "battery_x": 91.4,
+ "np_x": 228.8,
+ "battery_x": 91.2,
+ "c_tip": 97.0,
+ "mac": 97.0,
+ "aspect_ratio": 5.0,
+ "panels": 1,
+ "taper": 1.0,
+ "washout": 0.0,
+ "y_break": 242.5,
+ "spar": "3",
+ "boom_tube": "10x9",
  "battery_len": 58.0,
  "batt_range": [
   83,
@@ -49,8 +58,8 @@
  "b_h": 175.0,
  "fin_h": 79,
  "tube_x0": 198.4,
- "tube_x1": 521.3,
- "x_prop": 538.5,
+ "tube_x1": 521.2,
+ "x_prop": 538.4,
  "prop_r": 50.8,
  "split_x": 118,
  "stall_limit": 9.0,
@@ -301,7 +310,7 @@
   {
    "name": "tail_mount",
    "g": 3.9,
-   "x": 489
+   "x": 488
   },
   {
    "name": "stab",
@@ -436,7 +445,7 @@
   {
    "name": "servo_ail_R",
    "g": 9.0,
-   "x": 236
+   "x": 235
   },
   {
    "name": "horn_ail_R",
@@ -451,7 +460,7 @@
   {
    "name": "servo_ail_L",
    "g": 9.0,
-   "x": 236
+   "x": 235
   },
   {
    "name": "horn_ail_L",
@@ -476,7 +485,7 @@
   {
    "name": "motor_wires",
    "g": 1.5,
-   "x": 364
+   "x": 363
   }
  ]
 }

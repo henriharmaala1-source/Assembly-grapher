@@ -181,7 +181,11 @@ int run(const std::vector<std::string>& args) {
     const double wallPeriod = period / o.speedup;     // --realtime only
     double next = nowS();
     double nextSim = -1.0;                 // SITL time the next tick is due at
-    double speed = o.speedup;              // SIM_SPEEDUP as last set
+    // SIM_SPEEDUP as last set. A SLAM starts SLOW: the bridge loads its
+    // vocabulary on the first frame (seconds), and at x1 that is seconds of
+    // SITL time between two frames -- which a stereo-inertial ORB-SLAM3 reads
+    // as a timestamp jump and resets on. The controller raises it from there.
+    double speed = o.fp.slam ? std::min(o.speedup, 0.1) : o.speedup;
     double costSum = 0; int costN = 0;     // tick cost, for the speedup controller
     long ticks = 0, late = 0;
     if (!o.realtime) plant->fc().setParam("SIM_SPEEDUP", float(speed));
@@ -200,7 +204,10 @@ int run(const std::vector<std::string>& args) {
         const double t0 = nowS();
         f.tick();
         const double tickS = nowS() - t0;
-        costSum += tickS; ++costN;
+        // Only ticks that did the work count: before SITL's clock is known
+        // the module does not run, and 2 ms ticks set SITL to x1 just before
+        // the first real frame (and the SLAM's vocabulary load) arrived.
+        if (plant->timeS() >= 0.0) { costSum += tickS; ++costN; }
         if (plant->stage() == SitlPlant::Stage::FAILED) {
             std::fprintf(stderr, "[sitl] %s\n", plant->failure().c_str());
             return 3;

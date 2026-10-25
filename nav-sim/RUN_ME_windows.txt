@@ -103,7 +103,8 @@ text menu rather than dying. A build without OpenCV highgui does the same.
   kestrel sitl [--connect tcp:127.0.0.1:5760] [--world gallery|hall]
                [--seed N] [--seconds S] [--alt M] [--script FILE.kms]
                [--lowres] [--keep-going] [--speedup X] [--realtime]
-               [--vio | --slam [--slam-socket PATH]] [--csv FILE] [--shot PREFIX]
+               [--vio | --slam | --slam-inertial] [--slam-socket PATH]
+               [--csv FILE] [--shot PREFIX]
         THE SAME AUTONOMY FLYING ARDUPILOT. Everything `mission sim` flies --
         onboard's voxel module, MissionController, SCRIPT mode -- but the
         airframe is ArduCopter SITL: the commands go through onboard's own
@@ -143,6 +144,11 @@ text menu rather than dying. A build without OpenCV highgui does the same.
                    Linux or WSL2). Fly it at 848x480 with the bridge on
                    `--fast 12 5`: emitter-off IR is dark, and at ORB's default
                    thresholds the map never initialises (README there).
+          --slam-inertial  the same, stereo-INERTIAL, on ArduPilot's own IMU
+                   (HIGHRES_IMU at 200 Hz, rotated into the camera's axes, on
+                   SITL's clock like the frames). Needs the bridge built by
+                   the current fetch_orbslam3.sh: two ORB-SLAM3 patches make
+                   a standing start possible at all (README there).
         The report adds the estimator's and the EKF's worst horizontal error
         against SITL's truth.
         Every run reports how well the aircraft HOLDS STILL while the mission
@@ -229,8 +235,8 @@ must be the Linux build too -- in WSL2, not kestrel.exe).
 WHAT IT DOES NOT DO: SITL's physics never touch the walls -- contact is
 judged here, from the true voxels. Lockstep is soft (SITL is slowed, not
 stepped): ArduPilot's JSON backend would step it exactly but replaces its
-multicopter model with one of ours. ORB-SLAM3 runs stereo, not
-stereo-inertial (SITL's IMU is not wired to the bridge).
+multicopter model with one of ours. SLAM at 848x480 is slow on a small
+machine: SITL ran at x0.05 here, so a 30 s flight took ~15 minutes.
 
 ---------------------------------------------------------------------
 

@@ -14,6 +14,10 @@
 #   - Sim3Solver::ComputeSim3 made safe at identity rotation: upstream aborts
 #     the process (NaN into Sophus) when a hovering camera's loop search finds
 #     its own view. The one change to SLAM code; same rotation otherwise.
+#   - IMU.fastInit read with a "1.0" settings file too (upstream reads it only
+#     in the legacy loader): a stereo-inertial map on an aircraft standing
+#     still before takeoff -- and, with fast init, no map reset for standing
+#     still (upstream demands 2 cm of motion in the first 10 s)
 #   - the vocabulary is unpacked next to the library
 # ORB-SLAM3 is GPLv3. It is built into its own process, kestrel-orbslam, which
 # talks to the rest of onboard over a socket (slam_link.hpp) -- see README.md.
@@ -59,6 +63,14 @@ s = open(p).read()
 anchor = '    int GetTrackingState();'
 if 'GetCurrentMapIdHeadless' not in s:
     s = s.replace(anchor, anchor + '\n    long GetCurrentMapIdHeadless();', 1)
+# ...and one for the IMU's initialisation stage (0 none, 1 initialised, 2 and
+# 3 the two inertial BAs). Each stage ROTATES THE WHOLE MAP onto gravity and
+# rescales it, but bumps only the map's change index, not the "big change"
+# counter MapChanged() reads -- so a consumer anchored before it is wrong after
+# it. Found in `kestrel sitl --slam-inertial`: 76 deg of yaw error at arming
+# and a wall on takeoff. The bridge counts a stage change as a map change.
+if 'GetImuStageHeadless' not in s:
+    s = s.replace(anchor, anchor + '\n    int GetImuStageHeadless();', 1)
 open(p, 'w').write(s)
 p = src + '/src/System.cc'
 s = open(p).read()
@@ -70,6 +82,11 @@ if 'GetCurrentMapIdHeadless' not in s:
     s += ('\nnamespace ORB_SLAM3 {\nlong System::GetCurrentMapIdHeadless() {\n'
           '    Map* m = mpAtlas ? mpAtlas->GetCurrentMap() : nullptr;\n'
           '    return m ? long(m->GetId()) : -1;\n}\n}\n')
+if 'GetImuStageHeadless' not in s:
+    s += ('\nnamespace ORB_SLAM3 {\nint System::GetImuStageHeadless() {\n'
+          '    Map* m = mpAtlas ? mpAtlas->GetCurrentMap() : nullptr;\n'
+          '    if (!m || !m->isImuInitialized()) return 0;\n'
+          '    return m->GetIniertialBA2() ? 3 : m->GetIniertialBA1() ? 2 : 1;\n}\n}\n')
 open(p, 'w').write(s)
 # Upstream bug: Sim3Solver::ComputeSim3 turns Horn's quaternion into an axis by
 # dividing by its imaginary part's norm. When that norm is ZERO -- the best
@@ -98,6 +115,49 @@ if old in s:
     s = s.replace(old, new, 1)
 elif '[kestrel] the eigenvector IS the quaternion' not in s:
     sys.exit('Sim3Solver.cc: the ComputeSim3 patch no longer applies')
+open(p, 'w').write(s)
+
+# Upstream gap: with a "1.0" settings file (which the bridge writes) Tracking
+# reads its parameters through newParameterLoader(), which never looks at
+# IMU.fastInit -- only the legacy loader does. Without fast init a
+# stereo-inertial map waits for 0.5 m/s^2 of acceleration change between
+# frames, which an aircraft on the ground never gives, while a GNSS-denied FC
+# will not arm until the vision is healthy: found as a deadlock in
+# `kestrel sitl --slam-inertial` ("not enough acceleration", for ever).
+p = src + '/src/Tracking.cc'
+s = open(p).read()
+old = """    if(settings){
+        newParameterLoader(settings);"""
+new = """    if(settings){
+        newParameterLoader(settings);
+        // [kestrel] the 1.0 loader skips IMU.fastInit; read it here.
+        {
+            cv::FileStorage fsFast(strSettingPath, cv::FileStorage::READ);
+            cv::FileNode nFast = fsFast["IMU.fastInit"];
+            if(!nFast.empty()) mFastInit = static_cast<int>(nFast) != 0;
+        }"""
+if old in s and '[kestrel] the 1.0 loader skips IMU.fastInit' not in s:
+    s = s.replace(old, new, 1)
+elif '[kestrel] the 1.0 loader skips IMU.fastInit' not in s:
+    sys.exit('Tracking.cc: the IMU.fastInit patch no longer applies')
+open(p, 'w').write(s)
+
+# ...and with fast init, do not throw the map away for standing still. Once
+# the IMU has initialised, LocalMapping resets the map ("Not enough motion for
+# initializing") unless the camera moved 2 cm in its first 10 s -- on the
+# ground before takeoff it cannot, so the map reset every few seconds and the
+# FC never saw healthy vision (17 resets in one `kestrel sitl` run). Stereo
+# gives the scale and a still accelerometer gives gravity; the check exists
+# for monocular-inertial, where neither is true. Kept for everything else.
+p = src + '/src/LocalMapping.cc'
+s = open(p).read()
+old = """                            if((mTinit<10.f) && (dist<0.02))"""
+new = """                            // [kestrel] not for a stereo fast-init start: it is still on purpose
+                            if((mTinit<10.f) && (dist<0.02) && !mpTracker->mFastInit)"""
+if old in s and '[kestrel] not for a stereo fast-init start' not in s:
+    s = s.replace(old, new, 1)
+elif '[kestrel] not for a stereo fast-init start' not in s:
+    sys.exit('LocalMapping.cc: the standing-start patch no longer applies')
 open(p, 'w').write(s)
 PY
 

@@ -202,8 +202,10 @@ void FlightShow::tick() {
     if (p_.plant && !p_.plant->ready(truth_)) {           // not airborne yet
         // ...but the module runs, as aboard, and what it makes is sent: the
         // FC's pre-arm checks want the proximity sensor ("PRX1: No Data"),
-        // and a GNSS-denied FC arms only on the VIO.
-        telemetry(); mod_->run(cv::Mat(), wm_); feedVision();
+        // and a GNSS-denied FC arms only on the VIO. Not before the plant's
+        // clock is known, though: frames stamped on the tick count and then
+        // on SITL's time JUMP, and a stereo-inertial SLAM resets on a jump.
+        if (p_.plant->timeS() >= 0.0) { telemetry(); mod_->run(cv::Mat(), wm_); feedVision(); }
         return;
     }
     telemetry();

@@ -310,6 +310,47 @@ void testStreamsReRequested() {
     close(mfd);
 }
 
+// The readback's timeout runs on the FC's clock when it has one: a SITL slowed
+// to x0.05 got 0.15 s of its own time to answer 46 requests on the wall clock.
+void testParamsOnFcClock() {
+    int mfd = -1, sfd = -1;
+    char name[128];
+    if (openpty(&mfd, &sfd, name, nullptr, nullptr) != 0) return;
+    fcntl(mfd, F_SETFL, O_NONBLOCK);
+    close(sfd);
+    MavlinkBackend fc;
+    fc.setParamTimeoutS(1.0);
+    CHECK(fc.connect(name, 115200));
+    auto att = [&](uint32_t ms) {
+        mav::Payload p;
+        p.u32(ms);
+        for (int i = 0; i < 6; ++i) p.f32(0.f);
+        fcSend(mfd, mav::MSG_ATTITUDE, p);
+    };
+    // 2 s of wall time with the FC's clock standing still (a paused SITL):
+    // nobody answers, and the timeout must NOT have run out.
+    for (int k = 0; k < 20; ++k) {
+        fcHeartbeat(mfd, mav::COPTER_STABILIZE, false);
+        att(5000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        fc.tick();
+        drainMaster(mfd, 0);
+    }
+    CHECK(fc.linkUp());
+    CHECK(!fc.paramsResolved());
+    // The FC's clock moves 1.5 s on: now it has had its second, and gives up.
+    for (int k = 0; k < 4 && !fc.paramsResolved(); ++k) {
+        fcHeartbeat(mfd, mav::COPTER_STABILIZE, false);
+        att(5000 + 500 * uint32_t(k + 1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fc.tick();
+        drainMaster(mfd, 0);
+    }
+    CHECK(fc.paramsResolved());
+    std::printf("  parameter timeout on the FC's clock: held while it stood still\n");
+    close(mfd);
+}
+
 }  // namespace
 
 int main() {
@@ -1158,6 +1199,7 @@ int main() {
 
     testSocketTransports();
     testStreamsReRequested();
+    testParamsOnFcClock();
 
     std::printf("%s (%d failure%s)\n", fails ? "FAILED" : "all checks passed",
                 fails, fails == 1 ? "" : "s");

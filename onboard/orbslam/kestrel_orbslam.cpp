@@ -30,6 +30,7 @@
 #include <memory>
 #include <string>
 #include <csignal>
+#include <iostream>
 #include <execinfo.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -88,7 +89,15 @@ std::string writeSettings(const slamlink::FrameHeader& h, bool inertial, int fea
              " 0.0, 0.0, 1.0, 0.0117, 0.0, 0.0, 0.0, 1.0]\n"
           << "IMU.InsertKFsWhenLost: 0\n"
           << "IMU.NoiseGyro: 1e-3\nIMU.NoiseAcc: 1e-2\n"
-          << "IMU.GyroWalk: 1e-6\nIMU.AccWalk: 1e-4\nIMU.Frequency: 200.0\n";
+          << "IMU.GyroWalk: 1e-6\nIMU.AccWalk: 1e-4\nIMU.Frequency: 200.0\n"
+          // FAST INIT. Without it ORB-SLAM3 will not start a stereo-inertial
+          // map until the acceleration changes by 0.5 m/s^2 between frames --
+          // which an aircraft standing on the ground never does, and a
+          // GNSS-denied FC will not arm until the vision is healthy: a
+          // deadlock, found in `kestrel sitl --slam-inertial` (ArduCopter
+          // SITL, GPS off: arming refused for ten minutes). Stereo gives the
+          // scale; the IMU's own initialisation still waits for motion.
+          << "IMU.fastInit: 1\n";
     f << "ORBextractor.nFeatures: " << features << "\n"
       << "ORBextractor.scaleFactor: 1.2\nORBextractor.nLevels: 8\n"
       << "ORBextractor.iniThFAST: " << fastIni << "\nORBextractor.minThFAST: " << fastMin << "\n"
@@ -137,6 +146,11 @@ void onCrash(int sig) {
 
 int main(int argc, char** argv) {
     for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL}) std::signal(sig, onCrash);
+    // ORB-SLAM3 reports why it will not initialise on std::cout ("not enough
+    // acceleration"). Under systemd or into a log file that is block-buffered
+    // and arrives minutes late or never: line by line instead.
+    std::cout << std::unitbuf;
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     Options opt;
     if (!parse(argc, argv, opt)) {
         std::fprintf(stderr, "usage: kestrel-orbslam --vocab ORBvoc.txt [--socket PATH] "
@@ -200,7 +214,16 @@ int main(int argc, char** argv) {
             rep.ms = std::chrono::duration<float, std::milli>(
                          std::chrono::steady_clock::now() - t0).count();
             rep.state = slam->GetTrackingState();
-            rep.mapId = int32_t(slam->GetCurrentMapIdHeadless());
+            // mapId is the FRAME's id: the map, and the IMU's initialisation
+            // stage within it (0-3). Each stage ROTATES the whole map onto
+            // gravity and rescales it -- a new coordinate frame, exactly as a
+            // new map is -- and the consumer re-anchors on a changed id
+            // (navcore/visual_pose.cpp). Counted as a map change only by
+            // MapChanged()'s big-change index it was not: anchored before the
+            // first stage, `kestrel sitl --slam-inertial` armed with the SLAM
+            // heading 76 deg off the compass and hit a wall on takeoff.
+            const int imuStage = slam->GetImuStageHeadless();
+            rep.mapId = int32_t(slam->GetCurrentMapIdHeadless() * 4 + imuStage);
             if (slam->MapChanged()) ++mapChanges;      // loop closure / merge
             if (lastMap >= 0 && rep.mapId != lastMap) ++mapChanges;
             lastMap = rep.mapId;

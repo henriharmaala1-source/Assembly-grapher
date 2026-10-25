@@ -204,6 +204,25 @@ void MavlinkBackend::requestStreams() {
     lastStreamReqS_ = nowS();
 }
 
+// THE FC'S TIME, as far as it is known: advances with ATTITUDE's time_boot_ms
+// while that is fresh, and with the wall clock otherwise. On an aircraft the
+// two are the same; under a SLOWED SITL (`kestrel sitl`'s soft lockstep, x0.05)
+// they are not, and a wall-clock timeout gave ArduPilot 0.15 s of its own time
+// to answer 46 parameter requests -- 14 answered, the rest reported "unknown",
+// while the 0.5 s resend flooded it every 25 ms of its time.
+double MavlinkBackend::fcClock(double wallNow) {
+    const bool fcFresh = fcTimeMs_ != 0 && wallNow - lastAttS_ < 1.0;
+    if (fcClockWall_ >= 0.0) {
+        if (fcFresh && fcClockFcMs_ != 0 && fcTimeMs_ >= fcClockFcMs_)
+            fcClock_ += double(fcTimeMs_ - fcClockFcMs_) * 1e-3;
+        else if (!fcFresh)
+            fcClock_ += wallNow - fcClockWall_;
+    }
+    fcClockWall_ = wallNow;
+    fcClockFcMs_ = fcFresh ? fcTimeMs_ : 0;
+    return fcClock_;
+}
+
 void MavlinkBackend::tick() {
     drainRx();
 
@@ -223,7 +242,7 @@ void MavlinkBackend::tick() {
     linkUp_ = link_.isOpen() && everRx_ && (t - lastRxS_) < 2.0;
     tel_.linkUp = linkUp_;
 
-    serviceParams(t);
+    serviceParams(fcClock(t));
     serviceOrigin(t);
 
     // AN RTL THE FC WOULD NOT TAKE. ArduPilot refuses RTL without a position

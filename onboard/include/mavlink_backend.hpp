@@ -301,7 +301,10 @@ private:
     uint16_t throttleUs(float climbMps) const;
     float    climbFrac(float climbMps, float upMps, float dnMps) const;
 
-    void serviceParams(double now);
+    void serviceParams(double now);       // `now` on fcClock()
+    double fcClock(double wallNow);
+    double fcClock_ = 0.0, fcClockWall_ = -1.0;
+    uint32_t fcClockFcMs_ = 0;
     void onParamValue(const mav::Msg& m);
     bool rcMapOk() const;
 

@@ -76,6 +76,31 @@ points", then armed and flew on it) and the defaults do not; at 424x240
 nothing does. Check on the real camera before trusting either number:
 `--settings-out FILE` keeps the YAML the bridge wrote.
 
+**Stereo-inertial from a standing start.** An aircraft sits still until it
+takes off, and a GNSS-denied FC will not arm until the vision is healthy.
+Upstream ORB-SLAM3 cannot start a stereo-inertial map from rest, and
+`kestrel sitl --slam-inertial` (ArduCopter SITL, GPS off, ArduPilot's own
+IMU) found each reason in turn:
+
+1. **`IMU.fastInit` is ignored** with a "1.0" settings file (it is read only
+   by the legacy loader): without it the map waits for 0.5 m/s^2 of
+   acceleration change between frames -- "not enough acceleration", for ever.
+   Patched in `fetch_orbslam3.sh`; the bridge writes `IMU.fastInit: 1`.
+2. **The map is thrown away for standing still**: after the IMU initialises,
+   LocalMapping resets unless the camera moved 2 cm in its first 10 s (17
+   resets in one run). That check is for monocular-inertial, which has no
+   scale; stereo does. Patched to skip it under fast init.
+3. **The IMU's initialisation rotates the whole map onto gravity** (and again
+   at the second inertial BA), which ORB-SLAM3 does not count as a map change.
+   Anchored before it, onboard armed with the SLAM heading 76 deg off the
+   compass and hit a wall on takeoff. The bridge now reports the IMU stage as
+   part of the frame id (`mapId = map * 4 + stage`), and onboard re-anchors on
+   it as on a new map.
+
+With all three: both inertial BAs completed, 30 s GNSS-denied flight, 0
+collisions, SLAM within 0.32 m and the EKF within 0.36 m of SITL's truth
+(one seed). Stereo alone needs none of this and is still the default.
+
 Config keys: `nav.vox_slam`, `nav.vox_slam_socket` (default
 `/tmp/kestrel-slam.sock`), `nav.vox_slam_inertial`, `nav.vox_emitter`
 (`strobe`/`off`/`on`), `nav.vox_vio_to_fc`. ArduPilot parameters for the EKF3

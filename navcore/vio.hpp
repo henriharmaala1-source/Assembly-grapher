@@ -101,10 +101,13 @@ struct VioParams {
     // RE-ACQUIRING after a loss: the tracker's search (and the solve's start)
     // assumes the aircraft still moves at its last MEASURED velocity, for up to
     // this many frames -- an aircraft cannot stop in a second. The reported
-    // coast still decays (coastDecay); this only says where to look. Without
-    // it, a loss at speed was permanent: the decayed prior put the search
-    // where the floor would be had the aircraft stopped, 49 px from where it
-    // was, every frame after (nav-sim downvio_sweep over gravel, 4 m/s at 1.5 m).
+    // coast still decays (coastDecay); this only says where to look -- the
+    // decayed prior put the search where the floor would be had the aircraft
+    // stopped. Measured in nav-sim downvio_sweep: decisive over an early
+    // ground texture that showed its tile lattice (gravel, 4 m/s, 1.5 m: 28 %
+    // -> 1.1 % drift); over the final real textures it changes little (gravel
+    // at 8 m/s: 70 -> 61 % on one seed, equal elsewhere). Kept as correct, not
+    // as a measured win.
     int    reacquireFrames = 30;
     int    minInliers  = 20;     // below this the frame is LOST
     int    kfMinTracked = 80;    // re-anchor when the track thins below this

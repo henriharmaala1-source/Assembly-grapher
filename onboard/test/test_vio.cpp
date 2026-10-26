@@ -296,8 +296,8 @@ int main() {
     // Lost there, as it must be; then found again. NOTE this passes with or
     // without VioParams::reacquireFrames: this floor has texture at every
     // scale, and the tracker's coarse pyramid levels catch even a bad search
-    // start. The case that needs it -- fine-only texture, real gravel -- is
-    // nav-sim's downvio_gravel_reacquire (ctest, with the real ground photos).
+    // start. It mattered over an early nav-sim ground texture (gravel, 28 % ->
+    // 1.1 %) and little over the final one; see VioParams::reacquireFrames.
     for (bool stereo : {false, true}) {
         const Score s = flyDown(w, cam, stereo, 1.f / 15.f, 3.f, 25, 6, 9.f);
         const float drift = 100.f * s.finalErr / std::max(0.1f, s.pathM);

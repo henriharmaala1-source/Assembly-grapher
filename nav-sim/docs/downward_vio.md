@@ -1,5 +1,11 @@
 # VIO from a downward camera: what tilt, rotation, field of view, speed, height and the ground do
 
+**Two studies.** The first (below "First") flies over navcore's procedural IR
+texture. The second -- **"Over real ground"**, at the end -- repeats the core
+of it over real ground photographs under the sun, and is the one to trust
+for what texture does: it finds the failure the procedural texture hides
+(featureless ground) and a speed limit set by texture scale.
+
 Measured 2026-10-25 with `nav-sim/test/downvio_sweep` (grid: `downvio_sweep.sh`,
 raw: `downward_vio_sweep.csv`, 344 runs). The estimator is the aircraft's own
 **DepthVio** (navcore/vio.hpp), unchanged except for the fix below; the
@@ -100,3 +106,79 @@ Pinhole lenses only (real >120 deg lenses are fisheye: better centre, worse
 edges than this); no motion blur, rolling shutter, exposure changes or
 vibration; IMU error as white noise plus a constant bias; straight lines of
 20-60 m; one texture model; 4 seeds per condition.
+
+## Over real ground
+
+The procedural texture has structure at every scale by construction, so it
+cannot show a ground that runs out of features. `nav-sim/ground_texture.hpp`
+renders what a downward daylight camera sees instead: real photographs
+(lawn, grass, gravel, cracked dirt, rocky ground, sand, paving;
+`nav-sim/textures/fetch_ground_textures.sh` pins them -- three.js,
+Babylon.js and scikit-image, with their licences) at physical size, by
+stochastic tiling (no lattice at any height), laid out as scenes with patches
+and large-scale brightness variation, mipmapped by pixel footprint, lit by a
+sun with object shadows and optionally the aircraft's own shadow, through a
+camera with auto-exposure, vignetting, noise and motion blur.
+
+![the grounds at 1.5 and 15 m](downward_vio_ground.jpg)
+
+Mono + rangefinder, 20 deg tilt, 4 m/s, 4 seeds per cell, drift % (raw:
+`downward_vio_ground.csv`; grid: `test/downvio_ground.sh`):
+
+| ground | 1.5 m, 60 deg | 1.5 m, 120 deg | 5 m, 60 deg | 5 m, 120 deg | 15 m, 60 deg | 15 m, 120 deg |
+|---|---|---|---|---|---|---|
+| procedural (old) | 0.52 | 0.63 | 0.29 | 0.18 | 0.99 | 2.30 |
+| lawn | 0.64 | 0.44 | 0.28 | 0.28 | 0.78 | 4.40 |
+| field | 0.48 | 0.52 | 0.21 | 0.29 | 0.82 | 2.04 |
+| gravel | 0.75 | 0.89 | 0.29 | 0.38 | 0.91 | 2.73 |
+| dirt | 0.69 | 0.36 | 0.42 | 0.35 | 0.87 | 1.99 |
+| paving | 0.40 | 0.28 | 1.21 | 0.35 | 1.16 | 1.25 |
+| park | 0.70 | 0.32 | 0.72 | 0.25 | 1.22 | 2.55 |
+| **sand** | 7.0 (7 % lost) | 0.71 | **78 (71 % lost)** | **100 lost** | **100 lost** | **100 lost** |
+
+- **Real grass, gravel, dirt and paving track as well as the procedural
+  texture** -- within a factor of ~2 everywhere, under 1 % up to 5 m. The old
+  study's conclusions about tilt, rotation and attitude bias stand.
+- **Sand is the failure the procedural texture hid.** Its grain is a
+  millimetre: from 5 m a pixel spans centimetres and the ground is grey. No
+  corners, no track, at any lens. (One seed of four also lost 26 % at 1.5 m
+  with the narrow lens.) An untrodden sand plain, snow, still water and fresh
+  concrete belong in this class; real beaches with tracks and ripples will be
+  somewhat better -- this sand has only 5 % brightness variation at 15 m.
+- **Height still favours the narrow lens**: at 15 m the 120 deg lens drifts
+  2-4.4 %, the 60 deg 0.8-1.2 %, on every real ground.
+- **Light does not matter here.** Sun at 20 or 70 deg: identical. The
+  aircraft's own shadow in view (sun at 70 deg, 120 deg lens): field 0.49 ->
+  0.66 %, paving 0.28 -> ~0.3 %, inliers down ~10 % -- the moving blob is voted
+  out as an outlier, as it should be.
+- **Motion blur does not matter here**: 12 m/s at 5 m, 60 fps, exposures 0 /
+  2 / 6 ms (up to ~8 px of smear): 0.29-0.63 % with either lens.
+
+### Fine texture sets a speed limit
+
+Gravel's structure is all fine: at 1.5 m with the 60 deg lens it tracks at
+4-6 m/s (0.4-0.8 %) and fails at 8 m/s (60-70 % drift, over half the frames
+lost; ~99 px of image motion a frame at 30 fps), where paving's coarse slabs
+still hold (0.6-0.8 %). The tracker's coarse pyramid levels need coarse
+structure to catch large motion. Speed limit ~ (frame rate x height x texture
+scale): fly higher, faster frames, or over coarser ground.
+
+### A DepthVio change, and an honest account of it
+
+While lost, DepthVio let its velocity decay and searched the next frame where
+the floor would be had the aircraft stopped. It now searches with the last
+MEASURED velocity for up to a second (`VioParams::reacquireFrames`); the
+reported coast still decays. Over an EARLY version of these textures, which
+still showed the photo's tile lattice, that turned a permanent loss into a
+recovery (gravel seed 1: 28 % -> 1.1 %). Over the final textures it changes
+little: equal in every case tried but one (gravel at 8 m/s: 70 -> 61 %).
+Kept because it is right and never worse; not claimed as a measured win.
+`ctest -R downvio_gravel_track` checks gravel at 4 m/s tracks (with the
+photographs; skipped without).
+
+### Caveats for this part
+
+Grey visible-light luminance (a NIR camera sees vegetation much brighter);
+the photographs' physical sizes are judged from their content; scenes are
+flat (objects only in the cluttered world of the first study); 20-50 m
+straight lines; 4 seeds.

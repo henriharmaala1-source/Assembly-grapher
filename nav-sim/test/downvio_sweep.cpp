@@ -52,7 +52,12 @@
 #include <random>
 #include <string>
 
+#include <functional>
+
+#include <opencv2/calib3d.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/video/tracking.hpp>
 
 #include "depth_camera.hpp"
 #include "vio.hpp"
@@ -142,6 +147,9 @@ struct Opt {
     std::string ground = "noise", texDir = "nav-sim/textures";
     float sunElev = 45.f, sunAz = 135.f, exposureMs = 0.f;
     float checkDrift = -1.f;      // > 0: exit 1 if the drift % exceeds it (ctest)
+    // imu: DepthVio, roll/pitch from the IMU. vision: PnpVo, all 6 DOF from
+    // the image, no IMU at all.
+    std::string attitude = "imu";
     bool droneShadow = false, castShadows = true;
 };
 
@@ -207,6 +215,7 @@ bool parse(int argc, char** argv, Opt& o, bool& header) {
         else if (a == "--drone-shadow") o.droneShadow = true;
         else if (a == "--no-cast-shadows") o.castShadows = false;
         else if (a == "--check-drift") f(o.checkDrift);
+        else if (a == "--attitude" && i + 1 < argc) o.attitude = argv[++i];
         else if (a == "--header") header = true;
         else { std::fprintf(stderr, "downvio_sweep: unknown argument %s\n", a.c_str()); return false; }
     }
@@ -214,6 +223,163 @@ bool parse(int argc, char** argv, Opt& o, bool& header) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// PnpVo -- VISION-ONLY attitude (--attitude vision): the question "can a wide
+// lens stand in for the IMU?". The same front end as DepthVio -- Shi-Tomasi
+// corners anchored at keyframes by depth, tracked by pyramidal LK seeded by a
+// constant-velocity prediction, forward-backward checked, same keyframe
+// policy -- but the pose is solved in FULL 6 DOF by PnP (RANSAC, then
+// refined), so roll and pitch come from the image and nothing from an IMU.
+// Depth is asked for at keyframes through `depthAt(Rwc, C)`, so the mono +
+// rangefinder model builds its ground plane from THIS estimate's tilt, as it
+// would have to with no IMU. Test-harness code, not the aircraft's.
+class PnpVo {
+public:
+    using DepthFn = std::function<cv::Mat(const cv::Matx33d& Rwc, const cv::Vec3d& C)>;
+    void init(const sim::DepthCamera& cam, float maxDepthM, float maxJumpM) {
+        cam_ = &cam; maxDepth_ = maxDepthM; maxJump_ = maxJumpM;
+        K_ = cv::Matx33d(cam.fpx(), 0, cam.ppx(), 0, cam.fy(), cam.ppy(), 0, 0, 1);
+    }
+    void reset(const cv::Matx33d& Rwc, const cv::Vec3d& C) {
+        R_ = Rprev_ = Rwc; C_ = Cprev_ = C; vel_ = cv::Vec3d(0, 0, 0); started_ = true;
+        pts_.clear(); world_.clear(); prev_.release(); lostRun_ = 0;
+    }
+    // One frame. Returns true if the pose is a measurement.
+    bool step(const cv::Mat& ir8raw, const DepthFn& depthAt) {
+        cv::Mat ir8;
+        {   // the same high-pass DepthVio applies: lighting is not texture
+            cv::Mat f, m; ir8raw.convertTo(f, CV_16S);
+            cv::blur(ir8raw, m, cv::Size(25, 25), cv::Point(-1, -1), cv::BORDER_REFLECT);
+            m.convertTo(m, CV_16S); cv::Mat d = f - m; d.convertTo(ir8, CV_8U, 2.0, 128.0);
+        }
+        // Constant-velocity prediction, rotation included.
+        const cv::Matx33d dR = R_ * Rprev_.t();
+        const cv::Matx33d Rpred = dR * R_;
+        const cv::Vec3d Cpred = C_ + vel_;
+        Rprev_ = R_; Cprev_ = C_;
+        bool ok = false;
+        if (!prev_.empty() && pts_.size() >= 20) {
+            std::vector<cv::Point2f> cur(pts_.size()), back;
+            const cv::Matx33d Rcw = Rpred.t();
+            for (size_t i = 0; i < pts_.size(); ++i) {
+                const cv::Vec3d pc = Rcw * (cv::Vec3d(world_[i].x, world_[i].y, world_[i].z) - Cpred);
+                cur[i] = pc[2] > 0.1 ? cv::Point2f(float(K_(0, 0) * pc[0] / pc[2] + K_(0, 2)),
+                                                   float(K_(1, 1) * pc[1] / pc[2] + K_(1, 2)))
+                                     : pts_[i];
+            }
+            back = pts_;
+            std::vector<uchar> s1, s2; std::vector<float> e;
+            const cv::TermCriteria term(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
+            cv::calcOpticalFlowPyrLK(prev_, ir8, pts_, cur, s1, e, cv::Size(21, 21), 3, term, cv::OPTFLOW_USE_INITIAL_FLOW);
+            cv::calcOpticalFlowPyrLK(ir8, prev_, cur, back, s2, e, cv::Size(21, 21), 3, term, cv::OPTFLOW_USE_INITIAL_FLOW);
+            std::vector<cv::Point2f> img; std::vector<cv::Point3f> obj; std::vector<int> idx;
+            for (size_t i = 0; i < pts_.size(); ++i) {
+                if (!s1[i] || !s2[i]) continue;
+                if (std::hypot(back[i].x - pts_[i].x, back[i].y - pts_[i].y) > 1.f) continue;
+                if (cur[i].x < 0 || cur[i].y < 0 || cur[i].x >= ir8.cols || cur[i].y >= ir8.rows) continue;
+                img.push_back(cur[i]); obj.push_back(world_[i]); idx.push_back(int(i));
+            }
+            tracked_ = int(img.size());
+            if (img.size() >= 20) {
+                cv::Matx33d Rcw0 = Rpred.t();
+                cv::Mat rvec, tvec;
+                cv::Rodrigues(cv::Mat(Rcw0), rvec);
+                tvec = cv::Mat(-(Rcw0 * Cpred));
+                std::vector<int> inl;
+                const bool sol = cv::solvePnPRansac(obj, img, cv::Mat(K_), cv::noArray(), rvec, tvec, true,
+                                                    100, 2.0f, 0.99, inl, cv::SOLVEPNP_ITERATIVE);
+                if (sol && inl.size() >= 20) {
+                    std::vector<cv::Point2f> i2; std::vector<cv::Point3f> o2;
+                    for (int k : inl) { i2.push_back(img[size_t(k)]); o2.push_back(obj[size_t(k)]); }
+                    cv::solvePnPRefineLM(o2, i2, cv::Mat(K_), cv::noArray(), rvec, tvec);
+                    cv::Mat Rm; cv::Rodrigues(rvec, Rm);
+                    const cv::Matx33d Rcw(Rm);
+                    const cv::Vec3d C = -(Rcw.t() * cv::Vec3d(tvec));
+                    const cv::Matx33d Rwc = Rcw.t();
+                    const double jump = cv::norm(C - C_);
+                    const cv::Matx33d rel = Rwc * R_.t();
+                    const double turn = std::acos(std::max(-1.0, std::min(1.0, (rel(0, 0) + rel(1, 1) + rel(2, 2) - 1) / 2)));
+                    if (jump <= maxJump_ && turn < 10.0 * kPi / 180.0) {
+                        vel_ = 0.5 * vel_ + 0.5 * (C - C_);
+                        R_ = Rwc; C_ = C; ok = true; inliers_ = int(inl.size());
+                        std::vector<cv::Point2f> np; std::vector<cv::Point3f> nw;
+                        for (int k : inl) { np.push_back(img[size_t(k)]); nw.push_back(obj[size_t(k)]); }
+                        pts_.swap(np); world_.swap(nw);
+                    }
+                }
+            }
+        }
+        if (!ok && !prev_.empty()) {
+            // LOST: coast on the prediction, re-anchor below.
+            R_ = Rpred; C_ = Cpred; pts_.clear(); world_.clear(); ++lostRun_;
+        } else if (ok) {
+            lostRun_ = 0;
+        }
+        // Keyframe policy, as DepthVio's.
+        const cv::Matx33d relK = R_ * kfR_.t();
+        const double turnedK = std::acos(std::max(-1.0, std::min(1.0, (relK(0, 0) + relK(1, 1) + relK(2, 2) - 1) / 2)));
+        if (prev_.empty() || !ok || pts_.size() < 80 || cv::norm(C_ - kfC_) > 0.6 || turnedK > 15.0 * kPi / 180.0)
+            keyframe(ir8, depthAt(R_, C_));
+        prev_ = ir8.clone();
+        return ok;
+    }
+    const cv::Matx33d& R() const { return R_; }
+    const cv::Vec3d& C() const { return C_; }
+    int inliers() const { return inliers_; }
+
+private:
+    void keyframe(const cv::Mat& ir8, const cv::Mat& depth) {
+        cv::Mat mask(ir8.size(), CV_8U, cv::Scalar(0));
+        for (int v = 0; v < depth.rows; ++v)
+            for (int u = 0; u < depth.cols; ++u) {
+                const float r = depth.at<float>(v, u);
+                if (r >= 0.3f && r <= maxDepth_) mask.at<uchar>(v, u) = 255;
+            }
+        for (const cv::Point2f& q : pts_) cv::circle(mask, q, 8, cv::Scalar(0), -1);
+        const int want = 250 - int(pts_.size());
+        if (want > 0) {
+            std::vector<cv::Point2f> fresh;
+            cv::goodFeaturesToTrack(ir8, fresh, want, 0.01, 8.0, mask);
+            for (const cv::Point2f& q : fresh) {
+                const float r = depth.at<float>(int(q.y + 0.5f), int(q.x + 0.5f));
+                if (!(r >= 0.3f && r <= maxDepth_)) continue;
+                const double x = (q.x - K_(0, 2)) / K_(0, 0), y = (q.y - K_(1, 2)) / K_(1, 1);
+                const double n = std::sqrt(x * x + y * y + 1.0);
+                const cv::Vec3d pw = R_ * cv::Vec3d(x / n * r, y / n * r, r / n) + C_;
+                pts_.push_back(q);
+                world_.push_back(cv::Point3f(float(pw[0]), float(pw[1]), float(pw[2])));
+            }
+        }
+        kfR_ = R_; kfC_ = C_;
+    }
+    const sim::DepthCamera* cam_ = nullptr;
+    cv::Matx33d K_, R_ = cv::Matx33d::eye(), Rprev_ = cv::Matx33d::eye(), kfR_ = cv::Matx33d::eye();
+    cv::Vec3d C_, Cprev_, vel_, kfC_;
+    float maxDepth_ = 15.f, maxJump_ = 0.5f;
+    bool started_ = false;
+    int lostRun_ = 0, tracked_ = 0, inliers_ = 0;
+    cv::Mat prev_;
+    std::vector<cv::Point2f> pts_;
+    std::vector<cv::Point3f> world_;
+};
+
+// Camera->world rotation of a CamPose, from navcore's own projection.
+cv::Matx33d rotOf(const sim::CamPose& p) {
+    cv::Matx33d R;
+    const float b[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    for (int c = 0; c < 3; ++c) {
+        float x, y, z;
+        sim::DepthCamera::camToWorld(p, b[c][0], b[c][1], b[c][2], x, y, z);
+        R(0, c) = x; R(1, c) = y; R(2, c) = z;
+    }
+    return R;
+}
+// Angle between two optical axes (= the body's down axes), degrees: TILT error.
+double tiltErrDeg(const cv::Matx33d& a, const cv::Matx33d& b) {
+    const double d = a(0, 2) * b(0, 2) + a(1, 2) * b(1, 2) + a(2, 2) * b(2, 2);
+    return deg(std::acos(std::max(-1.0, std::min(1.0, d))));
+}
 
 // The rotation above is the one thing here that is not navcore's: check it
 // against navcore's own projection over a grid of attitudes, gimbal lock
@@ -247,7 +413,8 @@ int main(int argc, char** argv) {
     if (!parse(argc, argv, o, header)) return 2;
     const char* cols = "depth,world,fov,tilt,wobble,wobble_hz,peak_rate_dps,speed,alt,att_bias,"
                        "seed,frames,drift_pct,final_err_m,max_err_m,lost_pct,mean_inliers,"
-                       "ground_frac,ms_per_frame,ground,sun_elev,drone_shadow,exposure_ms";
+                       "ground_frac,ms_per_frame,ground,sun_elev,drone_shadow,exposure_ms,"
+                       "attitude,tilt_err_rms_deg,tilt_err_max_deg";
     if (header) { std::printf("%s\n", cols); return 0; }
 
     sim::VoxelWorld world;
@@ -279,6 +446,10 @@ int main(int argc, char** argv) {
     vp.maxJumpM = std::max(vp.maxJumpM, 2.5f * o.speed / o.fps);
     sim::DepthVio vio;
     vio.init(cam, vp);
+    PnpVo pvo;
+    pvo.init(cam, vp.maxDepthM, vp.maxJumpM);
+    const bool visionAtt = o.attitude == "vision";
+    double tiltSq = 0, tiltMax = 0; int tiltN = 0;
 
     std::mt19937 rng(o.seed * 104729u + 17u);
     std::normal_distribution<double> N(0.0, 1.0);
@@ -333,8 +504,35 @@ int main(int argc, char** argv) {
             sh.on = o.droneShadow; sh.e = float(pos.e); sh.n = float(pos.n); sh.u = float(pos.u);
             ir = ground.render(world, cam, truth, blur, sh);
         }
+        // Mono + rangefinder depth from a given camera attitude (rotation, C):
+        // the IMU's in imu mode; the vision's OWN estimate in vision mode.
+        float rngMeas = -1.f;
+        auto planeDepth = [&](const cv::Matx33d& Rwc) {
+            if (rngMeas < 0.f) {
+                V3 f0, r0, d0;
+                bodyAxes(yaw, pitch, roll, f0, r0, d0);
+                rngMeas = world.raycast(float(pos.e), float(pos.n), float(pos.u), float(d0.e),
+                                        float(d0.n), float(d0.u), cp.maxRangeM);
+                rngMeas *= float(1.0 + 0.01 * N(rng));
+            }
+            // Body down = the optical axis = Rwc's third column.
+            const double H = rngMeas * (-Rwc(2, 2));
+            cv::Mat dm(o.h, o.w, CV_32F);
+            for (int v = 0; v < o.h; ++v) {
+                float* row = dm.ptr<float>(v);
+                for (int u = 0; u < o.w; ++u) {
+                    const double x = (u - cam.ppx()) / cam.fpx(), y = (v - cam.ppy()) / cam.fy();
+                    const double n = std::sqrt(x * x + y * y + 1.0);
+                    const double dz = (Rwc(2, 0) * x + Rwc(2, 1) * y + Rwc(2, 2)) / n;
+                    row[u] = (dz < -0.05) ? float(H / -dz) : 0.f;
+                }
+            }
+            return dm;
+        };
         cv::Mat depth;
-        if (o.depth == "truth") {
+        if (visionAtt) {
+            // Built inside the VO, at keyframes, from its own attitude.
+        } else if (o.depth == "truth") {
             depth = cam.renderTruth(world, truth);
         } else if (o.depth == "stereo") {
             depth = cam.renderStereo(world, truth, nullptr);
@@ -374,14 +572,33 @@ int main(int argc, char** argv) {
                 }
             groundSum += double(g) / tot;
         }
-        if (k == 0) vio.reset(truth);                // the start pose is known
-        sim::CamPose imuIn = imuCam;
-        const sim::VioResult res = vio.step(ir, depth, imuIn);
+        sim::VioResult res;
+        if (visionAtt) {
+            const cv::Matx33d Rt = rotOf(truth);
+            if (k == 0) pvo.reset(Rt, cv::Vec3d(truth.e, truth.n, truth.u));   // start pose known
+            cv::Mat stereoD, truthD;
+            res.valid = pvo.step(ir, [&](const cv::Matx33d& Rwc, const cv::Vec3d&) {
+                if (o.depth == "plane") return planeDepth(Rwc);
+                if (o.depth == "stereo") return stereoD.empty() ? (stereoD = cam.renderStereo(world, truth, nullptr)) : stereoD;
+                return truthD.empty() ? (truthD = cam.renderTruth(world, truth)) : truthD;
+            });
+            res.inliers = pvo.inliers();
+            const double te = tiltErrDeg(pvo.R(), Rt);
+            tiltSq += te * te; tiltMax = std::max(tiltMax, te); ++tiltN;
+        } else {
+            if (k == 0) vio.reset(truth);                // the start pose is known
+            sim::CamPose imuIn = imuCam;
+            res = vio.step(ir, depth, imuIn);
+            const double te = tiltErrDeg(rotOf(imuCam), rotOf(truth));   // the IMU's own tilt error
+            tiltSq += te * te; tiltMax = std::max(tiltMax, te); ++tiltN;
+        }
         msSum += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         if (!o.dump.empty() && k == frames / 2) {
             cv::imwrite(o.dump + "_ir.png", ir);
-            cv::Mat d8; depth.convertTo(d8, CV_8U, 255.0 / 15.0);
-            cv::imwrite(o.dump + "_depth.png", d8);
+            if (!depth.empty()) {
+                cv::Mat d8; depth.convertTo(d8, CV_8U, 255.0 / 15.0);
+                cv::imwrite(o.dump + "_depth.png", d8);
+            }
         }
         if (std::getenv("DOWNVIO_TRACE"))
             std::fprintf(stderr, "k %d valid %d tracked %d inliers %d kf %d err %.3f\n", k,
@@ -389,18 +606,20 @@ int main(int argc, char** argv) {
                          std::hypot(vio.pose().e - truth.e, vio.pose().n - truth.n));
         if (k == 0) continue;
         if (!res.valid) ++lost; else { sumIn += res.inliers; ++nIn; }
-        const sim::CamPose& est = vio.pose();
-        const double err = std::hypot(est.e - truth.e, est.n - truth.n);
+        const double ee = visionAtt ? pvo.C()[0] : double(vio.pose().e);
+        const double en = visionAtt ? pvo.C()[1] : double(vio.pose().n);
+        const double err = std::hypot(ee - truth.e, en - truth.n);
         maxErr = std::max(maxErr, err);
         finalErr = err;
     }
-    std::printf("%s,%s,%.0f,%.0f,%.0f,%.2f,%.0f,%.1f,%.1f,%.1f,%u,%d,%.2f,%.3f,%.3f,%.1f,%.0f,%.2f,%.0f,%s,%.0f,%d,%.1f\n",
+    std::printf("%s,%s,%.0f,%.0f,%.0f,%.2f,%.0f,%.1f,%.1f,%.1f,%u,%d,%.2f,%.3f,%.3f,%.1f,%.0f,%.2f,%.0f,%s,%.0f,%d,%.1f,%s,%.3f,%.3f\n",
                 o.depth.c_str(), o.world.c_str(), double(o.fov), double(o.tilt), double(o.wobble),
                 double(o.wobbleHz), peakRate, double(o.speed), double(o.alt), double(o.attBias),
                 o.seed, frames, 100.0 * finalErr / std::max(1e-6, along((frames - 1) * dt)), finalErr, maxErr,
                 100.0 * lost / std::max(1, frames - 1), nIn ? sumIn / nIn : 0.0,
                 groundSum / frames, msSum / frames, o.ground.c_str(), double(o.sunElev),
-                o.droneShadow ? 1 : 0, double(o.exposureMs));
+                o.droneShadow ? 1 : 0, double(o.exposureMs), o.attitude.c_str(),
+                tiltN ? std::sqrt(tiltSq / tiltN) : 0.0, tiltMax);
     const double drift = 100.0 * finalErr / std::max(1e-6, along((frames - 1) * dt));
     if (o.checkDrift > 0 && drift > o.checkDrift) {
         std::fprintf(stderr, "downvio_sweep: drift %.2f %% > %.2f %%\n", drift, double(o.checkDrift));

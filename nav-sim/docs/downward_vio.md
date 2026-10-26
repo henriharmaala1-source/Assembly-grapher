@@ -182,3 +182,39 @@ Grey visible-light luminance (a NIR camera sees vegetation much brighter);
 the photographs' physical sizes are judged from their content; scenes are
 flat (objects only in the cluttered world of the first study); 20-50 m
 straight lines; 4 seeds.
+
+## Can a wide lens replace the IMU's attitude?
+
+`downvio_sweep --attitude vision` flies the downward camera with NO IMU: a
+6-DOF visual odometry (PnpVo: DepthVio's front end, pose by PnP RANSAC + LM),
+roll and pitch from the image. The mono + rangefinder ground plane is built
+from the vision's OWN tilt. Against DepthVio on IMU attitude (0.3 deg noise,
+and +1 / +2 deg bias). 1.5 m, 15 m paths, procedural texture, 4 seeds
+(`test/downvio_noimu.sh`, raw: `downward_vio_noimu.csv`). Drift %, (tilt RMS):
+
+| mono + rangefinder | 60 deg | 90 deg | 120 deg | 140 deg |
+|---|---|---|---|---|
+| level, IMU | 0.39 | 0.30 | 0.38 | 0.52 |
+| level, IMU +1 deg | 7.9 | 6.3 | 4.8 | 4.6 |
+| level, IMU +2 deg | 15.8 | 11.5 | 8.2 | 8.0 |
+| level, **vision** | **0.23** (0.2) | **0.59** (0.9) | **0.26** (0.6) | **0.42** (0.6) |
+| manoeuvre, IMU | 0.71 | 0.62 | 1.26 | 0.55 |
+| manoeuvre, IMU +1 deg | 7.1 | 5.9 | 3.8 | 3.7 |
+| manoeuvre, IMU +2 deg | 12.7 | 10.8 | 8.5 | 7.0 |
+| manoeuvre, **vision** | **14.9 fails** (24, 11 % lost) | **0.60** (0.5) | **0.36** (1.4) | **0.50** (0.8) |
+
+(manoeuvre: 15 deg tilt + 10 deg roll/pitch wobble at 1.5 Hz, peak 94 deg/s.)
+
+- **Mono + rangefinder: yes, with a lens of 90 deg or more.** Vision-only
+  attitude matches an accurate IMU and beats one off by 1-2 deg ten- to
+  twentyfold: its tilt is consistent with the ground plane it builds, an IMU
+  bias is not. A 60 deg lens fails once the aircraft manoeuvres.
+- **Downward stereo: no -- keep the IMU.** Stereo ignores IMU bias (0.3-1.3 %
+  at 2 deg); vision-only attitude there is worse (0.7-12.7 % level, 2.6-18.7 %
+  manoeuvring, 2-28 deg tilt error): noisy depth lets PnP trade tilt for
+  translation. Wider lenses help, not enough.
+- Practical reading: use vision tilt to correct the IMU's bias, keep the IMU
+  as the gravity reference for when the image fails (sand, snow, lost).
+
+Not tested: uneven ground (vision attitude leans on the flat-ground plane),
+other heights, real-ground photographs, a drifting rather than constant bias.

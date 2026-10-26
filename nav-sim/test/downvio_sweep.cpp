@@ -450,6 +450,7 @@ int main(int argc, char** argv) {
     pvo.init(cam, vp.maxDepthM, vp.maxJumpM);
     const bool visionAtt = o.attitude == "vision";
     double tiltSq = 0, tiltMax = 0; int tiltN = 0;
+    std::vector<double> estMs;    // the ESTIMATOR alone (plus vision mode's own plane-depth build)
 
     std::mt19937 rng(o.seed * 104729u + 17u);
     std::normal_distribution<double> N(0.0, 1.0);
@@ -573,6 +574,7 @@ int main(int argc, char** argv) {
             groundSum += double(g) / tot;
         }
         sim::VioResult res;
+        const auto te0 = std::chrono::steady_clock::now();
         if (visionAtt) {
             const cv::Matx33d Rt = rotOf(truth);
             if (k == 0) pvo.reset(Rt, cv::Vec3d(truth.e, truth.n, truth.u));   // start pose known
@@ -583,12 +585,14 @@ int main(int argc, char** argv) {
                 return truthD.empty() ? (truthD = cam.renderTruth(world, truth)) : truthD;
             });
             res.inliers = pvo.inliers();
+            estMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - te0).count());
             const double te = tiltErrDeg(pvo.R(), Rt);
             tiltSq += te * te; tiltMax = std::max(tiltMax, te); ++tiltN;
         } else {
             if (k == 0) vio.reset(truth);                // the start pose is known
             sim::CamPose imuIn = imuCam;
             res = vio.step(ir, depth, imuIn);
+            estMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - te0).count());
             const double te = tiltErrDeg(rotOf(imuCam), rotOf(truth));   // the IMU's own tilt error
             tiltSq += te * te; tiltMax = std::max(tiltMax, te); ++tiltN;
         }
@@ -620,6 +624,13 @@ int main(int argc, char** argv) {
                 groundSum / frames, msSum / frames, o.ground.c_str(), double(o.sunElev),
                 o.droneShadow ? 1 : 0, double(o.exposureMs), o.attitude.c_str(),
                 tiltN ? std::sqrt(tiltSq / tiltN) : 0.0, tiltMax);
+    if (std::getenv("DOWNVIO_TIMING") && !estMs.empty()) {
+        std::vector<double> v = estMs;
+        std::sort(v.begin(), v.end());
+        double sum = 0; for (double x : v) sum += x;
+        std::fprintf(stderr, "estimator ms/frame: mean %.2f  median %.2f  p95 %.2f  max %.2f  (%zu frames)\n",
+                     sum / double(v.size()), v[v.size() / 2], v[v.size() * 95 / 100], v.back(), v.size());
+    }
     const double drift = 100.0 * finalErr / std::max(1e-6, along((frames - 1) * dt));
     if (o.checkDrift > 0 && drift > o.checkDrift) {
         std::fprintf(stderr, "downvio_sweep: drift %.2f %% > %.2f %%\n", drift, double(o.checkDrift));

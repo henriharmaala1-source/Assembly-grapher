@@ -1,0 +1,39 @@
+# CRUISE, SEE THE DOOR, GO DOWN TO IT. The scenario suite's example:
+#   kestrel mission scenarios onboard/missions/cruise_door.kms --target door
+# Cruise level until the detector sees a door, hand it to the tracker, fly at
+# a point just above it down the line of sight until 6 m out, then over it
+# and land beside it. Lose it at any point: back to cruising.
+mission "cruise, then the door"
+fence 150 m
+timeout 4 min
+size door 2 m
+
+on battery < 25% { rtl }
+
+nav direct
+let spot = here
+
+state cruise {
+  when seen door -> lock
+  cruise speed 3 m/s for 60 s
+  rtl
+}
+
+state lock {
+  track door timeout 4 s else { -> cruise }
+  -> approach
+}
+
+state approach {
+  when not tracking door -> cruise
+  gains yaw kp 1.4 kd 0.2
+  steer door aim centre up 0.5 throttle 0.5 until range to door < 6 m timeout 40 s else { -> cruise }
+  -> over_it
+}
+
+state over_it {
+  set spot = seen door else { -> cruise }
+  untrack
+  over spot above 2 m hold 2 s
+  land
+}

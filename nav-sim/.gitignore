@@ -1,0 +1,4 @@
+build/
+*.o
+*.png
+!docs/*.png

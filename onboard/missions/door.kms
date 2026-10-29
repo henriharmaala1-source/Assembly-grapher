@@ -1,0 +1,38 @@
+# DETECT -> TRACK -> TRIGGER -> BEHAVIOUR.
+#
+# Patrol by turning on the spot. When the detector (YOLO, slow) sees a door,
+# hand it to the lock tracker (cheap, every frame), approach until the door
+# fills half the frame, step aside, and land.
+#
+# A `when` belongs to the state where it MATTERS: losing the door while
+# approaching means start again; losing it while stepping aside (which turns
+# the camera away from it) is the plan -- so that state has no such trigger.
+mission "door"
+fence 25 m
+timeout 6 min
+
+on battery < 25% { rtl }
+
+state patrol {
+  when seen door -> acquire
+  yaw right 45
+  hold 2 s
+  -> patrol
+}
+
+state acquire {
+  track door timeout 5 s else { -> patrol }
+  -> go_through
+}
+
+state go_through {
+  when not tracking door -> patrol
+  approach door fill 0.5 timeout 60 s
+  -> step_aside
+}
+
+state step_aside {
+  untrack
+  move left 1 m
+  land
+}

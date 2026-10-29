@@ -1,0 +1,39 @@
+# kestrel on the Pi 5, started at boot. Installed by deploy/install_pi5.sh,
+# which fills in @USER@ and @BINDIR@ / @ETCDIR@.
+#
+#   sudo systemctl status kestrel       is it running, last lines of output
+#   journalctl -u kestrel -f            follow its output (the parameter report,
+#                                       "[mavlink] FC in ALT_HOLD -> control: ...")
+#   sudo systemctl restart kestrel      after editing @ETCDIR@/kestrel.env or .conf
+#
+# What it runs is @ETCDIR@/kestrel.env (the command line) plus
+# @ETCDIR@/kestrel.conf (tuning). It starts DRY-RUN: nothing is commanded until
+# --allow-control is added to kestrel.env (docs/pi5-ardupilot-setup.md).
+
+[Unit]
+Description=kestrel companion computer (Pi 5 -> ArduPilot)
+After=local-fs.target
+# A missing camera or FC makes it exit; retry, but do not spin for ever.
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=@USER@
+SupplementaryGroups=dialout video
+EnvironmentFile=@ETCDIR@/kestrel.env
+WorkingDirectory=@ETCDIR@
+# $KESTREL_ARGS (no braces) is split into words by systemd.
+ExecStart=@BINDIR@/kestrel --config=@ETCDIR@/kestrel.conf $KESTREL_ARGS
+Restart=on-failure
+RestartSec=3
+# The FC link thread runs SCHED_FIFO (rt.enable): that needs CAP_SYS_NICE,
+# not root. Without it the RT request fails quietly and RC timing is best-effort.
+AmbientCapabilities=CAP_SYS_NICE
+LimitRTPRIO=99
+LimitMEMLOCK=infinity
+# The black box goes here (kestrel.env: --blackbox=/var/lib/kestrel/...).
+StateDirectory=kestrel
+
+[Install]
+WantedBy=multi-user.target

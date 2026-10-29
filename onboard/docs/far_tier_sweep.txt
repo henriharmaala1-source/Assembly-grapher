@@ -1,0 +1,52 @@
+# far tier choosing among safe legs (VoxelNavModule farChoose), test_voxel_nav closed loop, 150 s
+# far=0 near tier alone (default), far=1 far tier chooses; big=1 48 m field with walls; paired by world seed
+# --- 424x240 (suite default), textured worlds ---
+RESULT far=0 big=0 stereo=0 world=11 travel=64.23 net=5.77 cells=79 legs=39 minclr=0.538 stuck=0
+RESULT far=0 big=0 stereo=0 world=12 travel=62.25 net=13.50 cells=73 legs=38 minclr=0.563 stuck=0
+RESULT far=0 big=0 stereo=0 world=13 travel=58.57 net=16.00 cells=59 legs=36 minclr=0.651 stuck=0
+RESULT far=0 big=0 stereo=0 world=7 travel=60.20 net=10.93 cells=67 legs=37 minclr=0.604 stuck=0
+RESULT far=0 big=0 stereo=1 world=11 travel=20.09 net=10.74 cells=19 legs=13 minclr=0.671 stuck=1
+RESULT far=0 big=0 stereo=1 world=12 travel=47.55 net=10.34 cells=38 legs=32 minclr=0.720 stuck=0
+RESULT far=0 big=0 stereo=1 world=13 travel=30.64 net=10.64 cells=34 legs=19 minclr=0.808 stuck=1
+RESULT far=0 big=0 stereo=1 world=7 travel=55.56 net=18.98 cells=62 legs=35 minclr=0.627 stuck=0
+RESULT far=0 big=1 stereo=0 world=11 travel=60.38 net=27.10 cells=77 legs=37 minclr=0.614 stuck=0
+RESULT far=0 big=1 stereo=0 world=12 travel=59.86 net=36.68 cells=73 legs=39 minclr=0.663 stuck=0
+RESULT far=0 big=1 stereo=0 world=13 travel=61.10 net=32.31 cells=79 legs=37 minclr=0.607 stuck=0
+RESULT far=0 big=1 stereo=0 world=7 travel=40.85 net=16.93 cells=48 legs=26 minclr=0.588 stuck=0
+RESULT far=0 big=1 stereo=1 world=11 travel=39.55 net=14.97 cells=41 legs=28 minclr=0.696 stuck=0
+RESULT far=0 big=1 stereo=1 world=12 travel=6.15 net=2.82 cells=8 legs=4 minclr=0.784 stuck=1
+RESULT far=0 big=1 stereo=1 world=13 travel=3.40 net=3.39 cells=6 legs=2 minclr=1.300 stuck=1
+RESULT far=0 big=1 stereo=1 world=7 travel=4.45 net=4.44 cells=7 legs=3 minclr=0.956 stuck=1
+RESULT far=1 big=0 stereo=0 world=11 travel=58.30 net=13.40 cells=73 legs=35 minclr=0.706 stuck=0
+RESULT far=1 big=0 stereo=0 world=12 travel=58.86 net=10.56 cells=74 legs=36 minclr=0.485 stuck=0
+RESULT far=1 big=0 stereo=0 world=13 travel=62.68 net=16.86 cells=85 legs=37 minclr=0.693 stuck=0
+RESULT far=1 big=0 stereo=0 world=7 travel=59.75 net=9.95 cells=73 legs=36 minclr=0.589 stuck=0
+RESULT far=1 big=0 stereo=1 world=11 travel=12.70 net=10.80 cells=16 legs=8 minclr=0.726 stuck=1
+RESULT far=1 big=0 stereo=1 world=12 travel=47.86 net=9.52 cells=42 legs=31 minclr=0.695 stuck=0
+RESULT far=1 big=0 stereo=1 world=13 travel=57.90 net=19.30 cells=73 legs=36 minclr=0.715 stuck=0
+RESULT far=1 big=0 stereo=1 world=7 travel=53.13 net=9.33 cells=44 legs=34 minclr=0.507 stuck=0
+RESULT far=1 big=1 stereo=0 world=11 travel=55.57 net=10.66 cells=71 legs=34 minclr=0.623 stuck=0
+RESULT far=1 big=1 stereo=0 world=12 travel=59.24 net=22.75 cells=66 legs=36 minclr=0.825 stuck=0
+RESULT far=1 big=1 stereo=0 world=13 travel=62.49 net=1.82 cells=83 legs=38 minclr=0.759 stuck=0
+RESULT far=1 big=1 stereo=0 world=7 travel=38.25 net=16.87 cells=50 legs=24 minclr=0.517 stuck=0
+RESULT far=1 big=1 stereo=1 world=11 travel=44.33 net=22.61 cells=53 legs=29 minclr=0.635 stuck=0
+RESULT far=1 big=1 stereo=1 world=12 travel=6.30 net=2.80 cells=9 legs=4 minclr=0.808 stuck=1
+RESULT far=1 big=1 stereo=1 world=13 travel=3.40 net=3.39 cells=6 legs=2 minclr=1.300 stuck=1
+RESULT far=1 big=1 stereo=1 world=7 travel=4.45 net=4.44 cells=7 legs=3 minclr=0.975 stuck=1
+# --- 848x480 (VOXTEST_FULLRES=1), big field ---
+RESULT far=0 big=1 stereo=0 world=11 travel=82.70 net=27.13 cells=95 legs=31 minclr=0.641 stuck=0
+RESULT far=0 big=1 stereo=0 world=12 travel=81.54 net=24.80 cells=96 legs=31 minclr=0.568 stuck=0
+RESULT far=0 big=1 stereo=0 world=13 travel=75.80 net=24.37 cells=87 legs=29 minclr=0.570 stuck=0
+RESULT far=0 big=1 stereo=0 world=7 travel=76.74 net=31.27 cells=89 legs=31 minclr=0.635 stuck=0
+RESULT far=0 big=1 stereo=1 world=11 travel=75.65 net=20.34 cells=87 legs=32 minclr=0.629 stuck=0
+RESULT far=0 big=1 stereo=1 world=12 travel=76.70 net=11.39 cells=93 legs=32 minclr=0.624 stuck=0
+RESULT far=0 big=1 stereo=1 world=13 travel=78.70 net=14.34 cells=92 legs=31 minclr=0.671 stuck=0
+RESULT far=0 big=1 stereo=1 world=7 travel=78.18 net=19.47 cells=89 legs=31 minclr=0.728 stuck=0
+RESULT far=1 big=1 stereo=0 world=11 travel=80.00 net=14.22 cells=100 legs=31 minclr=0.440 stuck=0
+RESULT far=1 big=1 stereo=0 world=12 travel=83.13 net=12.49 cells=105 legs=31 minclr=0.780 stuck=0
+RESULT far=1 big=1 stereo=0 world=13 travel=80.15 net=18.36 cells=97 legs=31 minclr=0.612 stuck=0
+RESULT far=1 big=1 stereo=0 world=7 travel=71.45 net=23.64 cells=84 legs=29 minclr=0.648 stuck=0
+RESULT far=1 big=1 stereo=1 world=11 travel=77.96 net=17.05 cells=94 legs=30 minclr=0.691 stuck=0
+RESULT far=1 big=1 stereo=1 world=12 travel=71.80 net=23.18 cells=88 legs=33 minclr=0.680 stuck=0
+RESULT far=1 big=1 stereo=1 world=13 travel=71.41 net=23.71 cells=85 legs=31 minclr=0.728 stuck=0
+RESULT far=1 big=1 stereo=1 world=7 travel=65.90 net=14.76 cells=74 legs=29 minclr=0.727 stuck=0

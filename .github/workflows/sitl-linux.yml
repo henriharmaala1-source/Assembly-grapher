@@ -1,0 +1,101 @@
+name: kestrel sitl (ArduCopter SITL, headless)
+
+# The aircraft's autonomy flying the REAL ArduCopter, every push: onboard's
+# MAVLink backend over TCP, the simulated D435i rendered from SITL's true
+# pose, kestrel's depth as ArduPilot's proximity sensor -- and a second run
+# with GPS off, kestrel's VIO the only position the EKF has.
+#
+# ArduCopter is the RELEASE the aircraft flies, pinned (Copter-4.7.2), built
+# once and cached. A slow runner is not a problem: kestrel's soft lockstep
+# slows SITL (SIM_SPEEDUP) to what the runner can render, so no frame is late.
+#
+# What fails the job: kestrel cannot reach SITL or get airborne (exit 3), a
+# crash, a usage error. What does NOT: a flight that touches a wall (exit 1).
+# That is a measured outcome of a chaotic system on one seed, not a build
+# break -- it is written into the summary and the CSV, and judged across seeds
+# (CLAUDE.md), never from one CI run.
+
+on:
+  push:
+    paths:
+      - 'nav-sim/**'
+      - 'navcore/**'
+      - 'onboard/src/**'
+      - 'onboard/include/**'
+      - '.github/workflows/sitl-linux.yml'
+  workflow_dispatch: {}
+
+env:
+  ARDUPILOT_REF: Copter-4.7.2
+
+jobs:
+  sitl:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # waf needs empy 3.x; 3.11 keeps it installable (it predates 3.12's
+      # removal of distutils).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential cmake libopencv-dev
+          python -m pip install --quiet empy==3.3.4 pexpect future
+
+      - name: Cache ArduCopter SITL
+        id: apcache
+        uses: actions/cache@v4
+        with:
+          path: ardupilot/build/sitl/bin/arducopter
+          key: arducopter-sitl-${{ env.ARDUPILOT_REF }}-ubuntu-24.04
+
+      - name: ArduPilot source (the parameter defaults are needed even when cached)
+        run: |
+          git clone -q --depth 1 --branch "$ARDUPILOT_REF" https://github.com/ArduPilot/ardupilot.git ardupilot-src
+          mkdir -p ardupilot
+          cp -r ardupilot-src/Tools ardupilot/
+
+      - name: Build ArduCopter SITL
+        if: steps.apcache.outputs.cache-hit != 'true'
+        working-directory: ardupilot-src
+        run: |
+          git submodule update -q --init --depth 1 modules/waf modules/mavlink modules/littlefs \
+              modules/lwip modules/DroneCAN/DSDL modules/DroneCAN/dronecan_dsdlc \
+              modules/DroneCAN/libcanard modules/DroneCAN/pydronecan
+          python ./waf configure --board sitl
+          python ./waf copter -j4
+          mkdir -p ../ardupilot/build/sitl/bin
+          cp build/sitl/bin/arducopter ../ardupilot/build/sitl/bin/
+
+      - name: Build kestrel
+        run: |
+          cmake -S nav-sim -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j4 --target kestrel
+
+      - name: Fly -- GPS, proximity to ArduPilot's avoidance
+        run: bash nav-sim/sitl/ci_fly.sh gps
+
+      - name: Fly -- GNSS-denied, kestrel's VIO the only position
+        run: bash nav-sim/sitl/ci_fly.sh vio
+
+      - name: Results
+        if: always()
+        run: |
+          echo '### kestrel sitl' >> "$GITHUB_STEP_SUMMARY"
+          for f in sitl_ci/*.log; do
+            echo "**$(basename $f .log)**" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^\[sitl\] ([0-9]+ s,|holding|GNSS|soft|COLLISION|contact|not airborne|nothing answered)|exit=' "$f" >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kestrel-sitl
+          path: sitl_ci/

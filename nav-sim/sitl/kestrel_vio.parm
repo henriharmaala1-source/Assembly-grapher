@@ -1,0 +1,21 @@
+# ArduCopter SITL, GNSS-DENIED, for `kestrel sitl --vio`: kestrel's VIO is the
+# only horizontal position the EKF gets. Load AFTER copter.parm:
+#
+#   build/sitl/bin/arducopter --model + --speedup 1 -I0 \
+#     --defaults Tools/autotest/default_params/copter.parm,<repo>/nav-sim/sitl/kestrel_vio.parm
+#
+# (Mission Planner's simulator: Config -> Full Parameter List -> Load from
+# file, Write, then reboot the simulated FC.) Values are the ones
+# onboard/docs/gnss-denied-setup.md section 11 sets on the aircraft; 4.7 names.
+
+GPS1_TYPE        0     # no GPS at all: not even a fix to fall back on
+VISO_TYPE        3     # VOXL backend: re-anchors on reset, yaw-aligns, arm check
+VISO_DELAY_MS    50
+VISO_POS_M_NSE   0.1
+VISO_QUAL_MIN    0
+EK3_SRC1_POSXY   6     # ExternalNav
+EK3_SRC1_VELXY   0     # position only -- 6 OSCILLATES (gnss-denied-setup.md s.11)
+EK3_SRC1_POSZ    1     # Baro
+EK3_SRC1_VELZ    0     # the VIO sends no vertical velocity
+EK3_SRC1_YAW     1     # Compass
+FS_EKF_ACTION    1     # Land: with VIO gone there is no position for RTL

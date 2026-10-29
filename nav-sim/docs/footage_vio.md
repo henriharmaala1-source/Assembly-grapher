@@ -172,6 +172,48 @@ That test exercises the plumbing, not the camera:
 Real footage adds what no render has: rolling shutter, compression at
 motion, lens vignetting and the camera's own processing.
 
+### Through the video, at three gimbal angles
+
+The same chain over the study's **real gravel** photographs. The setup:
+
+- an 82° lens;
+- 5 m height from the subtitles;
+- a 30 m loop at 3 m/s, ending at its start;
+- 960x540 mp4 at 30 fps;
+- seed 1.
+
+| gimbal | attitude | tracked | start to end | vs GPS RMS / final | implied height |
+|---|---|---|---|---|---|
+| −90° | gimbal | 100% | 0.25% | 0.04 / 0.07 m | 4.99 m |
+| −90° | vision only | 100% | 0.22% | 0.04 / 0.07 m | 4.99 m |
+| −70° | gimbal | 100% | 0.26% | 0.04 / 0.08 m | 4.99 m |
+| −70° | vision only | 98% | **24.7%** | 2.32 / 4.76 m | 4.60 m |
+| −45° | gimbal | 100% | 0.17% | 0.04 / 0.05 m | 5.00 m |
+| −45° | vision only | 99% | **6.8%** | 0.54 / 1.91 m | 5.01 m |
+
+`--attitude srt` gives the same numbers as `gimbal`, because the subtitles
+carry the same fixed angle.
+
+- **With the gimbal's angle, the angle does not matter.** Straight down or
+  45° forward, the loop closes to a quarter of a percent.
+- **Vision-only holds straight down and slips when oblique.** With the
+  camera tipped forward, the image's horizontal motion can be explained
+  partly as a tilt and partly as a translation, and the 6-DOF solve trades
+  one for the other. The camera's pitch is the one thing a gimbal states
+  outright, so give it, and use `--attitude vision` only to ask the
+  question.
+
+This is **one seed per row**: a check that the harness and the estimators
+behave, not a measurement of the gap. The repository's rule for A/B claims
+is at least four seeds per arm. The vision-only numbers in particular
+should be read as "can fail", not as a rate.
+
+Rendering took ~13 s/frame for 960x540 over the textured ground on this
+machine. That is why there is one seed. The estimator itself ran at
+10–13 ms/frame.
+
+![-70° gimbal run: VIO against the subtitles' GPS](footage_vio_example.png)
+
 ## What this cannot see
 
 - **Rolling shutter.** The Neo 2's sensor reads out line by line, and fast

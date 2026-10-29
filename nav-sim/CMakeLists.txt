@@ -588,6 +588,26 @@ add_test(NAME downvio_gravel_track
          COMMAND downvio_sweep --ground gravel --tex-dir ${CMAKE_CURRENT_SOURCE_DIR}/textures
                  --alt 1.5 --fov 60 --tilt 20 --speed 4 --dist 20 --seed 1 --check-drift 5)
 set_tests_properties(downvio_gravel_track PROPERTIES SKIP_RETURN_CODE 77)
+if(TARGET opencv_videoio)
+  # --write-video: the rendered flight as a video, for footage_vio below.
+  target_compile_definitions(downvio_sweep PRIVATE DOWNVIO_HAVE_VIDEOIO=1)
+  target_link_libraries(downvio_sweep PRIVATE opencv_videoio)
+  # The same estimators on RECORDED footage (a DJI Neo 2 looking down), with
+  # the height above the ground set by hand, from a log, or from the
+  # subtitles (test/footage_vio.cpp; nav-sim/docs/footage_vio.md).
+  add_executable(footage_vio test/footage_vio.cpp)
+  target_link_libraries(footage_vio PRIVATE navcore)
+  target_include_directories(footage_vio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(footage_vio PRIVATE ${OpenCV_LIBS} opencv_videoio)
+  # Subtitle parser (the DJI layouts), yaw sign against navcore, projection.
+  add_test(NAME footage_vio_selftest COMMAND footage_vio --selftest)
+  # End to end: downvio_sweep renders a looped flight to a video + DJI-style
+  # subtitles with the truth known; footage_vio must close the loop.
+  add_test(NAME footage_vio_synthetic
+           COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test/footage_vio_synthetic.sh
+                   $<TARGET_FILE:downvio_sweep> $<TARGET_FILE:footage_vio> ${CMAKE_CURRENT_BINARY_DIR}/footage_synth)
+  set_tests_properties(footage_vio_synthetic PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 add_executable(rl_env_check
   test/rl_env_check.cpp

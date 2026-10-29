@@ -6,6 +6,10 @@ of it over real ground photographs under the sun, and is the one to trust
 for what texture does: it finds the failure the procedural texture hides
 (featureless ground) and a speed limit set by texture scale.
 
+**On real footage:** the same estimators run on recorded video (a DJI Neo 2
+looking down, height set by hand) with `footage_vio` -- see
+[footage_vio.md](footage_vio.md).
+
 Measured 2026-10-25 with `nav-sim/test/downvio_sweep` (grid: `downvio_sweep.sh`,
 raw: `downward_vio_sweep.csv`, 344 runs). The estimator is the aircraft's own
 **DepthVio** (navcore/vio.hpp), unchanged except for the fix below; the

@@ -327,7 +327,7 @@ class Planner(tk.Tk):
         dsm = filedialog.askopenfilename(
             title="DSM GeoTIFF for LOCATION (Cancel = horizon overlay only)",
             filetypes=[("GeoTIFF", "*.tif *.tiff"), ("All", "*.*")])
-        fov = alt = calib = None
+        fov = alt = calib = truth = None
         spin = False
         if dsm:                                        # full comparison -> location
             fov = simpledialog.askfloat("Camera FOV", "Horizontal FOV (deg):",
@@ -345,12 +345,22 @@ class Planner(tk.Tk):
                 "Spin mode?",
                 "Was the camera spinning in place (hover + yaw)?\n"
                 "Yes = panorama-from-one-spot.  No = forward flight.")
+            t = simpledialog.askstring(
+                "Known position (optional)",
+                "If you know where the clip started, enter  E N  in the DSM's\n"
+                "coordinates (e.g. 327743 6820079) to mark it on the map.\n"
+                "Cancel = skip:", parent=self)
+            try:
+                truth = [float(v) for v in (t or "").replace(",", " ").split()][:2]
+                truth = truth if len(truth) == 2 else None
+            except ValueError:
+                truth = None
         self.status.config(text="Processing video…")
         threading.Thread(target=self._test_video_worker,
-                         args=(vid, dsm, fov, alt, calib, spin if dsm else False),
+                         args=(vid, dsm, fov, alt, calib, spin if dsm else False, truth),
                          daemon=True).start()
 
-    def _test_video_worker(self, vid, dsm, fov, alt, calib, spin):
+    def _test_video_worker(self, vid, dsm, fov, alt, calib, spin, truth=None):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         try:
             if dsm:                                    # locate (real comparison)
@@ -363,6 +373,8 @@ class Planner(tk.Tk):
                     cmd += ["--alt", str(alt)]             # else locate_video searches
                 if calib:
                     cmd += ["--calib", calib]
+                if truth:
+                    cmd += ["--truth-en", str(truth[0]), str(truth[1])]
                 png = os.path.join(root, "out", "candidates.png")   # best-guesses map
             else:                                      # overlay only (no DSM)
                 cmd = [sys.executable, os.path.join(root, "video_test.py"), "--video", vid]

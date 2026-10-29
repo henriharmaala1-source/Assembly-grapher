@@ -144,8 +144,29 @@ build speed/accuracy knob (e.g. 5 m cut a 3 km-tile build from 172 s to ~50 s
 with no accuracy loss, since grid spacing dominates).
 
 Also wired into the **planner app**: the "Test on video…" button now *localizes*
-(prompts for FOV / altitude / optional calibration) when you give it a DSM, or
-falls back to a horizon-overlay pass without one.
+(prompts for FOV / altitude / optional calibration / spin / optional known
+position) when you give it a DSM, or falls back to a horizon-overlay pass
+without one.
+
+**Output.** The location, plus the **top-8 best guesses**: spatially distinct
+minima of the cost, each judged under its *own* best heading/speed/altitude,
+with E/N, lat/lon, compass bearing (0 = N, clockwise) and relative cost
+(`x1.000` = best; several near `x1.0` = ambiguous). `out/candidates.png` draws
+them north-up on the DSM in real E/N. If you know where the clip really
+started, add `--truth-en E N`: it is marked on the maps, each guess shows its
+distance to it, and the true spot's rank among all cells is printed — so you
+can tell "close but mis-ranked" from "true spot not even in contention".
+
+**Spin mode (`--spin`)** — hover + yaw. Rotation is tracked over ~240 densely
+sampled frames (keyframe registration with a smooth-spin motion prior), then 24
+frames spread over the sweep are matched. Synthetic FOV-45° spins: 1 turn ->
+56 m, 2.5 turns -> 116 m (the 12-frame sampling used before gave 940 / 650 m).
+Long spins still accumulate ~3 % rotation drift.
+
+Frames are resized to 640 px wide **keeping the aspect ratio** (squashing 16:9
+to 4:3 exaggerated skyline elevations ×1.31). A `--calib` made at another
+resolution (e.g. 4K photos, 1080p video) is rescaled to the video; if the
+aspect differs it warns, since the video mode probably crops the sensor.
 
 **Preprocessing (`video_preproc.py`, on by default)** canonicalizes each frame so
 it's comparable to the reference: lens **undistort** + FOV from `--calib`, and
@@ -168,6 +189,12 @@ Demonstrated by `test_preproc.py`: a clip corrupted with roll + barrel distortio
 - Required: a DSM tile covering the area; footage from **above the canopy looking
   forward** with skyline structure. Tune `--speeds` to your per-frame motion, and
   pass `--roll` from the IMU for tilted (non-gimballed) footage.
+- Forward (non-spin) mode samples 12 frames across the **whole** clip and
+  assumes one constant heading and speed through all of them: trim the clip to
+  a straight, steady segment first, and set `--speeds` around (metres flown in
+  the clip) / 11. Crop the DSM (`--en-bounds`) to the plausible area — on large
+  tiles the grid auto-coarsens (~260 m on a 20 km tile), which quantizes the
+  motion and caps accuracy.
 
 The one field unknown remains the **classical segmentation on real camera
 imagery** — the core sim-to-real test this enables.

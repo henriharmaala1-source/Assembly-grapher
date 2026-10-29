@@ -74,9 +74,30 @@ def load_metric_dsm(path, en_bounds=None, lonlat_bounds=None, target_res=30.0):
 
 
 def local_to_world(x, y, res, transform):
-    """local raycaster coords (x=col*res, y=row*res) -> world (E, N)."""
+    """local raycaster coords (x=col*res, y=row*res) -> world (E, N).
+    Rasters are north-up (row 0 = north), so local y points SOUTH."""
     e, n = transform_xy(transform, y / res, x / res, offset="center")
     return e, n
+
+
+def world_to_local(E, N, res, transform):
+    """inverse of local_to_world."""
+    col, row = ~transform * (E, N)
+    return (col - 0.5) * res, (row - 0.5) * res
+
+
+def bearing_deg(heading_deg, transform):
+    """internal heading (deg from +col toward +row) -> compass bearing (0 = N, CW)."""
+    p = np.deg2rad(heading_deg)
+    dE = np.cos(p) * np.sign(transform.a); dN = np.sin(p) * np.sign(transform.e)
+    return float(np.degrees(np.arctan2(dE, dN)) % 360)
+
+
+def grid_extent(xs, ys, res, transform):
+    """world (left, right, bottom, top) of a local grid, for imshow(origin='upper')."""
+    e0, n0 = local_to_world(xs[0], ys[0], res, transform)
+    e1, n1 = local_to_world(xs[-1], ys[-1], res, transform)
+    return [e0, e1, n1, n0]
 
 
 def make_test_video(dsm, res, out, alt, fov, nframes=12, fps=8):
@@ -108,23 +129,32 @@ def make_test_video(dsm, res, out, alt, fov, nframes=12, fps=8):
 
 def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
            speeds=None, calib=None, auto_level=False, use_clahe=True, roll=None,
-           range_step=None, spin=False):
+           range_step=None, spin=False, spin_n=240):
     rc = HorizonRaycaster(dsm, res)
     H, W = dsm.shape
 
     cap = cv2.VideoCapture(video)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
-    take = max(1, total // max_n) if total else 1
-    frames, i, fov_eff, dcol = [], 0, None, None
+    # spin needs DENSE frames: rotation is tracked from overlap between
+    # consecutive frames, which vanishes if they are a FOV or more apart
+    want = spin_n if spin else max_n
+    take = max(1, total // want) if total else 1
+    frames, i, fov_eff, dcol, cal = [], 0, None, None, None
     while True:
         ok, fr = cap.read()
         if not ok:
             break
         if i % take == 0:
-            pre, fov_used, _ = vp.preprocess(fr, fov, calib, auto_level, use_clahe,
+            if calib is not None and cal is None:
+                cal, crop = vp.fit_calib(calib, fr.shape[1], fr.shape[0])
+                if crop:
+                    print("  NOTE: video aspect differs from the calibration images "
+                          "(video mode crops the sensor?) — calib may not apply")
+            pre, fov_used, _ = vp.preprocess(fr, fov, cal, auto_level, use_clahe,
                                              roll_override=roll)
-            if pre.shape != (480, 640):
-                pre = cv2.resize(pre, (640, 480))
+            if pre.shape[1] != 640:                     # keep aspect: square pixels
+                h640 = max(2, int(round(640 * pre.shape[0] / pre.shape[1])))
+                pre = cv2.resize(pre, (640, h640), interpolation=cv2.INTER_AREA)
             if fov_eff is None:
                 fov_eff = fov_used
                 dcol = np.arctan((np.arange(640) - 320) / camera.focal_px(640, fov_eff))
@@ -134,6 +164,9 @@ def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
     if not frames:
         raise RuntimeError(f"no frames decoded from '{video}' — unreadable, empty, "
                            f"or unsupported codec (try re-encoding to H.264 mp4)")
+    if len(frames) > want:                              # frame count was unknown
+        keep = np.linspace(0, len(frames) - 1, want).round().astype(int)
+        frames = [frames[j] for j in keep]
     print(f"  {len(frames)} frames used (of {total}); preprocessed, fov {fov_eff:.0f} deg")
 
     bnds = (res * 2, W * res - res * 2, res * 2, H * res - res * 2)
@@ -165,10 +198,15 @@ def locate(video, dsm, res, transform, crs, fov, alt, grid_m=80.0, max_n=12,
             out["lat"], out["lon"] = lat, lon
         except Exception:                               # noqa: BLE001
             tf = None
-    # the top-K best-guess positions (spatially-distinct cost minima), each in
-    # world coords + lat/lon, so a human can check if the true spot is among them
-    cands = coldstart.top_k_candidates(r["seq_cost"], ref, k=8)
+    # the top-K best-guess positions (spatially-distinct minima of the profile
+    # cost, i.e. each place under its OWN best heading/speed/altitude), in world
+    # coords + lat/lon, so a human can check if the true spot is among them
+    cands = coldstart.top_k_candidates(r["profile_cost"], ref, k=8)
     for cd in cands:
+        iy, ix = cd["iy"], cd["ix"]
+        cd["bearing"] = bearing_deg(r["profile_heading"][iy, ix], transform)
+        cd["speed"] = float(r["profile_speed"][iy, ix])
+        cd["altitude"] = float(r["profile_alt"][iy, ix])
         cd["E"], cd["N"] = local_to_world(cd["x"], cd["y"], res, transform)
         if tf is not None:
             try:
@@ -205,6 +243,9 @@ def main():
                          "from one spot instead of forward flight")
     ap.add_argument("--en-bounds", type=float, nargs=4)
     ap.add_argument("--lonlat-bounds", type=float, nargs=4)
+    ap.add_argument("--truth-en", type=float, nargs=2, metavar=("E", "N"),
+                    help="known true start position (DSM CRS) — marked on the maps, "
+                         "with each guess's distance and the true spot's rank")
     ap.add_argument("--out", default="out")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -229,76 +270,103 @@ def main():
                       calib=calib, auto_level=a.level, use_clahe=not a.no_clahe,
                       roll=a.roll, range_step=a.range_step, spin=a.spin)
     r = out["result"]
+    brg = bearing_deg(r["heading_deg"], tr)
     print(f"\nLOCATION (cold start, no GPS/IMU/VO{', SPIN' if a.spin else ''}):")
     print(f"  E={out['E']:.0f}  N={out['N']:.0f}  ({crs})")
     if "lat" in out:
         print(f"  lat={out['lat']:.5f}  lon={out['lon']:.5f}")
     if a.spin:
-        print(f"  heading {r['heading_deg']:.0f} deg, altitude {r['altitude']:.0f} m, "
-              f"swept ~{r['spin_span_deg']:.0f} deg, "
+        print(f"  first-frame bearing {brg:.0f} deg (0=N, clockwise), altitude "
+              f"{r['altitude']:.0f} m, swept ~{r['spin_span_deg']:.0f} deg, "
               f"single-look ambiguity {r['single_frame_confusion']} cells")
     else:
-        print(f"  heading {r['heading_deg']:.0f} deg, speed {r['speed']:.0f} m/frame, "
+        print(f"  bearing {brg:.0f} deg (0=N, clockwise), speed {r['speed']:.0f} m/frame, "
               f"altitude {r['altitude']:.0f} m, "
               f"single-look ambiguity {r['single_frame_confusion']} cells")
+
+    tEN = tuple(a.truth_en) if a.truth_en else None
     if truth is not None:
-        eE, eN = local_to_world(*r["start_xy"], res, tr)
-        tE, tN = local_to_world(truth[0][0], truth[0][1], res, tr)
-        print(f"  (test) start error: {np.hypot(eE-tE, eN-tN):.0f} m")
+        tEN = local_to_world(truth[0][0], truth[0][1], res, tr)
+        print(f"  (test) start error: {np.hypot(out['E']-tEN[0], out['N']-tEN[1]):.0f} m")
 
     cands = out["candidates"]
-    print(f"\nBEST GUESSES (top {len(cands)} — check if one is your true spot):")
     c0 = cands[0]["cost"] if cands else 1.0
+    print(f"\nBEST GUESSES (top {len(cands)} — check if one is your true spot; "
+          f"cost x1.0 = best, near-equal costs = ambiguous):")
     for cd in cands:
         ll = f"  ({cd['lat']:.5f}, {cd['lon']:.5f})" if "lat" in cd else ""
         rel = cd["cost"] / c0 if c0 else 1.0
-        print(f"  #{cd['rank']}  E={cd['E']:.0f}  N={cd['N']:.0f}{ll}"
-              f"   cost x{rel:.3f}")
+        how = (f"brg {cd['bearing']:.0f}" + ("" if a.spin else f", {cd['speed']:.0f} m/fr")
+               + f", alt {cd['altitude']:.0f}")
+        far = (f"  [{np.hypot(cd['E']-tEN[0], cd['N']-tEN[1]):.0f} m from truth]"
+               if tEN else "")
+        print(f"  #{cd['rank']}  E={cd['E']:.0f}  N={cd['N']:.0f}{ll}   "
+              f"cost x{rel:.3f}  ({how}){far}")
+    if tEN:
+        tx, ty = world_to_local(tEN[0], tEN[1], res, tr)
+        ix = int(np.argmin(np.abs(ref["xs"] - tx))); iy = int(np.argmin(np.abs(ref["ys"] - ty)))
+        P = r["profile_cost"]; fin = np.isfinite(P)
+        inside = (ref["xs"][0] - ref["spacing"] <= tx <= ref["xs"][-1] + ref["spacing"]
+                  and ref["ys"][0] - ref["spacing"] <= ty <= ref["ys"][-1] + ref["spacing"])
+        if inside and np.isfinite(P[iy, ix]):
+            rank = int((P[fin] < P[iy, ix]).sum()) + 1
+            print(f"  TRUE SPOT: its grid cell ranks {rank} of {int(fin.sum())} "
+                  f"(top {100 * rank / fin.sum():.1f}%), cost x{P[iy, ix] / c0:.3f}")
+        else:
+            print("  TRUE SPOT: outside the searched area (DSM/crop doesn't cover it)")
 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from rasterio.plot import plotting_extent
     H, W = dsm.shape
+    dext = plotting_extent(dsm, tr)                     # north-up, real E/N axes
+    traj = np.array([local_to_world(px, py, res, tr) for px, py in r["trajectory"]])
     fig, ax = plt.subplots(1, 2, figsize=(13, 5.4))
-    ax[0].imshow(dsm, origin="lower", cmap="terrain", extent=[0, W*res, 0, H*res])
+    ax[0].imshow(dsm, cmap="terrain", extent=dext)
     if truth is not None:
-        ax[0].plot(truth[:, 0], truth[:, 1], "g-", lw=2, label="true path")
-        ax[0].plot(truth[0, 0], truth[0, 1], "g*", ms=14)
-    ax[0].plot(r["trajectory"][:, 0], r["trajectory"][:, 1], "c--", lw=2, label="recovered")
-    ax[0].plot(*r["start_xy"], "c+", ms=14, mew=3)
-    ax[0].legend(); ax[0].set_title("DSM + recovered trajectory (local m)")
-    sc = r["seq_cost"].copy(); sc[~np.isfinite(sc)] = np.nan
+        tw = np.array([local_to_world(px, py, res, tr) for px, py in truth])
+        ax[0].plot(tw[:, 0], tw[:, 1], "g-", lw=2, label="true path")
+    if tEN:
+        ax[0].plot(*tEN, "g*", ms=14, label="true start")
+    ax[0].plot(traj[:, 0], traj[:, 1], "c--", lw=2, label="recovered")
+    ax[0].plot(out["E"], out["N"], "c+", ms=14, mew=3)
+    ax[0].legend(); ax[0].set_title("DSM + recovered trajectory (north up)")
+    sc = r["profile_cost"].copy(); sc[~np.isfinite(sc)] = np.nan
     ax[1].imshow(np.exp(-(sc - np.nanmin(sc)) / (3 * np.deg2rad(0.4) ** 2)),
-                 origin="lower", cmap="magma",
-                 extent=[ref["xs"][0], ref["xs"][-1], ref["ys"][0], ref["ys"][-1]])
-    if truth is not None:
-        ax[1].plot(truth[0, 0], truth[0, 1], "g*", ms=14)
-    ax[1].plot(*r["start_xy"], "c+", ms=14, mew=3)
-    ax[1].set_title("cold-start likelihood")
-    fig.suptitle("locate_video: DSM GeoTIFF + video -> location (cold start)", fontsize=12)
+                 cmap="magma", extent=grid_extent(ref["xs"], ref["ys"], res, tr))
+    if tEN:
+        ax[1].plot(*tEN, "g*", ms=14)
+    ax[1].plot(out["E"], out["N"], "c+", ms=14, mew=3)
+    ax[1].set_title("cold-start likelihood (best over heading/speed/alt)")
+    for x_ in ax:
+        x_.ticklabel_format(useOffset=False, style="plain")
+        x_.set_xlabel("E (m)"); x_.set_ylabel("N (m)")
+    fig.suptitle(f"locate_video: DSM + video -> location (cold start), {crs}", fontsize=12)
     fig.tight_layout(); fig.savefig(os.path.join(a.out, "locate.png"), dpi=120)
     print(f"  figure -> {os.path.join(a.out, 'locate.png')}")
 
-    # best-guesses map: numbered top-K candidates on the DSM so the user can see
-    # at a glance whether their true location is among them
+    # best-guesses map: numbered top-K candidates on the DSM, north up in real
+    # E/N, so the user can see at a glance whether their true spot is among them
     fig2, bx = plt.subplots(figsize=(8.6, 8.0))
-    bx.imshow(dsm, origin="lower", cmap="terrain", extent=[0, W*res, 0, H*res])
+    bx.imshow(dsm, cmap="terrain", extent=dext)
     for cd in cands:
         first = cd["rank"] == 1
         col = "lime" if first else "yellow"
-        bx.plot(cd["x"], cd["y"], "o", mfc="none", mec=col,
+        bx.plot(cd["E"], cd["N"], "o", mfc="none", mec=col,
                 ms=18 if first else 13, mew=2.5 if first else 1.8)
         lab = f"#{cd['rank']}"
         if "lat" in cd:
             lab += f"\n{cd['lat']:.4f},{cd['lon']:.4f}"
-        bx.annotate(lab, (cd["x"], cd["y"]), color=col, fontsize=8,
+        bx.annotate(lab, (cd["E"], cd["N"]), color=col, fontsize=8,
                     fontweight="bold", xytext=(7, 7), textcoords="offset points")
-    if truth is not None:
-        bx.plot(truth[0, 0], truth[0, 1], "r*", ms=18, label="truth")
+    if tEN:
+        bx.plot(*tEN, "r*", ms=18, label="true spot")
         bx.legend(loc="upper right")
-    bx.set_title(f"Best guesses (#1 = best, lime). E/N origin at SW corner.\n"
-                 f"DSM {W*res/1000:.1f}x{H*res/1000:.1f} km @ {res:.0f} m")
-    bx.set_xlabel("local east (m)"); bx.set_ylabel("local north (m)")
+    bx.ticklabel_format(useOffset=False, style="plain")
+    bx.set_title(f"Best guesses (#1 = best, lime) — north up\n"
+                 f"DSM {W*res/1000:.1f}x{H*res/1000:.1f} km @ {res:.0f} m, {crs}")
+    bx.set_xlabel("E (m)"); bx.set_ylabel("N (m)")
     fig2.tight_layout(); fig2.savefig(os.path.join(a.out, "candidates.png"), dpi=120)
     print(f"  best-guesses map -> {os.path.join(a.out, 'candidates.png')}")
 

@@ -18,7 +18,8 @@ from horizon import camera
 
 
 def load_calib(path):
-    """Return (K, dist, fov_deg) from a .json/.npz with fx,fy,cx,cy,k1,k2,p1,p2,k3."""
+    """Return (K, dist, size) from a .json/.npz with fx,fy,cx,cy,k1,k2,p1,p2,k3.
+    size = (width, height) the calibration was made at, or None if not stored."""
     if path.endswith(".npz"):
         d = dict(np.load(path))
     else:
@@ -26,7 +27,24 @@ def load_calib(path):
             d = json.load(fh)
     K = np.array([[d["fx"], 0, d["cx"]], [0, d["fy"], d["cy"]], [0, 0, 1]], float)
     dist = np.array([d.get(k, 0.0) for k in ("k1", "k2", "p1", "p2", "k3")], float)
-    return K, dist
+    size = (int(d["width"]), int(d["height"])) if "width" in d and "height" in d else None
+    return K, dist, size
+
+
+def fit_calib(calib, w, h):
+    """Rescale intrinsics to the frame size actually processed — a calibration
+    made on 4K photos is wrong for 1080p video unless scaled. Returns
+    ((K, dist), aspect_mismatch); a mismatch means the video mode crops the
+    sensor differently from the calibration images, so the calib may not apply.
+    """
+    K, dist = calib[0], calib[1]
+    size = calib[2] if len(calib) > 2 else None
+    if not size:
+        return (K, dist), False
+    sx, sy = w / size[0], h / size[1]
+    K2 = K.copy()
+    K2[0, 0] *= sx; K2[0, 2] *= sx; K2[1, 1] *= sy; K2[1, 2] *= sy
+    return (K2, dist), abs(sx - sy) > 0.02 * max(sx, sy)
 
 
 def fov_from_K(K, width):
@@ -69,7 +87,7 @@ def preprocess(frame, fov_default=65.0, calib=None, auto_level=True,
     gray = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     fov = fov_default
     if calib is not None:
-        K, dist = calib
+        K, dist = calib[0], calib[1]
         gray = undistort(gray, K, dist)
         fov = fov_from_K(K, gray.shape[1])
     if use_clahe:

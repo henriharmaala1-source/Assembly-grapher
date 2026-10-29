@@ -170,6 +170,10 @@ def cold_start_blind(ref, frame_curves, frame_daz, fov_deg=65.0,
               f"({n_alt} altitudes) in {time.time()-t0:.0f}s")
 
     best = None
+    # profile surface: best cost at each start cell over ANY heading/alt/speed,
+    # so runner-up candidates are judged on their own best hypothesis
+    prof = np.full((ny, nx), np.inf)
+    p_th = np.zeros((ny, nx)); p_v = np.zeros((ny, nx)); p_ai = np.zeros((ny, nx), int)
     for th in headings_deg:
         c, s = np.cos(np.deg2rad(th)), np.sin(np.deg2rad(th))
         for ai in range(n_alt):
@@ -182,6 +186,8 @@ def cold_start_blind(ref, frame_curves, frame_daz, fov_deg=65.0,
                     good = np.isfinite(m) & ref["valid"]
                     seq[good] += m[good]; cnt[good] += 1
                 seq[cnt < Nf] = np.inf
+                upd = seq < prof
+                prof[upd] = seq[upd]; p_th[upd] = th; p_v[upd] = v; p_ai[upd] = ai
                 mn = float(seq.min())
                 if best is None or mn < best["cost"]:
                     iy, ix = np.unravel_index(np.argmin(seq), seq.shape)
@@ -198,13 +204,21 @@ def cold_start_blind(ref, frame_curves, frame_daz, fov_deg=65.0,
     return dict(start_xy=(sx, sy), heading_deg=best["theta"], speed=best["speed"],
                 altitude=float(agls[best["alt_idx"]]), trajectory=traj,
                 seq_cost=best["seq"], first_cost=first,
+                profile_cost=prof, profile_heading=p_th, profile_speed=p_v,
+                profile_alt=agls[p_ai],
                 single_frame_confusion=single, seconds=time.time() - t0)
 
 
-def _best_shift(a, b, max_frac=0.8):
-    """Azimuth shift (samples) such that b ~= a shifted by s, via overlap SSD."""
-    n = a.size; rng = int(n * max_frac); best = (1e18, 0)
-    for s in range(-rng, rng + 1):
+def _best_shift(a, b, max_frac=0.8, center=None, window=None):
+    """Azimuth shift (samples, sub-sample refined) such that b ~= a shifted by s,
+    via overlap SSD. center/window restrict the search to a predicted range."""
+    n = a.size; rng = int(n * max_frac)
+    lo, hi = -rng, rng
+    if center is not None and window is not None:
+        lo = max(lo, int(np.floor(center - window)))
+        hi = min(hi, int(np.ceil(center + window)))
+    ss, ds = [], []
+    for s in range(lo, hi + 1):
         if s >= 0:
             aa, bb = a[s:], b[:n - s]
         else:
@@ -212,59 +226,99 @@ def _best_shift(a, b, max_frac=0.8):
         if aa.size < n // 4:
             continue
         aa = aa - aa.mean(); bb = bb - bb.mean()
-        d = float(np.mean((aa - bb) ** 2))
-        if d < best[0]:
-            best = (d, s)
-    return best[1]
+        ss.append(s); ds.append(float(np.mean((aa - bb) ** 2)))
+    if not ds:
+        return 0.0
+    k = int(np.argmin(ds))
+    if 0 < k < len(ds) - 1:                            # parabolic vertex
+        dm, d0, dp = ds[k - 1], ds[k], ds[k + 1]
+        den = dm - 2 * d0 + dp
+        if den > 0:
+            return ss[k] + float(np.clip(0.5 * (dm - dp) / den, -0.5, 0.5))
+    return float(ss[k])
 
 
-def _spin_rotations(curves, daz, step_deg=0.5):
-    """Cumulative camera rotation (radians) per frame, from consecutive overlap."""
+def _spin_rotations(curves, daz, step_deg=0.5, key_frac=0.35):
+    """Cumulative camera rotation (radians) per frame.
+
+    Each frame is registered to the latest KEYFRAME, and a new keyframe starts
+    once the view has turned key_frac of the FOV. Overlap stays high however
+    fast the camera spins (given dense frames), and chaining keyframes instead
+    of every frame pair keeps the accumulated drift low. A spin is smooth, so
+    each shift is searched only near the one predicted from the previous step —
+    otherwise a look-alike skyline feature elsewhere in the view can win, and
+    one bad keyframe corrupts every rotation after it.
+    """
     step = np.deg2rad(step_deg)
     g = np.arange(daz.min(), daz.max(), step)
     fr = [np.interp(g, daz, c) for c in curves]
-    cum = [0.0]
+    win = max(4, int(0.15 * g.size))
+    cum = [0.0]; key, key_rot, prev_s, inc = 0, 0.0, 0.0, None
     for i in range(1, len(fr)):
-        cum.append(cum[-1] + _best_shift(fr[i - 1], fr[i]) * step)
+        if inc is None:                                # first step: no prior yet
+            s = _best_shift(fr[key], fr[i])
+        else:
+            s = _best_shift(fr[key], fr[i], center=prev_s + inc, window=win)
+        inc = s - prev_s
+        cum.append(key_rot + s * step)
+        if abs(s) > key_frac * g.size:
+            key, key_rot, prev_s = i, cum[-1], 0.0
+        else:
+            prev_s = s
     return np.array(cum)
 
 
 def cold_start_spin(ref, frame_curves, frame_daz, fov_deg=65.0,
-                    headings_deg=None, progress=True):
+                    headings_deg=None, max_match=24, progress=True):
     """Spinning camera at ~one spot (hover + yaw): the drone is STATIONARY and
     the heading sweeps. Estimate the per-frame rotation from frame overlap, then
     find the position by summing per-frame residuals at those headings (no speed,
-    no straight-line motion). A wide sweep makes the fix uniquely localizing."""
+    no straight-line motion). A wide sweep makes the fix uniquely localizing.
+
+    Pass frames DENSELY (consecutive frames must overlap, i.e. turn well under
+    one FOV apart); rotation is tracked on all of them and the match then uses
+    up to max_match frames spread over the sweep.
+    """
     if headings_deg is None:
         headings_deg = np.arange(0, 360, 4)
     n_alt, ny, nx, _ = ref["panos"].shape
-    Nf = len(frame_curves)
     cumrot = _spin_rotations(frame_curves, frame_daz)
     span = float(np.rad2deg(cumrot.max() - cumrot.min()))
+    sel = np.unique(np.linspace(0, len(frame_curves) - 1,
+                                min(len(frame_curves), max_match)).round().astype(int))
+    curves = [frame_curves[j] for j in sel]; rots = cumrot[sel]
+    Nf = len(curves)
     t0 = time.time()
     best = None
+    prof = np.full((ny, nx), np.inf)
+    p_th = np.zeros((ny, nx)); p_ai = np.zeros((ny, nx), int)
     for th in headings_deg:
         thr = np.deg2rad(th)
         for ai in range(n_alt):
             seq = np.zeros((ny, nx))
             for i in range(Nf):
-                seq += residual_map(ref, frame_curves[i], frame_daz,
-                                    thr + cumrot[i], fov_deg, ai)
+                seq += residual_map(ref, curves[i], frame_daz,
+                                    thr + rots[i], fov_deg, ai)
             seq = np.where(ref["valid"], seq, np.inf)
+            upd = seq < prof
+            prof[upd] = seq[upd]; p_th[upd] = th; p_ai[upd] = ai
             mn = float(np.nanmin(seq))
             if best is None or mn < best["cost"]:
                 iy, ix = np.unravel_index(np.nanargmin(seq), seq.shape)
                 best = dict(cost=mn, theta=th, alt_idx=ai, iy=iy, ix=ix, seq=seq)
     sx, sy = ref["xs"][best["ix"]], ref["ys"][best["iy"]]
-    f0 = np.min([residual_map(ref, frame_curves[0], frame_daz, np.deg2rad(t),
+    f0 = np.min([residual_map(ref, curves[0], frame_daz, np.deg2rad(t),
                               fov_deg, best["alt_idx"]) for t in headings_deg], 0)
     f0v = f0[ref["valid"]]
     single = int((f0v <= f0v.min() + np.deg2rad(0.4) ** 2).sum())
     if progress:
-        print(f"  spin: {Nf} frames swept ~{span:.0f} deg, {time.time()-t0:.0f}s")
+        print(f"  spin: rotation tracked over {len(frame_curves)} frames, swept "
+              f"~{span:.0f} deg; matched {Nf} frames in {time.time()-t0:.0f}s")
     return dict(start_xy=(sx, sy), heading_deg=best["theta"],
                 altitude=float(ref["agls"][best["alt_idx"]]),
                 trajectory=np.array([(sx, sy)]), seq_cost=best["seq"],
+                profile_cost=prof, profile_heading=p_th,
+                profile_speed=np.zeros((ny, nx)), profile_alt=ref["agls"][p_ai],
                 first_cost=f0, single_frame_confusion=single,
                 spin_span_deg=span, speed=0.0, seconds=time.time() - t0)
 

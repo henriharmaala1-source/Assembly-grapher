@@ -608,7 +608,9 @@ if(TARGET opencv_videoio)
   add_test(NAME footage_vio_synthetic
            COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test/footage_vio_synthetic.sh
                    $<TARGET_FILE:downvio_sweep> $<TARGET_FILE:footage_vio> ${CMAKE_CURRENT_BINARY_DIR}/footage_synth)
-  set_tests_properties(footage_vio_synthetic PROPERTIES SKIP_RETURN_CODE 77)
+  # Five runs over one rendered clip (two to three minutes on a CI runner),
+  # past ctest's 90 s default there -- the same as the other long checks.
+  set_tests_properties(footage_vio_synthetic PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 400)
 endif()
 
 # The veto's fast path equals its reference (test/sphere_clear_check.cpp).

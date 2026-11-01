@@ -447,6 +447,11 @@ columns as the classical ones, on seeds it never trained on.
                                            knowledge would be worth, before
                                            anything is built to approximate it.
 
+                     IT USES EVERY CORE: episodes run side by side (one per
+                     hardware thread), with the same numbers in the same order
+                     as one at a time. On 4 busy cores that was 2.9x; a
+                     16-thread desktop should see most of 16x.
+
                        --brake-mask        a primitive must be able to STOP
                                            inside its own confirmed-free length
                                            at its own speed (the aircraft

@@ -34,6 +34,10 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 // Where to send a probe's output so it does not clutter the console.
@@ -299,7 +303,13 @@ int cmdBench(std::vector<std::string> args) {
             while (i + 1 < args.size() && args[i + 1][0] != '-') only.push_back(args[++i]);
         }
     }
+    // Every core: episodes are independent (see below). OpenCV's own
+    // threading inside an episode is turned off while several run, or the two
+    // would fight over the same cores.
+    const unsigned benchThreads = std::max(1u, std::thread::hardware_concurrency());
+    if (benchThreads > 1) cv::setNumThreads(1);
     std::printf("baselines through VoxelEnv -- the same harness a learned policy uses\n");
+    std::printf("%u episodes at a time (one per hardware thread)\n", benchThreads);
     std::printf("corefrac %.2f   %s depth   %d steps%s%s\n", coreFrac,
                 stereo ? "simulated stereo" : "truth", maxSteps,
                 oracle ? "   ORACLE MAP (truth within 8 m) -- a ceiling, not a planner" : "",
@@ -322,8 +332,22 @@ int cmdBench(std::vector<std::string> args) {
             continue;
         double sum = 0, sumNet = 0; long long sumCells = 0;
         int runs = 0, coll = 0;
+        // EPISODES IN PARALLEL. Each (world, seed) is an independent
+        // VoxelEnv with its own seeded randomness, so running them side by
+        // side changes nothing but the wall clock: the same numbers, printed
+        // in the same order as they complete in sequence. On one thread a
+        // full 10-planner bench was hours; it is now divided by the cores.
+        struct Job { std::string w; int s; };
+        std::vector<Job> jobs;
         for (const std::string& w : worlds)
-            for (int s = s0; s <= s1; ++s) {
+            for (int s = s0; s <= s1; ++s) jobs.push_back({w, s});
+        std::vector<EnvStep> res(jobs.size());
+        std::vector<char> done(jobs.size(), 0);
+        std::mutex mx;
+        std::condition_variable cvDone;
+        std::atomic<size_t> next{0};
+        auto worker = [&]() {
+            for (size_t j; (j = next++) < jobs.size();) {
                 EnvConfig c;
                 // RANGE, NOT GOAL, and this is not cosmetic. Under GOAL the
                 // episode ENDS the moment the aircraft is within goalTolM --
@@ -334,35 +358,53 @@ int cmdBench(std::vector<std::string> args) {
                 // scaffolding; see CLAUDE.md.
                 c.objective = EnvConfig::RANGE;
                 c.coreFrac = coreFrac;
-                c.world = w; c.seed = unsigned(s); c.maxSteps = maxSteps;
+                c.world = jobs[j].w; c.seed = unsigned(jobs[j].s); c.maxSteps = maxSteps;
                 c.truthDepth = !stereo;
                 c.oracleMap = oracle;
                 c.egoKnownOnly = egoKnownOnly;
                 c.brakeMask = brakeMask;
-                c.horizonS = (w == "maze") ? 0.6f : 2.0f;
+                c.horizonS = (jobs[j].w == "maze") ? 0.6f : 2.0f;
                 VoxelEnv env(c);
-                unsigned rng = unsigned(s) * 7919u + unsigned(pol) * 104729u;
+                unsigned rng = unsigned(jobs[j].s) * 7919u + unsigned(pol) * 104729u;
                 EnvStep st;
                 for (int t = 0; t < maxSteps; ++t) {
                     st = env.step(chooseIn(pol, env, rng));
                     if (st.done || st.truncated) break;
                 }
-                // A collision is the failure here; arriving at the goal is
-                // not a success, it is just something that happened on the way.
-                // reachedGoal is always false under RANGE -- the goal does
-                // not end an episode there -- so there are exactly two ways
-                // out: something stopped it, or the budget did.
-                const char* oc = st.collisions ? "COLLIDED"
-                                               : "flew the whole budget";
-                const float loops = st.travelM / std::max(0.1f, st.netDispM);
-                std::printf("%-8s %-8s %-5d %-16s %9.1f %8.1f %6d %6.1fx %9.2f\n",
-                            polName(pol), w.c_str(), s, oc, st.travelM,
-                            st.netDispM, st.cellsVisited, loops, st.minClearM);
-                std::fflush(stdout);
-                sum += st.travelM; sumNet += st.netDispM; sumCells += st.cellsVisited;
-                ++runs;
-                coll += st.collisions ? 1 : 0;
+                std::lock_guard<std::mutex> lk(mx);
+                res[j] = st; done[j] = 1;
+                cvDone.notify_all();
             }
+        };
+        const unsigned nThreads = std::max(1u, std::min(unsigned(jobs.size()), benchThreads));
+        std::vector<std::thread> pool;
+        for (unsigned k = 0; k < nThreads; ++k) pool.emplace_back(worker);
+        for (size_t j = 0; j < jobs.size(); ++j) {
+            EnvStep st;
+            {
+                std::unique_lock<std::mutex> lk(mx);
+                cvDone.wait(lk, [&] { return done[j] != 0; });
+                st = res[j];
+            }
+            const std::string& w = jobs[j].w;
+            const int s = jobs[j].s;
+            // A collision is the failure here; arriving at the goal is
+            // not a success, it is just something that happened on the way.
+            // reachedGoal is always false under RANGE -- the goal does
+            // not end an episode there -- so there are exactly two ways
+            // out: something stopped it, or the budget did.
+            const char* oc = st.collisions ? "COLLIDED"
+                                           : "flew the whole budget";
+            const float loops = st.travelM / std::max(0.1f, st.netDispM);
+            std::printf("%-8s %-8s %-5d %-16s %9.1f %8.1f %6d %6.1fx %9.2f\n",
+                        polName(pol), w.c_str(), s, oc, st.travelM,
+                        st.netDispM, st.cellsVisited, loops, st.minClearM);
+            std::fflush(stdout);
+            sum += st.travelM; sumNet += st.netDispM; sumCells += st.cellsVisited;
+            ++runs;
+            coll += st.collisions ? 1 : 0;
+        }
+        for (std::thread& th : pool) th.join();
         const double r = std::max(1, runs);
         std::printf("  -> %-8s runs %d  collisions %d  mean travel %.1f m  "
                     "net %.1f m  cells %.0f  loops %.1fx\n\n",

@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -372,6 +373,59 @@ bool VoxelMap::sphereClear(float x, float y, float z, float r,
     int x0, y0, z0, x1, y1, z1;
     worldToCell(x - r, y - r, z - r, x0, y0, z0);
     worldToCell(x + r, y + r, z + r, x1, y1, z1);
+    // THE HOT LOOP of a simulator step (thousands of calls: every primitive,
+    // every rollout point). The per-axis distances depend on one coordinate
+    // each, so they are computed once per axis instead of once per cell, and
+    // a slice or row already out of reach is skipped whole. Same arithmetic in
+    // the same order as computing them per cell, so the answer is identical.
+    float nx2[32], ny2[32], nz2[32];
+    const int nX = x1 - x0 + 1, nY = y1 - y0 + 1, nZ = z1 - z0 + 1;
+    if (nX > 32 || nY > 32 || nZ > 32) return sphereClearSlow(x, y, z, r, coreFrac);
+    for (int i = 0; i < nX; ++i) {
+        float bx, by, bz; cellCentre(x0 + i, 0, 0, bx, by, bz);
+        const float n = std::max(0.f, std::fabs(x - bx) - h); nx2[i] = n * n;
+    }
+    for (int i = 0; i < nY; ++i) {
+        float bx, by, bz; cellCentre(0, y0 + i, 0, bx, by, bz);
+        const float n = std::max(0.f, std::fabs(y - by) - h); ny2[i] = n * n;
+    }
+    for (int i = 0; i < nZ; ++i) {
+        float bx, by, bz; cellCentre(0, 0, z0 + i, bx, by, bz);
+        const float n = std::max(0.f, std::fabs(z - bz) - h); nz2[i] = n * n;
+    }
+    for (int cz = z0; cz <= z1; ++cz) {
+        if (nz2[cz - z0] > r2) continue;
+        for (int cy = y0; cy <= y1; ++cy) {
+            if (ny2[cy - y0] + nz2[cz - z0] > r2) continue;
+            for (int cx = x0; cx <= x1; ++cx) {
+                // Nearest point of this voxel's box to the sphere centre.
+                const float d2 = nx2[cx - x0] + ny2[cy - y0] + nz2[cz - z0];
+                if (d2 > r2) continue;              // the box does not reach
+                if (!inBounds(cx, cy, cz)) {
+                    // Outside the map is unknown. Treat it like any unknown.
+                    if (coreFrac > 0.f && d2 <= core2) return false;
+                    continue;
+                }
+                const float l = log_[idx(cx, cy, cz)];
+                if (l > p_.occThresh) return false;                  // blocked
+                if (coreFrac > 0.f && d2 <= core2 && !(l < p_.freeThresh))
+                    return false;                                    // not confirmed
+            }
+        }
+    }
+    return true;
+}
+
+// The original per-cell form, for a ball too large for the fixed buffers
+// above (radius past 16 cells). Kept rather than allocated around: it is the
+// reference the fast path is checked against.
+bool VoxelMap::sphereClearSlow(float x, float y, float z, float r, float coreFrac) const {
+    const float h = p_.cell * 0.5f;
+    const float r2 = r * r;
+    const float core = r * coreFrac, core2 = core * core;
+    int x0, y0, z0, x1, y1, z1;
+    worldToCell(x - r, y - r, z - r, x0, y0, z0);
+    worldToCell(x + r, y + r, z + r, x1, y1, z1);
     for (int cz = z0; cz <= z1; ++cz)
         for (int cy = y0; cy <= y1; ++cy)
             for (int cx = x0; cx <= x1; ++cx) {
@@ -662,16 +716,30 @@ void VoxelMap::recentre(float cx, float cy, float cz) {
     int sz = int(std::lround((noz - oz_) / p_.cell));
     if (!sx && !sy && !sz) return;
 
-    std::vector<float> out(log_.size(), 0.f);
-    for (int z = 0; z < p_.nz; ++z)
-        for (int y = 0; y < p_.ny; ++y)
-            for (int x = 0; x < p_.nx; ++x) {
-                int ox = x + sx, oy = y + sy, oz = z + sz;
-                if (ox < 0 || oy < 0 || oz < 0 ||
-                    ox >= p_.nx || oy >= p_.ny || oz >= p_.nz) continue;
-                out[idx(x, y, z)] = log_[idx(ox, oy, oz)];
+    // Whole rows at a time into a buffer kept between calls. The first version
+    // allocated and zeroed a fresh 22 MB vector and bounds-checked every one
+    // of the 5.5 M cells on every shift -- the second-largest cost of a
+    // simulator step, three map levels a step. The result is identical: the
+    // same cells copied, everything that scrolls in reset to 0 (unknown).
+    // Every destination cell is written exactly once: the in-range part of a
+    // row copied, the rest of it zeroed.
+    scratch_.resize(log_.size());
+    const int xa = std::max(0, -sx), xb = std::min(p_.nx, p_.nx - sx);   // x range whose source is inside
+    for (int z = 0; z < p_.nz; ++z) {
+        const int oz = z + sz;
+        for (int y = 0; y < p_.ny; ++y) {
+            const int oy = y + sy;
+            float* dst = &scratch_[idx(0, y, z)];
+            if (oz < 0 || oz >= p_.nz || oy < 0 || oy >= p_.ny || xa >= xb) {
+                std::fill(dst, dst + p_.nx, 0.f);
+                continue;
             }
-    log_.swap(out);
+            std::fill(dst, dst + xa, 0.f);
+            std::memcpy(dst + xa, &log_[idx(xa + sx, oy, oz)], sizeof(float) * size_t(xb - xa));
+            std::fill(dst + xb, dst + p_.nx, 0.f);
+        }
+    }
+    log_.swap(scratch_);
     ox_ += sx * p_.cell; oy_ += sy * p_.cell; oz_ += sz * p_.cell;
 }
 

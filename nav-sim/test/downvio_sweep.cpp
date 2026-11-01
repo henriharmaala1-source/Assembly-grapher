@@ -47,6 +47,7 @@
 //   --write-srt F      the truth as DJI-layout subtitles: position, height
 //                      above the ground as rel_alt, gimbal angles
 //   --hover-end S      slow to a stop at the end of the path and hover S s
+//   --rs-readout-ms T  a rolling shutter reading out over T ms (see Opt)
 //
 // PINHOLE ONLY. navcore's camera model and DepthVio are pinhole; real lenses
 // past ~120 deg are fisheye, which concentrates resolution at the centre
@@ -203,6 +204,12 @@ struct Opt {
     // over the start mark", which the landmark memory needs to confirm a
     // return. 0 (the default) keeps every earlier flight exactly as it was.
     float hoverEnd = 0.f;
+    // --rs-readout-ms T: a ROLLING SHUTTER. Rows are read top to bottom over
+    // T ms ending at the frame's time, so each band of rows sees the world
+    // from where the aircraft was when that band was read (16 bands, each a
+    // full render: 16x the render cost). The estimators still assume one
+    // instant per frame -- which is the error being measured. 0 = global.
+    float rsReadoutMs = 0.f;
 };
 
 // Arc length -> position (east, north) and heading for --path.
@@ -286,6 +293,7 @@ bool parse(int argc, char** argv, Opt& o, bool& header) {
         else if (a == "--write-video" && i + 1 < argc) o.writeVideo = argv[++i];
         else if (a == "--write-srt" && i + 1 < argc) o.writeSrt = argv[++i];
         else if (a == "--hover-end") f(o.hoverEnd);
+        else if (a == "--rs-readout-ms") f(o.rsReadoutMs);
         else if (a == "--header") header = true;
         else { std::fprintf(stderr, "downvio_sweep: unknown argument %s\n", a.c_str()); return false; }
     }
@@ -471,6 +479,24 @@ int main(int argc, char** argv) {
             kground::DroneShadow sh;
             sh.on = o.droneShadow; sh.e = float(pos.e); sh.n = float(pos.n); sh.u = float(pos.u);
             ir = ground.render(world, cam, truth, blur, sh);
+        }
+        if (o.rsReadoutMs > 0.f) {
+            constexpr int kBands = 16;
+            for (int b = 0; b < kBands; ++b) {
+                const double tb = t - 1e-3 * o.rsReadoutMs * (1.0 - (b + 0.5) / kBands);
+                double yb;
+                const V3 pb = poseAt(tb, yb);
+                const sim::CamPose cb = camAt(pb, yb, pitchAt(tb), rollAt(tb), 0.0, 0.0);
+                cv::Mat band;
+                if (o.ground == "noise") band = cam.renderIR(world, cb);
+                else {
+                    kground::DroneShadow sh;
+                    sh.on = o.droneShadow; sh.e = float(pb.e); sh.n = float(pb.n); sh.u = float(pb.u);
+                    band = ground.render(world, cam, cb, {}, sh);
+                }
+                const int r0 = b * o.h / kBands, r1 = (b + 1) * o.h / kBands;
+                band.rowRange(r0, r1).copyTo(ir.rowRange(r0, r1));
+            }
         }
         if (!o.writeVideo.empty()) {
 #ifdef DOWNVIO_HAVE_VIDEOIO

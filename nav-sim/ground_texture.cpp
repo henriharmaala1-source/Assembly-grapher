@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <string>
 
@@ -140,7 +141,7 @@ float GroundRenderer::groundAlbedo(float x, float y, float foot) const {
     auto mat = [&](const char* nm) {
         const Texture* t = find(nm);
         // Built surfaces ARE periodic: paving laid in a pattern is one layer.
-        if (std::string(nm) == "paving") return t->sample(x, y, foot);
+        if (std::strcmp(nm, "paving") == 0) return t->sample(x, y, foot);
         // Cells SMALLER than the photograph: a tile that repeats even twice
         // inside one cell shows as a lattice from height.
         const float cellM = 0.8f * t->sizeM;
@@ -254,11 +255,18 @@ cv::Mat GroundRenderer::render(const sim::VoxelWorld& w, const sim::DepthCamera&
     const int W = cam.params().width, H = cam.params().height;
     cv::Mat rad(H, W, CV_32F, cv::Scalar(0));
     const std::vector<sim::CamPose> poses = blur.empty() ? std::vector<sim::CamPose>{pose} : blur;
-    for (const sim::CamPose& p : poses)
-        for (int v = 0; v < H; ++v) {
+    // Rows in parallel: radiance() is a pure function of the pixel, and each
+    // pixel still sums its poses in the same order, so the image is
+    // bit-identical to the single-threaded loop -- only faster (this loop was
+    // the whole cost of a downvio_sweep frame over real ground). The noise
+    // below stays sequential: it draws from one seeded generator in order.
+    cv::parallel_for_(cv::Range(0, H), [&](const cv::Range& rows) {
+        for (int v = rows.start; v < rows.end; ++v) {
             float* row = rad.ptr<float>(v);
-            for (int u = 0; u < W; ++u) row[u] += radiance(w, cam, p, u, v, sh);
+            for (const sim::CamPose& p : poses)
+                for (int u = 0; u < W; ++u) row[u] += radiance(w, cam, p, u, v, sh);
         }
+    });
     rad *= 1.0 / double(poses.size());
     // Vignetting, then auto-exposure on the central half (as cameras meter).
     for (int v = 0; v < H; ++v) {

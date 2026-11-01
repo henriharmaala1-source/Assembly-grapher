@@ -611,6 +611,13 @@ if(TARGET opencv_videoio)
   set_tests_properties(footage_vio_synthetic PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# The veto's fast path equals its reference (test/sphere_clear_check.cpp).
+add_executable(sphere_clear_check test/sphere_clear_check.cpp)
+target_link_libraries(sphere_clear_check PRIVATE navcore)
+target_include_directories(sphere_clear_check PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(sphere_clear_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME sphere_clear_check COMMAND sphere_clear_check)
+
 # The EGO-style bench baseline routes round a trunk, stays straight in the
 # open, and treats unknown as free only when told to (test/ego_planner_check.cpp).
 add_executable(ego_planner_check test/ego_planner_check.cpp ego_planner.cpp)

@@ -222,3 +222,39 @@ and +1 / +2 deg bias). 1.5 m, 15 m paths, procedural texture, 4 seeds
 
 Not tested: uneven ground (vision attitude leans on the flat-ground plane),
 other heights, real-ground photographs, a drifting rather than constant bias.
+
+## Rolling shutter: a silent bias that grows with speed
+
+A rolling-shutter sensor, like the DJI Neo 2's, reads the image a line at a
+time. When the aircraft moves during the readout, each row sees the ground
+from a slightly different place, and the estimators here assume one instant
+per frame. The research survey ranked measuring this first
+(`reports/GNSS denied navigation deep survey.md`).
+
+`downvio_sweep --rs-readout-ms T` renders each of 16 bands of rows at its
+own read time, ending at the frame's timestamp.
+
+**Setup:** gimbal straight down, 5 m, 82° lens, 20 m flight, navcore's
+noise ground, 4 seeds per cell. Mean drift ± standard error. Raw:
+`downward_vio_rolling_shutter.csv`.
+
+| speed | global shutter | 15 ms readout | 30 ms readout |
+|---|---|---|---|
+| 2 m/s | 0.33 ± 0.10 % | 0.64 ± 0.09 % | 0.81 ± 0.15 % |
+| 5 m/s | 0.34 ± 0.03 % | 1.09 ± 0.21 % | **2.15 ± 0.23 %** |
+
+- **The added drift grows roughly with speed × readout:** +0.3–0.5% at
+  2 m/s, and +0.75% / +1.8% at 5 m/s. At 5 m/s with a 30 ms readout it is
+  six times the global-shutter drift.
+- **No frame was lost in any run.** The tracker keeps every frame and the
+  estimate is simply biased, so nothing in the VIO's own health signals
+  shows it.
+- **For the Neo 2 footage:** compare slow and fast passes over the same
+  ground. A gap that grows with speed is rolling shutter, not the method.
+  Measure the readout time (the LED-banding method in the survey) before
+  reading anything into fast passes.
+- **For the aircraft:** this is the measured argument for a global-shutter
+  camera (an OV9281 is about $26–43). The alternative is correcting each
+  feature for its row's time with a constant-velocity model, which DJI-era
+  studies found sufficient. That is not implemented here.
+

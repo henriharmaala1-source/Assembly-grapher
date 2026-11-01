@@ -249,15 +249,11 @@ int cmdTrack(std::vector<std::string> args) {
 }
 
 // ------------------------------------------------------------------ baselines
-// The nine classical planners live in rl_env.hpp, so `bench` and the python
-// evaluator score against the SAME implementation rather than two that are
-// free to drift apart.
+// The ten classical planners live in rl_env.hpp (and ego_planner.hpp), so
+// `bench` and the python evaluator score against the SAME implementation
+// rather than two that are free to drift apart.
 using Pol = BaselinePolicy;
 inline const char* polName(Pol p) { return baselineName(p); }
-inline int choose(Pol pol, const std::vector<float>& obs,
-                  const std::vector<uint8_t>& mask, int nPrims, unsigned& rng) {
-    return chooseBaseline(pol, obs, mask, nPrims, rng);
-}
 
 int cmdBench(std::vector<std::string> args) {
     // All five styles, matching TRAIN_WORLDS -- a baseline measured on a
@@ -266,7 +262,7 @@ int cmdBench(std::vector<std::string> args) {
     int s0 = 101, s1 = 104, maxSteps = 3000;   // the forest goal needs ~2500
     bool stereo = false, oracle = false;
     float coreFrac = 0.f;
-    // WHICH PLANNERS, because a sweep does not want all nine. The veto is
+    // WHICH PLANNERS, because a sweep does not want all ten. The veto is
     // shared by every one of them, so a question about the veto is answered by
     // whichever two or three actually reach it -- and paying for the other six
     // at every point of a five-value sweep is most of a day.
@@ -313,7 +309,7 @@ int cmdBench(std::vector<std::string> args) {
                 "cells", "loops", "minClr");
     for (Pol pol : {Pol::Random, Pol::FreeM, Pol::Goal, Pol::Score,
                     Pol::FreeG, Pol::NovelG, Pol::Cover, Pol::FrontRaw,
-                    Pol::Circler}) {
+                    Pol::Circler, Pol::Ego}) {
         if (!only.empty() &&
             std::find(only.begin(), only.end(), polName(pol)) == only.end())
             continue;
@@ -339,8 +335,7 @@ int cmdBench(std::vector<std::string> args) {
                 unsigned rng = unsigned(s) * 7919u + unsigned(pol) * 104729u;
                 EnvStep st;
                 for (int t = 0; t < maxSteps; ++t) {
-                    st = env.step(choose(pol, env.observation(), env.actionMask(),
-                                         env.nPrims(), rng));
+                    st = env.step(chooseIn(pol, env, rng));
                     if (st.done || st.truncated) break;
                 }
                 // A collision is the failure here; arriving at the goal is

@@ -99,6 +99,10 @@ struct Opt {
     int every = 1, width = 960;
     float maxSpeed = 12.f;            // m/s: sets the per-frame jump gate
     float checkDrift = -1.f;          // > 0: exit 1 if drift % exceeds it
+    // --loop: the landmark memory (down_vo.hpp PlaceMemory) on top of the VIO
+    bool loop = false;
+    float loopSpacing = 2.f, loopMinAge = 15.f;
+    int loopEvery = 5;
     bool quiet = false;
     // --calibrate
     std::string calibVideo, calibOut = "calib.yml";
@@ -139,6 +143,12 @@ void usage() {
         "  --shot FILE.png        one processed frame (check the lens correction)\n"
         "  --summary FILE         append one CSV row per run\n"
         "  --check-drift PCT      exit 1 if the drift exceeds PCT %% of the path\n"
+        "landmark memory (\"I have been here\"):\n"
+        "  --loop                 store ground fingerprints as it flies; recognising one\n"
+        "                         again corrects the drift since (reported beside the raw VIO)\n"
+        "  --loop-spacing M       store a place every M metres (default 2)\n"
+        "  --loop-min-age S       only places at least S seconds old count as a return (15)\n"
+        "  --loop-every N         look for a return every N frames (5)\n"
         "  --quiet\n\n"
         "  footage_vio --calibrate VIDEO [--board 9x6] [--square-mm 25] [--fisheye]\n"
         "              [--out calib.yml] [--every N] [--max-views 60]\n"
@@ -152,7 +162,8 @@ bool parse(int argc, char** argv, Opt& o) {
         const std::string a = argv[i];
         const bool more = i + 1 < argc;
         auto f = [&](float& v) { v = float(std::atof(argv[++i])); };
-        if (!more && a != "--no-srt" && a != "--fisheye" && a != "--quiet" && a != "--help" && a != "-h") {
+        if (!more && a != "--no-srt" && a != "--fisheye" && a != "--quiet" && a != "--loop" && a != "--help" &&
+            a != "-h") {
             std::fprintf(stderr, "footage_vio: %s needs a value\n", a.c_str());
             return false;
         }
@@ -179,6 +190,10 @@ bool parse(int argc, char** argv, Opt& o) {
         else if (a == "--shot") o.shot = argv[++i];
         else if (a == "--summary") o.summary = argv[++i];
         else if (a == "--check-drift") f(o.checkDrift);
+        else if (a == "--loop") o.loop = true;
+        else if (a == "--loop-spacing") f(o.loopSpacing);
+        else if (a == "--loop-min-age") f(o.loopMinAge);
+        else if (a == "--loop-every") o.loopEvery = std::max(1, std::atoi(argv[++i]));
         else if (a == "--quiet") o.quiet = true;
         else if (a == "--calibrate") o.calibVideo = argv[++i];
         else if (a == "--board") std::sscanf(argv[++i], "%dx%d", &o.boardW, &o.boardH);
@@ -481,14 +496,15 @@ int calibrate(const Opt& o) {
 // The plot: top-down, north up when GPS fixed the heading, metres.
 // ---------------------------------------------------------------------------
 void drawPlot(const std::string& path, const std::vector<cv::Point2d>& vio, const std::vector<char>& valid,
-              const std::vector<cv::Point2d>& gps, const std::vector<std::string>& lines, bool northUp) {
+              const std::vector<cv::Point2d>& gps, const std::vector<std::string>& lines, bool northUp,
+              const std::vector<cv::Point2d>& corr = {}) {
     const int W = 900, H = 900, top = 30 + 22 * int(lines.size()), pad = 50;
     cv::Mat im(H, W, CV_8UC3, cv::Scalar(255, 255, 255));
     double x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
     auto grow = [&](const std::vector<cv::Point2d>& v) {
         for (const auto& p : v) { x0 = std::min(x0, p.x); x1 = std::max(x1, p.x); y0 = std::min(y0, p.y); y1 = std::max(y1, p.y); }
     };
-    grow(vio); grow(gps);
+    grow(vio); grow(gps); grow(corr);
     if (x0 > x1) { x0 = y0 = -1; x1 = y1 = 1; }
     const double span = std::max({x1 - x0, y1 - y0, 2.0}) * 1.1;
     const double cx = 0.5 * (x0 + x1), cy = 0.5 * (y0 + y1);
@@ -512,6 +528,8 @@ void drawPlot(const std::string& path, const std::vector<cv::Point2d>& vio, cons
     const cv::Scalar cG(0, 140, 255), cV(200, 90, 20), cL(40, 40, 220);
     for (size_t i = 1; i < gps.size(); ++i) cv::line(im, P(gps[i - 1]), P(gps[i]), cG, 2, cv::LINE_AA);
     for (size_t i = 1; i < vio.size(); ++i) cv::line(im, P(vio[i - 1]), P(vio[i]), cV, 2, cv::LINE_AA);
+    const cv::Scalar cC(150, 60, 160);
+    for (size_t i = 1; i < corr.size(); ++i) cv::line(im, P(corr[i - 1]), P(corr[i]), cC, 2, cv::LINE_AA);
     for (size_t i = 0; i < vio.size(); ++i) if (!valid[i]) cv::circle(im, P(vio[i]), 2, cL, -1, cv::LINE_AA);
     if (!vio.empty()) {
         cv::circle(im, P(vio.front()), 7, cv::Scalar(60, 160, 60), 2, cv::LINE_AA);
@@ -528,6 +546,10 @@ void drawPlot(const std::string& path, const std::vector<cv::Point2d>& vio, cons
     if (!gps.empty()) {
         ly += 18;
         cv::line(im, {lx, ly - 4}, {lx + 30, ly - 4}, cG, 2); cv::putText(im, "GPS (subtitles)", {lx + 38, ly}, cv::FONT_HERSHEY_SIMPLEX, 0.45, cG, 1, cv::LINE_AA);
+    }
+    if (!corr.empty()) {
+        ly += 18;
+        cv::line(im, {lx, ly - 4}, {lx + 30, ly - 4}, cC, 2); cv::putText(im, "VIO + landmark memory", {lx + 38, ly}, cv::FONT_HERSHEY_SIMPLEX, 0.45, cC, 1, cv::LINE_AA);
     }
     ly += 18;
     cv::circle(im, {lx + 15, ly - 4}, 3, cL, -1); cv::putText(im, "VIO lost", {lx + 38, ly}, cv::FONT_HERSHEY_SIMPLEX, 0.45, cL, 1, cv::LINE_AA);
@@ -594,19 +616,21 @@ struct Rec {
     bool valid = false;
     int tracked = 0, inliers = 0;
     double e = 0, n = 0, u = 0, yaw = 0, H = 0;
+    double ce = 0, cn = 0;            // with the landmark memory's corrections (= e, n without --loop)
+    bool fix = false;                 // a correction was applied at this frame
     bool gps = false;
     double ge = 0, gn = 0, galt = 0;
 };
 
 // Path length of a track, sampled every `everyS` seconds: hover jitter at
 // frame rate is not distance flown.
-double pathLen(const std::vector<Rec>& r, bool gps, double everyS) {
+double pathLen(const std::vector<Rec>& r, bool gps, double everyS, bool corr = false) {
     double L = 0, lt = -1e9, le = 0, ln = 0;
     bool have = false;
     for (const Rec& x : r) {
         if (gps && !x.gps) continue;
         if (have && x.t - lt < everyS) continue;
-        const double e = gps ? x.ge : x.e, n = gps ? x.gn : x.n;
+        const double e = gps ? x.ge : corr ? x.ce : x.e, n = gps ? x.gn : corr ? x.cn : x.n;
         if (have) L += std::hypot(e - le, n - ln);
         le = e; ln = n; lt = x.t; have = true;
     }
@@ -741,6 +765,18 @@ int main(int argc, char** argv) {
     vio.init(cam, vp);
     downvo::PnpVo pvo;
     pvo.init(cam, vp.maxDepthM, vp.maxJumpM);
+    downvo::PlaceMemory mem;
+    {
+        downvo::PlaceMemory::Params mpar;
+        mpar.spacingM = o.loopSpacing; mpar.minAgeS = o.loopMinAge;
+        mem.init(cam, mpar);
+    }
+    // The correction the memory has applied: corrected = rotUp(cTh) * raw + cT
+    // (horizontal; height stays the VIO's). Starts as the identity.
+    double cTh = 0, cTe = 0, cTn = 0, flown = 0, lastFixT = -1e9;
+    int frameNo = 0;
+    struct FixLog { double t, ageS, shiftM, dyawDeg; int inliers; };
+    std::vector<FixLog> fixes;
 
     if (!o.quiet)
         std::printf("video: %s  %dx%d @ %.2f fps (%.0f frames); processing %dx%d, every %d -> %.2f fps; "
@@ -752,7 +788,7 @@ int main(int argc, char** argv) {
                     o.attitude.c_str(), o.gimbalPitch);
 
     std::vector<Rec> recs;
-    std::vector<double> estMs;
+    std::vector<double> estMs, memMs;
     double lat0 = 0, lon0 = 0;
     bool haveOrigin = false;
     double gyroYaw = 0, rate = 0, prevSrtYaw = 0;
@@ -834,6 +870,58 @@ int main(int argc, char** argv) {
             prevR = R;
         }
         estMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - te0).count());
+        // THE LANDMARK MEMORY, on the corrected estimate (timed on its own).
+        const auto tm0 = std::chrono::steady_clock::now();
+        {
+            if (!recs.empty() && r.valid)
+                flown += std::hypot(r.e - recs.back().e, r.n - recs.back().n);
+            auto applyCorr = [&]() {
+                const double c = std::cos(rad(cTh)), s = std::sin(rad(cTh));
+                r.ce = c * r.e + s * r.n + cTe;
+                r.cn = -s * r.e + c * r.n + cTn;
+            };
+            applyCorr();
+            if (o.loop && r.valid) {
+                const cv::Matx33d Rraw = o.attitude == "vision" ? pvo.R() : downvo::rotOf(vio.pose());
+                auto rotUp = [](double d) {
+                    const double c = std::cos(rad(d)), s = std::sin(rad(d));
+                    return cv::Matx33d(c, s, 0, -s, c, 0, 0, 0, 1);
+                };
+                cv::Matx33d Rc = rotUp(cTh) * Rraw;
+                cv::Vec3d Cc(r.ce, r.cn, r.u);
+                if (frameNo % o.loopEvery == 0 && t - lastFixT > 1.0) {
+                    const cv::Matx33d gimbalR = downvo::rotOf(att);
+                    const downvo::PlaceMemory::Fix fx =
+                        mem.query(small, t, flown, Rc, Cc, H, o.attitude == "vision" ? nullptr : &gimbalR);
+                    if (fx.ok) {
+                        const double dyaw = yawBetween(Rc, fx.R);
+                        const double before_e = r.ce, before_n = r.cn;
+                        cTh += dyaw;
+                        const double c = std::cos(rad(cTh)), s = std::sin(rad(cTh));
+                        cTe = fx.C[0] - (c * r.e + s * r.n);
+                        cTn = fx.C[1] - (-s * r.e + c * r.n);
+                        applyCorr();
+                        Rc = rotUp(cTh) * Rraw;
+                        Cc = cv::Vec3d(r.ce, r.cn, r.u);
+                        // Vision-only odometry carries its own tilt and height,
+                        // and those drifted too: restart it at the fix (in its
+                        // own, uncorrected frame) so it does not go on from
+                        // the wrong ones. DepthVio takes tilt from the gimbal.
+                        if (o.attitude == "vision") {
+                            const cv::Matx33d Ri = rotUp(-cTh);
+                            const cv::Vec3d Craw = Ri * cv::Vec3d(fx.C[0] - cTe, fx.C[1] - cTn, 0.0);
+                            pvo.reset(Ri * fx.R, cv::Vec3d(Craw[0], Craw[1], fx.C[2]));
+                        }
+                        r.fix = true;
+                        lastFixT = t;
+                        fixes.push_back({t, fx.ageS, std::hypot(r.ce - before_e, r.cn - before_n), dyaw, fx.inliers});
+                    }
+                }
+                mem.maybeStore(small, t, flown, Rc, Cc, H);
+            }
+            ++frameNo;
+        }
+        if (o.loop) memMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tm0).count());
         prevValid = r.valid;
 
         double lat, lon;
@@ -873,90 +961,126 @@ int main(int argc, char** argv) {
     const double meanIn = nValid ? sumIn / nValid : 0;
     const Rec& R0 = recs.front();
     const Rec& R1 = recs.back();
-    const double path = pathLen(recs, false, 0.5);
-    const double closure = std::hypot(R1.e - R0.e, R1.n - R0.n);
-    // A CLOSED LOOP HIDES A SCALE ERROR: a wrong height stretches the way
-    // out and the way back alike, and the loop still closes. What shows it
-    // without GPS is a distance measured on the ground -- fly out to a taped
-    // mark and back, and compare this with the tape.
-    double far = 0, farT = 0;
-    for (const Rec& x : recs) {
-        const double d = std::hypot(x.e - R0.e, x.n - R0.n);
-        if (d > far) { far = d; farT = x.t; }
-    }
     std::vector<double> ms = estMs;
     std::sort(ms.begin(), ms.end());
     double msSum = 0; for (double x : ms) msSum += x;
     const double msMean = msSum / double(ms.size()), msP95 = ms[ms.size() * 95 / 100];
-
-    // Against GPS: one rotation about the start, no scale (the scale is what
-    // is being tested), then the scale that WOULD fit, reported on its own.
-    int nG = 0;
-    double sDot = 0, sCross = 0, sPP = 0;
-    for (const Rec& x : recs) {
-        if (!x.gps) continue;
-        const double pe = x.e - R0.e, pn = x.n - R0.n;
-        sDot += pe * x.ge + pn * x.gn;
-        sCross += pe * x.gn - pn * x.ge;
-        sPP += pe * pe + pn * pn;
-        ++nG;
-    }
-    const bool cmp = nG >= 2 && sPP > 1e-6;
-    const double th = cmp ? std::atan2(sCross, sDot) : 0.0;
-    const double scale = cmp ? std::hypot(sDot, sCross) / sPP : 1.0;   // GPS ~ scale * R * VIO
-    double se = 0, maxE = 0, finE = 0;
-    auto rot = [&](const Rec& x) {
-        const double pe = x.e - R0.e, pn = x.n - R0.n;
-        return cv::Point2d(std::cos(th) * pe - std::sin(th) * pn, std::sin(th) * pe + std::cos(th) * pn);
-    };
-    for (const Rec& x : recs) {
-        if (!x.gps) continue;
-        const cv::Point2d p = rot(x);
-        const double e = std::hypot(p.x - x.ge, p.y - x.gn);
-        se += e * e; maxE = std::max(maxE, e); finE = e;
-    }
-    const double rmsE = cmp ? std::sqrt(se / nG) : 0;
-    const double gpsPath = cmp ? pathLen(recs, true, 0.5) : 0;
-    const double gpsClosure = cmp ? std::hypot(R1.ge, R1.gn) : 0;
     double Hmean = 0; for (const Rec& x : recs) Hmean += x.H; Hmean /= double(recs.size());
-    // Drift: against GPS where there is one, else the start-to-end gap (the
-    // drift IF the flight ended over its start).
-    const double drift = cmp ? 100.0 * finE / std::max(1e-6, gpsPath) : 100.0 * closure / std::max(1e-6, path);
+
+    // The same measures for a track: the raw VIO, or the one the landmark
+    // memory corrected.
+    struct Metrics {
+        double path = 0, closure = 0, far = 0, farT = 0;
+        bool cmp = false;
+        double th = 0, scale = 1, rmsE = 0, maxE = 0, finE = 0, gpsPath = 0, gpsClosure = 0, drift = 0;
+    };
+    auto pos = [](const Rec& x, bool corr) { return cv::Point2d(corr ? x.ce : x.e, corr ? x.cn : x.n); };
+    auto metrics = [&](bool corr) {
+        Metrics m;
+        const cv::Point2d p0 = pos(R0, corr), p1 = pos(R1, corr);
+        m.path = pathLen(recs, false, 0.5, corr);
+        m.closure = cv::norm(p1 - p0);
+        // A CLOSED LOOP HIDES A SCALE ERROR: a wrong height stretches the way
+        // out and the way back alike, and the loop still closes. What shows it
+        // without GPS is a distance measured on the ground -- fly out to a taped
+        // mark and back, and compare this with the tape.
+        for (const Rec& x : recs) {
+            const double d = cv::norm(pos(x, corr) - p0);
+            if (d > m.far) { m.far = d; m.farT = x.t; }
+        }
+        // Against GPS: one rotation about the start, no scale (the scale is
+        // what is being tested), then the scale that WOULD fit, on its own.
+        int nG = 0;
+        double sDot = 0, sCross = 0, sPP = 0;
+        for (const Rec& x : recs) {
+            if (!x.gps) continue;
+            const cv::Point2d q = pos(x, corr) - p0;
+            sDot += q.x * x.ge + q.y * x.gn;
+            sCross += q.x * x.gn - q.y * x.ge;
+            sPP += q.dot(q);
+            ++nG;
+        }
+        m.cmp = nG >= 2 && sPP > 1e-6;
+        m.th = m.cmp ? std::atan2(sCross, sDot) : 0.0;
+        m.scale = m.cmp ? std::hypot(sDot, sCross) / sPP : 1.0;      // GPS ~ scale * R * VIO
+        double se = 0;
+        for (const Rec& x : recs) {
+            if (!x.gps) continue;
+            const cv::Point2d q = pos(x, corr) - p0;
+            const cv::Point2d r(std::cos(m.th) * q.x - std::sin(m.th) * q.y, std::sin(m.th) * q.x + std::cos(m.th) * q.y);
+            const double e = std::hypot(r.x - x.ge, r.y - x.gn);
+            se += e * e; m.maxE = std::max(m.maxE, e); m.finE = e;
+        }
+        m.rmsE = m.cmp ? std::sqrt(se / nG) : 0;
+        m.gpsPath = m.cmp ? pathLen(recs, true, 0.5) : 0;
+        m.gpsClosure = m.cmp ? std::hypot(R1.ge, R1.gn) : 0;
+        // Drift: against GPS where there is one, else the start-to-end gap
+        // (the drift IF the flight ended over its start).
+        m.drift = m.cmp ? 100.0 * m.finE / std::max(1e-6, m.gpsPath) : 100.0 * m.closure / std::max(1e-6, m.path);
+        return m;
+    };
+    const Metrics raw = metrics(false);
+    const Metrics cor = o.loop ? metrics(true) : raw;
+    const Metrics& M = cor;                                  // what the summary and the check use
+    auto rot = [&](const Rec& x, bool corr) {
+        const Metrics& m = corr ? cor : raw;
+        const cv::Point2d q = pos(x, corr) - pos(R0, corr);
+        return cv::Point2d(std::cos(m.th) * q.x - std::sin(m.th) * q.y, std::sin(m.th) * q.x + std::cos(m.th) * q.y);
+    };
 
     std::printf("\nframes %zu over %.1f s, %.1f %% tracked, mean inliers %.0f, estimator %.1f ms/frame (p95 %.1f)\n",
                 recs.size(), R1.t - R0.t, validPct, meanIn, msMean, msP95);
-    std::printf("VIO: flew %.1f m; start-to-end %.2f m = %.2f %% of the path  "
-                "(the drift, IF it ended over its start)\n", path, closure, 100.0 * closure / std::max(1e-6, path));
-    std::printf("VIO: furthest from the start %.2f m, at %.1f s  (against a TAPED distance this checks the "
-                "scale -- height and lens -- which a closed loop cannot)\n", far, farT);
-    if (cmp) {
-        std::printf("GPS: flew %.1f m; start-to-end %.2f m\n", gpsPath, gpsClosure);
-        std::printf("VIO vs GPS (one rotation about the start, %.1f deg; no scale): RMS %.2f m, max %.2f m, "
-                    "final %.2f m = %.2f %% of the path\n", deg(th), rmsE, maxE, finE, drift);
+    auto report = [&](const char* who, const Metrics& m) {
+        std::printf("%s: flew %.1f m; start-to-end %.2f m = %.2f %% of the path  "
+                    "(the drift, IF it ended over its start)\n", who, m.path, m.closure,
+                    100.0 * m.closure / std::max(1e-6, m.path));
+        std::printf("%s: furthest from the start %.2f m, at %.1f s  (against a TAPED distance this checks the "
+                    "scale -- height and lens -- which a closed loop cannot)\n", who, m.far, m.farT);
+        if (m.cmp)
+            std::printf("%s vs GPS (one rotation about the start, %.1f deg; no scale): RMS %.2f m, max %.2f m, "
+                        "final %.2f m = %.2f %% of the path\n", who, deg(m.th), m.rmsE, m.maxE, m.finE, m.drift);
+    };
+    report("VIO", raw);
+    if (raw.cmp) {
+        std::printf("GPS: flew %.1f m; start-to-end %.2f m\n", raw.gpsPath, raw.gpsClosure);
         std::printf("scale GPS/VIO %.3f: a height of %.2f m (mean; used %.2f) would make it 1, if the lens is right\n",
-                    scale, Hmean * scale, Hmean);
-        if (gpsPath < 20)
-            std::printf("  (GPS over %.0f m is metre-noise against metres: the comparison means little)\n", gpsPath);
+                    raw.scale, Hmean * raw.scale, Hmean);
+        if (raw.gpsPath < 20)
+            std::printf("  (GPS over %.0f m is metre-noise against metres: the comparison means little)\n", raw.gpsPath);
     } else if (!srt.empty()) {
         std::printf("GPS: none in the subtitles -- the start-to-end gap is the only check\n");
+    }
+    if (o.loop) {
+        double mm = 0; for (double x : memMs) mm += x;
+        std::printf("\nlandmark memory: %d places stored, %d looks for a return, %d recognised, %d rejected by the "
+                    "geometry (%.1f ms/frame)\n", mem.stored(), mem.queries(), mem.accepted(), mem.rejected(),
+                    memMs.empty() ? 0.0 : mm / double(memMs.size()));
+        for (const FixLog& fl : fixes)
+            std::printf("  %6.1f s: recognised a place from %.0f s ago (%d inliers): moved %.2f m, turned %+.1f deg\n",
+                        fl.t, fl.ageS, fl.inliers, fl.shiftM, fl.dyawDeg);
+        report("VIO+memory", cor);
+        std::printf("  (it removes drift; it cannot fix SCALE -- a wrong height or lens is still wrong)\n");
     }
 
     if (!o.csv.empty()) {
         FILE* f = std::fopen(o.csv.c_str(), "w");
         if (!f) { std::fprintf(stderr, "footage_vio: cannot write %s\n", o.csv.c_str()); return 2; }
-        std::fprintf(f, "t_s,valid,tracked,inliers,vio_e,vio_n,vio_u,vio_yaw_deg,height_m,gps,gps_e,gps_n,gps_rel_alt,vio_rot_e,vio_rot_n\n");
+        std::fprintf(f, "t_s,valid,tracked,inliers,vio_e,vio_n,vio_u,vio_yaw_deg,height_m,gps,gps_e,gps_n,gps_rel_alt,"
+                        "vio_rot_e,vio_rot_n,corr_e,corr_n,fix\n");
         for (const Rec& x : recs) {
-            const cv::Point2d p = rot(x);
-            std::fprintf(f, "%.4f,%d,%d,%d,%.4f,%.4f,%.4f,%.2f,%.3f,%d,%.3f,%.3f,%.3f,%.4f,%.4f\n", x.t, int(x.valid),
-                         x.tracked, x.inliers, x.e, x.n, x.u, x.yaw, x.H, int(x.gps), x.ge, x.gn, x.galt, p.x, p.y);
+            const cv::Point2d p = rot(x, false);
+            std::fprintf(f, "%.4f,%d,%d,%d,%.4f,%.4f,%.4f,%.2f,%.3f,%d,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%d\n", x.t,
+                         int(x.valid), x.tracked, x.inliers, x.e, x.n, x.u, x.yaw, x.H, int(x.gps), x.ge, x.gn, x.galt,
+                         p.x, p.y, x.ce, x.cn, int(x.fix));
         }
         std::fclose(f);
     }
     if (!o.plot.empty()) {
-        std::vector<cv::Point2d> pv, pg;
+        std::vector<cv::Point2d> pv, pg, pc;
         std::vector<char> va;
         for (const Rec& x : recs) {
-            pv.push_back(cmp ? rot(x) : cv::Point2d(x.e - R0.e, x.n - R0.n));
+            pv.push_back(raw.cmp ? rot(x, false) : cv::Point2d(x.e - R0.e, x.n - R0.n));
+            if (o.loop) pc.push_back(cor.cmp ? rot(x, true) : cv::Point2d(x.ce - R0.ce, x.cn - R0.cn));
             va.push_back(x.valid);
             if (x.gps) pg.emplace_back(x.ge, x.gn);
         }
@@ -965,12 +1089,15 @@ int main(int argc, char** argv) {
             cv::format("%s   %s attitude, height %s %.2f m, hfov %.0f",
                        o.video.substr(slash == std::string::npos ? 0 : slash + 1).c_str(), o.attitude.c_str(),
                        hsrc.c_str(), Hmean, hfovEff),
-            cv::format("VIO %.1f m flown, start-to-end %.2f m (%.2f %%), %.0f %% tracked", path, closure,
-                       100.0 * closure / std::max(1e-6, path), validPct)};
-        if (cmp)
+            cv::format("VIO %.1f m flown, start-to-end %.2f m (%.2f %%), %.0f %% tracked", raw.path, raw.closure,
+                       100.0 * raw.closure / std::max(1e-6, raw.path), validPct)};
+        if (raw.cmp)
             lines.push_back(cv::format("vs GPS: RMS %.2f m, final %.2f m (%.2f %%), scale %.3f -> height %.2f m",
-                                       rmsE, finE, drift, scale, Hmean * scale));
-        drawPlot(o.plot, pv, va, pg, lines, cmp);
+                                       raw.rmsE, raw.finE, raw.drift, raw.scale, Hmean * raw.scale));
+        if (o.loop)
+            lines.push_back(cv::format("+ landmark memory: %d returns recognised, start-to-end %.2f m%s", mem.accepted(),
+                                       cor.closure, cor.cmp ? cv::format(", vs GPS final %.2f m", cor.finE).c_str() : ""));
+        drawPlot(o.plot, pv, va, pg, lines, raw.cmp, pc);
     }
     if (!o.summary.empty()) {
         const bool fresh = !std::ifstream(o.summary).good();
@@ -979,18 +1106,20 @@ int main(int argc, char** argv) {
             if (fresh)
                 std::fprintf(f, "video,attitude,height_src,height_mean_m,height_offset_m,gimbal_pitch,hfov,width,every,"
                                 "frames,duration_s,valid_pct,mean_inliers,path_m,closure_m,closure_pct,gps_path_m,"
-                                "gps_closure_m,gps_rms_m,gps_max_m,gps_final_m,drift_pct,scale,implied_height_m,ms_per_frame,furthest_m\n");
+                                "gps_closure_m,gps_rms_m,gps_max_m,gps_final_m,drift_pct,scale,implied_height_m,ms_per_frame,furthest_m,"
+                                "loop,places,returns,raw_closure_m,raw_gps_final_m\n");
             std::fprintf(f, "%s,%s,%s,%.3f,%.3f,%.1f,%.2f,%d,%d,%zu,%.2f,%.1f,%.0f,%.2f,%.3f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,"
-                            "%.2f,%.4f,%.3f,%.2f,%.3f\n",
+                            "%.2f,%.4f,%.3f,%.2f,%.3f,%d,%d,%d,%.3f,%.3f\n",
                          o.video.c_str(), o.attitude.c_str(), hsrc.c_str(), Hmean, double(o.heightOffset),
                          double(o.gimbalPitch), hfovEff, pw, o.every, recs.size(), R1.t - R0.t, validPct, meanIn,
-                         path, closure, 100.0 * closure / std::max(1e-6, path), gpsPath, gpsClosure, rmsE, maxE,
-                         finE, drift, scale, Hmean * scale, msMean, far);
+                         M.path, M.closure, 100.0 * M.closure / std::max(1e-6, M.path), M.gpsPath, M.gpsClosure,
+                         M.rmsE, M.maxE, M.finE, M.drift, M.scale, Hmean * M.scale, msMean, M.far, int(o.loop),
+                         mem.stored(), mem.accepted(), raw.closure, raw.finE);
             std::fclose(f);
         }
     }
-    if (o.checkDrift > 0 && !(drift <= o.checkDrift)) {
-        std::fprintf(stderr, "footage_vio: drift %.2f %% > %.2f %%\n", drift, double(o.checkDrift));
+    if (o.checkDrift > 0 && !(M.drift <= o.checkDrift)) {
+        std::fprintf(stderr, "footage_vio: drift %.2f %% > %.2f %%\n", M.drift, double(o.checkDrift));
         return 1;
     }
     return 0;

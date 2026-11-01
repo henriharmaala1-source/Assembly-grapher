@@ -10,16 +10,21 @@
 //                flat ground plane H metres below the camera
 //   rotOf        a navcore CamPose as a camera->world rotation matrix
 //   tiltErrDeg   the angle between two optical axes
+//   PlaceMemory  "I have been here": stored ground fingerprints that, when
+//                recognised again, correct the drift since
 //
 // Test-harness code, not the aircraft's.
 // ---------------------------------------------------------------------------
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <vector>
 
 #include <opencv2/calib3d.hpp>
+#include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
 
@@ -206,6 +211,183 @@ private:
     cv::Mat prev_;
     std::vector<cv::Point2f> pts_;
     std::vector<cv::Point3f> world_;
+};
+
+// ---------------------------------------------------------------------------
+// PlaceMemory -- "I have been here before": a landmark memory for the
+// downward camera, the part of SLAM (RTAB-Map, ORB-SLAM3) that bounds drift,
+// without the rest of SLAM.
+//
+// STORE: every spacingM of flight, ORB corners of the ground and where each
+// one is in the world -- its pixel ray from the pose at that moment, cut
+// against the ground plane H below. A place is a set of fingerprints with
+// world positions, nothing more.
+//
+// RECOGNISE: every few frames, against the places old enough to be a real
+// return (minAgeS) and near enough to be possible (searchBaseM + searchFrac
+// of the distance flown since: odometry drifts a percentage of distance, so
+// it cannot be further off than that). Fingerprints matched with a ratio test,
+// then the GEOMETRY decides: PnP with RANSAC from the current estimate, and
+// the result must agree with what is trusted INDEPENDENTLY of the odometry --
+// the height source, and the tilt where a gimbal holds it -- before it counts.
+// Not with the odometry's own estimate: that is what drifted, and the first
+// version, gated on it, rejected a correct 63-inlier return to the start
+// because the vision-only estimate it was correcting was 44 deg off in tilt. A look-alike patch of grass
+// is the failure that matters, because a false "been here" teleports the
+// estimate; every test after the fingerprint match is there for that.
+//
+// What a FIX gives is the pose relative to the place as it was stored, so it
+// removes the drift accumulated SINCE then -- the start point, stored first,
+// is the best place to come back to.
+class PlaceMemory {
+public:
+    struct Params {
+        float spacingM    = 2.0f;   // store a place every this far
+        float minAgeS     = 15.0f;  // only places at least this old are a return
+        float searchBaseM = 3.0f;   // candidates within base + frac * flown-since
+        float searchFrac  = 0.2f;
+        int   features    = 800;
+        float ratio       = 0.8f;   // Lowe's ratio test
+        int   minInliers  = 40;
+        float maxTiltErrDeg = 4.0f; // the fix's optical axis against the trusted one
+        float maxHeightErr  = 0.25f;  // fraction of the height
+        float maxRangeH   = 4.0f;   // ground points no further than this x height
+    };
+    struct Fix {
+        bool ok = false;
+        cv::Matx33d R;              // camera -> world, in the memory's frame
+        cv::Vec3d C;
+        int inliers = 0, place = -1;
+        double ageS = 0;
+    };
+
+    void init(const sim::DepthCamera& cam, const Params& p) {
+        p_ = p;
+        K_ = cv::Matx33d(cam.fpx(), 0, cam.ppx(), 0, cam.fy(), cam.ppy(), 0, 0, 1);
+        // A LOWER CORNER THRESHOLD, after local contrast normalisation. At
+        // ORB's default (FAST 20) the synthetic low-contrast ground gave ZERO
+        // corners -- and so would grass from height or dusk -- while FAST at 5
+        // found a thousand. CLAHE lifts the contrast locally; 10 keeps noise
+        // out of the fingerprints.
+        orb_ = cv::ORB::create(p.features, 1.2f, 8, 31, 0, 2, cv::ORB::HARRIS_SCORE, 31, 10);
+        clahe_ = cv::createCLAHE(2.0, cv::Size(8, 8));
+    }
+
+    // Every frame, with the CORRECTED pose. True if a place was stored.
+    bool maybeStore(const cv::Mat& gray, double t, double flownM, const cv::Matx33d& Rwc,
+                    const cv::Vec3d& C, double H) {
+        if (!places_.empty() && flownM - lastStoreFlown_ < p_.spacingM) return false;
+        std::vector<cv::KeyPoint> kp;
+        cv::Mat desc, eq;
+        clahe_->apply(gray, eq);
+        orb_->detectAndCompute(eq, cv::noArray(), kp, desc);
+        Place pl;
+        pl.t = t; pl.flownM = flownM; pl.C = C;
+        for (size_t i = 0; i < kp.size(); ++i) {
+            const double x = (kp[i].pt.x - K_(0, 2)) / K_(0, 0), y = (kp[i].pt.y - K_(1, 2)) / K_(1, 1);
+            const cv::Vec3d d = Rwc * cv::Vec3d(x, y, 1.0);
+            const double n = cv::norm(d);
+            if (d[2] / n > -0.05) continue;                  // above or along the horizon
+            const double s = H / -d[2];
+            if (s * n > p_.maxRangeH * H) continue;          // too oblique to trust
+            const cv::Vec3d w = C + s * d;
+            pl.world.emplace_back(float(w[0]), float(w[1]), float(w[2]));
+            pl.desc.push_back(desc.row(int(i)));
+        }
+        if (pl.world.size() < size_t(p_.minInliers)) return false;
+        places_.push_back(std::move(pl));
+        lastStoreFlown_ = flownM;
+        return true;
+    }
+
+    // Look for a return. `Rwc`, `C`: the current corrected estimate (the
+    // RANSAC starts from it). `H`: the height above the ground from the
+    // height source; `tiltRef`: the camera rotation whose TILT is trusted (the
+    // gimbal's), or null when there is none (vision-only attitude).
+    Fix query(const cv::Mat& gray, double t, double flownM, const cv::Matx33d& Rwc, const cv::Vec3d& C,
+              double H, const cv::Matx33d* tiltRef) {
+        Fix f;
+        std::vector<std::pair<double, int>> cand;
+        for (int i = 0; i < int(places_.size()); ++i) {
+            const Place& pl = places_[size_t(i)];
+            if (t - pl.t < p_.minAgeS) continue;
+            const double d = std::hypot(C[0] - pl.C[0], C[1] - pl.C[1]);
+            if (d <= p_.searchBaseM + p_.searchFrac * (flownM - pl.flownM)) cand.emplace_back(d, i);
+        }
+        if (cand.empty()) return f;
+        std::sort(cand.begin(), cand.end());
+        ++queries_;
+        std::vector<cv::KeyPoint> kp;
+        cv::Mat desc, eq;
+        clahe_->apply(gray, eq);
+        orb_->detectAndCompute(eq, cv::noArray(), kp, desc);
+        if (desc.empty()) return f;
+        cv::BFMatcher bf(cv::NORM_HAMMING);
+        for (size_t c = 0; c < cand.size() && c < 3; ++c) {
+            const Place& pl = places_[size_t(cand[c].second)];
+            std::vector<std::vector<cv::DMatch>> km;
+            bf.knnMatch(desc, pl.desc, km, 2);
+            std::vector<cv::Point3f> obj;
+            std::vector<cv::Point2f> img;
+            for (const auto& m : km)
+                if (m.size() == 2 && m[0].distance < p_.ratio * m[1].distance) {
+                    obj.push_back(pl.world[size_t(m[0].trainIdx)]);
+                    img.push_back(kp[size_t(m[0].queryIdx)].pt);
+                }
+            if (int(obj.size()) < p_.minInliers) continue;
+            const cv::Matx33d Rcw0 = Rwc.t();
+            cv::Mat rvec, tvec;
+            cv::Rodrigues(cv::Mat(Rcw0), rvec);
+            tvec = cv::Mat(-(Rcw0 * C));
+            std::vector<int> inl;
+            if (!cv::solvePnPRansac(obj, img, cv::Mat(K_), cv::noArray(), rvec, tvec, true, 200, 3.0f, 0.99,
+                                    inl, cv::SOLVEPNP_ITERATIVE))
+                continue;
+            if (int(inl.size()) < p_.minInliers) { ++rejected_; continue; }
+            cv::Mat Rm;
+            cv::Rodrigues(rvec, Rm);
+            const cv::Matx33d Rcw(Rm);
+            const cv::Matx33d R = Rcw.t();
+            const cv::Vec3d Cs = -(R * cv::Vec3d(tvec));
+            // THE GATES: tilt and height are trusted outright; a fix that
+            // disagrees with them is a look-alike, not a return.
+            const double hFix = Cs[2] - double(pl.world.front().z);   // above that place's ground
+            const bool tiltOk = !tiltRef || tiltErrDeg(R, *tiltRef) <= p_.maxTiltErrDeg;
+            const bool heightOk = std::fabs(hFix - H) <= p_.maxHeightErr * std::max(0.5, H);
+            const double moved = std::hypot(Cs[0] - C[0], Cs[1] - C[1]);
+            const bool nearOk = moved <= p_.searchBaseM + p_.searchFrac * (flownM - pl.flownM);
+            if (std::getenv("PLACE_TRACE"))
+                std::fprintf(stderr, "place %d age %.1f s: %zu matches, %zu inliers, tilt err %.2f deg, height %.2f vs %.2f, "
+                                     "moves %.2f m\n", cand[c].second, t - pl.t, obj.size(), inl.size(),
+                             tiltRef ? tiltErrDeg(R, *tiltRef) : -1.0, hFix, H, moved);
+            if (!(tiltOk && heightOk && nearOk)) { ++rejected_; continue; }
+            f.ok = true; f.R = R; f.C = Cs; f.inliers = int(inl.size()); f.place = cand[c].second;
+            f.ageS = t - pl.t;
+            ++accepted_;
+            return f;
+        }
+        return f;
+    }
+
+    int stored() const { return int(places_.size()); }
+    int queries() const { return queries_; }
+    int accepted() const { return accepted_; }
+    int rejected() const { return rejected_; }
+
+private:
+    struct Place {
+        double t = 0, flownM = 0;
+        cv::Vec3d C;
+        cv::Mat desc;
+        std::vector<cv::Point3f> world;
+    };
+    Params p_;
+    cv::Matx33d K_;
+    cv::Ptr<cv::ORB> orb_;
+    cv::Ptr<cv::CLAHE> clahe_;
+    std::vector<Place> places_;
+    double lastStoreFlown_ = -1e9;
+    int queries_ = 0, accepted_ = 0, rejected_ = 0;
 };
 
 }  // namespace downvo

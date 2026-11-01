@@ -374,7 +374,7 @@ RL PATH-POLICY HARNESS
 The point is a comparison, not a model: a learned planner scored in the SAME
 columns as the classical ones, on seeds it never trained on.
 
-    kestrel bench    the non-RL side: NINE classical planners through the
+    kestrel bench    the non-RL side: TEN classical planners through the
                      same environment the policy uses, so the comparison is
                      between planners and not between two harnesses. START
                      HERE -- these are the numbers a policy has to beat.
@@ -415,6 +415,15 @@ columns as the classical ones, on seeds it never trained on.
                                  ground -- kept as a MEASURED row so the
                                  weakness of the metric is a number and not
                                  an assurance
+                       ego       an EGO-Planner-style trajectory optimiser,
+                                 what the ROS forest stacks (RTAB-Map +
+                                 EGO-Planner) fly: a smooth B-spline toward a
+                                 local target, pushed out of obstacles by
+                                 gradient, patrolling goal -> spawn -> goal.
+                                 Like EGO-Planner it treats UNKNOWN as free.
+                                 It advises like the rest: the closest
+                                 admissible primitive to its trajectory is
+                                 flown, so the veto still applies
 
                      The columns are travel, net (how far from the spawn it
                      ended), cells, loops (travel/net) and minimum clearance.

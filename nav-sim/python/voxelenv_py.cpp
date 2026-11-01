@@ -108,7 +108,8 @@ PYBIND11_MODULE(voxelenv, m) {
         .value("novelG",   BaselinePolicy::NovelG)
         .value("cover",    BaselinePolicy::Cover)
         .value("frontRaw", BaselinePolicy::FrontRaw)
-        .value("circler",  BaselinePolicy::Circler);
+        .value("circler",  BaselinePolicy::Circler)
+        .value("ego",      BaselinePolicy::Ego);
 
     // The classical planners, from the SAME C++ that `kestrel bench` runs.
     // Reimplementing them in python would let the two drift, and then the
@@ -129,6 +130,9 @@ PYBIND11_MODULE(voxelenv, m) {
         .def(py::init<const EnvConfig&>(), py::arg("config") = EnvConfig())
         .def("reset", &VoxelEnv::reset, py::arg("world"), py::arg("seed"))
         .def("step", &VoxelEnv::step, py::arg("primitive_index"))
+        // The EGO-style baseline plans on the env's map, so it is asked of the
+        // env; choose_baseline refuses it rather than answer for it.
+        .def("ego_action", &VoxelEnv::egoAction)
         .def("observation", [](const VoxelEnv& e) {
             const auto& o = e.observation();
             return py::array_t<float>(py::ssize_t(o.size()), o.data());

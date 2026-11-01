@@ -350,17 +350,28 @@ struct EnvStep {
 //             allows, forever. It banks travelM for free with no displacement
 //             and almost no new ground. It is here so the metric's known
 //             weakness is a measured row rather than a claim.
+//   Ego       An EGO-Planner-style trajectory optimiser (ego_planner.hpp): a
+//             B-spline pushed out of obstacles by gradient, patrolling between
+//             the goal and the spawn. What the ROS forest stacks fly. It plans
+//             on the MAP, so it is chosen by VoxelEnv::egoAction (or
+//             chooseIn), not chooseBaseline -- but from the same mask, flown
+//             by the same step().
 //
-// All nine read only the observation and the mask, so they run through the
-// identical harness a learned policy does and no comparison is cross-harness.
+// The first nine read only the observation and the mask, so they run through
+// the identical harness a learned policy does and no comparison is
+// cross-harness; Ego reads the map the same env built.
 enum class BaselinePolicy { Random = 0, FreeM, Goal, Score,
-                            FreeG, NovelG, Cover, FrontRaw, Circler };
+                            FreeG, NovelG, Cover, FrontRaw, Circler, Ego };
 const char* baselineName(BaselinePolicy p);
 
 // rng is advanced in place; only Random uses it. Returns a primitive index,
-// always one the mask admits when any is admitted.
+// always one the mask admits when any is admitted. Throws for Ego, which needs
+// the map (chooseIn).
 int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
                    const std::vector<uint8_t>& mask, int nPrims, unsigned& rng);
+class VoxelEnv;
+// Any of the ten, given the env itself.
+int chooseIn(BaselinePolicy pol, VoxelEnv& env, unsigned& rng);
 
 class VoxelEnv {
 public:
@@ -377,6 +388,13 @@ public:
     const std::vector<uint8_t>& actionMask() const { return mask_; }
 
     int nPrims() const;
+    // The EGO-style baseline's choice for THIS step (BaselinePolicy::Ego). It
+    // keeps a trajectory across calls, so call it once per step, before step().
+    int egoAction();
+    // Its counters this episode: "plans", "failures", "astarFails",
+    // "collidingAfter" (control points still inside an obstacle after
+    // optimising, summed over plans).
+    int egoStat(const char* which) const;
     static int obsFeaturesPerPrim() { return 9; }
     static int obsGlobalFeatures()  { return 24; }
     int obsSize() const { return nPrims() * obsFeaturesPerPrim() + obsGlobalFeatures(); }

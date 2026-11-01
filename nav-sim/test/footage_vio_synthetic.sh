@@ -7,7 +7,8 @@
 #   1. height from the subtitles: the loop must close and match the GPS
 #      track to a few percent;
 #   2. a custom --height 20 % too high: the track comes out 20 % long, and
-#      the report must say so -- the height it implies within 5 % of 3 m.
+#      the report must say so -- the height it implies within 5 % of 3 m;
+#   3. --loop: the landmark memory recognises the start when the loop returns.
 #
 # The ground is navcore's noise model, so no textures are needed. Exit 77
 # (skipped) when this OpenCV cannot write video.
@@ -26,4 +27,11 @@ rm -f "$W/summary.csv"
 "$FV" --video "$W/loop.mp4" --hfov 90 --width 640 --height 3.6 --summary "$W/summary.csv" --quiet || exit 1
 # row 3 = the custom-height run; implied_height_m is the 24th column
 awk -F, 'NR == 3 { h = $24; print "implied height " h " m (true 3.0)"; exit (h > 2.85 && h < 3.15) ? 0 : 1 }' \
-    "$W/summary.csv"
+    "$W/summary.csv" || exit 1
+# 3. the landmark memory: the loop ends over its start, so it must recognise
+#    the start (returns, column 29) and stay within the drift bound. The clip
+#    is 9 s long, hence the short minimum age.
+"$FV" --video "$W/loop.mp4" --hfov 90 --width 640 --loop --loop-min-age 5 --summary "$W/summary.csv" \
+      --check-drift 5 --quiet || exit 1
+awk -F, 'NR == 4 { print "landmark memory: " $29 " return(s) recognised, start-to-end " $30 " -> " $15 " m";
+                   exit ($29 >= 1) ? 0 : 1 }' "$W/summary.csv"

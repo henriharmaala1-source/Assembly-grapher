@@ -1,7 +1,9 @@
 #include "rl_env.hpp"
+#include "ego_planner.hpp"
 #include "footage.hpp"
 
 #include <cstring>
+#include <stdexcept>
 
 #include <opencv2/imgproc.hpp>
 
@@ -71,6 +73,14 @@ struct VoxelEnv::Impl {
     std::vector<cv::Point2f> trail;
     // The last depth image, kept only so it can be looked at.
     cv::Mat lastDepth;
+    // The EGO-style baseline's state (egoAction): its current trajectory, how
+    // long it has been followed, and which waypoint it is flying to.
+    EgoPlanner ego;
+    float egoT = 0.f;
+    int   egoSince = 0, egoWp = 0;
+    bool  egoHavePrev = false;
+    float egoPrev[3] = {0, 0, 0};
+    float startZ = 0.f;
 
     Impl(const TrajParams& tp) : traj(tp) {}
 
@@ -103,12 +113,17 @@ const char* baselineName(BaselinePolicy p) {
         case BaselinePolicy::NovelG:   return "novelG";
         case BaselinePolicy::Cover:    return "cover";
         case BaselinePolicy::FrontRaw: return "frontRaw";
+        case BaselinePolicy::Ego:      return "ego";
         default:                       return "circler";
     }
 }
 
 int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
                    const std::vector<uint8_t>& mask, int nPrims, unsigned& rng) {
+    // Ego plans on the MAP, which the observation does not carry. Answering
+    // with some other planner's choice would put the wrong row under its name.
+    if (pol == BaselinePolicy::Ego)
+        throw std::invalid_argument("ego needs the map: use VoxelEnv::egoAction (or chooseIn)");
     const int F = VoxelEnv::obsFeaturesPerPrim();
     std::vector<int> legal;
     for (int i = 0; i < nPrims && i < (int)mask.size(); ++i)
@@ -188,7 +203,98 @@ int chooseBaseline(BaselinePolicy pol, const std::vector<float>& obs,
     return best;
 }
 
+int chooseIn(BaselinePolicy pol, VoxelEnv& env, unsigned& rng) {
+    if (pol == BaselinePolicy::Ego) return env.egoAction();
+    return chooseBaseline(pol, env.observation(), env.actionMask(), env.nPrims(), rng);
+}
+
 int VoxelEnv::nPrims() const { return int(im_->traj.librarySize()); }
+
+// THE EGO-STYLE BASELINE (ego_planner.hpp). It needs the map, not just the
+// observation, so it lives here rather than in chooseBaseline -- but it picks
+// from the same mask, and its choice is flown by the same step(), so it is
+// scored through the identical harness.
+//
+// WAYPOINTS: the goal, then back to the spawn, then the goal again. A
+// waypoint planner given one waypoint would hover on it for the rest of a
+// travel-objective episode, which measures nothing; flying a patrol between
+// two is what such a planner is for. Under RANGE the goal is scaffolding
+// either way.
+//
+// It replans every kReplanSteps (EGO replans continuously; 0.5 s here) or
+// when the aircraft has drifted off the trajectory, and flies the admissible
+// primitive whose rollout lies closest to the trajectory over its horizon.
+int VoxelEnv::egoAction() {
+    Impl& I = *im_;
+    std::vector<int> legal;
+    for (int i = 0; i < nPrims() && i < (int)mask_.size(); ++i)
+        if (mask_[i]) legal.push_back(i);
+    if (legal.empty()) return 0;
+    constexpr int kReplanSteps = 5;
+    constexpr float kDeviationM = 0.5f;
+    const float dt = cfg_.dt;
+    const EgoPlanner::V3 pos{I.px, I.py, I.pz};
+    EgoPlanner::V3 vel{0, 0, 0};
+    if (I.egoHavePrev)
+        for (int a = 0; a < 3; ++a) vel[a] = (pos[a] - I.egoPrev[a]) / dt;
+    for (int a = 0; a < 3; ++a) I.egoPrev[a] = pos[a];
+    I.egoHavePrev = true;
+
+    auto waypoint = [&]() {
+        return I.egoWp == 0 ? EgoPlanner::V3{I.goalE, I.goalN, I.goalU}
+                            : EgoPlanner::V3{I.startX, I.startY, I.startZ};
+    };
+    EgoPlanner::V3 wp = waypoint();
+    bool replan = !I.ego.valid() || I.egoSince >= kReplanSteps;
+    if (std::hypot(wp[0] - pos[0], wp[1] - pos[1]) < cfg_.goalTolM) {
+        I.egoWp ^= 1; wp = waypoint(); replan = true;
+    }
+    if (!replan) {
+        const EgoPlanner::V3 s = I.ego.sample(I.egoT);
+        if (std::hypot(std::hypot(s[0] - pos[0], s[1] - pos[1]), s[2] - pos[2]) > kDeviationM) replan = true;
+    }
+    if (replan) {
+        I.ego.plan(I.map, pos, vel, wp);
+        I.egoT = 0.f; I.egoSince = 0;
+    }
+
+    int best = legal[0];
+    float bestC = 1e30f;
+    const float ca = std::cos(I.yaw * sim::PI_F / 180.f), sa = std::sin(I.yaw * sim::PI_F / 180.f);
+    for (int i : legal) {
+        float c = 0.f;
+        if (I.ego.valid()) {
+            const auto& pts = I.traj.primPoints(size_t(i));
+            for (size_t k = 0; k < pts.size(); ++k) {
+                const float wx = I.px + pts[k][0] * ca + pts[k][1] * sa;
+                const float wy = I.py - pts[k][0] * sa + pts[k][1] * ca;
+                const float wz = I.pz + pts[k][2];
+                const EgoPlanner::V3 s = I.ego.sample(I.egoT + float(k + 1) * dt);
+                c += (wx - s[0]) * (wx - s[0]) + (wy - s[1]) * (wy - s[1]) + (wz - s[2]) * (wz - s[2]);
+            }
+        } else {
+            // No trajectory: EGO would brake. The slowest, straightest
+            // admissible primitive is the nearest thing in the library.
+            float sp, yr, cl;
+            I.traj.primCommand(size_t(i), sp, yr, cl);
+            c = sp + std::fabs(yr) / 100.f + std::fabs(cl);
+        }
+        if (c < bestC) { bestC = c; best = i; }
+    }
+    I.egoT += dt;
+    ++I.egoSince;
+    return best;
+}
+
+int VoxelEnv::egoStat(const char* which) const {
+    const EgoPlanner::Stats& s = im_->ego.stats();
+    const std::string w = which;
+    if (w == "plans") return s.plans;
+    if (w == "failures") return s.failures;
+    if (w == "astarFails") return s.astarFails;
+    if (w == "collidingAfter") return s.collidingAfter;
+    return 0;
+}
 
 void VoxelEnv::position(float& e, float& n, float& u) const {
     e = im_->px; n = im_->py; u = im_->pz;
@@ -543,7 +649,13 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     // The spawn is only known HERE -- after the world dispatch, the --vary-goal
     // sampling and the clearance nudge have all had their say. Seeding the
     // trail any earlier drew a line from the previous episode's last position.
-    I.startX = I.px; I.startY = I.py;
+    I.startX = I.px; I.startY = I.py; I.startZ = I.pz;
+    {
+        EgoParams ep;
+        ep.robotR = cfg_.robotR;
+        I.ego = EgoPlanner(ep);
+        I.egoT = 0.f; I.egoSince = 0; I.egoWp = 0; I.egoHavePrev = false;
+    }
     I.prevNet = 0.f;
     // How big this world is, so RANGE pays the same for covering the same
     // FRACTION of a 60 m maze and a 300 m city.

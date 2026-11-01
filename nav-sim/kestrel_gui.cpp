@@ -412,11 +412,11 @@ const char* DEMO_WORLD[] = {"tour", "gallery", "hall", "forest", "maze", "city",
                             "road", "culdesac", "corridor"};
 const int NDEMO_WORLD = int(sizeof DEMO_WORLD / sizeof *DEMO_WORLD);
 
-// THE NINE, in the order bench runs them and named exactly as --policies takes
+// THE TEN, in the order bench runs them and named exactly as --policies takes
 // them, so the row, the command and the binary cannot disagree about what a
 // planner is called.
 const char* POLICY_NAME[] = {"random", "freeM", "goal", "score",
-                             "freeG", "novelG", "cover", "frontRaw", "circler"};
+                             "freeG", "novelG", "cover", "frontRaw", "circler", "ego"};
 const int NPOLICY = int(sizeof POLICY_NAME / sizeof *POLICY_NAME);
 
 // CORE FRACTION, AT THE REGIME BOUNDARIES rather than at round decimals.
@@ -550,7 +550,7 @@ struct Cfg {
     bool  benchOracle = false;    // --oracle: truth map within 8 m (a ceiling)
     // Which planners bench runs, and how much of the body's volume the veto
     // insists is CONFIRMED free. Both default to what bench has always done.
-    bool  bp[9] = {true, true, true, true, true, true, true, true, true};
+    bool  bp[10] = {true, true, true, true, true, true, true, true, true, true};
     int   coreIdx = 0;
 
     // sim
@@ -703,7 +703,7 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--steps"); a.push_back(std::to_string(c.steps));
             if (c.benchStereo) a.push_back("--stereo");
             if (c.benchOracle) a.push_back("--oracle");
-            // Only when it is a SUBSET. Emitting all nine would be the same run
+            // Only when it is a SUBSET. Emitting all ten would be the same run
             // with a longer command line, and the strip is meant to be typed.
             {
                 int on = 0;
@@ -938,7 +938,7 @@ enum {
     // 209-212 -- which is exactly the shape that made a six-world row look
     // like a two-world row to the code that counted it.
     ID_BW = 250,          // +0..5, the order of WORLD_NAME
-    ID_BENCH_POL = 260,   // +0..8, the order of POLICY_NAME
+    ID_BENCH_POL = 260,   // +0..9, the order of POLICY_NAME
     ID_BENCH_CFM = 270, ID_BENCH_CFP, ID_BENCH_ORACLE,
     ID_WW = 560,          // +0..5
     ID_EW = 660,          // +0..5
@@ -1029,11 +1029,11 @@ void panelTrack(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
 void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     const int x = 266;
     txt(im, "path-planner baselines", x, 112, 0.66, INK, 2);
-    txt(im, "NINE classical planners through the SAME environment a learned policy",
+    txt(im, "TEN classical planners through the SAME environment a learned policy",
         x, 136, 0.44, DIM);
-    txt(im, "uses. Four optimise a goal nothing is scored on any more; five are",
+    txt(im, "uses: goal-seekers, five matched to safe travel, and ego, an",
         x, 156, 0.44, DIM);
-    txt(im, "matched to safe travel. RUN_ME says what each one does.",
+    txt(im, "EGO-Planner-style optimiser. RUN_ME says what each one does.",
         x, 176, 0.44, DIM);
 
     worldRow(im, bs, x, 206, ID_BW, c.bw);        // label 194, buttons 206-242

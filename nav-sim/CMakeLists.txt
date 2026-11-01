@@ -296,6 +296,7 @@ if(pybind11_FOUND)
     python/voxelenv_py.cpp
     kestrel_report.cpp
     rl_env.cpp
+    ego_planner.cpp
 )
   target_link_libraries(voxelenv PRIVATE navcore)
   target_include_directories(voxelenv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
@@ -402,6 +403,7 @@ add_executable(kestrel
   ${KESTREL_AUTONOMY_SRC}
 
   rl_env.cpp
+  ego_planner.cpp
   ../onboard/src/lock_tracker_fused.cpp
   ../onboard/src/crop_filters.cpp
   ../onboard/src/gray_frame.cpp
@@ -609,9 +611,18 @@ if(TARGET opencv_videoio)
   set_tests_properties(footage_vio_synthetic PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# The EGO-style bench baseline routes round a trunk, stays straight in the
+# open, and treats unknown as free only when told to (test/ego_planner_check.cpp).
+add_executable(ego_planner_check test/ego_planner_check.cpp ego_planner.cpp)
+target_link_libraries(ego_planner_check PRIVATE navcore)
+target_include_directories(ego_planner_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(ego_planner_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME ego_planner_check COMMAND ego_planner_check)
+
 add_executable(rl_env_check
   test/rl_env_check.cpp
   rl_env.cpp
+  ego_planner.cpp
 
 
 )

@@ -214,6 +214,83 @@ machine. That is why there is one seed. The estimator itself ran at
 
 ![-70° gimbal run: VIO against the subtitles' GPS](footage_vio_example.png)
 
+## Landmark memory (`--loop`): "I have been here"
+
+The VIO remembers only the ground currently in view, so its error grows
+with distance and nothing pulls it back. `--loop` adds the part of SLAM that
+does pull it back (the loop closure in RTAB-Map and ORB-SLAM3) without the
+rest of SLAM (`PlaceMemory` in `test/down_vo.hpp`):
+
+- **Store.** Every 2 m (`--loop-spacing`) it keeps a *place*: ORB corner
+  fingerprints of the ground, each with its world position. The position
+  comes from the pixel's ray, cut against the ground plane at the known
+  height.
+- **Recognise.** Every 5 frames (`--loop-every`) it looks for a return among
+  places that are both:
+  - old enough to be a real return, at least 15 s by default
+    (`--loop-min-age`);
+  - near enough to be possible: within 3 m plus 20% of the distance flown
+    since that place. Odometry drift is a percentage of distance, so it
+    can't be further off than that.
+
+  Fingerprints are matched with a ratio test, then a PnP pose is fitted
+  with RANSAC.
+- **Check the geometry,** independently of the VIO. The fitted pose must
+  agree with:
+  - the **height source**;
+  - the **gimbal's tilt**, except in vision-only mode, where nothing
+    independent knows the tilt.
+
+  A look-alike patch of grass is the dangerous failure, because a false
+  "been here" teleports the estimate. The checks are deliberately not made
+  against the VIO's own estimate, since that is what drifted. The first
+  version did compare against it, and rejected a correct 63-inlier return:
+  the vision-only estimate it was correcting was 44° off in tilt.
+- **Correct.** The track is shifted and turned so it passes through the
+  recognised pose. Vision-only odometry is also restarted there, because its
+  tilt and height drifted too. The report prints the raw VIO and the
+  corrected track side by side, and lists each return.
+
+**Measured on the synthetic gravel loops from above** (gimbal −90°, −70° and
+−45°; 5 m; 30 m loop; `--loop-min-age 6`, because the clips are only 11 s
+long). Start-to-end gap:
+
+| gimbal | attitude | VIO alone | VIO + memory |
+|---|---|---|---|
+| −90° | gimbal | 0.07 m | 0.03 m |
+| −90° | vision only | 0.17 m | 0.16 m |
+| −70° | gimbal | 0.08 m | 0.15 m |
+| −70° | vision only | **4.90 m** | **0.05 m** |
+| −45° | gimbal | 0.05 m | 0.04 m |
+| −45° | vision only | **1.95 m** | **0.12 m** |
+
+It recognised the start on every run.
+
+- **Where the VIO had drifted, it removed the drift:** 4.90 m down to
+  0.05 m.
+- **Where the VIO was already within about 0.1 m, the result is the fix's
+  own accuracy,** which can be slightly worse (0.08 → 0.15 m at −70°).
+- **It costs 10–15 ms per frame** at 960x540 (ORB, matching and PnP),
+  measured separately from the estimator's own time.
+- **It finds nothing on low-contrast ground** unless the contrast is
+  normalised first. At ORB's default corner threshold, the synthetic noise
+  ground gave zero corners. So it applies local contrast normalisation
+  (CLAHE) and a lower threshold.
+
+**What it cannot do:**
+- **Fix scale.** A wrong height or lens stretches the stored places too.
+- **Bend the track before the return.** The correction applies from the
+  moment of recognition onward. The earlier track keeps its drift, which is
+  why the RMS against GPS barely changes. Spreading the correction back
+  along the path is pose-graph optimisation, which is not done here.
+- **Help without a return.** It only corrects when the aircraft comes back
+  over somewhere it has been. The Neo 2 protocol's "hover over the start
+  mark at the end" is exactly that test.
+
+One seed per row again: the synthetic renders are slow. Read it as
+"recognises a return and removes the drift when there is drift to remove",
+not as a rate.
+
 ## What this cannot see
 
 - **Rolling shutter.** The Neo 2's sensor reads out line by line, and fast

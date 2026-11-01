@@ -420,6 +420,15 @@ public:
         speed = prims_[i].speed; yawRate = prims_[i].yawRate; climb = prims_[i].climb;
     }
 
+    // The whole rollout of primitive `i`, body frame (+y forward, +x right,
+    // +z up), one point per dt -- the path sphereClear checked. Read-only, for
+    // a caller that picks the primitive closest to a trajectory of its own
+    // (nav-sim's EGO-style baseline) without a second copy of the rollout.
+    const std::vector<std::array<float, 3>>& primPoints(size_t i) const {
+        static const std::vector<std::array<float, 3>> none;
+        return i < prims_.size() ? prims_[i].pts : none;
+    }
+
     struct Reject {
         int occupied = 0;   // an OCCUPIED cell inside the robot ball
         int unknown  = 0;   // the centreline was not confirmed FREE

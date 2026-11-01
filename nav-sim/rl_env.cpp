@@ -653,6 +653,12 @@ void VoxelEnv::reset(const std::string& world, unsigned seed) {
     {
         EgoParams ep;
         ep.robotR = cfg_.robotR;
+        // The SAME top speed as the primitive library it is matched against.
+        // At EGO's own 2.5 m/s its trajectories matched the 2 m/s primitives
+        // while freeM took the 3 m/s ones, which made the travel column partly
+        // a speed comparison (docs/ego_bench.md, first run).
+        ep.maxVel = I.traj.params().vMax;
+        ep.unknownFree = !cfg_.egoKnownOnly;
         I.ego = EgoPlanner(ep);
         I.egoT = 0.f; I.egoSince = 0; I.egoWp = 0; I.egoHavePrev = false;
     }
@@ -902,8 +908,15 @@ void VoxelEnv::buildObservation() {
         // ones that end inside something. nAdm still counts what geometry
         // WOULD have approved, so the observation and the logging do not change
         // meaning between the two modes -- only what is selectable does.
-        if (e.admissible) ++nAdm;
-        if (e.admissible || !cfg_.maskUnsafe) mask_[i] = 1;
+        bool ok = e.admissible;
+        if (ok && cfg_.brakeMask) {
+            const TrajParams& tp = I.traj.params();
+            const float usable = std::max(0.f, e.freeM - tp.robotR * tp.freeMarginFrac);
+            const float v = e.speed;
+            ok = v * tp.reactS + v * v / (2.f * tp.decelMs2) <= usable;
+        }
+        if (ok) ++nAdm;
+        if (ok || !cfg_.maskUnsafe) mask_[i] = 1;
         sumFree += e.freeM; maxFree = std::max(maxFree, e.freeM);
     }
 

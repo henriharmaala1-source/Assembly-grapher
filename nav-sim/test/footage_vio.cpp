@@ -87,6 +87,7 @@ double deg(double r) { return r * 180.0 / kPi; }
 struct Opt {
     std::string video, srt, calib, heightCsv, csv, plot, shot, summary;
     bool noSrt = false;
+    float srtOffset = 0.f;            // subtitle time = video time + this
     float hfov = 0.f;                 // > 0: pinhole of this horizontal FOV
     float height = 0.f;               // > 0: constant height, metres
     float heightOffset = 0.f;
@@ -103,6 +104,7 @@ struct Opt {
     bool loop = false;
     float loopSpacing = 2.f, loopMinAge = 15.f;
     int loopEvery = 5;
+    int loopConfirm = 2;              // looks that must agree before a return counts
     bool quiet = false;
     // --calibrate
     std::string calibVideo, calibOut = "calib.yml";
@@ -137,6 +139,7 @@ void usage() {
         "telemetry:\n"
         "  --srt FILE             DJI subtitles (default: the video's name with .SRT/.srt)\n"
         "  --no-srt               ignore them\n"
+        "  --srt-offset S         the subtitles describe video time + S (the run estimates it)\n"
         "output:\n"
         "  --csv FILE             per-frame track\n"
         "  --plot FILE.png        top-down track, against GPS when there is one\n"
@@ -149,6 +152,8 @@ void usage() {
         "  --loop-spacing M       store a place every M metres (default 2)\n"
         "  --loop-min-age S       only places at least S seconds old count as a return (15)\n"
         "  --loop-every N         look for a return every N frames (5)\n"
+        "  --loop-confirm K       a return counts only when K consecutive looks agree on the\n"
+        "                         same correction (2; 1 = trust a single one)\n"
         "  --quiet\n\n"
         "  footage_vio --calibrate VIDEO [--board 9x6] [--square-mm 25] [--fisheye]\n"
         "              [--out calib.yml] [--every N] [--max-views 60]\n"
@@ -170,6 +175,7 @@ bool parse(int argc, char** argv, Opt& o) {
         if (a == "--video") o.video = argv[++i];
         else if (a == "--srt") o.srt = argv[++i];
         else if (a == "--no-srt") o.noSrt = true;
+        else if (a == "--srt-offset") f(o.srtOffset);
         else if (a == "--calib") o.calib = argv[++i];
         else if (a == "--hfov") f(o.hfov);
         else if (a == "--height") f(o.height);
@@ -194,6 +200,7 @@ bool parse(int argc, char** argv, Opt& o) {
         else if (a == "--loop-spacing") f(o.loopSpacing);
         else if (a == "--loop-min-age") f(o.loopMinAge);
         else if (a == "--loop-every") o.loopEvery = std::max(1, std::atoi(argv[++i]));
+        else if (a == "--loop-confirm") o.loopConfirm = std::max(1, std::atoi(argv[++i]));
         else if (a == "--quiet") o.quiet = true;
         else if (a == "--calibrate") o.calibVideo = argv[++i];
         else if (a == "--board") std::sscanf(argv[++i], "%dx%d", &o.boardW, &o.boardH);
@@ -549,7 +556,7 @@ void drawPlot(const std::string& path, const std::vector<cv::Point2d>& vio, cons
     }
     if (!corr.empty()) {
         ly += 18;
-        cv::line(im, {lx, ly - 4}, {lx + 30, ly - 4}, cC, 2); cv::putText(im, "VIO + landmark memory", {lx + 38, ly}, cv::FONT_HERSHEY_SIMPLEX, 0.45, cC, 1, cv::LINE_AA);
+        cv::line(im, {lx, ly - 4}, {lx + 30, ly - 4}, cC, 2); cv::putText(im, "VIO + memory (spread back)", {lx + 38, ly}, cv::FONT_HERSHEY_SIMPLEX, 0.45, cC, 1, cv::LINE_AA);
     }
     ly += 18;
     cv::circle(im, {lx + 15, ly - 4}, 3, cL, -1); cv::putText(im, "VIO lost", {lx + 38, ly}, cv::FONT_HERSHEY_SIMPLEX, 0.45, cL, 1, cv::LINE_AA);
@@ -617,6 +624,8 @@ struct Rec {
     int tracked = 0, inliers = 0;
     double e = 0, n = 0, u = 0, yaw = 0, H = 0;
     double ce = 0, cn = 0;            // with the landmark memory's corrections (= e, n without --loop)
+    double se = 0, sn = 0;            // the same, each correction spread back along the path (offline)
+    double flown = 0;                 // VIO path length so far
     bool fix = false;                 // a correction was applied at this frame
     bool gps = false;
     double ge = 0, gn = 0, galt = 0;
@@ -674,6 +683,8 @@ int main(int argc, char** argv) {
             if (!in) { std::fprintf(stderr, "footage_vio: cannot read %s\n", path.c_str()); return 2; }
             std::stringstream ss; ss << in.rdbuf();
             srt = parseSrt(ss.str());
+            // A block stamped at subtitle time T describes video time T - offset.
+            for (SrtRec& r : srt) r.t -= o.srtOffset;
             std::set<std::string> keys;
             for (const SrtRec& r : srt) for (const auto& kv : r.f) keys.insert(kv.first);
             std::string ks;
@@ -775,8 +786,21 @@ int main(int argc, char** argv) {
     // (horizontal; height stays the VIO's). Starts as the identity.
     double cTh = 0, cTe = 0, cTn = 0, flown = 0, lastFixT = -1e9;
     int frameNo = 0;
-    struct FixLog { double t, ageS, shiftM, dyawDeg; int inliers; };
+    struct FixLog { double t, ageS, shiftM, dyawDeg; int inliers; double placeFlown, flown, de, dn; };
     std::vector<FixLog> fixes;
+    // AGREEMENT before acting. One look that says "been here" can be a
+    // look-alike; the standard defence (Kimera-Multi, DOOR-SLAM: pairwise
+    // consistency) is that independent observations of a true return agree.
+    // So a fix is held as a CANDIDATE and applied only when loopConfirm
+    // consecutive looks give the same correction (within 0.3 m + 10 % and 3 deg).
+    struct Pending { double t; double de, dn, dyaw; int n; } pending{0, 0, 0, 0, 0};
+    int unconfirmed = 0;
+    // Frame-timing integrity (Ingenuity's Flight 6: one dropped frame broke
+    // the image timestamps and nearly the aircraft).
+    int tsGaps = 0, dupFrames = 0;
+    double srtLagS = 0, srtLagR = 0;
+    double prevPosMs = -1;
+    cv::Mat prevSmall;
 
     if (!o.quiet)
         std::printf("video: %s  %dx%d @ %.2f fps (%.0f frames); processing %dx%d, every %d -> %.2f fps; "
@@ -810,6 +834,16 @@ int main(int argc, char** argv) {
         cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
         cv::resize(gray, small, cv::Size(pw, ph), 0, 0, cv::INTER_AREA);
         if (!map1.empty()) { cv::Mat u; cv::remap(small, u, map1, map2, cv::INTER_LINEAR); small = u; }
+        {   // timestamps that do not step by one frame, and frames repeated
+            const double pm = cap.get(cv::CAP_PROP_POS_MSEC);
+            if (prevPosMs >= 0 && pm > 0) {
+                const double step = (pm - prevPosMs) / o.every, nominal = 1000.0 / fps;
+                if (std::fabs(step - nominal) > 0.5 * nominal) ++tsGaps;
+            }
+            if (pm > 0) prevPosMs = pm;
+            if (!prevSmall.empty() && cv::norm(small, prevSmall, cv::NORM_L1) < 0.2 * small.total()) ++dupFrames;
+            small.copyTo(prevSmall);
+        }
 
         // The camera's attitude for this frame.
         double pitch = o.gimbalPitch, roll = o.gimbalRoll, v;
@@ -875,6 +909,7 @@ int main(int argc, char** argv) {
         {
             if (!recs.empty() && r.valid)
                 flown += std::hypot(r.e - recs.back().e, r.n - recs.back().n);
+            r.flown = flown;
             auto applyCorr = [&]() {
                 const double c = std::cos(rad(cTh)), s = std::sin(rad(cTh));
                 r.ce = c * r.e + s * r.n + cTe;
@@ -893,7 +928,19 @@ int main(int argc, char** argv) {
                     const cv::Matx33d gimbalR = downvo::rotOf(att);
                     const downvo::PlaceMemory::Fix fx =
                         mem.query(small, t, flown, Rc, Cc, H, o.attitude == "vision" ? nullptr : &gimbalR);
+                    bool act = false;
                     if (fx.ok) {
+                        const double cde = fx.C[0] - r.ce, cdn = fx.C[1] - r.cn, cdy = yawBetween(Rc, fx.R);
+                        const bool agrees = pending.n > 0 && t - pending.t < 3.0 &&
+                                            std::hypot(cde - pending.de, cdn - pending.dn) <=
+                                                0.3 + 0.1 * std::hypot(cde, cdn) &&
+                                            std::fabs(cdy - pending.dyaw) <= 3.0;
+                        pending = {t, cde, cdn, cdy, agrees ? pending.n + 1 : 1};
+                        act = pending.n >= o.loopConfirm;
+                        if (!act) ++unconfirmed;
+                    }
+                    if (act) {
+                        pending.n = 0;
                         const double dyaw = yawBetween(Rc, fx.R);
                         const double before_e = r.ce, before_n = r.cn;
                         cTh += dyaw;
@@ -914,7 +961,8 @@ int main(int argc, char** argv) {
                         }
                         r.fix = true;
                         lastFixT = t;
-                        fixes.push_back({t, fx.ageS, std::hypot(r.ce - before_e, r.cn - before_n), dyaw, fx.inliers});
+                        fixes.push_back({t, fx.ageS, std::hypot(r.ce - before_e, r.cn - before_n), dyaw, fx.inliers,
+                                         mem.placeFlown(fx.place), flown, r.ce - before_e, r.cn - before_n});
                     }
                 }
                 mem.maybeStore(small, t, flown, Rc, Cc, H);
@@ -959,6 +1007,20 @@ int main(int argc, char** argv) {
     for (size_t i = 1; i < recs.size(); ++i) if (recs[i].valid) { ++nValid; sumIn += recs[i].inliers; }
     const double validPct = 100.0 * nValid / double(recs.size() - 1);
     const double meanIn = nValid ? sumIn / nValid : 0;
+    // SPREAD BACK: each correction is drift that built up since the place it
+    // recognised, so -- offline, for the track estimate, not what the aircraft
+    // knew at the time -- distribute it along the path flown since then, in
+    // proportion to distance (drift grows with distance). The linear first
+    // step of a pose graph.
+    for (Rec& x : recs) { x.se = x.ce; x.sn = x.cn; }
+    for (const FixLog& f : fixes) {
+        const double span = std::max(1e-6, f.flown - f.placeFlown);
+        for (Rec& x : recs) {
+            if (x.t >= f.t || x.flown < f.placeFlown) continue;
+            const double w = (x.flown - f.placeFlown) / span;
+            x.se += w * f.de; x.sn += w * f.dn;
+        }
+    }
     const Rec& R0 = recs.front();
     const Rec& R1 = recs.back();
     std::vector<double> ms = estMs;
@@ -974,11 +1036,14 @@ int main(int argc, char** argv) {
         bool cmp = false;
         double th = 0, scale = 1, rmsE = 0, maxE = 0, finE = 0, gpsPath = 0, gpsClosure = 0, drift = 0;
     };
-    auto pos = [](const Rec& x, bool corr) { return cv::Point2d(corr ? x.ce : x.e, corr ? x.cn : x.n); };
-    auto metrics = [&](bool corr) {
+    // track: 0 raw VIO, 1 corrected as it flew, 2 corrections spread back
+    auto pos = [](const Rec& x, int corr) {
+        return corr == 2 ? cv::Point2d(x.se, x.sn) : corr == 1 ? cv::Point2d(x.ce, x.cn) : cv::Point2d(x.e, x.n);
+    };
+    auto metrics = [&](int corr) {
         Metrics m;
         const cv::Point2d p0 = pos(R0, corr), p1 = pos(R1, corr);
-        m.path = pathLen(recs, false, 0.5, corr);
+        m.path = pathLen(recs, false, 0.5, corr != 0);
         m.closure = cv::norm(p1 - p0);
         // A CLOSED LOOP HIDES A SCALE ERROR: a wrong height stretches the way
         // out and the way back alike, and the loop still closes. What shows it
@@ -1019,17 +1084,92 @@ int main(int argc, char** argv) {
         m.drift = m.cmp ? 100.0 * m.finE / std::max(1e-6, m.gpsPath) : 100.0 * m.closure / std::max(1e-6, m.path);
         return m;
     };
-    const Metrics raw = metrics(false);
-    const Metrics cor = o.loop ? metrics(true) : raw;
+    const Metrics raw = metrics(0);
+    const Metrics cor = o.loop ? metrics(1) : raw;
+    const Metrics smo = o.loop ? metrics(2) : raw;
     const Metrics& M = cor;                                  // what the summary and the check use
-    auto rot = [&](const Rec& x, bool corr) {
-        const Metrics& m = corr ? cor : raw;
+    auto rot = [&](const Rec& x, int corr) {
+        const Metrics& m = corr == 2 ? smo : corr == 1 ? cor : raw;
         const cv::Point2d q = pos(x, corr) - pos(R0, corr);
         return cv::Point2d(std::cos(m.th) * q.x - std::sin(m.th) * q.y, std::sin(m.th) * q.x + std::cos(m.th) * q.y);
     };
 
     std::printf("\nframes %zu over %.1f s, %.1f %% tracked, mean inliers %.0f, estimator %.1f ms/frame (p95 %.1f)\n",
                 recs.size(), R1.t - R0.t, validPct, meanIn, msMean, msP95);
+    // CLOCK OFFSET between the video and the subtitles, estimated from the
+    // data: the VIO's ground speed against the GPS's, cross-correlated over
+    // +-2 s. A 1 s lag on GPS used as truth is metres of apparent error at
+    // walking speed, and nothing else in the file says whether there is one.
+    if (haveGps && haveOrigin && recs.size() > 20) {
+        const double h = 0.25;                                       // speed over +-h s
+        const int k = std::max(1, int(std::lround(h * fpsRun)));
+        auto gpsAt = [&](double t, double& e, double& n) {
+            double la, lo;
+            if (!srtAt(srt, "latitude", t, la) || !srtAt(srt, "longitude", t, lo)) return false;
+            enuOf(la, lo, lat0, lon0, e, n);
+            return true;
+        };
+        std::vector<double> tv, sv;
+        for (size_t i = size_t(k); i + size_t(k) < recs.size(); ++i) {
+            if (!recs[i - k].valid || !recs[i + k].valid) continue;
+            tv.push_back(recs[i].t);
+            sv.push_back(std::hypot(recs[i + k].e - recs[i - k].e, recs[i + k].n - recs[i - k].n) /
+                         (recs[i + k].t - recs[i - k].t));
+        }
+        double bestR = -2, bestL = 0;
+        for (double L = -2.0; L <= 2.0 + 1e-9; L += 1.0 / fpsRun) {
+            double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+            int n = 0;
+            for (size_t i = 0; i < tv.size(); ++i) {
+                double e0, n0, e1, n1;
+                if (!gpsAt(tv[i] + L - h, e0, n0) || !gpsAt(tv[i] + L + h, e1, n1)) continue;
+                const double g = std::hypot(e1 - e0, n1 - n0) / (2 * h);
+                sx += sv[i]; sy += g; sxx += sv[i] * sv[i]; syy += g * g; sxy += sv[i] * g; ++n;
+            }
+            if (n < 20) continue;
+            const double cov = sxy / n - sx / n * sy / n;
+            const double den = std::sqrt(std::max(1e-12, (sxx / n - sx / n * sx / n) * (syy / n - sy / n * sy / n)));
+            const double r = cov / den;
+            if (r > bestR) { bestR = r; bestL = L; }
+        }
+        if (bestR > -2) {
+            std::printf("clock: the subtitles match the video best %+.2f s later (speed correlation %.2f)%s\n", bestL,
+                        bestR,
+                        std::fabs(bestL) > 1.5 / fpsRun && bestR > 0.5
+                            ? cv::format("  -- rerun with --srt-offset %.2f",
+                                         std::round((o.srtOffset + bestL) * 100.0) / 100.0 + 0.0).c_str()
+                            : "");
+            srtLagS = bestL; srtLagR = bestR;
+        }
+    }
+    // INTEGRITY: the video's own timestamps and repeated frames, and the
+    // subtitles' frame counter and interval against the video.
+    {
+        int srtCntGaps = 0, srtDtOff = 0, srtWithCnt = 0;
+        double prevCnt = -1;
+        for (const SrtRec& x : srt) {
+            auto c = x.f.find("framecnt");
+            if (c != x.f.end()) {
+                ++srtWithCnt;
+                if (prevCnt >= 0 && c->second - prevCnt != 1.0) ++srtCntGaps;
+                prevCnt = c->second;
+            }
+            auto d = x.f.find("difftime");
+            if (d != x.f.end() && std::fabs(d->second - 1000.0 / fps) > 0.5 * 1000.0 / fps) ++srtDtOff;
+        }
+        std::printf("integrity: video %d timestamp jump(s), %d repeated frame(s)", tsGaps, dupFrames);
+        if (!srt.empty())
+            std::printf("; subtitles %zu blocks for %.0f video frames, %d frame-counter gap(s), %d interval(s) off "
+                        "the frame rate", srt.size(), nFrames, srtCntGaps, srtDtOff);
+        std::printf("\n");
+        // Repeats are reported, not warned on: a real sensor never repeats a
+        // frame exactly (noise), but an encoder's skipped frame or a
+        // noiseless render of a hover does.
+        if (tsGaps || srtCntGaps)
+            std::printf("  WARNING: dropped frames break the constant-rate assumption the VIO's motion prior "
+                        "makes, and shift the subtitles against the frames -- check the clip\n");
+        (void)srtWithCnt;
+    }
     auto report = [&](const char* who, const Metrics& m) {
         std::printf("%s: flew %.1f m; start-to-end %.2f m = %.2f %% of the path  "
                     "(the drift, IF it ended over its start)\n", who, m.path, m.closure,
@@ -1058,7 +1198,13 @@ int main(int argc, char** argv) {
         for (const FixLog& fl : fixes)
             std::printf("  %6.1f s: recognised a place from %.0f s ago (%d inliers): moved %.2f m, turned %+.1f deg\n",
                         fl.t, fl.ageS, fl.inliers, fl.shiftM, fl.dyawDeg);
+        if (unconfirmed)
+            std::printf("  %d look(s) said \"been here\" without %d agreeing in a row: held, not applied\n", unconfirmed,
+                        o.loopConfirm);
         report("VIO+memory", cor);
+        if (smo.cmp && !fixes.empty())
+            std::printf("VIO+memory, corrections spread back along the path (offline): vs GPS RMS %.2f m, max %.2f m\n",
+                        smo.rmsE, smo.maxE);
         std::printf("  (it removes drift; it cannot fix SCALE -- a wrong height or lens is still wrong)\n");
     }
 
@@ -1068,7 +1214,7 @@ int main(int argc, char** argv) {
         std::fprintf(f, "t_s,valid,tracked,inliers,vio_e,vio_n,vio_u,vio_yaw_deg,height_m,gps,gps_e,gps_n,gps_rel_alt,"
                         "vio_rot_e,vio_rot_n,corr_e,corr_n,fix\n");
         for (const Rec& x : recs) {
-            const cv::Point2d p = rot(x, false);
+            const cv::Point2d p = rot(x, 0);
             std::fprintf(f, "%.4f,%d,%d,%d,%.4f,%.4f,%.4f,%.2f,%.3f,%d,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%d\n", x.t,
                          int(x.valid), x.tracked, x.inliers, x.e, x.n, x.u, x.yaw, x.H, int(x.gps), x.ge, x.gn, x.galt,
                          p.x, p.y, x.ce, x.cn, int(x.fix));
@@ -1079,8 +1225,8 @@ int main(int argc, char** argv) {
         std::vector<cv::Point2d> pv, pg, pc;
         std::vector<char> va;
         for (const Rec& x : recs) {
-            pv.push_back(raw.cmp ? rot(x, false) : cv::Point2d(x.e - R0.e, x.n - R0.n));
-            if (o.loop) pc.push_back(cor.cmp ? rot(x, true) : cv::Point2d(x.ce - R0.ce, x.cn - R0.cn));
+            pv.push_back(raw.cmp ? rot(x, 0) : cv::Point2d(x.e - R0.e, x.n - R0.n));
+            if (o.loop) pc.push_back(smo.cmp ? rot(x, 2) : cv::Point2d(x.se - R0.se, x.sn - R0.sn));
             va.push_back(x.valid);
             if (x.gps) pg.emplace_back(x.ge, x.gn);
         }
@@ -1107,14 +1253,14 @@ int main(int argc, char** argv) {
                 std::fprintf(f, "video,attitude,height_src,height_mean_m,height_offset_m,gimbal_pitch,hfov,width,every,"
                                 "frames,duration_s,valid_pct,mean_inliers,path_m,closure_m,closure_pct,gps_path_m,"
                                 "gps_closure_m,gps_rms_m,gps_max_m,gps_final_m,drift_pct,scale,implied_height_m,ms_per_frame,furthest_m,"
-                                "loop,places,returns,raw_closure_m,raw_gps_final_m\n");
+                                "loop,places,returns,raw_closure_m,raw_gps_final_m,srt_lag_s,srt_lag_r\n");
             std::fprintf(f, "%s,%s,%s,%.3f,%.3f,%.1f,%.2f,%d,%d,%zu,%.2f,%.1f,%.0f,%.2f,%.3f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,"
-                            "%.2f,%.4f,%.3f,%.2f,%.3f,%d,%d,%d,%.3f,%.3f\n",
+                            "%.2f,%.4f,%.3f,%.2f,%.3f,%d,%d,%d,%.3f,%.3f,%.3f,%.3f\n",
                          o.video.c_str(), o.attitude.c_str(), hsrc.c_str(), Hmean, double(o.heightOffset),
                          double(o.gimbalPitch), hfovEff, pw, o.every, recs.size(), R1.t - R0.t, validPct, meanIn,
                          M.path, M.closure, 100.0 * M.closure / std::max(1e-6, M.path), M.gpsPath, M.gpsClosure,
                          M.rmsE, M.maxE, M.finE, M.drift, M.scale, Hmean * M.scale, msMean, M.far, int(o.loop),
-                         mem.stored(), mem.accepted(), raw.closure, raw.finE);
+                         mem.stored(), mem.accepted(), raw.closure, raw.finE, srtLagS, srtLagR);
             std::fclose(f);
         }
     }

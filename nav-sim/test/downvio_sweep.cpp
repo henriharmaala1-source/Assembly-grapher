@@ -46,6 +46,7 @@
 //   --write-video F    the rendered frames as a video (needs videoio)
 //   --write-srt F      the truth as DJI-layout subtitles: position, height
 //                      above the ground as rel_alt, gimbal angles
+//   --hover-end S      slow to a stop at the end of the path and hover S s
 //
 // PINHOLE ONLY. navcore's camera model and DepthVio are pinhole; real lenses
 // past ~120 deg are fisheye, which concentrates resolution at the centre
@@ -197,6 +198,11 @@ struct Opt {
     // Footage out, for nav-sim/test/footage_vio.cpp: the rendered frames as a
     // video, and the truth as DJI-style subtitles (.SRT).
     std::string writeVideo, writeSrt;
+    // --hover-end S: slow to a stop over the ramp time at the end of the path
+    // and hover S seconds -- the recording protocol's "come back and hover
+    // over the start mark", which the landmark memory needs to confirm a
+    // return. 0 (the default) keeps every earlier flight exactly as it was.
+    float hoverEnd = 0.f;
 };
 
 // Arc length -> position (east, north) and heading for --path.
@@ -279,6 +285,7 @@ bool parse(int argc, char** argv, Opt& o, bool& header) {
         else if (a == "--path" && i + 1 < argc) o.path = argv[++i];
         else if (a == "--write-video" && i + 1 < argc) o.writeVideo = argv[++i];
         else if (a == "--write-srt" && i + 1 < argc) o.writeSrt = argv[++i];
+        else if (a == "--hover-end") f(o.hoverEnd);
         else if (a == "--header") header = true;
         else { std::fprintf(stderr, "downvio_sweep: unknown argument %s\n", a.c_str()); return false; }
     }
@@ -374,10 +381,18 @@ int main(int argc, char** argv) {
     // (Starting at full speed handed DepthVio 50 px of flow on its first frame
     // with no velocity prior: a 60 deg lens at 1.5 m and 4 m/s never caught on.)
     const double ramp = 1.5;
+    // With --hover-end the end mirrors the start: a ramp down to a stop at
+    // exactly --dist, then a hover.
+    const double tStop = o.dist / o.speed + ramp;            // when the ramp-down ends
     auto along = [&](double t) {
+        if (o.hoverEnd > 0.f) {
+            if (t >= tStop) return double(o.dist);
+            if (t > tStop - ramp) { const double r = tStop - t; return o.dist - 0.5 * o.speed * r * r / ramp; }
+        }
         return t < ramp ? 0.5 * o.speed * t * t / ramp : o.speed * (t - 0.5 * ramp);
     };
-    const int frames = int((o.dist / o.speed + 0.5 * ramp) * o.fps) + 1;
+    const int frames = o.hoverEnd > 0.f ? int((tStop + o.hoverEnd) * o.fps) + 1
+                                        : int((o.dist / o.speed + 0.5 * ramp) * o.fps) + 1;
     const double u0 = floorTop + o.alt;
     double sumIn = 0, maxErr = 0, groundSum = 0, msSum = 0;
     int lost = 0, nIn = 0;

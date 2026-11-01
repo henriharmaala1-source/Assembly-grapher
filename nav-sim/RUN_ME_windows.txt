@@ -423,7 +423,11 @@ columns as the classical ones, on seeds it never trained on.
                                  Like EGO-Planner it treats UNKNOWN as free.
                                  It advises like the rest: the closest
                                  admissible primitive to its trajectory is
-                                 flown, so the veto still applies
+                                 flown, so the veto still applies.
+                                 --ego-known-only (the "ego: unknown" button)
+                                 makes it treat UNKNOWN as an obstacle
+                                 instead -- this tree's own rule -- so the
+                                 two can be compared on the same seeds
 
                      The columns are travel, net (how far from the spawn it
                      ended), cells, loops (travel/net) and minimum clearance.
@@ -442,6 +446,15 @@ columns as the classical ones, on seeds it never trained on.
                                            planner -- it says what perfect map
                                            knowledge would be worth, before
                                            anything is built to approximate it.
+
+                       --brake-mask        a primitive must be able to STOP
+                                           inside its own confirmed-free length
+                                           at its own speed (the aircraft
+                                           planner's speed law, as a veto).
+                                           Without it the env flies the
+                                           chosen speed with only 0.4 m seen
+                                           ahead. Off by default so earlier
+                                           numbers stay comparable.
 
                        --corefrac F        how much of the body's own volume
                                            the veto insists is CONFIRMED FREE,

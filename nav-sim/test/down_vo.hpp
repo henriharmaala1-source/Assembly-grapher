@@ -370,6 +370,8 @@ public:
     }
 
     int stored() const { return int(places_.size()); }
+    double placeT(int i) const { return places_[size_t(i)].t; }
+    double placeFlown(int i) const { return places_[size_t(i)].flownM; }
     int queries() const { return queries_; }
     int accepted() const { return accepted_; }
     int rejected() const { return rejected_; }

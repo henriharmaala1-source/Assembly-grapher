@@ -291,6 +291,61 @@ One seed per row again: the synthetic renders are slow. Read it as
 "recognises a return and removes the drift when there is drift to remove",
 not as a rate.
 
+### Agreement, spreading back, and frame timing
+
+Three changes came out of the research survey
+(`reports/GNSS denied navigation deep survey.md`):
+
+- **Two looks must agree** (`--loop-confirm 2`, the default). A single
+  "been here" is held as a candidate and applied only when the next look
+  gives the same correction: within 0.3 m plus 10%, and 3°. This is the
+  pairwise-consistency defence that multi-robot SLAM systems use against
+  look-alikes.
+  - On the synthetic noise loop with a 3 s hover at the end: 8 looks
+    recognised the start, 4 were held back as unconfirmed, and 4 applied
+    corrections of 0.01–0.04 m.
+  - On a clip that ends exactly at the return, with no hover, the second
+    look never comes and the correction is not applied. The −70°
+    vision-only gravel clip keeps its 4.76 m gap at `--loop-confirm 2`; it
+    closes to 0.05 m at `--loop-confirm 1`. Hence the hover in the
+    recording protocol.
+- **Corrections spread back along the path,** offline: each correction is
+  distributed over the path flown since the recognised place, in proportion
+  to distance. That is the linear first step of a pose graph. It gives a
+  better track estimate when drift really grows with distance: on the noise
+  loop it is 0.03 m RMS against GPS. It is worse when drift does not grow
+  that way: on the −70° vision-only clip, where the drift came from tilt
+  error, RMS went from 2.32 m raw to 2.72 m. The online, as-flown track is
+  still what the summary and `--check-drift` use.
+- **Frame-timing integrity.** The output now includes an `integrity:` line:
+  - timestamp jumps in the video;
+  - repeated frames;
+  - for the subtitles: block count against frames, frame-counter gaps, and
+    intervals off the frame rate.
+
+  NASA's Ingenuity nearly crashed on its sixth flight after one dropped
+  frame broke its image timestamps. Dropped frames also slide the
+  subtitles' GPS and height against the video. Repeats are reported but not
+  warned on: a real sensor never repeats a frame exactly, but an encoder's
+  skipped frame or a noiseless synthetic hover does.
+
+`downvio_sweep --hover-end S` adds a slow-down and an S-second hover at the
+end of a synthetic flight, matching the protocol. The ctest flies it.
+
+### The clock between the video and the subtitles
+
+Nothing in a DJI file says whether the subtitles' GPS lines up in time with
+the frames. So the run estimates it: it cross-correlates the VIO's ground
+speed against the GPS speed over ±2 s, prints the best lag (`clock:`), and
+suggests `--srt-offset S` when the lag is more than a frame and the
+correlation is high.
+
+On the synthetic loop, subtitles deliberately shifted by +0.5 s and −0.8 s
+are both recovered exactly. The 0.5 s shift alone raised the error against
+GPS from 0.04 m to 0.68 m RMS on an otherwise perfect track. That is the
+size of mistake a lag in the "ground truth" makes. The ctest checks the
+recovery.
+
 ## What this cannot see
 
 - **Rolling shutter.** The Neo 2's sensor reads out line by line, and fast

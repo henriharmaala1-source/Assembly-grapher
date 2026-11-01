@@ -548,6 +548,8 @@ struct Cfg {
     int   seed0 = 101, seed1 = 104, steps = 3000;
     bool  benchStereo = false;
     bool  benchOracle = false;    // --oracle: truth map within 8 m (a ceiling)
+    bool  benchEgoKnown = false;  // --ego-known-only: ego treats unknown as an obstacle
+    bool  benchBrake = false;     // --brake-mask: must be able to stop inside what was seen
     // Which planners bench runs, and how much of the body's volume the veto
     // insists is CONFIRMED free. Both default to what bench has always done.
     bool  bp[10] = {true, true, true, true, true, true, true, true, true, true};
@@ -703,6 +705,8 @@ std::vector<std::string> buildArgs(const Cfg& c,
             a.push_back("--steps"); a.push_back(std::to_string(c.steps));
             if (c.benchStereo) a.push_back("--stereo");
             if (c.benchOracle) a.push_back("--oracle");
+            if (c.benchEgoKnown) a.push_back("--ego-known-only");
+            if (c.benchBrake) a.push_back("--brake-mask");
             // Only when it is a SUBSET. Emitting all ten would be the same run
             // with a longer command line, and the strip is meant to be typed.
             {
@@ -939,7 +943,7 @@ enum {
     // like a two-world row to the code that counted it.
     ID_BW = 250,          // +0..5, the order of WORLD_NAME
     ID_BENCH_POL = 260,   // +0..9, the order of POLICY_NAME
-    ID_BENCH_CFM = 270, ID_BENCH_CFP, ID_BENCH_ORACLE,
+    ID_BENCH_CFM = 270, ID_BENCH_CFP, ID_BENCH_ORACLE, ID_BENCH_EGOK, ID_BENCH_BRAKE,
     ID_WW = 560,          // +0..5
     ID_EW = 660,          // +0..5
     ID_RW = 760,          // +0..5
@@ -1076,8 +1080,17 @@ void panelBench(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c) {
     bs.push_back({cv::Rect(x + 270, 486, 250, 36),
                   c.benchOracle ? "Oracle map: ON (ceiling)" : "Oracle map: off",
                   ID_BENCH_ORACLE, c.benchOracle});
+    // ego's view of UNKNOWN: EGO-Planner's own (free) or this tree's rule.
+    bs.push_back({cv::Rect(x + 540, 486, 230, 36),
+                  c.benchEgoKnown ? "ego: unknown = wall" : "ego: unknown = free",
+                  ID_BENCH_EGOK, c.benchEgoKnown});
+    // The speed law as a veto: every planner must be able to stop inside what
+    // it has seen (EnvConfig::brakeMask).
+    bs.push_back({cv::Rect(x, 530, 360, 34),
+                  c.benchBrake ? "Brake mask: ON (stop inside seen)" : "Brake mask: off",
+                  ID_BENCH_BRAKE, c.benchBrake});
     txt(im, "Run both: a failure on perfect depth is the planner, a failure only on "
-            "stereo is the sensor.", x, 546, 0.42, DIM);
+            "stereo is the sensor.", x, 584, 0.42, DIM);
 }
 void panelDemo(cv::Mat& im, std::vector<Btn>& bs, const Cfg& c,
                const std::vector<std::string>& recs) {
@@ -1530,6 +1543,8 @@ struct FlagBtn { int mode; int id; const char* flag; };
 const FlagBtn FLAG_BTNS[] = {
     {BENCH, ID_BENCH_STEREO,  "--stereo"},
     {BENCH, ID_BENCH_ORACLE,  "--oracle"},
+    {BENCH, ID_BENCH_EGOK,    "--ego-known-only"},
+    {BENCH, ID_BENCH_BRAKE,   "--brake-mask"},
     {TRAIN, ID_TRAIN_STEREO,  "--stereo"},
     {TRAIN, ID_TRAIN_RESUME,  "--resume"},
     {TRAIN, ID_TRAIN_NOVETO,  "--no-veto"},
@@ -1971,6 +1986,8 @@ void apply(int id, Cfg& c, const std::vector<TrackInput>& inputs,
         case ID_BENCH_STP:    c.steps = std::min(5000, c.steps + 100); break;
         case ID_BENCH_STEREO: c.benchStereo = !c.benchStereo; break;
         case ID_BENCH_ORACLE: c.benchOracle = !c.benchOracle; break;
+        case ID_BENCH_EGOK: c.benchEgoKnown = !c.benchEgoKnown; break;
+        case ID_BENCH_BRAKE: c.benchBrake = !c.benchBrake; break;
 
         case ID_TRAIN_WM:     c.workers = std::max(1, c.workers - 1); break;
         case ID_TRAIN_WP:     c.workers = std::min(32, c.workers + 1); break;
@@ -2291,6 +2308,8 @@ int check() {
             }
             c.benchStereo = c.trainStereo = c.cuda = (variant == 1);
             c.benchOracle = (variant == 2);
+            c.benchEgoKnown = (variant == 3);
+            c.benchBrake = (variant == 2);
             c.frameLimit = variant * 50;
             c.stepsIdx = variant;
 

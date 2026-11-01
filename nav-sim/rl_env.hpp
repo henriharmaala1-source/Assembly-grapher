@@ -257,6 +257,25 @@ struct EnvConfig {
     // strictly harder and the numbers not comparable with fixed-geometry runs,
     // which is why it is opt-in rather than the new default.
     bool  varyGoal    = false;
+
+    // THE EGO BASELINE'S ATTITUDE TO UNKNOWN SPACE (bench --ego-known-only).
+    // EGO-Planner treats an unobserved cell as free, and so does `ego` by
+    // default; true makes its grid treat unknown as an obstacle -- this tree's
+    // own rule -- so the two can be compared on the same seeds.
+    bool  egoKnownOnly = false;
+
+    // STOP INSIDE WHAT HAS BEEN SEEN (bench --brake-mask). The mask admits a
+    // primitive once it has minFreeM (0.4 m) of confirmed-free length --
+    // whatever its speed. The aircraft's own planner caps speed so it can stop
+    // inside the confirmed-free length (voxel_traj.cpp, the speed law), but
+    // the env flies the chosen primitive at its commanded speed, so in here a
+    // 3 m/s primitive with 0.4 m seen ahead was selectable. true admits a
+    // primitive only if v*reactS + v^2/(2*decel) fits in its confirmed-free
+    // length less the body margin: the speed law, as a veto. It is the rule
+    // the safe planners in the literature share (FASTER, SUPER: a stop
+    // always available in known-free space). Off by default, so every
+    // number measured before it stays comparable.
+    bool  brakeMask = false;
 };
 
 struct EnvStep {

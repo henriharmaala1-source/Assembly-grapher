@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UVC (USB Video Class): class 14 = video, subclass 1 = video control.
+         Matches essentially any standard USB-video capture dongle, so the app
+         is offered/focused when the analog dongle is attached. -->
+    <usb-device class="14" subclass="1" />
+    <usb-device class="239" subclass="2" />   <!-- Miscellaneous / IAD composite -->
+</resources>

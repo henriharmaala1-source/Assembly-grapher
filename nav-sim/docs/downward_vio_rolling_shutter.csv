@@ -1,0 +1,25 @@
+args,depth,world,fov,tilt,wobble,wobble_hz,peak_rate_dps,speed,alt,att_bias,seed,frames,drift_pct,final_err_m,max_err_m,lost_pct,mean_inliers,ground_frac,ms_per_frame,ground,sun_elev,drone_shadow,exposure_ms,attitude,tilt_err_rms_deg,tilt_err_max_deg
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 2 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,2,323,0.51,0.102,0.141,0.0,222,1.00,197,noise,45,0,0.0,imu,0.427,1.039
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 1 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,1,323,0.35,0.070,0.114,0.0,221,1.00,203,noise,45,0,0.0,imu,0.428,1.187
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 4 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,4,323,0.05,0.009,0.118,0.0,222,1.00,195,noise,45,0,0.0,imu,0.410,1.114
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 3 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,3,323,0.41,0.082,0.152,0.0,221,1.00,209,noise,45,0,0.0,imu,0.425,1.007
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 1 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,1,323,0.66,0.132,0.167,0.0,221,1.00,2805,noise,45,0,0.0,imu,0.428,1.187
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 2 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,2,323,0.53,0.106,0.143,0.0,220,1.00,2802,noise,45,0,0.0,imu,0.427,1.039
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 3 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,3,323,0.88,0.175,0.226,0.0,222,1.00,2670,noise,45,0,0.0,imu,0.425,1.007
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 4 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,4,323,0.48,0.096,0.156,0.0,223,1.00,2672,noise,45,0,0.0,imu,0.410,1.114
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 1 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,1,323,0.93,0.186,0.213,0.0,221,1.00,2637,noise,45,0,0.0,imu,0.428,1.187
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 2 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,2,323,0.37,0.075,0.135,0.0,221,1.00,2643,noise,45,0,0.0,imu,0.427,1.039
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 3 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,3,323,0.95,0.190,0.233,0.0,220,1.00,2685,noise,45,0,0.0,imu,0.425,1.007
+"--gimbal -90 --alt 5 --fov 82 --speed 2 --dist 20 --seed 4 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,2.0,5.0,0.0,4,323,0.99,0.198,0.242,0.0,223,1.00,2729,noise,45,0,0.0,imu,0.410,1.114
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 1 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,1,143,0.28,0.056,0.112,0.0,219,1.00,169,noise,45,0,0.0,imu,0.437,1.187
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 2 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,2,143,0.29,0.057,0.127,0.0,219,1.00,175,noise,45,0,0.0,imu,0.444,1.039
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 3 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,3,143,0.40,0.079,0.121,0.0,219,1.00,174,noise,45,0,0.0,imu,0.438,0.944
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 4 --rs-readout-ms 0",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,4,143,0.39,0.078,0.120,0.0,222,1.00,175,noise,45,0,0.0,imu,0.409,1.114
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 1 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,1,143,1.01,0.201,0.280,0.0,220,1.00,2683,noise,45,0,0.0,imu,0.437,1.187
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 2 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,2,143,0.59,0.117,0.172,0.0,218,1.00,2683,noise,45,0,0.0,imu,0.444,1.039
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 3 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,3,143,1.60,0.319,0.321,0.0,221,1.00,2655,noise,45,0,0.0,imu,0.438,0.944
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 4 --rs-readout-ms 15",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,4,143,1.15,0.230,0.243,0.0,221,1.00,2672,noise,45,0,0.0,imu,0.409,1.114
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 1 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,1,143,1.85,0.368,0.440,0.0,219,1.00,2560,noise,45,0,0.0,imu,0.437,1.187
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 2 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,2,143,1.68,0.335,0.389,0.0,215,1.00,2552,noise,45,0,0.0,imu,0.444,1.039
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 3 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,3,143,2.67,0.533,0.533,0.0,220,1.00,2585,noise,45,0,0.0,imu,0.438,0.944
+"--gimbal -90 --alt 5 --fov 82 --speed 5 --dist 20 --seed 4 --rs-readout-ms 30",plane,flat,82,0,0,1.50,0,5.0,5.0,0.0,4,143,2.39,0.475,0.476,0.0,219,1.00,2586,noise,45,0,0.0,imu,0.409,1.114

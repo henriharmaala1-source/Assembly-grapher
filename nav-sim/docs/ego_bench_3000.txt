@@ -1,0 +1,127 @@
+# kestrel bench --worlds W --seeds 101 104 --steps 3000 --policies freeM goal ego  (truth depth, corefrac 0), one block per world
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    maze     101   flew the whole budget     287.4     17.4    263   16.5x      0.80
+freeM    maze     102   flew the whole budget     168.5     27.6     75    6.1x      0.85
+freeM    maze     103   flew the whole budget     273.0     39.1    187    7.0x      0.69
+freeM    maze     104   flew the whole budget     242.0     42.5    162    5.7x      0.76
+  -> freeM    runs 4  collisions 0  mean travel 242.7 m  net 31.7 m  cells 172  loops 7.7x
+
+goal     maze     101   COLLIDED              26.9     26.0     28    1.0x      0.58
+goal     maze     102   flew the whole budget     128.6     19.4     27    6.6x      0.73
+goal     maze     103   flew the whole budget     151.1     19.7     27    7.7x      0.65
+goal     maze     104   flew the whole budget     148.2     12.7     20   11.7x      0.69
+  -> goal     runs 4  collisions 1  mean travel 113.7 m  net 19.4 m  cells 26  loops 5.9x
+
+ego      maze     101   flew the whole budget     115.0     20.7     22    5.6x      0.76
+ego      maze     102   COLLIDED              20.5     19.3     27    1.1x      0.58
+ego      maze     103   flew the whole budget     133.6     19.6     30    6.8x      0.69
+ego      maze     104   flew the whole budget     114.6     12.7     21    9.0x      0.77
+  -> ego      runs 4  collisions 1  mean travel 95.9 m  net 18.1 m  cells 25  loops 5.3x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    forest   101   flew the whole budget     286.4    189.5    316    1.5x      0.72
+freeM    forest   102   flew the whole budget     281.0    170.9    329    1.6x      0.76
+freeM    forest   103   flew the whole budget     284.9    186.8    320    1.5x      0.73
+freeM    forest   104   flew the whole budget     283.2    116.8    316    2.4x      0.68
+  -> freeM    runs 4  collisions 0  mean travel 283.8 m  net 166.0 m  cells 320  loops 1.7x
+
+goal     forest   101   flew the whole budget     138.9    137.2    192    1.0x      0.74
+goal     forest   102   flew the whole budget     134.9    133.5    184    1.0x      0.73
+goal     forest   103   flew the whole budget     115.9     95.3    134    1.2x      0.75
+goal     forest   104   flew the whole budget     129.1    128.8    172    1.0x      0.76
+  -> goal     runs 4  collisions 0  mean travel 129.7 m  net 123.7 m  cells 170  loops 1.0x
+
+ego      forest   101   COLLIDED             180.5    166.0    238    1.1x      0.59
+ego      forest   102   COLLIDED             195.5    167.7    240    1.2x      0.59
+ego      forest   103   flew the whole budget     194.7    158.1    250    1.2x      0.65
+ego      forest   104   flew the whole budget     197.3    151.5    242    1.3x      0.73
+  -> ego      runs 4  collisions 2  mean travel 192.0 m  net 160.8 m  cells 242  loops 1.2x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    corridor 101   flew the whole budget     263.5     28.7    216    9.2x      0.83
+freeM    corridor 102   flew the whole budget     107.3      0.2      1  595.5x      1.20
+freeM    corridor 103   flew the whole budget     263.3     39.1    227    6.7x      0.75
+freeM    corridor 104   flew the whole budget     265.7      2.1    292  125.5x      0.73
+  -> freeM    runs 4  collisions 0  mean travel 225.0 m  net 17.5 m  cells 184  loops 12.8x
+
+goal     corridor 101   flew the whole budget     111.9     47.5     77    2.4x      0.72
+goal     corridor 102   flew the whole budget     129.4      0.9      2  136.4x      1.03
+goal     corridor 103   flew the whole budget     131.0     29.4     42    4.5x      0.77
+goal     corridor 104   flew the whole budget     123.3     24.5     35    5.0x      0.74
+  -> goal     runs 4  collisions 0  mean travel 123.9 m  net 25.6 m  cells 39  loops 4.8x
+
+ego      corridor 101   flew the whole budget     118.9     47.7     76    2.5x      0.69
+ego      corridor 102   flew the whole budget     107.3      1.0      2  112.8x      1.06
+ego      corridor 103   COLLIDED              57.0     37.8     68    1.5x      0.60
+ego      corridor 104   flew the whole budget      97.6     24.5     36    4.0x      0.71
+  -> ego      runs 4  collisions 1  mean travel 95.2 m  net 27.7 m  cells 46  loops 3.4x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    city     101   flew the whole budget     107.9      1.5      2   73.3x      0.99
+freeM    city     102   flew the whole budget     271.0     13.3    261   20.4x      0.90
+freeM    city     103   flew the whole budget     153.5      4.3      5   35.3x      0.98
+freeM    city     104   flew the whole budget      85.7      0.0      1  857.1x      1.20
+  -> freeM    runs 4  collisions 0  mean travel 154.5 m  net 4.8 m  cells 67  loops 32.4x
+
+goal     city     101   flew the whole budget     142.6     63.1     88    2.3x      0.80
+goal     city     102   flew the whole budget     130.6     41.4     60    3.2x      0.89
+goal     city     103   flew the whole budget     134.8     39.0     55    3.5x      0.89
+goal     city     104   flew the whole budget      85.7      0.7      1  130.5x      1.20
+  -> goal     runs 4  collisions 0  mean travel 123.4 m  net 36.0 m  cells 51  loops 3.4x
+
+ego      city     101   flew the whole budget      23.6     18.3     26    1.3x      0.76
+ego      city     102   flew the whole budget      96.4     21.5     31    4.5x      0.85
+ego      city     103   flew the whole budget      89.5     21.7     23    4.1x      0.95
+ego      city     104   flew the whole budget      86.2      0.7      1  120.5x      1.20
+  -> ego      runs 4  collisions 0  mean travel 73.9 m  net 15.6 m  cells 20  loops 4.8x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    road     101   flew the whole budget     262.3     27.8    140    9.4x      0.63
+freeM    road     102   flew the whole budget     262.0      4.3     36   61.6x      1.15
+freeM    road     103   flew the whole budget     179.5     69.5    110    2.6x      0.70
+freeM    road     104   flew the whole budget     264.1     33.8    173    7.8x      0.74
+  -> freeM    runs 4  collisions 0  mean travel 242.0 m  net 33.9 m  cells 115  loops 7.1x
+
+goal     road     101   flew the whole budget      85.8     85.8     86    1.0x      1.20
+goal     road     102   flew the whole budget      86.2     86.2     88    1.0x      1.20
+goal     road     103   flew the whole budget      85.8     85.8     86    1.0x      1.20
+goal     road     104   flew the whole budget      86.2     86.2     88    1.0x      1.20
+  -> goal     runs 4  collisions 0  mean travel 86.0 m  net 86.0 m  cells 87  loops 1.0x
+
+ego      road     101   flew the whole budget     171.4    171.4    172    1.0x      1.20
+ego      road     102   flew the whole budget     171.4    171.4    173    1.0x      1.20
+ego      road     103   flew the whole budget     171.4    171.4    172    1.0x      1.20
+ego      road     104   flew the whole budget     171.4    171.4    173    1.0x      1.20
+  -> ego      runs 4  collisions 0  mean travel 171.4 m  net 171.4 m  cells 172  loops 1.0x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+freeM    culdesac 101   flew the whole budget     262.1     12.3    140   21.3x      1.20
+freeM    culdesac 102   flew the whole budget     262.1     12.3    140   21.3x      1.20
+freeM    culdesac 103   flew the whole budget     262.3     10.6    150   24.7x      1.20
+freeM    culdesac 104   flew the whole budget     265.3      3.2     94   84.1x      0.87
+  -> freeM    runs 4  collisions 0  mean travel 263.0 m  net 9.6 m  cells 131  loops 27.4x
+
+goal     culdesac 101   flew the whole budget      96.7     96.7     97    1.0x      1.20
+goal     culdesac 102   flew the whole budget      96.8     96.8     97    1.0x      1.20
+goal     culdesac 103   flew the whole budget      96.8     96.8     97    1.0x      1.20
+goal     culdesac 104   flew the whole budget      96.6     96.6     97    1.0x      1.20
+  -> goal     runs 4  collisions 0  mean travel 96.7 m  net 96.7 m  cells 97  loops 1.0x
+
+ego      culdesac 101   flew the whole budget     140.0    107.8    109    1.3x      0.96
+ego      culdesac 102   flew the whole budget     142.5    111.9    115    1.3x      0.86
+ego      culdesac 103   flew the whole budget     150.3    115.8    118    1.3x      0.91
+ego      culdesac 104   flew the whole budget     145.7    119.3    121    1.2x      1.02
+  -> ego      runs 4  collisions 0  mean travel 144.7 m  net 113.7 m  cells 116  loops 1.3x
+

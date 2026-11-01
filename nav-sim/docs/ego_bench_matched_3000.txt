@@ -1,0 +1,109 @@
+# kestrel bench --policies ego (matched speed 3 m/s), seeds 101-104, 3000 steps, truth depth. unknown=free then --ego-known-only, per world
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      maze     101   COLLIDED              13.9     12.0     14    1.2x      0.60
+ego      maze     102   COLLIDED              20.2     19.0     27    1.1x      0.59
+ego      maze     103   COLLIDED               4.4      3.6      5    1.2x      0.59
+ego      maze     104   COLLIDED              13.9     12.2     16    1.1x      0.59
+  -> ego      runs 4  collisions 4  mean travel 13.1 m  net 11.7 m  cells 16  loops 1.1x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps   ego: UNKNOWN IS AN OBSTACLE
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      maze     101   COLLIDED              27.9     26.1     29    1.1x      0.59
+ego      maze     102   flew the whole budget     118.1     19.3     27    6.1x      0.77
+ego      maze     103   flew the whole budget     125.3     19.6     28    6.4x      0.68
+ego      maze     104   flew the whole budget     128.5     12.8     20   10.0x      0.76
+  -> ego      runs 4  collisions 1  mean travel 99.9 m  net 19.5 m  cells 26  loops 5.1x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      forest   101   flew the whole budget     200.6    147.2    257    1.4x      0.74
+ego      forest   102   flew the whole budget     233.3    116.2    271    2.0x      0.73
+ego      forest   103   flew the whole budget     199.4    154.8    254    1.3x      0.61
+ego      forest   104   flew the whole budget     201.1    147.2    257    1.4x      0.73
+  -> ego      runs 4  collisions 0  mean travel 208.6 m  net 141.4 m  cells 260  loops 1.5x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps   ego: UNKNOWN IS AN OBSTACLE
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      forest   101   flew the whole budget     144.7     88.2    122    1.6x      0.74
+ego      forest   102   flew the whole budget     156.3     96.5    132    1.6x      0.74
+ego      forest   103   flew the whole budget     123.5     57.5     80    2.1x      0.73
+ego      forest   104   COLLIDED             103.0     93.7    130    1.1x      0.59
+  -> ego      runs 4  collisions 1  mean travel 131.9 m  net 84.0 m  cells 116  loops 1.6x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      corridor 101   flew the whole budget     121.9     47.6     77    2.6x      0.72
+ego      corridor 102   flew the whole budget     107.6      1.0      2  108.7x      1.05
+ego      corridor 103   COLLIDED              56.4     37.5     66    1.5x      0.60
+ego      corridor 104   flew the whole budget     100.5     24.5     36    4.1x      0.75
+  -> ego      runs 4  collisions 1  mean travel 96.6 m  net 27.7 m  cells 45  loops 3.5x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps   ego: UNKNOWN IS AN OBSTACLE
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      corridor 101   flew the whole budget     139.8     47.7     76    2.9x      0.70
+ego      corridor 102   flew the whole budget      96.9      0.9      2  109.0x      1.10
+ego      corridor 103   COLLIDED              54.8     37.8     66    1.4x      0.60
+ego      corridor 104   flew the whole budget     108.0     24.5     36    4.4x      0.75
+  -> ego      runs 4  collisions 1  mean travel 99.9 m  net 27.7 m  cells 45  loops 3.6x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      city     101   flew the whole budget      24.9     18.8     25    1.3x      0.67
+ego      city     102   flew the whole budget     140.7    104.0    141    1.4x      0.85
+ego      city     103   flew the whole budget      90.2     22.0     23    4.1x      0.95
+ego      city     104   flew the whole budget      86.2      0.7      1  125.7x      1.20
+  -> ego      runs 4  collisions 0  mean travel 85.5 m  net 36.4 m  cells 48  loops 2.3x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps   ego: UNKNOWN IS AN OBSTACLE
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      city     101   flew the whole budget      21.7     18.1     24    1.2x      0.78
+ego      city     102   flew the whole budget     139.7     41.4     59    3.4x      0.88
+ego      city     103   flew the whole budget     135.0     38.8     55    3.5x      0.89
+ego      city     104   flew the whole budget      86.2      0.7      1  125.7x      1.20
+  -> ego      runs 4  collisions 0  mean travel 95.7 m  net 24.8 m  cells 35  loops 3.9x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      road     101   flew the whole budget     195.3    158.9    178    1.2x      1.20
+ego      road     102   flew the whole budget     195.1    158.9    179    1.2x      1.20
+ego      road     103   flew the whole budget     195.3    158.9    178    1.2x      1.20
+ego      road     104   flew the whole budget     195.1    158.9    179    1.2x      1.20
+  -> ego      runs 4  collisions 0  mean travel 195.2 m  net 158.9 m  cells 178  loops 1.2x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps   ego: UNKNOWN IS AN OBSTACLE
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      road     101   flew the whole budget     195.3    158.9    178    1.2x      1.20
+ego      road     102   flew the whole budget     195.2    158.9    179    1.2x      1.20
+ego      road     103   flew the whole budget     195.3    158.9    178    1.2x      1.20
+ego      road     104   flew the whole budget     195.2    158.9    179    1.2x      1.20
+  -> ego      runs 4  collisions 0  mean travel 195.3 m  net 158.9 m  cells 178  loops 1.2x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      culdesac 101   flew the whole budget     156.1    107.9    110    1.4x      0.89
+ego      culdesac 102   flew the whole budget     159.6    111.9    114    1.4x      0.88
+ego      culdesac 103   flew the whole budget     159.0    115.9    118    1.4x      0.86
+ego      culdesac 104   flew the whole budget     160.5    119.2    120    1.3x      1.04
+  -> ego      runs 4  collisions 0  mean travel 158.8 m  net 113.7 m  cells 116  loops 1.4x
+
+baselines through VoxelEnv -- the same harness a learned policy uses
+corefrac 0.00   truth depth   3000 steps   ego: UNKNOWN IS AN OBSTACLE
+policy   world    seed  outcome             travel      net  cells   loops    minClr
+ego      culdesac 101   flew the whole budget     152.9    107.6    108    1.4x      1.14
+ego      culdesac 102   flew the whole budget     155.4    111.6    113    1.4x      1.14
+ego      culdesac 103   flew the whole budget     157.9    115.6    117    1.4x      1.14
+ego      culdesac 104   flew the whole budget     160.0    119.4    123    1.3x      0.95
+  -> ego      runs 4  collisions 0  mean travel 156.6 m  net 113.6 m  cells 115  loops 1.4x
+

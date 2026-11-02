@@ -16,7 +16,9 @@ What is measured, and what is borrowed from the stock arm (frames/mark4-v2-10/dx
   measured     tip to the motor hole's near edge 22.5; motor hole 8 mm; straight edge ends
                200 (side without spar holes) and 198 (spar-hole side); tip to the spar
                holes' near edge 65; tip to the arm holes' near edges 204 and 201.
-  measured     also: the motor bolt slots are 5 mm end to end (width 3 mm, from stock)
+  measured     also: the motor bolt slots are 5 mm end to end (width 3 mm, from stock); the
+               tab ("notch") at the inner end, on the side without spar holes: its tip is 18 mm
+               past the end of that straight edge, and its tip edge is 7.5 mm wide
   from stock   the tip outline, the lightening cut-out, the slot width, the arm width
                (about 10-11 mm), the spar holes (2 x 4 mm, 8.6 mm apart, on the bump), the
                arm holes (2 x 3.2 mm, 11.14 mm apart across the arm), the bump's shape.
@@ -50,6 +52,8 @@ SPAR_EDGE = 65.0           # tip to the spar holes' (bump's) near edge
 ARMHOLE_EDGE_NONSPAR = 204.0   # tip to the near edge of the arm hole on the side without spar holes
 ARMHOLE_EDGE_SPAR = 201.0      # ... and on the spar-hole side
 SLOT_LEN = 5.0             # the motor bolt slots, end to end
+TAB_LEN = 18.0             # the inner-end tab: its tip is this far past the end of the non-spar straight edge
+TAB_W = 7.5                # ... and its flat tip is this wide
 # ---- borrowed from the stock arm ------------------------------------------------------
 ARMHOLE_D = 3.2
 SPARHOLE_D = 4.0
@@ -164,6 +168,17 @@ def build(stock):
     foot = unary_union([boss_top, boss_bot, Polygon([(END_NONSPAR, v_top), (END_SPAR, v_bot_end),
                                                     arm_holes_spar, arm_holes_nonspar])])
     foot = foot.convex_hull
+    # the tab at the inner end, beside the non-spar-side arm hole. Its shape is the stock arm's tab
+    # (a flat tip, tilted as on the stock arm), moved so the tip lands TAB_LEN past the straight edge's
+    # end and stretched to TAB_W; the finger joins the boss round the arm hole with straight edges.
+    sa, sb, sc, sd = (225.13, 15.65), (229.06, 9.86), (226.10, 7.85), (224.43, 5.33)    # stock tab points
+    du = (END_NONSPAR + TAB_LEN) - sb[0]
+    tb = (sb[0] + du, sb[1])
+    k = TAB_W / math.dist(sa, sb)
+    ta = (tb[0] + (sa[0] - sb[0]) * k, tb[1] + (sa[1] - sb[1]) * k)
+    tc, td = (sc[0] + du, sc[1]), (sd[0] + du, sd[1])
+    tab = unary_union([boss_top, Polygon([ta, tb, tc, td])]).convex_hull
+    foot = unary_union([foot, tab])
     body = unary_union([tip, strip, bump, foot]).buffer(0.25, 32).buffer(-0.25, 32)
     body = body.buffer(0)
     # the stock lightening cut-out(s) and the motor hole/slots stay
@@ -182,7 +197,7 @@ def build(stock):
     holes = [("motor", motor, MOTOR_D),
              ("spar", (sh[0][0] + shift, sh[0][1]), SPARHOLE_D), ("spar", (sh[1][0] + shift, sh[1][1]), SPARHOLE_D),
              ("arm", arm_holes_nonspar, ARMHOLE_D), ("arm", arm_holes_spar, ARMHOLE_D)]
-    return {"body": body, "holes": holes, "slots": slots, "bosses": (r_top, r_bot)}
+    return {"body": body, "holes": holes, "slots": slots, "bosses": (r_top, r_bot), "tab": (ta, tb)}
 
 
 # ---------------------------------------------------------------------------------------
@@ -246,6 +261,22 @@ def dim_slot(ax, m, text):
         ax.plot([p[0], p[0] + off[0] * 1.15], [p[1], p[1] + off[1] * 1.15], color=DIM, lw=0.6, zorder=5)
     ax.annotate("", xy=tuple(p0 + off), xytext=tuple(p1 + off),
                 arrowprops=dict(arrowstyle="<->", color=DIM, lw=0.9, shrinkA=0, shrinkB=0), zorder=6)
+    mid = (p0 + p1) / 2 + off + n * 2.7
+    ax.text(mid[0], mid[1], text, color=DIM, fontsize=10, fontweight="bold", ha="center", va="center", zorder=7)
+
+
+def dim_between(ax, p0, p1, outward, dist, text):
+    """Dimension of the distance p0-p1, drawn `dist` away on the `outward` side."""
+    p0, p1 = np.array(p0, float), np.array(p1, float)
+    d = (p1 - p0) / np.linalg.norm(p1 - p0)
+    n = np.array([-d[1], d[0]])
+    if n @ np.array(outward) < 0:
+        n = -n
+    off = n * dist
+    for p in (p0, p1):
+        ax.plot([p[0], p[0] + off[0] * 1.15], [p[1], p[1] + off[1] * 1.15], color=DIM, lw=0.6, zorder=5)
+    ax.annotate("", xy=tuple(p0 + off), xytext=tuple(p1 + off),
+                arrowprops=dict(arrowstyle="<->", color=DIM, lw=0.9, shrinkA=0, shrinkB=0), zorder=6)
     mid = (p0 + p1) / 2 + off + n * 1.9
     ax.text(mid[0], mid[1], text, color=DIM, fontsize=10, fontweight="bold", ha="center", va="center", zorder=7)
 
@@ -285,6 +316,8 @@ def draw(m, stock, path_png, path_svg):
     # dimension rows: spar-hole side (+v) above, the other side below
     y_top = [21, 29, 37]
     y_bot = [-21, -29, -37]
+    ta, tb = m["tab"]
+    dim_h(top, END_NONSPAR, END_NONSPAR + TAB_LEN, -17.5, "18", -4.98, -tb[1])
     dim_h(top, 0, MOTOR_EDGE, y_bot[0], "22.5", 0, 0)
     dim_h(top, 0, END_NONSPAR, y_bot[1], "200", -4.98, -4.98)
     dim_h(top, 0, ARMHOLE_EDGE_NONSPAR, y_bot[2], "204", -5.57, -5.57)
@@ -318,19 +351,25 @@ def draw(m, stock, path_png, path_svg):
 
     end = fig.add_axes([0.52, 0.045, 0.45, 0.33])
     draw_part(end, m, lw=1.6)
-    end.set_xlim(184, 217)
-    end.set_ylim(-17, 16)
+    end.set_xlim(184, 224)
+    end.set_ylim(-28, 14)
     end.set_aspect("equal")
     end.axis("off")
-    end.text(184.3, 15.5, "Inner end (outline assumed)", fontsize=10, fontweight="bold", color=INK, va="top")
+    end.text(184.3, 13.5, "Inner end (tab measured, rest assumed)", fontsize=10, fontweight="bold", color=INK, va="top")
     for kind, (u, v), d in m["holes"]:
         if kind == "arm":
-            side = 1 if -v > 0 else -1
-            end.annotate(f"Ø{d:g}", xy=(u + d / 2 * 0.7, -v + side * d / 2 * 0.7), xytext=(u + 6.5, -v + side * 6.5),
-                         fontsize=9, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.7))
-    end.text(184.3, -16.2, "straight edges end at 200 and 198; the holes' near edges are at\n"
-                           "204 and 201; the holes are 11.14 mm apart across the arm (stock)", fontsize=8, color=GREY,
-             va="bottom")
+            if -v > 0:                                            # spar-hole side, drawn up
+                end.annotate(f"Ø{d:g}", xy=(u + d / 2 * 0.7, -v + d / 2 * 0.7), xytext=(u - 11, -v + 5.0), fontsize=9,
+                             color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.7))
+            else:                                                 # other side, drawn down, beside the tab
+                end.annotate(f"Ø{d:g}", xy=(u - d / 2 * 0.7, -v - d / 2 * 0.7), xytext=(u - 11, -v - 9.5), fontsize=9,
+                             color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.7))
+    ta, tb = m["tab"]
+    dim_h(end, END_NONSPAR, END_NONSPAR + TAB_LEN, -19.5, "18", -4.98, -tb[1])
+    dim_between(end, (ta[0], -ta[1]), (tb[0], -tb[1]), outward=(1, 0), dist=3.0, text="7.5")
+    end.text(184.3, -27.8, "straight edges end at 200 and 198; the holes' near edges are at 204 and 201;\n"
+                         "the holes are 11.14 mm apart across the arm (stock); tab tip 18 past the 200 edge",
+             fontsize=8, color=GREY, va="bottom")
     fig.savefig(path_png)
     fig.savefig(path_svg)
     plt.close(fig)
@@ -353,6 +392,9 @@ def verify(m):
     bump = us[np.argmax(bot < bot[0] - 0.3)]
     print(f"straight edge ends: non-spar side {end_top:.2f} (asked 200), spar-hole side {end_bot:.2f} (asked 198); "
           f"bump starts {bump:.2f} (asked 65)")
+    ta, tb = m["tab"]
+    print(f"  tab: tip at u {g.bounds[2]:.2f} = {g.bounds[2] - 200:.2f} past the 200 edge (asked 18); "
+          f"tip edge {math.dist(ta, tb):.2f} wide (asked 7.5)")
     for a, b, w in m["slots"]:
         print(f"  slot end to end {math.dist(a, b) + w:.2f}, radii of its end-arc centres "
               f"{math.dist(a, (26.5, 0)):.2f} / {math.dist(b, (26.5, 0)):.2f}")

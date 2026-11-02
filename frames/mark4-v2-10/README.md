@@ -128,3 +128,12 @@ python3 frames/mark4-v2-10/build.py            # or --step path/to/another.step
 python3 frames/mark4-v2-10/trace_images.py
 python3 frames/mark4-v2-10/hardware.py         # --bore 2.6 for a tighter fit
 ```
+
+## Modified arm sketch
+
+`sketch/modified_arm.py` draws a dimensioned sketch of a modified arm from measured
+distances (tip to the motor hole, the spar holes and the arm holes, and where the straight
+edges end), starting from the stock arm's tip, slots and bump. It writes `modified_arm.dxf`,
+`.png` and `.svg` next to the script. The inner end's outline is assumed (two rounded
+bosses round the arm holes); the script's docstring lists what is measured and what is
+taken from the stock arm.

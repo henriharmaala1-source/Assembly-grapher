@@ -14,7 +14,9 @@ motor end (tip, motor mount, cut-out), at the bump with the two small holes, and
     set by putting the notch tip NOTCH_PAST mm beyond the end of the bump-side straight edge;
   * the motor hole is 8 mm and the four motor bolt slots are 5 mm end to end (3 mm wide);
   * the arm is 11.0 mm wide at the motor end and 11.5 mm at the frame end;
-  * the notch's tip edge is 7.5 mm wide (stock 7.0);
+  * the notch is rebuilt from its three edges: 7.5 mm tip, 10 mm long edge, 4 mm short edge (stock
+    7.0, 9.05 and 3.58), with the stock's right angles and tilt;
+  * the bump is 20.5 mm across the arm, edge to flat top (stock 18.6): the stock bump stretched;
   * the two end holes sit where they were measured, not where the stock arm has them.
 
 Coordinates: u runs along the arm from the tip (u = 0) toward the frame, v across it. Drawn with
@@ -33,7 +35,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.patches import Circle, Polygon as MplPolygon  # noqa: E402
-from shapely.affinity import translate  # noqa: E402
+from shapely.affinity import scale, translate  # noqa: E402
 from shapely.geometry import LineString, Polygon, box  # noqa: E402
 from shapely.ops import unary_union  # noqa: E402
 
@@ -50,6 +52,9 @@ END_BUMP_SIDE = 200.0      # tip to the end of the straight edge on the side wit
 END_NOTCH_SIDE = 198.0     # ... and on the side with the notch
 NOTCH_PAST = 18.0          # notch tip beyond the bump-side straight edge's end
 TAB_W = 7.5                # width of the notch's flat tip (stock 7.0)
+NOTCH_UPPER = 10.0         # the notch's long straight edge (stock 9.05) ...
+NOTCH_LOWER = 4.0          # ... and its short one (stock 3.58)
+BUMP_Y = 20.5              # across the arm at the bump, from the notch-side edge to the bump's flat top (stock 18.6)
 BUMP_NEAR = 65.0           # tip to the bump's near sloped edge (mid-height)
 HOLE_S3_EDGE = 204.0       # tip to the near edge of the end hole beside the notch
 HOLE_H4_EDGE = 201.0       # ... and of the end hole on the bump side
@@ -135,16 +140,30 @@ def chain(segs, tol=1e-3):
 def build(stock):
     """The modified arm in arm-local coordinates (v > 0 on the notch side)."""
     outer = stock["outer"]
-    # the notch's tip edge: the stock one runs from A to B (7.0 wide); stretch it to TAB_W about B
-    A, B = (225.13, 15.65), (229.06, 9.86)
-    k = TAB_W / math.dist(A, B)
-    A2 = (B[0] + (A[0] - B[0]) * k, B[1] + (A[1] - B[1]) * k)
+    # The notch. The stock one is a small rectangle tilted 34 degrees to the arm: a 7.0 mm tip edge between a
+    # 9.05 mm upper edge and a 3.58 mm lower edge. Rebuild it from the measured edges (tip TAB_W, upper
+    # NOTCH_UPPER, lower NOTCH_LOWER) with the same corner angles and tilt, tip corner B where it was.
+    P1s, As, Bs, Cs, Ds, Ss = (217.64, 10.58), (225.13, 15.65), (229.06, 9.86), (226.10, 7.85), (224.43, 5.33), (212.75, 7.27)
+    unit = lambda v: np.array(v, float) / np.linalg.norm(v)  # noqa: E731
+    d_dir = unit((As[0] - P1s[0], As[1] - P1s[1]))               # along the upper and lower edges, towards the tip
+    t_dir = unit((As[0] - Bs[0], As[1] - Bs[1]))                 # across the tip, from B to A
+    B = np.array(Bs)
+    A2, P1n, C2 = B + TAB_W * t_dir, B + TAB_W * t_dir - NOTCH_UPPER * d_dir, B - NOTCH_LOWER * d_dir
     ring = list(outer.exterior.coords)
-    i = min(range(len(ring)), key=lambda j: math.dist(ring[j], A))
-    assert math.dist(ring[i], A) < 0.05, "stock notch corner not found"
-    ring[i] = A2
-    if i == 0:
-        ring[-1] = A2
+    near = lambda p: min(range(len(ring)), key=lambda j: math.dist(ring[j], p))  # noqa: E731
+    iS, iP1, iA, iB, iC, iD = (near(p) for p in (Ss, P1s, As, Bs, Cs, Ds))
+    assert all(math.dist(ring[i], p) < 0.05 for i, p in zip((iS, iP1, iA, iB, iC, iD), (Ss, P1s, As, Bs, Cs, Ds))), \
+        "stock notch outline not found"
+    seq = [iS, iP1, iA, iB, iC, iD]
+    step = 1 if seq[1] > seq[0] else -1
+    assert all((q - p) * step > 0 for p, q in zip(seq, seq[1:])) and 0 not in seq, "unexpected outline order"
+    dP1 = P1n - np.array(P1s)
+    for j, i in enumerate(range(iS + step, iP1 + step, step), start=1):          # the lobe's arc up to the upper edge
+        ring[i] = tuple(np.array(ring[i]) + dP1 * j / abs(iP1 - iS))
+    ring[iA], ring[iB], ring[iC] = tuple(A2), tuple(B), tuple(C2)
+    dC = C2 - np.array(Cs)
+    for i in range(iC + step, iD + step, step):                                  # the small arc down to the end edge
+        ring[i] = tuple(np.array(ring[i]) + dC)
     outer = Polygon(ring)
     for u0, v0 in ((STOCK_END_BUMP, -6.71), (STOCK_END_NOTCH, 4.95)):
         assert min(math.dist(p, (u0, v0)) for p in ring) < 0.05, "stock straight edge end not found"
@@ -167,7 +186,14 @@ def build(stock):
 
     pts = [(45.0, V_NOTCH_EDGE), (foot_u + 1.0, V_NOTCH_EDGE)] + [(u, vb(u)) for u in (foot_u + 1.0, foot_u, 190.0, 50.0, 45.75, 45.0)]
     strip = Polygon(pts)
-    bump = translate(outer.intersection(box(71.30, -20, 101.0, -5.2)), xoff=shift)    # stock bump, moved with the rest
+    bump = outer.intersection(box(71.30, -20, 101.0, -5.2))                            # the stock bump ...
+    v_top = V_NOTCH_EDGE - BUMP_Y                                                      # ... its flat top goes to here
+    bump = scale(bump, xfact=1.0, yfact=(v_top + 6.2) / (-13.65 + 6.2), origin=(0, -6.2))   # stretched across the arm
+    bump = translate(bump, xoff=shift)                                                 # and moved with the rest
+    v_mid = (-6.2 + v_top) / 2                                                         # mid-height of the bump's near slope
+    near_u = bump.intersection(LineString([(0, v_mid), (300, v_mid)])).bounds[0]
+    bump = translate(bump, xoff=BUMP_NEAR - near_u)                                    # so it crosses at BUMP_NEAR
+    bump_dx = shift + BUMP_NEAR - near_u
     foot = translate(outer.intersection(box(205.0, -40, 240, 40)), xoff=shift)         # the stock inner end, with its notch
     body = unary_union([tip, strip, bump, foot]).buffer(0.3, 32).buffer(-0.3, 32).buffer(0)
     body = body.difference(unary_union(stock["inner"]))
@@ -183,13 +209,13 @@ def build(stock):
         slots.append((tuple(mid - d * half), tuple(mid + d * half), SLOT_W))
     s3_old, h4_old = stock["end_holes"]
     holes = [("motor", motor, MOTOR_D),
-             ("bump", (stock["bump_holes"][0][0] + shift, stock["bump_holes"][0][1]), BUMP_HOLE_D),
-             ("bump", (stock["bump_holes"][1][0] + shift, stock["bump_holes"][1][1]), BUMP_HOLE_D),
+             ("bump", (stock["bump_holes"][0][0] + bump_dx, stock["bump_holes"][0][1]), BUMP_HOLE_D),
+             ("bump", (stock["bump_holes"][1][0] + bump_dx, stock["bump_holes"][1][1]), BUMP_HOLE_D),
              ("end", (HOLE_S3_EDGE + END_HOLE_D / 2, s3_old[1]), END_HOLE_D),      # beside the notch
              ("end", (HOLE_H4_EDGE + END_HOLE_D / 2, h4_old[1]), END_HOLE_D)]      # bump side
     ghosts = [(s3_old[0] + shift, s3_old[1]), (h4_old[0] + shift, h4_old[1])]      # where the stock holes would be
-    return {"body": body, "holes": holes, "slots": slots, "ghosts": ghosts, "shift": shift, "vb": vb,
-            "notch": (A2, B), "tip_u": tip_u + shift,
+    return {"body": body, "holes": holes, "slots": slots, "ghosts": ghosts, "shift": shift, "vb": vb, "bump_dx": bump_dx, "v_mid": v_mid,
+            "notch": {"A": tuple(A2), "B": tuple(B), "C": tuple(C2), "P1": tuple(P1n)}, "tip_u": tip_u + shift,
             "end_bump": STOCK_END_BUMP + shift, "end_notch": STOCK_END_NOTCH + shift}
 
 
@@ -248,10 +274,10 @@ def dim_h(ax, u0, u1, y, label, y_from0, y_from1):
             va="bottom" if y > 0 else "top", fontsize=10, fontweight="bold", zorder=5)
 
 
-def dim_v(ax, u, y0, y1, label):
+def dim_v(ax, u, y0, y1, label, ty=None):
     ax.annotate("", xy=(u, y0), xytext=(u, y1), arrowprops=dict(arrowstyle="<->", color=DIM, lw=0.9,
                                                               shrinkA=0, shrinkB=0), zorder=6)
-    ax.text(u + 1.6, (y0 + y1) / 2, label, color=DIM, ha="left", va="center", fontsize=9, fontweight="bold",
+    ax.text(u + 1.6, (y0 + y1) / 2 if ty is None else ty, label, color=DIM, ha="left", va="center", fontsize=9, fontweight="bold",
             zorder=7, bbox=dict(fc="white", ec="none", pad=0.6))
 
 
@@ -314,10 +340,12 @@ def measure(m):
     taper = np.array([vb(u) for u in us])
     start = us[np.argmax((e[:, 1] < taper - 0.3) & (us > 50))]
     flat = us[np.argmax((e[:, 1] < -12.5) & (us > 50))]
-    ta, tb = m["notch"]
+    nt = m["notch"]
     w = lambda u: e[np.argmin(abs(us - u)), 0] - e[np.argmin(abs(us - u)), 1]  # noqa: E731
+    bump_y = max(w(u) for u in np.arange(start, start + 25, 0.5))
     return {"end_notch": m["end_notch"], "end_bump": m["end_bump"], "bump_start": start, "bump_flat": flat,
-            "bump_mid": (start + flat) / 2, "tip": g.bounds[2], "tab_w": math.dist(ta, tb),
+            "bump_mid": g.intersection(LineString([(50, m["v_mid"]), (300, m["v_mid"])])).bounds[0], "tip": g.bounds[2], "tab_w": math.dist(nt["A"], nt["B"]),
+            "upper": math.dist(nt["P1"], nt["A"]), "lower": math.dist(nt["B"], nt["C"]), "bump_y": bump_y,
             "width60": w(60.0), "width190": w(190.0)}
 
 
@@ -342,8 +370,8 @@ def draw(m, stock, ms, path_png, path_svg):
     top.set_aspect("equal")
     top.axis("off")
 
-    ta, tb = m["notch"]
-    ta_u, tb_u, tb_v = ta[0] + m["shift"], tb[0] + m["shift"], tb[1]
+    nt, sh = m["notch"], m["shift"]
+    ta_u, tb_u, tb_v = nt["A"][0] + sh, nt["B"][0] + sh, nt["B"][1]
     h_s3 = next(h for k, h, d in m["holes"] if k == "end" and h[1] > 0)         # beside the notch
     h_h4 = next(h for k, h, d in m["holes"] if k == "end" and h[1] < 0)         # bump side
     y_top, y_bot = [21, 29, 37], [-21, -29, -37]
@@ -351,11 +379,14 @@ def draw(m, stock, ms, path_png, path_svg):
     dim_h(top, 0, MOTOR_EDGE, y_bot[0], "22.5", 0, 0)
     dim_h(top, 0, ms["end_notch"], y_bot[1], lab(ms["end_notch"], END_NOTCH_SIDE), -V_NOTCH_EDGE, -V_NOTCH_EDGE)
     dim_h(top, 0, HOLE_S3_EDGE, y_bot[2], num(HOLE_S3_EDGE), -h_s3[1], -h_s3[1])
-    dim_h(top, 0, ms["bump_mid"], y_top[0], lab(ms["bump_mid"], BUMP_NEAR), 9.5, 9.5)
+    dim_h(top, 0, ms["bump_mid"], y_top[0], lab(ms["bump_mid"], BUMP_NEAR), -m["v_mid"], -m["v_mid"])
     dim_h(top, 0, ms["end_bump"], y_top[1], lab(ms["end_bump"], END_BUMP_SIDE), -vb(ms["end_bump"]), -vb(ms["end_bump"]))
     dim_h(top, 0, HOLE_H4_EDGE, y_top[2], num(HOLE_H4_EDGE), -h_h4[1], -h_h4[1])
     dim_h(top, ms["end_bump"], ms["tip"], -17.5, lab(ms["tip"] - ms["end_bump"], NOTCH_PAST), -vb(ms["end_bump"]), -tb_v)
     dim_v(top, 54, -V_NOTCH_EDGE, -vb(54), num(ms["width60"]))
+    bump_end = 92.58 + m["bump_dx"]                               # the far end of the bump's flat top
+    top.plot([bump_end - 3, 96.0], [BUMP_Y - V_NOTCH_EDGE, BUMP_Y - V_NOTCH_EDGE], color=DIM, lw=0.6, zorder=3)
+    dim_v(top, 94.0, -V_NOTCH_EDGE, BUMP_Y - V_NOTCH_EDGE, lab(ms["bump_y"], BUMP_Y), ty=13.5)
     dim_v(top, 176, -V_NOTCH_EDGE, -vb(176), num(ms["width190"]))
     top.text(-3, 29, "bump side", color=DIM, fontsize=9, ha="right", va="center", style="italic")
     top.text(-3, -29, "notch side", color=DIM, fontsize=9, ha="right", va="center", style="italic")
@@ -388,14 +419,18 @@ def draw(m, stock, ms, path_png, path_svg):
     end.set_ylim(-32, 19)
     end.set_aspect("equal")
     end.axis("off")
-    end.text(184.3, 18.5, "Inner end: the stock outline, holes where you measured", fontsize=10, fontweight="bold",
+    end.text(184.3, 18.5, "Inner end: stock outline, your notch edges, your hole positions", fontsize=10, fontweight="bold",
              color=INK, va="top")
     end.annotate("Ø3.2", xy=(h_h4[0] + 1.1, -h_h4[1] + 1.1), xytext=(h_h4[0] + 12.5, -h_h4[1] + 4.0), fontsize=9, color=INK,
                  arrowprops=dict(arrowstyle="-", color=INK, lw=0.7))
     end.annotate("Ø3.2", xy=(h_s3[0] - 1.1, -h_s3[1] - 1.1), xytext=(h_s3[0] - 11, -h_s3[1] - 9.5), fontsize=9, color=INK,
                  arrowprops=dict(arrowstyle="-", color=INK, lw=0.7))
     dim_h(end, ms["end_bump"], ms["tip"], -19.5, lab(ms["tip"] - ms["end_bump"], NOTCH_PAST), -vb(ms["end_bump"]), -tb_v)
-    dim_between(end, (ta_u, -ta[1]), (tb_u, -tb_v), outward=(1, 0), dist=3.0, text="7.5", gap=2.7)
+    dim_between(end, (ta_u, -nt["A"][1]), (tb_u, -tb_v), outward=(1, 0), dist=3.0, text=num(ms["tab_w"]), gap=2.7)
+    dim_between(end, (nt["P1"][0] + sh, -nt["P1"][1]), (ta_u, -nt["A"][1]), outward=(-0.56, -0.83), dist=3.0,
+                text=num(ms["upper"]), gap=2.4)
+    dim_between(end, (tb_u, -tb_v), (nt["C"][0] + sh, -nt["C"][1]), outward=(0.56, 0.83), dist=3.0,
+                text=num(ms["lower"]), gap=2.4)
     thin = [(h, w) for k, h, d, w in walls(m) if k == "end" and w < 1.0]
     if thin:                                                    # a hole that leaves almost no material on this outline
         (u, v), w = thin[0]
@@ -422,6 +457,8 @@ def main():
           f"notch side {ms['end_notch']:.2f} (you said {END_NOTCH_SIDE:g})")
     print(f"notch tip {ms['tip']:.2f} = {ms['tip'] - ms['end_bump']:.2f} past the bump-side end (you said {NOTCH_PAST:g}); "
           f"tip edge {ms['tab_w']:.2f} wide (you said {TAB_W:g})")
+    print(f"notch edges: tip {ms['tab_w']:.2f}, long edge {ms['upper']:.2f} (you said {NOTCH_UPPER:g}), "
+          f"short edge {ms['lower']:.2f} (you said {NOTCH_LOWER:g}); bump across the arm {ms['bump_y']:.2f} (you said {BUMP_Y:g})")
     print(f"bump: near sloped edge from {ms['bump_start']:.1f} to {ms['bump_flat']:.1f}, mid {ms['bump_mid']:.1f} "
           f"(you said {BUMP_NEAR:g})")
     print(f"width: {ms['width60']:.2f} at u 60 (you said {WIDTH_MOTOR_END:g}), {ms['width190']:.2f} at u 190 "

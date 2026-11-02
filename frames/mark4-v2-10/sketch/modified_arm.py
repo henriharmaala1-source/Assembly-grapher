@@ -16,7 +16,8 @@ What is measured, and what is borrowed from the stock arm (frames/mark4-v2-10/dx
   measured     tip to the motor hole's near edge 22.5; motor hole 8 mm; straight edge ends
                200 (side without spar holes) and 198 (spar-hole side); tip to the spar
                holes' near edge 65; tip to the arm holes' near edges 204 and 201.
-  from stock   the tip outline, the motor slots and lightening cut-out, the arm width
+  measured     also: the motor bolt slots are 5 mm end to end (width 3 mm, from stock)
+  from stock   the tip outline, the lightening cut-out, the slot width, the arm width
                (about 10-11 mm), the spar holes (2 x 4 mm, 8.6 mm apart, on the bump), the
                arm holes (2 x 3.2 mm, 11.14 mm apart across the arm), the bump's shape.
   assumed      the inner end's outline: two rounded bosses round the arm holes.
@@ -48,9 +49,11 @@ END_SPAR = 198.0           # ... and on the spar-hole side
 SPAR_EDGE = 65.0           # tip to the spar holes' (bump's) near edge
 ARMHOLE_EDGE_NONSPAR = 204.0   # tip to the near edge of the arm hole on the side without spar holes
 ARMHOLE_EDGE_SPAR = 201.0      # ... and on the spar-hole side
+SLOT_LEN = 5.0             # the motor bolt slots, end to end
 # ---- borrowed from the stock arm ------------------------------------------------------
 ARMHOLE_D = 3.2
 SPARHOLE_D = 4.0
+SLOT_W = 3.0               # slot width (M3 clearance), as on the stock arm
 
 
 def load_stock():
@@ -168,8 +171,14 @@ def build(stock):
     body = body.difference(cut)
 
     motor = (MOTOR_EDGE + MOTOR_D / 2, 0.0)
-    slots = [(tuple((a[0] + (motor[0] - stock["h1"][0]), a[1])), tuple((b[0] + (motor[0] - stock["h1"][0]), b[1])), w)
-             for a, b, w in stock["slots"]]
+    dx = motor[0] - stock["h1"][0]                    # the stock slots stay concentric with the moved hole
+    slots = []
+    for a, b, _ in stock["slots"]:
+        mid = np.array([(a[0] + b[0]) / 2 + dx, (a[1] + b[1]) / 2])
+        d = np.array([b[0] - a[0], b[1] - a[1]])
+        d /= np.linalg.norm(d)                        # radial: the 16 and 19 mm bolt circles run along it
+        half = (SLOT_LEN - SLOT_W) / 2                # end-arc centres; the slot is SLOT_LEN long over its ends
+        slots.append((tuple(mid - d * half), tuple(mid + d * half), SLOT_W))
     holes = [("motor", motor, MOTOR_D),
              ("spar", (sh[0][0] + shift, sh[0][1]), SPARHOLE_D), ("spar", (sh[1][0] + shift, sh[1][1]), SPARHOLE_D),
              ("arm", arm_holes_nonspar, ARMHOLE_D), ("arm", arm_holes_spar, ARMHOLE_D)]
@@ -220,6 +229,25 @@ def dim_h(ax, u0, u1, y, label, y_from0, y_from1):
                                                               shrinkA=0, shrinkB=0), zorder=4)
     ax.text((u0 + u1) / 2, y + math.copysign(1.3, y), label, color=DIM, ha="center",
             va="bottom" if y > 0 else "top", fontsize=10, fontweight="bold", zorder=5)
+
+
+def dim_slot(ax, m, text):
+    """Length of the slot nearest the upper right of the motor hole, end to end, on its own axis."""
+    cands = [(a, b, w) for a, b, w in m["slots"] if (a[0] + b[0]) / 2 > MOTOR_EDGE + MOTOR_D / 2 and (a[1] + b[1]) / 2 < 0]
+    a, b, w = cands[0]                                  # arm-local v < 0 is the spar-hole side, drawn at +v
+    a, b = np.array(fv(a)), np.array(fv(b))
+    d = (b - a) / np.linalg.norm(b - a)
+    n = np.array([-d[1], d[0]])
+    if n @ ((a + b) / 2 - np.array([MOTOR_EDGE + MOTOR_D / 2, 0.0])) < 0:
+        n = -n                                          # the dimension sits outside the slot, away from the hole
+    p0, p1 = a - d * w / 2, b + d * w / 2               # slot ends
+    off = n * 3.4
+    for p in (p0, p1):
+        ax.plot([p[0], p[0] + off[0] * 1.15], [p[1], p[1] + off[1] * 1.15], color=DIM, lw=0.6, zorder=5)
+    ax.annotate("", xy=tuple(p0 + off), xytext=tuple(p1 + off),
+                arrowprops=dict(arrowstyle="<->", color=DIM, lw=0.9, shrinkA=0, shrinkB=0), zorder=6)
+    mid = (p0 + p1) / 2 + off + n * 1.9
+    ax.text(mid[0], mid[1], text, color=DIM, fontsize=10, fontweight="bold", ha="center", va="center", zorder=7)
 
 
 def draw_part(ax, m, stock_outline=None, lw=1.4):
@@ -282,10 +310,11 @@ def draw(m, stock, path_png, path_svg):
     mu = motor_u
     tip.annotate("Ø8 motor hole", xy=(mu, 4.0), xytext=(mu, 12.8), fontsize=9, color=INK, ha="center",
                  arrowprops=dict(arrowstyle="-", color=INK, lw=0.7))
-    tip.text(69.5, -8.5, "4 slots, 3 wide (16 and 19 mm\nmotors): stock pattern, kept\nconcentric with the hole", fontsize=8,
+    tip.text(69.5, -8.5, "4 bolt slots, 5 long end to end\nand 3 wide, on the 16 and 19 mm\nbolt circles (width from stock)", fontsize=8,
              color=GREY, ha="right", va="top")
     tip.text(-3, 15.5, "Tip", fontsize=10, fontweight="bold", color=INK, va="top")
     dim_h(tip, 0, MOTOR_EDGE, -12.5, "22.5", 0.0, 0.0)
+    dim_slot(tip, m, "5")
 
     end = fig.add_axes([0.52, 0.045, 0.45, 0.33])
     draw_part(end, m, lw=1.6)
@@ -324,6 +353,9 @@ def verify(m):
     bump = us[np.argmax(bot < bot[0] - 0.3)]
     print(f"straight edge ends: non-spar side {end_top:.2f} (asked 200), spar-hole side {end_bot:.2f} (asked 198); "
           f"bump starts {bump:.2f} (asked 65)")
+    for a, b, w in m["slots"]:
+        print(f"  slot end to end {math.dist(a, b) + w:.2f}, radii of its end-arc centres "
+              f"{math.dist(a, (26.5, 0)):.2f} / {math.dist(b, (26.5, 0)):.2f}")
     for kind, (u, v), d in m["holes"]:
         print(f"  {kind:5s} hole: centre u {u:7.2f} v {-v:6.2f}  d {d:g}  near edge {u - d / 2:7.2f}")
 

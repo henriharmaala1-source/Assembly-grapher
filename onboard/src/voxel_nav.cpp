@@ -1,5 +1,7 @@
 #include "voxel_nav.hpp"
 
+#include "perf_stats.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -43,13 +45,19 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
 
     cv::Mat depth;
     sim::PoseHint hint;
-    if (!src_->next(depth, hint) || depth.empty()) return;
+    {
+        // Includes the wait for the camera's next frame: at 30 fps a stage
+        // that finishes early spends the rest of the period here.
+        PerfStats::Scope t(perf(), "vox.frame");
+        if (!src_->next(depth, hint) || depth.empty()) return;
+    }
 
     const WorldState s = wm.snapshot();
 
     // PROXIMITY FIRST, and on EVERY frame -- before the stillness gate, because
     // it needs only attitude and is most needed while the aircraft moves.
     {
+        PerfStats::Scope t(perf(), "vox.prox");
         sim::CamPose att;
         if (p_.preferCameraImu && hint.valid && hint.attitudeOnly) {
             att.rollDeg = hint.pose.rollDeg; att.pitchDeg = hint.pose.pitchDeg;
@@ -72,6 +80,7 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
     // gate: it is the estimate the persistMap branch is placed by. Published
     // as vio* whenever it produced something new.
     if (p_.vio || p_.slam) {
+        PerfStats::Scope t(perf(), p_.slam ? "vox.slam" : "vox.vio");
         const sim::PoseEstimate& e = visual_.step(*src_, depth, attitudeFor(hint, s),
                                                   s.vehYawDeg, monoNowS());
         if (e.fresh)
@@ -146,7 +155,12 @@ void VoxelNavModule::run(const cv::Mat& /*colour -- see header*/, WorldModel& wm
         ++resets_;
     }
 
-    const sim::GeneralResult r = nav_.step(depth, pose);
+    sim::GeneralResult r;
+    {
+        PerfStats::Scope t(perf(), "vox.map+plan");
+        r = nav_.step(depth, pose);
+    }
+    PerfStats::Scope tLegs(perf(), "vox.legs");
     // THE LEG. The mission flies a straight, level line, and the planner's
     // bearing is the endpoint of a curved primitive chosen for openness -- so
     // a straight leg on exactly that bearing is often short or clipped. Search

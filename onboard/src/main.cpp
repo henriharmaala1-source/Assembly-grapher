@@ -39,6 +39,7 @@
 #include <string>
 #include <thread>
 
+#include "perf_stats.hpp"
 #include "black_box.hpp"
 #include "config.hpp"
 #include "controller.hpp"
@@ -237,6 +238,7 @@ int main(int argc, char** argv) {
         "{feed-gps       | false | inject the fused estimate into iNAV as MSP2_SENSOR_GPS }"
         "{feed-gps-hz    | 10    | rate to inject synthetic GPS (Hz) }"
         "{budget         | 60    | per-tick CPU budget ms }"
+        "{perf           | 0     | print each stage's measured ms/frame every N seconds (0 = off) }"
         "{config         |       | key=value tuning file (gains/mission/safety) }"
         "{blackbox       |       | crash-survivable flight-data black box file (append-only) }"
         "{dump-config    | false | print effective config (defaults+overrides) and exit }"
@@ -275,6 +277,8 @@ int main(int argc, char** argv) {
     }
 
     const bool display      = parser.get<bool>("display");
+    const float perfEveryS   = std::max(0.f, parser.get<float>("perf"));
+    auto tPerf = std::chrono::steady_clock::now();
     const bool roadOn        = parser.get<bool>("road");
     bool       allowControl = parser.get<bool>("allow-control");
     const bool feedGps       = parser.get<bool>("feed-gps");
@@ -590,14 +594,32 @@ int main(int argc, char** argv) {
         // hand it the newest frame; it runs depth/detect/SLAM/planning at its own
         // pace and publishes into the world model without stalling this loop.
         frameBus.publish(frame);
-        track.run(frame, wm);
-        if (roadOn) road.run(frame, wm);
+        {
+            PerfStats::Scope tt(perf(), "fly.track");
+            track.run(frame, wm);
+        }
+        if (roadOn) {
+            PerfStats::Scope tr(perf(), "fly.road");
+            road.run(frame, wm);
+        }
 
         // ---- behaviour + control
         const auto   tNow = std::chrono::steady_clock::now();
         const double dt   = std::chrono::duration<double>(tNow - tPrev).count();
         tPrev = tNow;
         fps   = 0.9 * fps + 0.1 / std::max(dt, 1e-6);
+        // ---- --perf: where the frame time goes, measured on this board
+        // (perf_stats.hpp). The fly loop's own period is recorded too.
+        if (perfEveryS > 0.f) {
+            perf().add("fly.period", dt * 1000.0);
+            const double since = std::chrono::duration<double>(tNow - tPerf).count();
+            if (since >= perfEveryS) {
+                std::printf("%s\n", perf().line(since).c_str());
+                std::fflush(stdout);
+                perf().reset();
+                tPerf = tNow;
+            }
+        }
 
         // ---- RC command source: the radio drives mode / GO / goal-steer (the
         // same world-model surfaces as the keyboard), so the drone is flyable

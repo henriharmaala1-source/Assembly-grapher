@@ -1,12 +1,17 @@
 #include "scheduler.hpp"
 
+#include "perf_stats.hpp"
+
 bool PerceptionScheduler::maybeRun(Slot& s, const cv::Mat& frame, WorldModel& wm,
                                    long frameId, float& budget, int interval) {
     if (!s.mod->isReady()) return false;
     if (frameId - s.lastRun < interval) return false;
     if (budget <= 0.f) return false;   // a heavy module already ran this tick
 
-    s.mod->run(frame, wm);
+    {
+        PerfStats::Scope t(perf(), s.mod->name());   // the measured cost, beside the nominal one
+        s.mod->run(frame, wm);
+    }
     s.lastRun = frameId;
     budget -= s.mod->costMs();
     lastRan_.push_back(s.mod->name());
@@ -21,7 +26,10 @@ void PerceptionScheduler::tick(const cv::Mat& frame, WorldModel& wm,
     // 1. Always-on cheap modules (the tracker) — run unconditionally.
     for (auto& s : slots_) {
         if (!s.alwaysOn) continue;
-        s.mod->run(frame, wm);
+        {
+            PerfStats::Scope t(perf(), s.mod->name());
+            s.mod->run(frame, wm);
+        }
         s.lastRun = frameId;
         budget -= s.mod->costMs();
         lastRan_.push_back(s.mod->name());

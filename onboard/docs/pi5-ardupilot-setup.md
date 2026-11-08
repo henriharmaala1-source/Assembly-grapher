@@ -194,3 +194,41 @@ Taking it back, fastest first:
 
 `LIVE` cannot be switched on from the radio. It is set at service start, on
 purpose: going live should be a decision made on the ground.
+
+## 6. Where the frame time goes (measure before buying compute)
+
+Every compute decision -- stay on the Pi 5, try a Zero 2 W, add an NPU for
+the detector, move to a Jetson -- turns on what each stage costs **on this
+board**. Two ways to measure it:
+
+**Without the camera or an aircraft:** the onboard test suite flies the real
+voxel module and VIO closed-loop on simulated D435i frames.
+
+```bash
+cd onboard && cmake -B build -DBUILD_TESTS=ON && cmake --build build --target test_voxel_nav
+VOXTEST_PERF=1 VOXTEST_VIO=1 ./build/test_voxel_nav
+```
+
+It ends with one row per stage:
+- `vox.map+plan`: integrating depth into the voxel map and choosing a plan;
+- `vox.vio`: the VIO step;
+- `vox.prox`: the proximity scan for ArduPilot;
+- `vox.legs`: certifying the straight legs;
+- `vox.frame`: rendering a simulated frame. On the aircraft this is the
+  wait for the D435i's next frame instead.
+
+**On the aircraft, live:** add `--perf 10` to the command line, or to
+`KESTREL_ARGS` in `/etc/kestrel/kestrel.env`. Every 10 seconds it prints one
+line: each stage's mean, p95 and max milliseconds, and how often it ran.
+The stages are:
+- the scheduled perception modules: `voxel-nav`, `detect`, `navigate`;
+- the voxel module's own stages above;
+- the tracker on the fly loop: `fly.track`;
+- the fly loop's period: `fly.period`.
+
+```
+[perf] 10.0 s  voxel-nav 38.2 ms (p95 51.0, max 63.1, 29.8/s) | detect 21.7 ms ...
+```
+
+Compare a stage's mean with the frame period (33 ms at 30 fps). Whichever
+stage dominates is what any hardware change has to speed up.

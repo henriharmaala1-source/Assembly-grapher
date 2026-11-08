@@ -132,3 +132,67 @@ number as a real constraint, not a rounding error.
 
 Every one of these is the same trade-off stated in `introduction.md`: cheap
 and FPV-weight, chosen deliberately, over maximally capable.
+
+---
+
+## The GNSS-denied build: hardware notes (2026-11)
+
+The BOM above is the original analog-FPV/iNav build. The aircraft has since
+moved to **ArduPilot over MAVLink**, with a **RealSense D435i** forward
+(depth + IR + IMU) for the voxel map and VIO, and a downward camera and
+rangefinder studied in `nav-sim/docs/downward_vio.md`
+(`gnss-denied-setup.md`, `pi5-ardupilot-setup.md`). These notes are what the
+2026-11 hardware survey and the repo's own measurements say about it. Prices
+are dated listings; check them before buying.
+
+**Flight controller: 2 MB flash, not 1 MB.** ArduPilot builds visual
+odometry only for boards with more than 1024 KB of flash
+(`HAL_VISUALODOM_ENABLED`, `libraries/AP_VisualOdom/AP_VisualOdom_config.h`).
+On a 1 MB board -- most F405s -- ODOMETRY and VISION_POSITION_ESTIMATE are
+compiled out, so the Pi's VIO cannot reach EKF3, and Lua scripting is out
+too. The H743-SLIM V4 above is fine. Do not "save money" on an F405 for
+this build. (Optical flow is a separate feature and may survive on 1 MB
+boards; check the board's `features.txt`.)
+
+**Forward depth: keep the D435i, and buy a spare.** RealSense was spun out of
+Intel as RealSense Inc. in July 2025 and kept the D4xx line, but stock is
+patchy: the D435 listed at $537.99 (OpenELAB, Nov 2026) and the D435i was
+out of stock at several distributor regions. The used-purchase checks are in
+`d435i-acceptance-checklist.md`. The one alternative worth a bench test is
+the **Orbbec Gemini 336** (global-shutter IR stereo + IMU, 99 g, <3 W,
+$284 on Orbbec's store, Nov 2026) -- unverified on a Pi 5. The Luxonis
+OAK-D Pro W ($529, 91 g, up to ~7.5 W) computes depth on the camera but
+strains the power budget above. ZED cameras have no depth SDK on a Pi.
+
+**Pin the OS: Bookworm.** librealsense is known-good on Raspberry Pi OS
+Bookworm on a Pi 5 (source build, RSUSB backend); Trixie was barely tested by
+the RealSense community. Current Hailo AI HAT packages, by contrast,
+*require* Trixie. Buying an NPU HAT therefore means migrating the OS under
+the depth camera -- re-run the D435i checks on Trixie first.
+
+**Downward camera: global shutter.** Measured in the simulator: a 30 ms
+rolling-shutter readout raises downward-VIO drift from 0.34 % to 2.15 % at
+5 m/s, and no frame is ever lost, so nothing flags it. An OV9281 mono
+global-shutter module on the Pi's CSI port is the cheap fix. librealsense has
+been reported to interfere with libcamera, so test the CSI camera and the
+USB D435i together for 30 minutes before trusting either.
+
+**Downward height: TFmini Plus over TF-Luna.** TFmini Plus (0.1-12 m, IP65,
+~$61-87) is the safer default. The TF-Luna (0.2-8 m, ~$30) is lighter and
+cheaper, but one ArduPilot user had to shield it against GPS and compass
+interference -- and the mast compass is already the weak heading link here.
+
+**Optical flow on the FC is now an integrity witness, not just position
+hold.** The Matek 3901-L0X above (or ARK Flow over DroneCAN, if the FC has a
+CAN port) gives a velocity measured by different hardware than the Pi's VIO;
+comparing the two is the cheapest VIO failure detector. Its own lidar is
+short-range, and a wrong `FLOW_ORIENT_YAW` can cause a flyaway (MTF-01).
+
+**Compute: stay on the Pi 5 (4 GB) until a profile says otherwise.** Memory
+prices moved everything in 2026: the Pi 5 16 GB reached $385 and the Jetson
+Orin Nano Super kit $399. Published CPU VIO is no faster on an Orin NX
+(VINS-Fusion ~62 ms/frame) than on a Pi 5 (~52 ms); a Jetson buys a GPU
+(cuVSLAM) or a heavier detector, not faster versions of this code. An NPU
+(Hailo-8L/8 AI HAT+) only pays if the detector turns out to dominate the
+frame -- and the AI HAT+ 2 is slower for vision than the Hailo-8. Measure
+each stage on the real board first (`ROADMAP.md`, P7.1).

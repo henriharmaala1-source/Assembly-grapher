@@ -163,6 +163,9 @@ if(BUILD_TESTS)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
 
+  # The per-stage timing behind `--perf N` (perf_stats.hpp).
+  kestrel_test(test_perf_stats)
+
   add_executable(sim_autonomy
     test/sim_autonomy.cpp
     src/sim_fc_backend.cpp

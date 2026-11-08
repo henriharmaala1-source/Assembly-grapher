@@ -20,7 +20,10 @@
 //
 // Env: VOXTEST_WORLD=<seed> re-rolls the pillars, VOXTEST_STEREO=1 renders
 // through the simulated stereo matcher instead of perfect depth,
-// VOXTEST_TRACE=1 prints every leg and phase change. What this found when it
+// VOXTEST_TRACE=1 prints every leg and phase change, VOXTEST_PERF=1 prints
+// where the module's frame time went, stage by stage (perf_stats.hpp) -- the
+// real onboard code, so on a Pi 5 this is the per-stage measurement the
+// compute decisions wait on (ROADMAP P7.1), with no camera needed. What this found when it
 // was first run is recorded in navcore/nav_pipeline.{hpp,cpp}: legs certified
 // past the marking range (0.27 m truth clearance, then STUCK), and a wall at
 // grazing incidence that stereo never returned (0.03 m).
@@ -43,6 +46,7 @@
 #include <string>
 #include <vector>
 
+#include "perf_stats.hpp"
 #include "fc_odometry.hpp"
 #include "slam_anchor.hpp"
 #include "slam_client.hpp"
@@ -1119,6 +1123,14 @@ int main() {
         CHECK(travelled >= 8.f);
     }
 
+    if (std::getenv("VOXTEST_PERF")) {
+        // Wall time is not tracked here; the rate column is per sample, so
+        // pass 0 and read the counts.
+        std::printf("\nper-stage timing over the whole run (this machine):\n");
+        for (const PerfStats::Row& r : perf().rows(0.0))
+            std::printf("  %-14s %7ld runs  mean %6.2f ms  p95 %6.2f  max %6.2f\n", r.name.c_str(), r.n,
+                        r.mean, r.p95, r.max);
+    }
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
     return fails ? 1 : 0;
 }

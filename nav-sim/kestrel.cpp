@@ -331,7 +331,7 @@ int cmdBench(std::vector<std::string> args) {
             std::find(only.begin(), only.end(), polName(pol)) == only.end())
             continue;
         double sum = 0, sumNet = 0; long long sumCells = 0;
-        int runs = 0, coll = 0;
+        int runs = 0, coll = 0, collUnknown = 0;
         // EPISODES IN PARALLEL. Each (world, seed) is an independent
         // VoxelEnv with its own seeded randomness, so running them side by
         // side changes nothing but the wall clock: the same numbers, printed
@@ -393,8 +393,12 @@ int cmdBench(std::vector<std::string> args) {
             // reachedGoal is always false under RANGE -- the goal does
             // not end an episode there -- so there are exactly two ways
             // out: something stopped it, or the budget did.
-            const char* oc = st.collisions ? "COLLIDED"
-                                           : "flew the whole budget";
+            // WHERE IT HIT, against the map the planner had built: UNKNOWN
+            // (nothing had looked there -- the veto was blind) or MAPPED
+            // (the cell was already OCCUPIED -- with the veto on, a bug).
+            const char* oc = !st.collisions ? "flew the whole budget"
+                           : st.hitUnknown  ? "COLLIDED(unknown)"
+                                            : "COLLIDED(mapped)";
             const float loops = st.travelM / std::max(0.1f, st.netDispM);
             std::printf("%-8s %-8s %-5d %-16s %9.1f %8.1f %6d %6.1fx %9.2f\n",
                         polName(pol), w.c_str(), s, oc, st.travelM,
@@ -403,12 +407,13 @@ int cmdBench(std::vector<std::string> args) {
             sum += st.travelM; sumNet += st.netDispM; sumCells += st.cellsVisited;
             ++runs;
             coll += st.collisions ? 1 : 0;
+            collUnknown += (st.collisions && st.hitUnknown) ? 1 : 0;
         }
         for (std::thread& th : pool) th.join();
         const double r = std::max(1, runs);
-        std::printf("  -> %-8s runs %d  collisions %d  mean travel %.1f m  "
+        std::printf("  -> %-8s runs %d  collisions %d (%d into unknown)  mean travel %.1f m  "
                     "net %.1f m  cells %.0f  loops %.1fx\n\n",
-                    polName(pol), runs, coll, sum / r, sumNet / r,
+                    polName(pol), runs, coll, collUnknown, sum / r, sumNet / r,
                     double(sumCells) / r, sum / std::max(0.1, sumNet));
     }
     return 0;

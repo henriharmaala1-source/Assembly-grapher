@@ -16,7 +16,28 @@ has a ready-made failing acceptance test in the SITL suite; the LLM supervisor
 
 Effort key: S ≈ hours, M ≈ 1–2 days, L ≈ 3days+.
 
-**Status (2026-07):** ✅ **Track F (F1–F9), P2 (P2.1–P2.4), P5b, and the
+**Status (2026-11):** the project moved past this plan's assumptions. It
+was written for an iNav/MSP airframe; the aircraft now flies **ArduPilot over
+MAVLink**, and most of P5 shipped in a broader form than planned:
+
+- ✅ **P2.5 MAVLink backend** -- not "minimal": a full backend pinned
+  byte-for-byte against pymavlink, flying ArduCopter SITL (`kestrel sitl`),
+  with OBSTACLE_DISTANCE into ArduPilot's own avoidance and CI flights on
+  4.7.2 (`.github/workflows/sitl-linux.yml`).
+- ✅ **P5a VIO** -- `DepthVio` (navcore/vio.*) on the D435i's IR + depth,
+  sent to EKF3 as ODOMETRY (`onboard/docs/gnss-denied-setup.md` §11; VELXY
+  must be 0, measured), plus ORB-SLAM3 (stereo and stereo-inertial) in its
+  own process, plus a downward-camera VIO studied in `nav-sim/docs/
+  downward_vio.md` and a harness for real footage (`footage_vio`).
+- ✅ **P2.4 assist checklist** -- `onboard/docs/assist-bench-checklist.md`.
+- ◐ **P4a recorder/replay** -- partly: the black box, `.kdr` depth recording
+  and `kestrel sim --replay`, `d435i_probe` record/replay. The jsonl
+  WorldState replay through the real pipeline is still open.
+- Open, unchanged: **F10, F11, P4b, P5c, P3, P4c, P6.x**.
+- New since: the **P7** items at the end of this file, from the 2026-11
+  research surveys and the bench and VIO measurements.
+
+*The July status, kept for the record:* ✅ **Track F (F1–F9), P2 (P2.1–P2.4), P5b, and the
 crash-survivable black box (P4a-bb) are DONE** — all on
 `claude/admiring-goldberg-sbcKz` with an in-tree CTest suite (10 tests, all
 green: estimator, modes, MSP-over-PTY, config, RC, FcLink, realtime, nav_map,
@@ -235,11 +256,11 @@ underneath in dry-run and draws what it *would* do on the feed.
   shows mission phases advancing while the sim FC receives no commands;
   props-off field pass comparing arrows to pilot judgement.
 
-### P2.4 — Assist-mode field checklist (S)
+### ✅ P2.4 — Assist-mode field checklist (S) — DONE (`onboard/docs/assist-bench-checklist.md`)
 Bumpless-takeover (baseline latch) validated bench + props-off; written
 procedure in `onboard/docs/`.
 
-### P2.5 — MAVLink minimal backend (L, **deferred**)
+### ✅ P2.5 — MAVLink minimal backend (L) — DONE, and grew into the main FC link (see Status)
 HEARTBEAT + RC_CHANNELS_OVERRIDE + GPS_INPUT only. Pull the trigger only if an
 ArduPilot airframe actually materialises.
 
@@ -292,7 +313,7 @@ thing above all: **whatever reached disk survives however the process dies**
   truncated-tail recovery (N-1 intact), in-record corruption rejected by CRC,
   and mid-file garbage resynced. 10/10 CTest green.
 
-### P4a — Recorder + replay (M) — *still wanted, now lower priority*
+### ◐ P4a — Recorder + replay (M) — *partly done (see Status); the jsonl WorldState replay is still open*
 The black box covers crash-survivable capture; the richer replay tool remains:
 - `--record=dir`: jsonl `WorldState` @10 Hz + events (mode changes, GO,
   failsafe, lock) + optional frame dump (MJPEG); ring-file rotation.
@@ -335,7 +356,7 @@ as "trust it while fresh, ignore it once stale."
 
 ## P5 — localization + planning
 
-### P5a — VIO velocity (M/L)
+### ✅ P5a — VIO velocity (M/L) — DONE as full VIO into EKF3 (see Status); the plan as first written follows
 The single biggest GPS-denied win; the EKF hook (`updateVisionVelocity`)
 already exists.
 - Sparse LK optical flow (fly-loop frames), de-rotated with FC attitude
@@ -378,7 +399,11 @@ were the acceptance gate — they now PASS. **Done:**
 
 ### P5c — Absolute vision fixes (deferred)
 Canopy/image-to-map localization → `updateVisionPose()`. Only after P5a/P5b
-prove out.
+prove out. The 2026-11 survey's numbers for when this becomes worth it:
+Finland's open orthophotos are 0.5 m/px with 0.5-2 m positional accuracy,
+the best 2026 pipeline (OrthoTrack) wants 0.2 m/px or finer, and splat
+relocalization needs a desktop GPU -- so both are offline evaluation tools
+first, with the Neo 2 footage and its SRT GPS as ground truth.
 
 ## P6 — mission capability (all within the §7 boundary)
 
@@ -536,3 +561,67 @@ P3: independent after Track F (guard layer reuses F8 config bounds)
 ```
 
 Keep `AGENTS.md §9` and this file honest as items land.
+
+---
+
+## P7 — from the 2026-11 surveys and measurements
+
+Sources: `reports/GNSS denied navigation deep survey.md` and `reports/Drone
+autonomy projects and hardware.md` (local, not tracked), and the measured
+results in `nav-sim/docs/` (`ego_bench.md`, `downward_vio.md`,
+`footage_vio.md`). Ordered by value per effort.
+
+### P7.1 — Profile each stage on the real Pi 5 (S, measure first)
+Every compute purchase depends on it and no Pi-class head-to-head exists:
+ms/frame and memory for the detector, VIO, voxel map and planner on the
+aircraft's own board. Then the Zero 2 W question is a measurement, not a
+guess.
+
+### P7.2 — Global-shutter downward camera (S, hardware)
+Measured: a 30 ms rolling-shutter readout raises downward-VIO drift from
+0.34 % to 2.15 % at 5 m/s, with no frame lost (a silent bias). An OV9281
+module is the fix; test it on CSI alongside the USB D435i, since
+librealsense has been reported to clash with libcamera.
+
+### P7.3 — The brake mask into the policy and the planner bar (M)
+`kestrel bench --brake-mask` halved crashes across six planners (19 → 9),
+removed them for `score` and `goal`, but cost freeM 22 % of travel. Next:
+the learned policy under the mask; stereo depth; and a SUPER-style backup
+trajectory as the way to keep the safety without the travel penalty.
+
+### P7.4 — Integrity monitor (M/L)
+Independent checks on the VIO before EKF3 fuses it: an FC optical-flow
+module as a second velocity witness, rangefinder vs baro, VIO vs gyro yaw
+rate, and EKF3 drag fusion as the camera-independent wind/velocity
+reference. Send ODOMETRY quality 0 on persistent failure.
+
+### P7.5 — Heading coupling (M, needs flight data)
+`VioFrameAligner` slews the VIO's heading to the FC's with a ~5 s time
+constant, so a compass swing of a few seconds (motor current) enters the
+track. The survey suggests minutes, frozen on throttle transients -- but a
+slower coupling risks toilet-bowling in position hold. Decide on logged
+flights, not by reasoning.
+
+### P7.6 — Landmark memory onboard (M)
+`footage_vio --loop` (ORB + PnP, gated on height and gimbal tilt, two
+agreeing looks) removed 4.9 m of drift on a synthetic loop. Port it to the
+aircraft's downward VIO once real footage confirms it, delivering
+corrections to the FC as a rate-limited slew, never a jump.
+
+### P7.7 — Second downward velocity source (M/L)
+SMF-VO (Nov 2025) claims >100 FPS on a Pi 5 CPU with wide-FOV lenses
+(sparse flow straight to velocity); RaD-VIO gives the rangefinder
+formulation. No code found for either: re-implement and A/B against
+DepthVio, 4 seeds per cell.
+
+### P7.8 — Independent map oracle (M)
+The largest safety effect ever measured here was a bug in `sphereClear`.
+wavemap (BSD-3) fed the same depth stream would give CI an independent
+reference for the voxel map and veto.
+
+### P7.9 — Hardware decisions, documented (S)
+F405 / 1 MB flight controllers compile visual odometry out of ArduPilot;
+current Hailo packages require Raspberry Pi OS Trixie while librealsense is
+only known-good on Bookworm; keep a spare D435i (patchy stock since the
+July 2025 spin-out). Written into `onboard/docs/bom.md`.
+

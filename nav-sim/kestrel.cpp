@@ -416,6 +416,20 @@ int cmdBench(std::vector<std::string> args) {
                     polName(pol), runs, coll, collUnknown, sum / r, sumNet / r,
                     double(sumCells) / r, sum / std::max(0.1, sumNet));
     }
+    // WHAT IT WAS FLOWN THROUGH (VoxelEnv::difficulty): the same worlds and
+    // seeds as above, measured from the truth -- so a row of this table can be
+    // read against how open or tight its world was, and against other
+    // benchmarks that report the same kind of numbers.
+    std::printf("world difficulty (true world at spawn altitude; AvoidBench-style):\n");
+    std::printf("%-8s %-5s %12s %12s %12s\n", "world", "seed", "free run m", "gap p10 xR", "gap med xR");
+    for (const std::string& w : worlds)
+        for (int s = s0; s <= s1; ++s) {
+            EnvConfig c;
+            c.world = w; c.seed = unsigned(s); c.truthDepth = true;
+            const VoxelEnv env(c);
+            const VoxelEnv::Difficulty d = env.difficulty();
+            std::printf("%-8s %-5d %12.1f %12.2f %12.2f\n", w.c_str(), s, d.freeRunM, d.gapP10, d.gapMed);
+        }
     return 0;
 }
 

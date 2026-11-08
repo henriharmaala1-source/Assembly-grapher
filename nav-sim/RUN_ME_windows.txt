@@ -447,6 +447,18 @@ columns as the classical ones, on seeds it never trained on.
                                            knowledge would be worth, before
                                            anything is built to approximate it.
 
+                     EVERY COLLISION SAYS WHERE IT HIT: COLLIDED(unknown) is
+                     space the planner's own map had never seen (the veto was
+                     blind), COLLIDED(mapped) a cell it had already marked
+                     (with the veto on, a bug). The summary counts them.
+
+                     AND WHAT IT WAS FLOWN THROUGH: the run ends with each
+                     world's difficulty, measured from the truth in
+                     AvoidBench's terms -- the mean straight free run from a
+                     random point at flight height, and the tight and typical
+                     gap as multiples of the body radius -- so a row can be
+                     read against how open or tight its world was.
+
                      IT USES EVERY CORE: episodes run side by side (one per
                      hardware thread), with the same numbers in the same order
                      as one at a time. On 4 busy cores that was 2.9x; a

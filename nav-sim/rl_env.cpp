@@ -7,6 +7,7 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <queue>
 #include <cstdio>
@@ -382,6 +383,34 @@ float VoxelEnv::goalPathM(float cellM) const {
                 }
     }
     return -1.f;                     // the goal is in another component
+}
+
+VoxelEnv::Difficulty VoxelEnv::difficulty(int samples) const {
+    const Impl& I = *im_;
+    const VoxelWorld& w = I.world;
+    Difficulty d;
+    unsigned st = cfg_.seed * 2654435761u + 12345u;
+    auto u01 = [&st]() { st = st * 1664525u + 1013904223u; return float(st >> 8) / float(1u << 24); };
+    const float x0 = w.ox(), y0 = w.oy();
+    const float sx = w.nx() * w.cell(), sy = w.ny() * w.cell();
+    const float z = I.startZ;
+    std::vector<float> runs, gaps;
+    for (int tries = 0; tries < 50 * samples && int(gaps.size()) < samples; ++tries) {
+        const float x = x0 + u01() * sx, y = y0 + u01() * sy;
+        const float c = trueClearance(w, x, y, z, 3.f);
+        if (c < cfg_.robotR) continue;                    // the airframe does not fit here
+        const float a = 2.f * sim::PI_F * u01();
+        runs.push_back(w.raycast(x, y, z, std::sin(a), std::cos(a), 0.f, 30.f));
+        gaps.push_back(c / cfg_.robotR);
+    }
+    if (gaps.empty()) return d;
+    std::sort(gaps.begin(), gaps.end());
+    double sum = 0; for (float r : runs) sum += r;
+    d.freeRunM = float(sum / double(runs.size()));
+    d.gapP10 = gaps[gaps.size() / 10];
+    d.gapMed = gaps[gaps.size() / 2];
+    d.samples = int(gaps.size());
+    return d;
 }
 
 void VoxelEnv::goal(float& e, float& n, float& u) const {

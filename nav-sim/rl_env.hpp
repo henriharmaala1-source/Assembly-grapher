@@ -447,6 +447,21 @@ public:
     // because the lattice would be too large. "No route" and "not checked" are
     // different answers and must not share a value.
     float goalPathM(float cellM = 1.0f) const;
+
+    // HOW HARD IS THIS WORLD, in the terms AvoidBench (TU Delft, ICRA 2023)
+    // made comparable across papers -- so a bench row says what it was flown
+    // through, not only how it went. From the TRUE world at the spawn's
+    // altitude, over random points where the airframe fits (clearance >=
+    // robotR), seeded by the world's seed:
+    //   freeRunM    mean straight-line distance, in a random horizontal
+    //               direction, before something is in the way (capped 30 m):
+    //               how far flying blind would get. AvoidBench's
+    //               "traversability" in spirit, not its exact definition.
+    //   gapP10/Med  clearance as multiples of robotR (1 = just fits): the
+    //               10th percentile and the median -- AvoidBench's "relative
+    //               gap size", the tight spots and the typical one.
+    struct Difficulty { float freeRunM = 0, gapP10 = 0, gapMed = 0; int samples = 0; };
+    Difficulty difficulty(int samples = 400) const;
     const EnvConfig& config() const { return cfg_; }
 
     // --- watching a run -----------------------------------------------------

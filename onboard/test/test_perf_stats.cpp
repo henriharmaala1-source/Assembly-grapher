@@ -17,6 +17,11 @@ static int fails = 0;
 
 int main() {
     PerfStats p;
+    // Off by default: nothing is recorded, by add() or by a Scope.
+    p.add("map", 5.0);
+    { PerfStats::Scope t(p, "scope"); }
+    CHECK(!p.enabled() && p.rows(1.0).empty());
+    p.enable(true);
     for (int i = 1; i <= 100; ++i) p.add("map", double(i));   // 1..100 ms
     for (int i = 0; i < 10; ++i) p.add("track", 2.0);
     const auto rows = p.rows(10.0);
@@ -34,6 +39,7 @@ int main() {
 
     // p95 is over the most recent 512 samples: old slow ones age out.
     PerfStats q;
+    q.enable(true);
     for (int i = 0; i < 600; ++i) q.add("s", 100.0);
     for (int i = 0; i < 512; ++i) q.add("s", 1.0);
     CHECK(q.rows(1.0)[0].p95 == 1.0);
@@ -51,6 +57,7 @@ int main() {
 
     // Concurrent writers (the Deliberator and the fly loop) lose no samples.
     PerfStats c;
+    c.enable(true);
     std::vector<std::thread> th;
     for (int k = 0; k < 4; ++k)
         th.emplace_back([&c] { for (int i = 0; i < 10000; ++i) c.add("x", 1.0); });

@@ -11,12 +11,16 @@
 //
 //   [perf] 10.0 s  voxel 38.2 ms (p95 51.0, max 63.1, 29.8/s) | vox.map 21.4 ...
 //
-// Cheap enough to leave compiled in: two steady_clock reads per stage and a
-// short mutex-guarded append. Thread-safe: the Deliberator thread records,
-// the fly loop prints.
+// OFF UNLESS ASKED FOR. Disabled (the default), a Scope is one relaxed atomic
+// load: no clock read, and above all no lock. That matters because the fly
+// loop runs SCHED_FIFO (F9) and shares this object with the normal-priority
+// Deliberator -- a mutex taken on every tick is a place the fly loop can wait
+// behind a preempted thread, for a measurement nobody asked for. Enabled, it
+// is two steady_clock reads per stage and a short guarded append.
 // ---------------------------------------------------------------------------
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <map>
@@ -26,8 +30,12 @@
 
 class PerfStats {
 public:
-    // One stage's duration, milliseconds.
+    void enable(bool on) { on_.store(on, std::memory_order_relaxed); }
+    bool enabled() const { return on_.load(std::memory_order_relaxed); }
+
+    // One stage's duration, milliseconds. Dropped while disabled.
     void add(const std::string& name, double ms) {
+        if (!enabled()) return;
         std::lock_guard<std::mutex> lk(mx_);
         Stat& s = stats_[name];
         ++s.n;
@@ -41,17 +49,20 @@ public:
     // Times a scope: PerfStats::Scope t(perf(), "vox.map");
     class Scope {
     public:
-        Scope(PerfStats& p, const char* name)
-            : p_(p), name_(name), t0_(std::chrono::steady_clock::now()) {}
+        Scope(PerfStats& p, const char* name) : p_(p), name_(name), on_(p.enabled()) {
+            if (on_) t0_ = std::chrono::steady_clock::now();
+        }
         ~Scope() {
-            p_.add(name_, std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - t0_).count());
+            if (on_)
+                p_.add(name_, std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - t0_).count());
         }
         Scope(const Scope&) = delete;
         Scope& operator=(const Scope&) = delete;
     private:
         PerfStats& p_;
         const char* name_;
+        bool on_;
         std::chrono::steady_clock::time_point t0_;
     };
 
@@ -108,6 +119,7 @@ private:
         std::vector<double> ring;
         size_t next = 0;
     };
+    std::atomic<bool> on_{false};
     mutable std::mutex mx_;
     std::map<std::string, Stat> stats_;
 };

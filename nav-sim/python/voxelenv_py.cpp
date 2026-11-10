@@ -52,6 +52,7 @@ PYBIND11_MODULE(voxelenv, m) {
         .def_readwrite("mask_unsafe", &EnvConfig::maskUnsafe)
         // Sample start and goal per episode instead of using one fixed
         // journey, so the goal channels have to be used.
+        .def_readwrite("brake_mask", &EnvConfig::brakeMask)
         .def_readwrite("vary_goal", &EnvConfig::varyGoal);
 
     py::class_<EnvStep>(m, "EnvStep")

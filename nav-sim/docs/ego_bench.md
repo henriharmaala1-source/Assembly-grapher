@@ -14,6 +14,14 @@ It patrols goal → spawn → goal, and advises through the same mask as every
 other planner: the admissible primitive closest to its trajectory is flown,
 so the veto still applies.
 
+**What `ego` is not:** EGO-Planner as its authors fly it. There, a
+controller tracks the optimised trajectory directly. Here the trajectory is
+projected onto the bench's ~210 motion primitives every step, on a 0.25 m
+map with about 3.5 m of honest range, flying a goal ↔ spawn patrol the other
+planners do not fly. So these rows measure the method's map convention and
+its trajectory shape through this harness. They are not a verdict on the
+published system.
+
 **Setup:** all six worlds × seeds 101–104 (four seeds per arm, the
 repository's minimum), 3000 steps, truth depth, corefrac 0. Raw:
 [ego_bench_3000.txt](ego_bench_3000.txt).
@@ -69,8 +77,8 @@ Per world (mean of 4; collisions out of 4):
 
 ## Second run: matched speed, and unknown as a wall
 
-Following the research survey (`reports/GNSS denied navigation deep
-survey.md`), ego was re-run on the same worlds and seeds with two changes:
+Following the November 2026 research survey ("GNSS denied navigation deep
+survey", a separate document, not in this repository), ego was re-run on the same worlds and seeds with two changes:
 
 - its top speed matches the primitives' (3 m/s, no longer 2.5);
 - a variant treats unknown space as an obstacle (`--ego-known-only`).

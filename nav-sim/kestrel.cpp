@@ -307,6 +307,13 @@ int cmdBench(std::vector<std::string> args) {
     // threading inside an episode is turned off while several run, or the two
     // would fight over the same cores.
     const unsigned benchThreads = std::max(1u, std::thread::hardware_concurrency());
+    // ...and put back afterwards: the window calls this function in its own
+    // process, and a bench must not leave the sim and the demo it runs next
+    // rendering on one thread.
+    struct CvThreads {
+        int was = cv::getNumThreads();
+        ~CvThreads() { cv::setNumThreads(was); }
+    } cvThreads;
     if (benchThreads > 1) cv::setNumThreads(1);
     std::printf("baselines through VoxelEnv -- the same harness a learned policy uses\n");
     std::printf("%u episodes at a time (one per hardware thread)\n", benchThreads);
@@ -321,7 +328,7 @@ int cmdBench(std::vector<std::string> args) {
     // is distance flown safely, so: travel, how far from the spawn it ended,
     // how much distinct ground it saw, and how many times it went round --
     // travel/net is the looping factor freeM scores 29.5 on.
-    std::printf("%-8s %-8s %-5s %-16s %9s %8s %6s %7s %9s\n",
+    std::printf("%-8s %-8s %-5s %-21s %9s %8s %6s %7s %9s\n",
                 "policy", "world", "seed", "outcome", "travel", "net",
                 "cells", "loops", "minClr");
     for (Pol pol : {Pol::Random, Pol::FreeM, Pol::Goal, Pol::Score,
@@ -400,7 +407,7 @@ int cmdBench(std::vector<std::string> args) {
                            : st.hitUnknown  ? "COLLIDED(unknown)"
                                             : "COLLIDED(mapped)";
             const float loops = st.travelM / std::max(0.1f, st.netDispM);
-            std::printf("%-8s %-8s %-5d %-16s %9.1f %8.1f %6d %6.1fx %9.2f\n",
+            std::printf("%-8s %-8s %-5d %-21s %9.1f %8.1f %6d %6.1fx %9.2f\n",
                         polName(pol), w.c_str(), s, oc, st.travelM,
                         st.netDispM, st.cellsVisited, loops, st.minClearM);
             std::fflush(stdout);

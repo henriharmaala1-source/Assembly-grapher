@@ -566,9 +566,9 @@ Keep `AGENTS.md §9` and this file honest as items land.
 
 ## P7 — from the 2026-11 surveys and measurements
 
-Sources: `reports/GNSS denied navigation deep survey.md` and `reports/Drone
-autonomy projects and hardware.md` (local, not tracked), and the measured
-results in `nav-sim/docs/` (`ego_bench.md`, `downward_vio.md`,
+Sources: two research surveys written in November 2026, "GNSS denied
+navigation deep survey" and "Drone autonomy projects and hardware" (delivered
+as documents; **not in this repository**), and the measured results in `nav-sim/docs/` (`ego_bench.md`, `downward_vio.md`,
 `footage_vio.md`). Ordered by value per effort.
 
 ### P7.1 — Profile each stage on the real Pi 5 (S, measure first)

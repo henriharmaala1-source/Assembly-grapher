@@ -259,6 +259,7 @@ WorldState stillState() {
 }  // namespace
 
 int main() {
+    perf().enable(std::getenv("VOXTEST_PERF") != nullptr);
     const sim::CamParams cp = d435i();
     VoxelNavModule::Params vp;
     vp.legMaxM = 6.f;

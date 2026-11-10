@@ -716,30 +716,32 @@ void VoxelMap::recentre(float cx, float cy, float cz) {
     int sz = int(std::lround((noz - oz_) / p_.cell));
     if (!sx && !sy && !sz) return;
 
-    // Whole rows at a time into a buffer kept between calls. The first version
-    // allocated and zeroed a fresh 22 MB vector and bounds-checked every one
-    // of the 5.5 M cells on every shift -- the second-largest cost of a
-    // simulator step, three map levels a step. The result is identical: the
-    // same cells copied, everything that scrolls in reset to 0 (unknown).
-    // Every destination cell is written exactly once: the in-range part of a
-    // row copied, the rest of it zeroed.
-    scratch_.resize(log_.size());
+    // IN PLACE, whole rows at a time. Cell d takes its value from cell
+    // d + off, off = (sz*ny + sy)*nx + sx, so walking the rows in the
+    // direction of off reads every source before anything overwrites it:
+    // ascending when the source row is the same or a later one, descending
+    // otherwise. Within a row memmove handles the overlap, and the part with
+    // no source is zeroed (unknown) after the copy. No second buffer: the
+    // first version allocated and zeroed a fresh 22 MB vector and
+    // bounds-checked all 5.5 M cells per shift, three map levels a step; the
+    // second kept a scratch copy, which was fast and cost 22 MB per map for
+    // good. The result is identical to both.
     const int xa = std::max(0, -sx), xb = std::min(p_.nx, p_.nx - sx);   // x range whose source is inside
-    for (int z = 0; z < p_.nz; ++z) {
-        const int oz = z + sz;
-        for (int y = 0; y < p_.ny; ++y) {
-            const int oy = y + sy;
-            float* dst = &scratch_[idx(0, y, z)];
-            if (oz < 0 || oz >= p_.nz || oy < 0 || oy >= p_.ny || xa >= xb) {
-                std::fill(dst, dst + p_.nx, 0.f);
-                continue;
-            }
-            std::fill(dst, dst + xa, 0.f);
-            std::memcpy(dst + xa, &log_[idx(xa + sx, oy, oz)], sizeof(float) * size_t(xb - xa));
-            std::fill(dst + xb, dst + p_.nx, 0.f);
+    const bool ascending = sz > 0 || (sz == 0 && sy >= 0);
+    const int rows = p_.ny * p_.nz;
+    for (int i = 0; i < rows; ++i) {
+        const int r = ascending ? i : rows - 1 - i;
+        const int z = r / p_.ny, y = r % p_.ny;
+        const int oz = z + sz, oy = y + sy;
+        float* dst = &log_[idx(0, y, z)];
+        if (oz < 0 || oz >= p_.nz || oy < 0 || oy >= p_.ny || xa >= xb) {
+            std::fill(dst, dst + p_.nx, 0.f);
+            continue;
         }
+        std::memmove(dst + xa, &log_[idx(xa + sx, oy, oz)], sizeof(float) * size_t(xb - xa));
+        std::fill(dst, dst + xa, 0.f);
+        std::fill(dst + xb, dst + p_.nx, 0.f);
     }
-    log_.swap(scratch_);
     ox_ += sx * p_.cell; oy_ += sy * p_.cell; oz_ += sz * p_.cell;
 }
 

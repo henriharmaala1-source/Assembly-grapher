@@ -620,6 +620,13 @@ target_include_directories(sphere_clear_check PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(sphere_clear_check PRIVATE ${OpenCV_LIBS})
 add_test(NAME sphere_clear_check COMMAND sphere_clear_check)
 
+# The map's in-place shift equals copying to a new grid (test/voxel_recentre_check.cpp).
+add_executable(voxel_recentre_check test/voxel_recentre_check.cpp)
+target_link_libraries(voxel_recentre_check PRIVATE navcore)
+target_include_directories(voxel_recentre_check PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(voxel_recentre_check PRIVATE ${OpenCV_LIBS})
+add_test(NAME voxel_recentre_check COMMAND voxel_recentre_check)
+
 # The EGO-style bench baseline routes round a trunk, stays straight in the
 # open, and treats unknown as free only when told to (test/ego_planner_check.cpp).
 add_executable(ego_planner_check test/ego_planner_check.cpp ego_planner.cpp)

@@ -228,8 +228,9 @@ other heights, real-ground photographs, a drifting rather than constant bias.
 A rolling-shutter sensor, like the DJI Neo 2's, reads the image a line at a
 time. When the aircraft moves during the readout, each row sees the ground
 from a slightly different place, and the estimators here assume one instant
-per frame. The research survey ranked measuring this first
-(`reports/GNSS denied navigation deep survey.md`).
+per frame. The November 2026 research survey ("GNSS denied navigation deep
+survey", a separate document, not in this repository) ranked measuring this
+first.
 
 `downvio_sweep --rs-readout-ms T` renders each of 16 bands of rows at its
 own read time, ending at the frame's timestamp.

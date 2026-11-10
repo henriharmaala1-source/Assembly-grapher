@@ -287,33 +287,46 @@ std::vector<SrtRec> parseSrt(const std::string& all) {
     return out;
 }
 
-// A field at video time t: linear between the blocks that have it.
-bool srtAt(const std::vector<SrtRec>& s, const char* key, double t, double& v) {
-    const SrtRec* a = nullptr; const SrtRec* b = nullptr;
-    for (const SrtRec& r : s) {
-        if (!r.f.count(key)) continue;
-        if (r.t <= t) a = &r; else { b = &r; break; }
+// The subtitles indexed by field: per field, its (time, value) samples in
+// time order. A lookup is a binary search. (The first version scanned every
+// block on every lookup -- a few lookups per frame, so quadratic in the clip's
+// length, and the clock estimate multiplied that by its lag sweep: fine on a
+// 13 s test clip, hours on a ten-minute recording.)
+class SrtIndex {
+public:
+    SrtIndex() = default;
+    explicit SrtIndex(const std::vector<SrtRec>& recs) {
+        for (const SrtRec& r : recs)                       // recs are time-sorted
+            for (const auto& kv : r.f) tracks_[kv.first].emplace_back(r.t, kv.second);
     }
-    if (!a && !b) return false;
-    if (!a) { v = b->f.at(key); return true; }
-    if (!b) { v = a->f.at(key); return true; }
-    const double w = (t - a->t) / std::max(1e-9, b->t - a->t);
-    const double va = a->f.at(key), vb = b->f.at(key);
-    if (std::strstr(key, "yaw")) {                       // headings wrap
-        double d = vb - va;
-        while (d > 180) d -= 360;
-        while (d < -180) d += 360;
-        v = va + w * d;
-    } else {
-        v = va + w * (vb - va);
+    bool has(const char* key) const { return tracks_.find(key) != tracks_.end(); }
+    // A field at video time t: linear between the blocks that have it.
+    bool at(const char* key, double t, double& v) const {
+        const auto it = tracks_.find(key);
+        if (it == tracks_.end() || it->second.empty()) return false;
+        const auto& tr = it->second;
+        // b: the first sample after t; a: the last at or before it.
+        const auto b = std::upper_bound(tr.begin(), tr.end(), t,
+                                        [](double x, const std::pair<double, double>& p) { return x < p.first; });
+        if (b == tr.begin()) { v = b->second; return true; }
+        const auto a = b - 1;
+        if (b == tr.end()) { v = a->second; return true; }
+        const double w = (t - a->first) / std::max(1e-9, b->first - a->first);
+        if (std::strstr(key, "yaw")) {                       // headings wrap
+            double d = b->second - a->second;
+            while (d > 180) d -= 360;
+            while (d < -180) d += 360;
+            v = a->second + w * d;
+        } else {
+            v = a->second + w * (b->second - a->second);
+        }
+        return true;
     }
-    return true;
-}
-
-bool srtHas(const std::vector<SrtRec>& s, const char* key) {
-    for (const SrtRec& r : s) if (r.f.count(key)) return true;
-    return false;
-}
+private:
+    std::map<std::string, std::vector<std::pair<double, double>>, std::less<>> tracks_;
+};
+bool srtAt(const SrtIndex& s, const char* key, double t, double& v) { return s.at(key, t, v); }
+bool srtHas(const SrtIndex& s, const char* key) { return s.has(key); }
 
 // Latitude/longitude -> metres east/north of (lat0, lon0): local and flat,
 // which is all a flight of a few hundred metres needs.
@@ -586,12 +599,13 @@ int selfTest() {
         "2\r\n00:00:00,033 --> 00:00:00,066\r\n<font size=\"28\">FrameCnt: 2, DiffTime: 33ms\r\n"
         "2024-05-06 12:00:00.033\r\n[latitude: 60.170100] [longitude: 24.940000] [rel_alt: 5.400 abs_alt: 30.300] "
         "[gb_yaw: -170.0 gb_pitch: -88.0 gb_roll: 0.0] </font>\r\n";
-    const auto s = parseSrt(a);
+    const auto recs = parseSrt(a);
+    const SrtIndex s(recs);
     double v;
-    check(s.size() == 2 && std::fabs(s[1].t - 0.033) < 1e-9, "DJI Mini/Air layout: two blocks, times");
+    check(recs.size() == 2 && std::fabs(recs[1].t - 0.033) < 1e-9, "DJI Mini/Air layout: two blocks, times");
     check(srtAt(s, "latitude", 0.0, v) && std::fabs(v - 60.17) < 1e-9, "latitude");
     check(srtAt(s, "rel_alt", 0.0165, v) && std::fabs(v - 5.3) < 1e-6, "rel_alt, interpolated half way");
-    check(s[0].f.count("abs_alt") && std::fabs(s[0].f.at("abs_alt") - 30.1) < 1e-9, "two fields in one bracket");
+    check(recs[0].f.count("abs_alt") && std::fabs(recs[0].f.at("abs_alt") - 30.1) < 1e-9, "two fields in one bracket");
     check(srtAt(s, "gb_pitch", 0.0, v) && v == -90.0, "gb_pitch");
     check(srtAt(s, "gb_yaw", 0.0165, v) && std::fabs(std::fabs(v) - 180.0) < 1e-6, "gb_yaw interpolates across +-180");
     const auto o1 = parseSrt("1\n00:00:01,000 --> 00:00:02,000\nF/2.8, SS 320, ISO 100, EV 0, "
@@ -693,9 +707,10 @@ int main(int argc, char** argv) {
             if (!o.quiet) std::printf("subtitles: %s, %zu blocks; fields:%s\n", path.c_str(), srt.size(), ks.c_str());
         }
     }
-    const bool haveGps = srtHas(srt, "latitude") && srtHas(srt, "longitude");
-    const bool srtGimbal = srtHas(srt, "gb_pitch");
-    const bool srtYaw = srtHas(srt, "gb_yaw");
+    const SrtIndex sidx(srt);
+    const bool haveGps = srtHas(sidx, "latitude") && srtHas(sidx, "longitude");
+    const bool srtGimbal = srtHas(sidx, "gb_pitch");
+    const bool srtYaw = srtHas(sidx, "gb_yaw");
     if (o.attitude == "srt" && !srtGimbal) {
         std::fprintf(stderr, "footage_vio: --attitude srt, but the subtitles carry no gb_pitch\n");
         return 2;
@@ -708,7 +723,7 @@ int main(int argc, char** argv) {
     else if (!o.heightCsv.empty()) {
         if (!loadHeightCsv(o.heightCsv, hcsv)) { std::fprintf(stderr, "footage_vio: no time,height rows in %s\n", o.heightCsv.c_str()); return 2; }
         hsrc = "csv";
-    } else if (srtHas(srt, "rel_alt")) hsrc = "srt";
+    } else if (srtHas(sidx, "rel_alt")) hsrc = "srt";
     else {
         std::fprintf(stderr, "footage_vio: no height: give --height M (or --height-csv, or subtitles with rel_alt)\n");
         return 2;
@@ -716,7 +731,7 @@ int main(int argc, char** argv) {
     auto heightAt = [&](double t) {
         double h = o.height;
         if (hsrc == "csv") h = interpRows(hcsv, t + o.heightTimeOffset);
-        else if (hsrc == "srt") srtAt(srt, "rel_alt", t, h);
+        else if (hsrc == "srt") srtAt(sidx, "rel_alt", t, h);
         return h + o.heightOffset;
     };
 
@@ -788,11 +803,15 @@ int main(int argc, char** argv) {
     int frameNo = 0;
     struct FixLog { double t, ageS, shiftM, dyawDeg; int inliers; double placeFlown, flown, de, dn; };
     std::vector<FixLog> fixes;
-    // AGREEMENT before acting. One look that says "been here" can be a
-    // look-alike; the standard defence (Kimera-Multi, DOOR-SLAM: pairwise
-    // consistency) is that independent observations of a true return agree.
-    // So a fix is held as a CANDIDATE and applied only when loopConfirm
-    // consecutive looks give the same correction (within 0.3 m + 10 % and 3 deg).
+    // AGREEMENT before acting: a fix is held as a CANDIDATE and applied only
+    // when loopConfirm consecutive looks give the same correction (within
+    // 0.3 m + 10 % and 3 deg). What this buys is narrower than the pairwise
+    // consistency of Kimera-Multi / DOOR-SLAM it borrows from: consecutive
+    // looks see nearly the same image against the same stored place, so they
+    // are NOT independent. It filters a one-off bad fit (a RANSAC fluke, a
+    // blurred frame); a patch of ground that genuinely looks like another
+    // would agree with itself. Against that the defences are the height and
+    // tilt gates and the drift-bounded search radius.
     struct Pending { double t; double de, dn, dyaw; int n; } pending{0, 0, 0, 0, 0};
     int unconfirmed = 0;
     // Frame-timing integrity (Ingenuity's Flight 6: one dropped frame broke
@@ -848,18 +867,18 @@ int main(int argc, char** argv) {
         // The camera's attitude for this frame.
         double pitch = o.gimbalPitch, roll = o.gimbalRoll, v;
         if (o.attitude == "srt") {
-            if (srtAt(srt, "gb_pitch", t, v)) pitch = v;
-            if (srtAt(srt, "gb_roll", t, v)) roll = v;
+            if (srtAt(sidx, "gb_pitch", t, v)) pitch = v;
+            if (srtAt(sidx, "gb_roll", t, v)) roll = v;
         }
         const double H = heightAt(t);
         const bool firstFrame = recs.empty();
         if (firstFrame) {
             double y0 = 0;
             if (o.startYawSet) gyroYaw = o.startYaw;
-            else if (srtYaw && srtAt(srt, "gb_yaw", t, y0)) gyroYaw = y0;
-            if (srtYaw) srtAt(srt, "gb_yaw", t, prevSrtYaw);
+            else if (srtYaw && srtAt(sidx, "gb_yaw", t, y0)) gyroYaw = y0;
+            if (srtYaw) srtAt(sidx, "gb_yaw", t, prevSrtYaw);
         } else if (o.attitude == "srt" && srtYaw) {
-            double y; srtAt(srt, "gb_yaw", t, y);         // the gimbal's yaw CHANGE is the gyro
+            double y; srtAt(sidx, "gb_yaw", t, y);         // the gimbal's yaw CHANGE is the gyro
             double d = y - prevSrtYaw;
             while (d > 180) d -= 360;
             while (d < -180) d += 360;
@@ -973,12 +992,12 @@ int main(int argc, char** argv) {
         prevValid = r.valid;
 
         double lat, lon;
-        if (haveGps && srtAt(srt, "latitude", t, lat) && srtAt(srt, "longitude", t, lon)) {
+        if (haveGps && srtAt(sidx, "latitude", t, lat) && srtAt(sidx, "longitude", t, lon)) {
             if (!haveOrigin) { lat0 = lat; lon0 = lon; haveOrigin = true; }
             enuOf(lat, lon, lat0, lon0, r.ge, r.gn);
             r.gps = true;
             double a;
-            if (srtAt(srt, "rel_alt", t, a)) r.galt = a;
+            if (srtAt(sidx, "rel_alt", t, a)) r.galt = a;
         }
         recs.push_back(r);
 
@@ -1105,7 +1124,7 @@ int main(int argc, char** argv) {
         const int k = std::max(1, int(std::lround(h * fpsRun)));
         auto gpsAt = [&](double t, double& e, double& n) {
             double la, lo;
-            if (!srtAt(srt, "latitude", t, la) || !srtAt(srt, "longitude", t, lo)) return false;
+            if (!srtAt(sidx, "latitude", t, la) || !srtAt(sidx, "longitude", t, lo)) return false;
             enuOf(la, lo, lat0, lon0, e, n);
             return true;
         };

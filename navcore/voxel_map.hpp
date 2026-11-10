@@ -511,7 +511,6 @@ private:
 
     VoxelMapParams p_;
     std::vector<float> log_;
-    std::vector<float> scratch_;   // recentre()'s, kept so a shift does not allocate
     std::vector<uint8_t> tex_;         // per-cell intensity; empty until used
     float ox_ = 0, oy_ = 0, oz_ = 0;   // world coord of cell (0,0,0) min corner
 };

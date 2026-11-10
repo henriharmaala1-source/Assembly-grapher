@@ -293,14 +293,18 @@ not as a rate.
 
 ### Agreement, spreading back, and frame timing
 
-Three changes came out of the research survey
-(`reports/GNSS denied navigation deep survey.md`):
+Three changes came out of the November 2026 research survey ("GNSS denied
+navigation deep survey", a separate document, not in this repository):
 
 - **Two looks must agree** (`--loop-confirm 2`, the default). A single
   "been here" is held as a candidate and applied only when the next look
-  gives the same correction: within 0.3 m plus 10%, and 3°. This is the
-  pairwise-consistency defence that multi-robot SLAM systems use against
-  look-alikes.
+  gives the same correction: within 0.3 m plus 10%, and 3°. It filters a
+  one-off bad fit (a RANSAC fluke, a blurred frame). It is weaker than the
+  pairwise-consistency checks of multi-robot SLAM it borrows from:
+  consecutive looks see nearly the same image, so they are not independent,
+  and ground that genuinely looks like another place would agree with
+  itself. The defences against that are the height and tilt gates and the
+  drift-bounded search radius.
   - On the synthetic noise loop with a 3 s hover at the end: 8 looks
     recognised the start, 4 were held back as unconfirmed, and 4 applied
     corrections of 0.01–0.04 m.

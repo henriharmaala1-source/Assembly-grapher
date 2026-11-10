@@ -278,6 +278,7 @@ int main(int argc, char** argv) {
 
     const bool display      = parser.get<bool>("display");
     const float perfEveryS   = std::max(0.f, parser.get<float>("perf"));
+    perf().enable(perfEveryS > 0.f);
     auto tPerf = std::chrono::steady_clock::now();
     const bool roadOn        = parser.get<bool>("road");
     bool       allowControl = parser.get<bool>("allow-control");

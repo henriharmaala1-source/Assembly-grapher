@@ -1,0 +1,29 @@
+# Find a person, mark where they are from the camera, and fly a path
+# planned around that spot.
+mission "fly over the person"
+fence 40 m
+timeout 8 min
+
+on battery < 25% {
+  say "battery low, going home"
+  rtl
+}
+
+let home = here
+search person timeout 40 s else {
+  say "nobody found"
+  goto home
+  land
+}
+
+let p = seen person else {
+  say "saw them but could not range them"
+  rtl
+}
+
+let behind = p + (ahead 4)          # 4 m past them, along my line of sight
+over p radius 1 m hold 5 s          # straight over them
+goto behind
+orbit p radius 3 m laps 1 points 6  # circle them, starting on my side
+goto home
+land

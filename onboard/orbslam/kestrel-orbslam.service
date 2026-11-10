@@ -1,0 +1,29 @@
+# systemd unit: keep kestrel-orbslam running, and bring it back if it dies.
+#
+#   sudo cp kestrel-orbslam.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now kestrel-orbslam
+#   journalctl -u kestrel-orbslam -f            # its log, crash traces included
+#
+# Edit the paths below to where the bridge and vocabulary actually are.
+#
+# A restart mid-flight is survivable, and tested (test_voxel_nav, "the bridge
+# dies and a supervisor restarts it"): onboard reconnects within a second,
+# treats the new process as a new map -- re-anchored where the estimate had
+# got to, the reset counter bumped so EKF3 takes it as a discontinuity -- and
+# has no position while the vocabulary reloads (seconds). The mission holds
+# still meanwhile. Start the bridge BEFORE takeoff all the same.
+[Unit]
+Description=kestrel-orbslam (ORB-SLAM3 position estimate for kestrel)
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/opt/kestrel/kestrel-orbslam --vocab /opt/kestrel/ORBvoc.txt --socket /tmp/kestrel-slam.sock
+Restart=always
+RestartSec=1
+# The vocabulary is 145 MB of text; parsing it is the slow part of a start.
+TimeoutStartSec=120
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

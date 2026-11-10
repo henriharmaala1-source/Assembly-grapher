@@ -1,0 +1,15 @@
+# ArduCopter SITL for every `kestrel sitl` run: kestrel's depth becomes
+# ArduPilot's proximity sensor. Load after copter.parm (and before
+# kestrel_vio.parm for a GNSS-denied run):
+#
+#   build/sitl/bin/arducopter --model + --speedup 1 -I0 -w \
+#     --defaults Tools/autotest/default_params/copter.parm,<repo>/nav-sim/sitl/kestrel_sitl.parm
+#
+# SITL has no walls of its own. kestrel renders them, its voxel module turns
+# each depth frame into 72 bearings of obstacle distance, and those go to the
+# FC as OBSTACLE_DISTANCE -- exactly what the aircraft sends. ArduPilot's own
+# avoidance (AVOID_ENABLE default: fence + proximity; GUIDED velocity is
+# adjusted by it) then acts on walls it cannot otherwise know exist: the
+# second, independent avoidance path, tested.
+
+PRX1_TYPE        2     # MAVLink: OBSTACLE_DISTANCE from the companion

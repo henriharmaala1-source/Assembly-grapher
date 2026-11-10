@@ -1,0 +1,276 @@
+package com.kestrel.tracker.camera
+
+import android.content.Context
+import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.media.ImageReader
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.util.Log
+import android.util.Size
+import android.view.Surface
+
+/**
+ * Frame source over the platform Camera2 API — no external UVC library.
+ *
+ * The analog capture dongle enumerates as a Camera2 camera with
+ * LENS_FACING_EXTERNAL on phones that support USB video (the same capability the
+ * generic USB-camera app used). We prefer that external camera when present, and
+ * fall back to the built-in back camera otherwise — so the app always runs, and
+ * uses the feed-faithful dongle path whenever it's plugged in.
+ *
+ * Frames are read as YUV_420_888; the Y plane (row-stride-aware copy) is the
+ * luminance the tracker wants — no colour conversion, no JPEG.
+ */
+class Camera2FrameSource(private val context: Context) : FrameSource {
+
+    private val mgr = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    private var device: CameraDevice? = null
+    private var session: CameraCaptureSession? = null
+    private var reader: ImageReader? = null
+    private var thread: HandlerThread? = null
+    private var handler: Handler? = null
+    private var onFrame: ((ByteArray, Int, Int) -> Unit)? = null
+    private var displaySurface: Surface? = null
+    private var reqBuilder: CaptureRequest.Builder? = null
+    private var zoom = 1f
+    private var maxZoom = 1f
+    private var camId: String? = null
+
+    /** Sensor mount rotation (0/90/180/270) — the default display rotation the
+     *  preview needs so the feed shows upright. Read synchronously in start(). */
+    var sensorOrientation = 0; private set
+
+    private var displaySize: Size? = null
+    private var displayTex: SurfaceTexture? = null
+
+    override val displayBufferSize: Pair<Int, Int>
+        get() = displaySize?.let { it.width to it.height } ?: (0 to 0)
+
+    /** TextureView clobbers the SurfaceTexture's default buffer size with the VIEW
+     *  size on every resize; re-assert ours so the preview keeps its own
+     *  resolution and aspect after a device rotation. */
+    override fun onDisplayViewResized() {
+        val ds = displaySize ?: return
+        displayTex?.setDefaultBufferSize(ds.width, ds.height)
+    }
+
+    override fun start(onFrame: (ByteArray, Int, Int) -> Unit, display: SurfaceTexture?) {
+        this.onFrame = onFrame
+        thread = HandlerThread("cam").also { it.start() }
+        handler = Handler(thread!!.looper)
+
+        val id = pickCameraId() ?: run { Log.e("Camera2", "no camera found"); return }
+        camId = id
+        maxZoom = if (Build.VERSION.SDK_INT >= 30)
+            mgr.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 1f
+        else 1f
+        sensorOrientation =
+            mgr.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        Log.i("Camera2", "max zoom ${maxZoom}x  sensor orientation $sensorOrientation")
+        val (size, ds) = pickSizes(id)
+        reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2).apply {
+            setOnImageAvailableListener({ r -> deliver(r) }, handler)
+        }
+        // Display surface (GPU preview) — same aspect as the tracker stream, but an
+        // order of magnitude more pixels. Sharing the tracker's size here is what
+        // made the preview look blocky once it was upscaled onto a 2400px screen.
+        if (display != null) {
+            displaySize = ds
+            displayTex = display
+            display.setDefaultBufferSize(ds.width, ds.height)
+            displaySurface = Surface(display)
+        }
+        try {
+            mgr.openCamera(id, object : CameraDevice.StateCallback() {
+                override fun onOpened(cam: CameraDevice) { device = cam; startSession(cam) }
+                override fun onDisconnected(cam: CameraDevice) { cam.close() }
+                override fun onError(cam: CameraDevice, error: Int) {
+                    Log.e("Camera2", "open error $error"); cam.close()
+                }
+            }, handler)
+        } catch (e: SecurityException) {
+            Log.e("Camera2", "CAMERA permission not granted", e)
+        }
+    }
+
+    /** External camera (the dongle) if present, else back, else the first one. */
+    private fun pickCameraId(): String? {
+        val ids = mgr.cameraIdList
+        var back: String? = null
+        for (id in ids) {
+            val facing = mgr.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING)
+            if (facing == CameraCharacteristics.LENS_FACING_EXTERNAL) {
+                Log.i("Camera2", "using EXTERNAL camera $id (dongle)"); return id
+            }
+            if (facing == CameraCharacteristics.LENS_FACING_BACK) back = id
+        }
+        return back ?: ids.firstOrNull()
+    }
+
+    /**
+     * Choose the tracker and display resolutions TOGETHER.
+     *
+     * Two hard constraints, and they interact — which is why this is one function
+     * and not two:
+     *
+     *  1. SAME ASPECT RATIO. The tracked box is drawn with a transform derived from
+     *     the TRACKER frame size but composited over the DISPLAY buffer. Equal
+     *     aspect makes that composition a uniform scale, so the image stays
+     *     geometrically correct and the box lands on the target. Mismatched aspect
+     *     squashes the picture (circles render as ovals) AND offsets the box,
+     *     because on this sensor 16:9 is a vertical crop of 4:3 — different fields
+     *     of view, not just different shapes.
+     *
+     *  2. WIDESCREEN WINS. This is a visual target-search rig: the operator needs
+     *     the widest field of view that fills the phone's (very wide, ~2.5:1)
+     *     screen. A 4:3 feed letterboxes hard. So we prefer the widest aspect the
+     *     camera offers in BOTH stream types, and only fall back to 4:3 if there is
+     *     no wide option.
+     *
+     * Sizes then differ by an order of magnitude on purpose: the ImageReader feeds
+     * Kotlin, so its pixel count drives every per-pixel pass and must stay small;
+     * the display Surface is consumed by the GPU and costs the CPU nothing.
+     */
+    private fun pickSizes(id: String): Pair<Size, Size> {
+        val map = mgr.getCameraCharacteristics(id)
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val yuv = map?.getOutputSizes(ImageFormat.YUV_420_888)?.toList().orEmpty()
+        val tex = map?.getOutputSizes(SurfaceTexture::class.java)?.toList().orEmpty()
+        if (yuv.isEmpty() || tex.isEmpty()) {
+            Log.w("Camera2", "no stream sizes advertised; falling back to 640x480")
+            return Size(640, 480) to Size(640, 480)
+        }
+
+        fun ar(s: Size) = s.width.toFloat() / s.height
+
+        // The tracker stream's PIXEL COUNT is the single biggest lever on frame
+        // rate: every luma/chroma conversion and the ego-motion flow scale with it
+        // linearly. This cap is hard.
+        val trackCap = 640 * 400
+        val dispCap = 1920 * 1080                   // plenty sharp; bounds bandwidth/power
+
+        // Aspect ratios offered by BOTH stream types (0.02 tolerance covers
+        // 1024x576 vs 1920x1080 style rounding).
+        val shared = yuv.map { ar(it) }
+            .filter { a -> tex.any { kotlin.math.abs(ar(it) - a) < 0.02f } }
+            .distinctBy { kotlin.math.round(it * 50f) }
+
+        fun of(list: List<Size>, a: Float) = list.filter { kotlin.math.abs(ar(it) - a) < 0.02f }
+
+        // An aspect is only a CANDIDATE if it has a tracker size within the cap.
+        // Choosing the widest aspect first and sizing afterwards is what produced a
+        // 2520x1080 tracker stream on this phone: 21:9 was the widest offered, but
+        // its smallest stream is 2.7 MEGAPIXELS — 8.9x the work of 640x480, and
+        // measured at 8 fps on the device. Width is worth having only when it is
+        // cheap; correctness of the frame rate comes first.
+        val usable = shared
+            .filter { it <= 2.4f }                  // ignore silly letterbox crop modes
+            .mapNotNull { a ->
+                val t = of(yuv, a).filter { it.width * it.height <= trackCap }
+                    .maxByOrNull { it.width * it.height } ?: return@mapNotNull null
+                a to t
+            }
+        val (target, track) = usable.maxByOrNull { it.first }              // widest that is cheap
+            ?: ((4f / 3f) to (yuv.minByOrNull { it.width * it.height }!!)) // nothing fits: smallest
+
+        val disp = of(tex, ar(track)).filter { it.width * it.height <= dispCap }
+            .maxByOrNull { it.width * it.height }
+            ?: of(tex, ar(track)).minByOrNull { it.width * it.height }
+            ?: track
+
+        Log.i("Camera2", "aspect ${"%.3f".format(target)} " +
+            "(shared: ${shared.joinToString { "%.2f".format(it) }}; " +
+            "cheap: ${usable.joinToString { "%.2f".format(it.first) }})  " +
+            "tracker ${track.width}x${track.height} (${track.width * track.height / 1000}k px)  " +
+            "display ${disp.width}x${disp.height}")
+        if (track.width * track.height > trackCap)
+            Log.w("Camera2", "tracker stream ${track.width}x${track.height} EXCEEDS the " +
+                "${trackCap / 1000}k-px budget — no cheaper size is offered; expect a low frame rate")
+        return track to disp
+    }
+
+    private fun startSession(cam: CameraDevice) {
+        // Two targets: the ImageReader (tracker frames) + the display surface
+        // (GPU preview). The display path never touches Kotlin/YUV conversion.
+        val targets = listOfNotNull(reader!!.surface, displaySurface)
+        @Suppress("DEPRECATION")
+        cam.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(s: CameraCaptureSession) {
+                session = s
+                val b = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                targets.forEach { b.addTarget(it) }
+                applyZoom(b)
+                reqBuilder = b
+                s.setRepeatingRequest(b.build(), null, handler)
+            }
+            override fun onConfigureFailed(s: CameraCaptureSession) {
+                Log.e("Camera2", "session configure failed")
+            }
+        }, handler)
+    }
+
+    private fun applyZoom(b: CaptureRequest.Builder) {
+        if (Build.VERSION.SDK_INT >= 30 && maxZoom > 1f)
+            b.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom.coerceIn(1f, maxZoom))
+    }
+
+    /** Real sensor zoom (crops the sensor → full-quality magnification). Zooms
+     *  both the display surface and the tracker frames together. */
+    override fun setZoom(ratio: Float) {
+        zoom = ratio
+        val s = session ?: return
+        val b = reqBuilder ?: return
+        applyZoom(b)
+        try { s.setRepeatingRequest(b.build(), null, handler) } catch (_: Exception) {}
+    }
+
+    private var nv21Buf = ByteArray(0)     // reused per frame — no per-frame alloc
+
+    private fun deliver(r: ImageReader) {
+        val img = r.acquireLatestImage() ?: return
+        try {
+            val w = img.width; val h = img.height
+            val ySize = w * h
+            if (nv21Buf.size != ySize * 3 / 2) nv21Buf = ByteArray(ySize * 3 / 2)
+            val nv21 = nv21Buf
+
+            // Y plane (row-stride aware).
+            val yP = img.planes[0]; val yb = yP.buffer; val yRow = yP.rowStride
+            if (yRow == w) { yb.get(nv21, 0, ySize) }
+            else for (row in 0 until h) { yb.position(row * yRow); yb.get(nv21, row * w, w) }
+
+            // Real chroma: pack the U/V planes into NV21's VU order (colour feed).
+            val uP = img.planes[1]; val vP = img.planes[2]
+            val ub = uP.buffer; val vb = vP.buffer
+            val uRow = uP.rowStride; val uPix = uP.pixelStride
+            val vRow = vP.rowStride; val vPix = vP.pixelStride
+            var pos = ySize
+            for (row in 0 until h / 2) {
+                val uBase = row * uRow; val vBase = row * vRow
+                for (col in 0 until w / 2) {
+                    val vi = vBase + col * vPix; val ui = uBase + col * uPix
+                    nv21[pos++] = if (vi < vb.limit()) vb.get(vi) else 128.toByte()   // V
+                    nv21[pos++] = if (ui < ub.limit()) ub.get(ui) else 128.toByte()   // U
+                }
+            }
+            onFrame?.invoke(nv21, w, h)
+        } finally {
+            img.close()
+        }
+    }
+
+    override fun stop() {
+        session?.close(); device?.close(); reader?.close(); displaySurface?.release()
+        thread?.quitSafely()
+        session = null; device = null; reader = null; displaySurface = null
+        thread = null; onFrame = null
+    }
+}

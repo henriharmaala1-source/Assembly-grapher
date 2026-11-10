@@ -127,11 +127,17 @@ the runs above. Raw: [brake_mask_3000.txt](brake_mask_3000.txt).
   - It cuts `ego` from 5 to 2.
   - `score`'s net × cells rises, from 7758 to 11377: it was being let fly
     faster than it could stop, and crashing for it.
-- **It does nothing for `random` and `frontRaw`.** The likely cause, not
-  yet checked (bench does not print whether a crash was into unmapped
-  space), is the body brushing unknown space beside a confirmed-free
-  centreline. That would make it the corefrac question, not stopping
-  distance. `frontRaw` steers at unknown space on purpose.
+- **It does nothing for `random` and `frontRaw`.** `frontRaw` steers at
+  unknown space on purpose.
+- **Every crash was into space the map had never seen.** Bench now prints
+  where each collision landed, against the planner's own map. Re-running
+  both arms on the same seeds: all 19 crashes without the mask and all 9
+  with it were `COLLIDED(unknown)`; none was into a cell already marked
+  occupied. So the veto never passed a known obstacle. What remains after
+  the mask is the body reaching unmapped space beside or beyond a
+  confirmed-free centreline, which is the corefrac question, not stopping
+  distance. (The re-run reproduced every row of the table above exactly,
+  with episodes now running in parallel.)
 - **The cost is distance for the planners that were already safe.** freeM
   flies 22% less (235 → 184 m) with the same zero crashes.
 - So it is a large safety gain for planners that chase a goal or a score,

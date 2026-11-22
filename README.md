@@ -18,6 +18,7 @@ Rakentaa **7" FPV-drone** johon on integroitu **Raspberry Pi 5** -kaveritietokon
 
 - **[bom_7inch_longrange.md](bom_7inch_longrange.md)** — täysi Bill of Materials, UART-jako, virransyöttö, ostohuomiot
 - **[docs/](docs/)** — blogityylinen projektisivu (GitHub Pages)
+- **[tools/bbanalyzer/](tools/bbanalyzer/)** — blackbox-analysaattori: tehot ja akku, ilmanvastus (CdA), paras matkanopeus, moottorien tasapaino, värähtelyt (runkoresonanssi vs. moottori) ja PID-askelvasteet arvioineen
 
 ## BOM lyhyesti
 

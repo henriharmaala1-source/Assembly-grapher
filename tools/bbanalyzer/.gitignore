@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+*_report.html
+*_report.json
+*.TXT
+*.BBL
+*.BFL

@@ -2,6 +2,9 @@ name: Build bbanalyzer.exe
 
 on:
   push:
+    # branches must be listed explicitly: with only `tags:` set, branch pushes would not trigger
+    branches:
+      - "**"
     paths:
       - "tools/bbanalyzer/**"
       - ".github/workflows/build-bbanalyzer-exe.yml"

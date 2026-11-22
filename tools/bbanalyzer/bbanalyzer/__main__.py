@@ -3,6 +3,7 @@
   python -m bbanalyzer analyze LOG.TXT --mass 1.1 --capacity 2200 --prop 7 [--out report.html]
   python -m bbanalyzer list LOG.TXT
   python -m bbanalyzer compare before.json after.json
+  python -m bbanalyzer [LOG ...]      interactive: asks for aircraft details, opens the report
 """
 
 from __future__ import annotations
@@ -23,8 +24,8 @@ def _analyze(a) -> int:
                   coast_throttle=a.coast_throttle, motor_poles=a.poles)
     mr = tuple(float(x) for x in a.motor_range.split(",")) if a.motor_range else None
     log, res, phases = analysis.run(a.log, ac, a.log_index, mr)
-    stem = Path(a.log).stem
-    out = Path(a.out or f"{stem}_report.html")
+    src = Path(a.log)
+    out = Path(a.out) if a.out else src.with_name(f"{src.stem}_report.html")
     out.write_text(report.build(log, res, phases, ac), encoding="utf-8")
     js = Path(a.json or out.with_suffix(".json"))
     js.write_text(analysis.to_json(res), encoding="utf-8")
@@ -78,6 +79,11 @@ def _compare(a) -> int:
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    # no sub-command: double-click or drag-and-drop mode
+    if not argv or (argv[0] not in ("analyze", "list", "compare", "-h", "--help")):
+        from .app import main_interactive
+        return main_interactive(argv)
     ap = argparse.ArgumentParser(prog="bbanalyzer", description="Blackbox log analyser")
     sub = ap.add_subparsers(dest="cmd", required=True)
     an = sub.add_parser("analyze", help="analyse one log and write an HTML report + JSON metrics")

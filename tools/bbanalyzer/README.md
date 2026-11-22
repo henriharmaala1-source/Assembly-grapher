@@ -4,14 +4,37 @@ Turns an iNav or Betaflight blackbox log into a single HTML report: power and ba
 efficiency and air resistance, motor balance, vibration (frame resonance vs motor noise) and a
 PID/tune review with reconstructed step responses and a plain-language scorecard.
 
-## Install
+## Windows: bbanalyzer.exe (no Python needed)
+
+Download `bbanalyzer.exe` from the **Actions** tab → latest "Build bbanalyzer.exe" run →
+artifact **bbanalyzer-windows** (or from a GitHub Release if one has been tagged `bbanalyzer-v*`).
+
+- **Drag a log onto `bbanalyzer.exe`** (or double-click it and drag the log into the window).
+- It asks for weight, prop size, battery capacity and blades once and remembers them
+  (`%USERPROFILE%\.bbanalyzer.json`). Enter keeps a value, `-` clears it.
+- The report is written next to the log and opens in your browser.
+- Command-line use works the same as below: `bbanalyzer.exe analyze LOG.TXT --mass 1.1 ...`
+
+It's a single ~80 MB file because it bundles Python, numpy, scipy and matplotlib. The first
+start takes a few seconds while it unpacks. Windows SmartScreen may warn about an unsigned
+program: "More info" → "Run anyway".
+
+To build it yourself on Windows:
+
+```powershell
+cd tools\bbanalyzer
+python -m pip install numpy pandas scipy matplotlib pyinstaller orangebox
+python -m PyInstaller --onefile --console --name bbanalyzer --paths . --collect-submodules bbanalyzer bbanalyzer_app.py
+```
+
+## Install (Python)
 
 ```bash
 cd tools/bbanalyzer
 python3 -m pip install -r requirements.txt
 ```
 
-pip may print `Invalid script entry point ... bb2csv` for orangebox. That only concerns an
+pip may print `Invalid script entry point ... bb2csv` for orangebox and exit with an error. That only concerns an
 optional command-line script; the library itself installs and works.
 
 ## Use

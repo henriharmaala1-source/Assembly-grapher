@@ -41,32 +41,49 @@ jobs:
           python -m pip install orangebox
           python -c "import orangebox; print('orangebox', orangebox.__file__)"
 
-      - name: Test
+      - name: Test (includes the GUI test)
         run: python -m pytest -q
 
-      - name: Build exe
+      - name: Build bbanalyzer.exe (window)
         run: >
-          python -m PyInstaller --noconfirm --onefile --console --name bbanalyzer
+          python -m PyInstaller --noconfirm --onefile --windowed --name bbanalyzer
+          --paths . --collect-submodules bbanalyzer
+          --exclude-module pytest --exclude-module IPython
+          --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide6
+          bbanalyzer_gui.py
+
+      - name: Build bbanalyzer-cli.exe (command line)
+        run: >
+          python -m PyInstaller --noconfirm --onefile --console --name bbanalyzer-cli
           --paths . --collect-submodules bbanalyzer
           --exclude-module tkinter --exclude-module pytest --exclude-module IPython
           --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide6
           bbanalyzer_app.py
 
-      - name: Smoke test exe
+      - name: Smoke test
         run: |
           python -c "import sys; sys.path.insert(0, 'tests'); from synth import make_flight; make_flight(seed=5)[0].to_csv('smoke.csv', index=False)"
-          ./dist/bbanalyzer.exe analyze smoke.csv --mass 1.1 --prop 7 --motor-range 1080,2000
-          if (-not (Test-Path smoke_report.html)) { throw "report was not written" }
-          Get-Item dist/bbanalyzer.exe | Select-Object Name, Length
+          ./dist/bbanalyzer-cli.exe analyze smoke.csv --mass 1.1 --prop 7 --motor-range 1080,2000
+          if (-not (Test-Path smoke_report.html)) { throw "CLI did not write a report" }
+          # the window must start and stay up (a crash on start would exit immediately)
+          $p = Start-Process -FilePath ./dist/bbanalyzer.exe -ArgumentList "smoke.csv" -PassThru
+          Start-Sleep -Seconds 25
+          if ($p.HasExited) { throw "bbanalyzer.exe exited on start (code $($p.ExitCode))" }
+          Get-Process -Name bbanalyzer -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-ChildItem dist | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
           name: bbanalyzer-windows
-          path: tools/bbanalyzer/dist/bbanalyzer.exe
+          path: |
+            tools/bbanalyzer/dist/bbanalyzer.exe
+            tools/bbanalyzer/dist/bbanalyzer-cli.exe
           retention-days: 90
 
       - name: Attach to release (version tags only)
         if: startsWith(github.ref, 'refs/tags/bbanalyzer-v')
         uses: softprops/action-gh-release@v2
         with:
-          files: tools/bbanalyzer/dist/bbanalyzer.exe
+          files: |
+            tools/bbanalyzer/dist/bbanalyzer.exe
+            tools/bbanalyzer/dist/bbanalyzer-cli.exe

@@ -6,16 +6,21 @@ PID/tune review with reconstructed step responses and a plain-language scorecard
 
 ## Windows: bbanalyzer.exe (no Python needed)
 
-Download `bbanalyzer.exe` from the **Actions** tab → latest "Build bbanalyzer.exe" run →
-artifact **bbanalyzer-windows** (or from a GitHub Release if one has been tagged `bbanalyzer-v*`).
+Download from the **Actions** tab → latest "Build bbanalyzer.exe" run → artifact
+**bbanalyzer-windows** (or from a GitHub Release if one has been tagged `bbanalyzer-v*`). It holds:
 
-- **Drag a log onto `bbanalyzer.exe`** (or double-click it and drag the log into the window).
-- It asks for weight, prop size, battery capacity and blades once and remembers them
-  (`%USERPROFILE%\.bbanalyzer.json`). Enter keeps a value, `-` clears it.
-- The report is written next to the log and opens in your browser.
-- Command-line use works the same as below: `bbanalyzer.exe analyze LOG.TXT --mass 1.1 ...`
+- **`bbanalyzer.exe`** – the window. Open it (or drop logs onto it), press **Add logs…**, fill in
+  what you know about the aircraft, press **Analyse**. The settings are remembered.
+  - **Summary**: headline numbers and the items that need attention
+  - **Checklist**: every check, colour-coded good / check / bad, with what it means and what to try
+  - **Plots**: flight overview, step response, worst tracking moments, PID terms, noise vs throttle,
+    gyro spectra, motors, power vs speed, coast-down drag, battery sag
+  - **Compare**: two analysed flights side by side (before/after a change)
+  - The full HTML report is also written next to each log (**Open report**).
+- **`bbanalyzer-cli.exe`** – the same analysis from the command line, for scripts:
+  `bbanalyzer-cli.exe analyze LOG.TXT --mass 1.1 --prop 7`
 
-It's a single ~80 MB file because it bundles Python, numpy, scipy and matplotlib. The first
+Each is a single ~80 MB file because it bundles Python, numpy, scipy and matplotlib. The first
 start takes a few seconds while it unpacks. Windows SmartScreen may warn about an unsigned
 program: "More info" → "Run anyway".
 
@@ -24,8 +29,11 @@ To build it yourself on Windows:
 ```powershell
 cd tools\bbanalyzer
 python -m pip install numpy pandas scipy matplotlib pyinstaller orangebox
-python -m PyInstaller --onefile --console --name bbanalyzer --paths . --collect-submodules bbanalyzer bbanalyzer_app.py
+python -m PyInstaller --onefile --windowed --name bbanalyzer --paths . --collect-submodules bbanalyzer bbanalyzer_gui.py
 ```
+
+With Python installed you can also start the window with `python -m bbanalyzer`
+(or `python -m bbanalyzer --console` for the text prompts).
 
 ## Install (Python)
 

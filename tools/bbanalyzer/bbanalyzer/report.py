@@ -52,7 +52,61 @@ def _unavailable(sec):
     return f'<p class="muted">Not available: {html.escape(str(sec.get("reason", "missing data")))}</p>'
 
 
-def build(log, res, phases, ac) -> str:
+FIGURES = {  # key -> (title shown in the GUI, function)
+    "overview": ("Flight overview", lambda log, res, ph, ac: plots.overview(log, ph)),
+    "steps": ("PID step response", lambda log, res, ph, ac: plots.steps(res.get("pid", {}))),
+    "worst": ("Worst tracking moments", lambda log, res, ph, ac: plots.worst_events(log, res.get("pid", {}))),
+    "terms": ("PID term contributions", lambda log, res, ph, ac: plots.term_bars(res.get("pid", {}))),
+    "noise_map": ("Noise vs throttle", lambda log, res, ph, ac: plots.noise_map(res.get("vibration", {}), ac)),
+    "spectra": ("Gyro spectra", lambda log, res, ph, ac: plots.spectra(res.get("vibration", {}))),
+    "motors": ("Motors", lambda log, res, ph, ac: plots.motor_bars(res.get("motors", {}))),
+    "power_curve": ("Power vs speed", lambda log, res, ph, ac: plots.power_curve(res.get("aero", {}))),
+    "coast": ("Coast-down drag", lambda log, res, ph, ac: plots.coast(res.get("aero", {}))),
+    "battery": ("Battery sag", lambda log, res, ph, ac: plots.battery(log)),
+}
+
+
+def figures(log, res, phases, ac) -> dict[str, str]:
+    """All figures as base64 PNG; analyses without data are simply missing."""
+    out = {}
+    for key, (_, fn) in FIGURES.items():
+        try:
+            b64 = fn(log, res, phases, ac)
+        except Exception:  # a broken plot must not stop the report
+            b64 = None
+        if b64:
+            out[key] = b64
+    return out
+
+
+def headline(res) -> list[tuple[str, str]]:
+    """Key numbers for the top of the report and the GUI summary."""
+    pw, ae = res.get("power", {}), res.get("aero", {})
+    rows = []
+    if pw.get("available"):
+        rows += [("Energy used", f"{pw['energy_wh']:.1f} Wh"), ("Charge", f"{pw['charge_mah']:.0f} mAh"),
+                 ("Peak power", f"{pw['p_peak']:.0f} W"), ("Peak current", f"{pw['i_peak']:.0f} A"),
+                 ("Min cell voltage", f"{pw['v_min_cell']:.2f} V")]
+        if pw.get("wh_per_km"):
+            rows.append(("Energy per km", f"{pw['wh_per_km']:.2f} Wh/km"))
+        ir = pw.get("internal_resistance")
+        if ir:
+            rows.append(("Pack + wiring R", f"{ir['r_mohm']:.0f} mΩ"))
+        if pw.get("hover", {}).get("g_per_w"):
+            rows.append(("Hover efficiency", f"{pw['hover']['g_per_w']:.1f} g/W"))
+    pc = ae.get("curve", {}) if ae.get("available") else {}
+    if pc.get("best_range_speed"):
+        rows.append(("Best range speed", f"{pc['best_range_speed']:.1f} m/s"))
+    cd = ae.get("coast", {}) if ae.get("available") else {}
+    if cd.get("available"):
+        rows.append(("Drag area (coast)", f"{cd['cda_m2']:.4f} m²" + (" ≥" if cd["lower_bound"] else "")))
+    gaps = res.get("integrity", {}).get("gaps", [])
+    rows.append(("Logging gaps", str(len(gaps))))
+    return rows
+
+
+def build(log, res, phases, ac, figs: dict[str, str] | None = None) -> str:
+    F = figs if figs is not None else figures(log, res, phases, ac)
     pw, ae, mo, vi, pi = (res.get(k, {}) for k in ("power", "aero", "motors", "vibration", "pid"))
     integ = res["integrity"]
     parts = [f"<!doctype html><html><head><meta charset='utf-8'><title>Blackbox analysis – {html.escape(log.source)}</title>"
@@ -62,25 +116,9 @@ def build(log, res, phases, ac) -> str:
                  f"{datetime.now():%Y-%m-%d %H:%M}</div>")
 
     # ---- headline cards
-    cards = []
-    if pw.get("available"):
-        cards += [_card("Energy used", f"{pw['energy_wh']:.1f} Wh"), _card("Charge", f"{pw['charge_mah']:.0f} mAh"),
-                  _card("Peak power", f"{pw['p_peak']:.0f} W"), _card("Peak current", f"{pw['i_peak']:.0f} A"),
-                  _card("Min cell voltage", f"{pw['v_min_cell']:.2f} V")]
-        if pw.get("wh_per_km"):
-            cards.append(_card("Energy per km", f"{pw['wh_per_km']:.2f} Wh/km"))
-        ir = pw.get("internal_resistance")
-        if ir:
-            cards.append(_card("Pack + wiring R", f"{ir['r_mohm']:.0f} mΩ"))
-        if pw.get("hover", {}).get("g_per_w"):
-            cards.append(_card("Hover efficiency", f"{pw['hover']['g_per_w']:.1f} g/W"))
+    parts.append("<div class='cards'>" + "".join(_card(k, v) for k, v in headline(res)) + "</div>")
     pc = ae.get("curve", {}) if ae.get("available") else {}
-    if pc.get("best_range_speed"):
-        cards.append(_card("Best range speed", f"{pc['best_range_speed']:.1f} m/s"))
     cd = ae.get("coast", {}) if ae.get("available") else {}
-    if cd.get("available"):
-        cards.append(_card("Drag area (coast)", f"{cd['cda_m2']:.4f} m²" + (" ≥" if cd["lower_bound"] else "")))
-    parts.append("<div class='cards'>" + "".join(cards) + "</div>")
 
     # ---- integrity
     parts.append("<h2>Log integrity</h2>")
@@ -95,7 +133,7 @@ def build(log, res, phases, ac) -> str:
     else:
         parts.append("<p>No logging gaps.</p>")
     parts.append(f"<p class='muted'>Phases found (s): " + ", ".join(f"{k} {v}" for k, v in res['phases']['seconds'].items()) + "</p>")
-    parts.append(_img(plots.overview(log, phases)))
+    parts.append(_img(F.get("overview")))
 
     # ---- scorecard
     parts.append("<h2>Tune &amp; airframe scorecard</h2><p class='muted'>Rule-of-thumb review – thresholds are typical "
@@ -111,7 +149,7 @@ def build(log, res, phases, ac) -> str:
         parts.append("<p>Step response reconstructed from the whole flight (Wiener deconvolution of setpoint → gyro). "
                      "Ideal: fast rise, small overshoot, settles inside the green band at 1.0. Shaded = spread between windows; "
                      "a wide spread means the response depends on conditions (throttle, battery, input size).</p>")
-        parts.append(_img(plots.steps(pi)))
+        parts.append(_img(F.get("steps")))
         rows = []
         for ax, A in pi["axes"].items():
             st = A.get("step") or {}
@@ -123,9 +161,9 @@ def build(log, res, phases, ac) -> str:
                                    "mean |err| °/s", "p95 |err| °/s", "corr", "I offset ratio"]))
         parts.append("<p>PID term contributions. A mean far from zero on the <b>I</b> term is a standing correction – "
                      "the aircraft needs constant help on that axis, which is a mechanical issue.</p>")
-        parts.append(_img(plots.term_bars(pi)))
+        parts.append(_img(F.get("terms")))
         parts.append("<p>Worst tracking moments, with what each term was doing:</p>")
-        parts.append(_img(plots.worst_events(log, pi)))
+        parts.append(_img(F.get("worst")))
         hdr = pi.get("header", {})
         if hdr:
             parts.append("<details><summary>Tune settings from the log header</summary>" +
@@ -137,13 +175,13 @@ def build(log, res, phases, ac) -> str:
     # ---- vibration
     parts.append("<h2>Vibration &amp; filtering</h2>")
     if vi.get("available"):
-        parts.append(_img(plots.spectra(vi)))
+        parts.append(_img(F.get("spectra")))
         rows = [[ax, _f(V.get("rms_raw_hf")), _f(V.get("rms_filt_hf")), _f(V.get("filter_attenuation_db")),
                  ", ".join(f"{p:.0f}" for p in V.get("peaks_hz", [])), _f(100 * V["dterm_hf_fraction"] if V.get("dterm_hf_fraction") is not None else None, "{:.0f}")]
                 for ax, V in vi["axes"].items()]
         parts.append(_table(rows, ["axis", "raw noise >20 Hz (°/s rms)", "filtered", "attenuation dB",
                                    "peaks Hz", "D-term energy >100 Hz %"]))
-        parts.append(_img(plots.noise_map(vi, ac)))
+        parts.append(_img(F.get("noise_map")))
         pk = vi.get("peak_classes", [])
         if pk:
             parts.append(_table([[_f(p["freq_hz"], "{:.0f}"), html.escape(p["class"]), _f(p["variation_pct"]),
@@ -155,7 +193,7 @@ def build(log, res, phases, ac) -> str:
     # ---- motors
     parts.append("<h2>Motors</h2>")
     if mo.get("available"):
-        parts.append(_img(plots.motor_bars(mo)))
+        parts.append(_img(F.get("motors")))
         parts.append(f"<p class='muted'>Motor order assumed Betaflight/iNav Quad X: "
                      + ", ".join(f"{k} = {v}" for k, v in mo["positions"].items())
                      + f". Splits measured over {mo['centred_seconds']:.0f} s with sticks centred. "
@@ -192,7 +230,7 @@ def build(log, res, phases, ac) -> str:
         if pw.get("wh_per_km"):
             rows.append(["Energy per km (whole flight / steady cruise)", f"{pw['wh_per_km']:.2f} / {_f(pw.get('cruise_wh_per_km'), '{:.2f}')} Wh/km"])
         parts.append(_table(rows, ["metric", "value"]))
-        parts.append(_img(plots.battery(log)))
+        parts.append(_img(F.get("battery")))
     else:
         parts.append(_unavailable(pw))
 
@@ -201,7 +239,7 @@ def build(log, res, phases, ac) -> str:
     if ae.get("available"):
         parts.append(f"<p class='muted'>Airspeed source: {html.escape(ae['airspeed_source'])}. Air density {ae['rho']:.3f} kg/m³.</p>")
         if pc.get("available"):
-            parts.append(_img(plots.power_curve(ae)))
+            parts.append(_img(F.get("power_curve")))
             m = pc.get("model")
             rows = []
             if m:
@@ -221,7 +259,7 @@ def build(log, res, phases, ac) -> str:
         else:
             parts.append(_unavailable(pc))
         if cd.get("available"):
-            parts.append(_img(plots.coast(ae)))
+            parts.append(_img(F.get("coast")))
             parts.append(_table([[_f(s["t"]), _f(s["v_mean"]), _f(s["drag_n"], "{:.2f}"), _f(s["cda_m2"], "{:.4f}"),
                                   _f(100 * s["throttle"], "{:.0f}")] for s in cd["segments"]],
                                 ["time s", "mean speed m/s", "drag N", "CdA m²", "throttle %"]))

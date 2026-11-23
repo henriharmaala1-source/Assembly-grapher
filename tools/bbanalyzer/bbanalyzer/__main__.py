@@ -3,13 +3,13 @@
   python -m bbanalyzer analyze LOG.TXT --mass 1.1 --capacity 2200 --prop 7 [--out report.html]
   python -m bbanalyzer list LOG.TXT
   python -m bbanalyzer compare before.json after.json
-  python -m bbanalyzer [LOG ...]      interactive: asks for aircraft details, opens the report
+  python -m bbanalyzer [LOG ...]            window (GUI)
+  python -m bbanalyzer --console [LOG ...]  console prompts instead of the window
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -44,34 +44,11 @@ def _list(a) -> int:
     return 0
 
 
-KEYS = [
-    ("power", "energy_wh", "energy Wh"), ("power", "wh_per_km", "Wh/km"), ("power", "i_peak", "peak current A"),
-    ("power", "v_min_cell", "min V/cell"), ("aero", "curve.best_range_speed", "best range speed m/s"),
-    ("aero", "curve.wh_per_km_at_best", "Wh/km at best range"), ("aero", "curve.model.cda_electrical_m2", "CdA/eta m2"),
-    ("aero", "coast.cda_m2", "CdA coast m2"), ("motors", "saturation_pct", "motor saturation %"),
-    ("pid", "axes.roll.step.overshoot_pct", "roll overshoot %"), ("pid", "axes.pitch.step.overshoot_pct", "pitch overshoot %"),
-    ("pid", "axes.roll.err_mean", "roll mean err"), ("pid", "axes.pitch.err_mean", "pitch mean err"),
-    ("vibration", "axes.roll.rms_raw_hf", "roll raw noise rms"), ("vibration", "axes.pitch.rms_raw_hf", "pitch raw noise rms"),
-]
-
-
-def _get(d, path):
-    for p in path.split("."):
-        if not isinstance(d, dict) or p not in d:
-            return None
-        d = d[p]
-    return d
-
-
 def _compare(a) -> int:
-    A = json.loads(Path(a.a).read_text())
-    B = json.loads(Path(a.b).read_text())
+    from . import compare
+
     print(f"| metric | {Path(a.a).stem} | {Path(a.b).stem} | change |\n|---|---|---|---|")
-    for sec, path, label in KEYS:
-        x, y = _get(A.get(sec, {}), path), _get(B.get(sec, {}), path)
-        if x is None and y is None:
-            continue
-        ch = f"{100 * (y - x) / abs(x):+.1f} %" if isinstance(x, (int, float)) and isinstance(y, (int, float)) and x else "–"
+    for label, x, y, ch in compare.rows(compare.load(a.a), compare.load(a.b)):
         fx = f"{x:.4g}" if isinstance(x, (int, float)) else "–"
         fy = f"{y:.4g}" if isinstance(y, (int, float)) else "–"
         print(f"| {label} | {fx} | {fy} | {ch} |")
@@ -80,10 +57,16 @@ def _compare(a) -> int:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    # no sub-command: double-click or drag-and-drop mode
+    # no sub-command: double-click or drag-and-drop -> window (console prompts with --console)
     if not argv or (argv[0] not in ("analyze", "list", "compare", "-h", "--help")):
+        if argv[:1] != ["--console"]:
+            try:
+                from .gui import main as gui_main
+                return gui_main(argv)
+            except ImportError:          # Python without tkinter
+                pass
         from .app import main_interactive
-        return main_interactive(argv)
+        return main_interactive([a for a in argv if a != "--console"])
     ap = argparse.ArgumentParser(prog="bbanalyzer", description="Blackbox log analyser")
     sub = ap.add_subparsers(dest="cmd", required=True)
     an = sub.add_parser("analyze", help="analyse one log and write an HTML report + JSON metrics")

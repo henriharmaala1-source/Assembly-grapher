@@ -145,7 +145,8 @@ def analyze(log: Log, ac: Aircraft, phases: dict) -> dict:
         res["available"] = True
     res["header"] = {k: v for k, v in log.headers.items()
                      if any(s in k.lower() for s in ("pid", "lpf", "rpm", "notch", "dyn", "tpa", "rate", "rc_", "ff",
-                                                     "d_min", "antigravity", "looptime", "pid_process"))}
+                                                     "d_min", "antigravity", "looptime", "pid_process",
+                                                     "atc_", "ins_gyro", "ins_hntch", "ins_hntc2", "sched_loop"))}
     res["scorecard"] = scorecard(res)
     return res
 

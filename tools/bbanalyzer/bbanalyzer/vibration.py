@@ -72,9 +72,13 @@ def analyze(log: Log, ac: Aircraft, phases: dict) -> dict:
         res["axes"][ax] = entry
 
     # ---- throttle (or RPM) vs frequency map, raw gyro summed over roll+pitch+yaw
-    use_rpm = "erpm_mean" in df and np.nanmedian(df["erpm_mean"]) > 0
+    use_rpm = ("rpm_mean" in df and np.nanmedian(df["rpm_mean"]) > 0) or \
+              ("erpm_mean" in df and np.nanmedian(df["erpm_mean"]) > 0)
     if use_rpm:
-        xvar = df["erpm_mean"].to_numpy() * 100.0 / (ac.motor_poles / 2.0)    # mechanical RPM
+        if "rpm_mean" in df and np.nanmedian(df["rpm_mean"]) > 0:
+            xvar = df["rpm_mean"].to_numpy()                                    # already mechanical RPM
+        else:
+            xvar = df["erpm_mean"].to_numpy() * 100.0 / (ac.motor_poles / 2.0)  # eRPM/100 -> mechanical RPM
         xlabel = "motor RPM"
     else:
         xvar = df["mavg"].to_numpy()

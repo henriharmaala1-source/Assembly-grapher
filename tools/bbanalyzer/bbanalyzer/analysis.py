@@ -22,6 +22,7 @@ def run(log_or_path, ac: Aircraft | None = None, log_index: int | None = None,
     res: dict = {
         "source": log.source,
         "firmware": log.firmware,
+        "firmware_family": log.family,
         "aircraft": ac.to_dict(),
         "integrity": {
             "duration_s": log.duration,

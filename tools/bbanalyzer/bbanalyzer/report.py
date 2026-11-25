@@ -114,6 +114,10 @@ def build(log, res, phases, ac, figs: dict[str, str] | None = None) -> str:
     parts.append(f"<h1>Blackbox analysis</h1><div class='sub'>{html.escape(log.source)} · {html.escape(log.firmware)} · "
                  f"{integ['duration_s']:.0f} s analysed at {integ['sample_rate_hz']:.0f} Hz · generated "
                  f"{datetime.now():%Y-%m-%d %H:%M}</div>")
+    modes = log.headers.get("flight_modes") if isinstance(log.headers, dict) else None
+    if modes:
+        parts.append("<div class='sub'>Flight modes: " + html.escape(", ".join(f"{m} @ {t:.0f} s" for t, m in modes[:12]))
+                     + (" …" if len(modes) > 12 else "") + "</div>")
 
     # ---- headline cards
     parts.append("<div class='cards'>" + "".join(_card(k, v) for k, v in headline(res)) + "</div>")

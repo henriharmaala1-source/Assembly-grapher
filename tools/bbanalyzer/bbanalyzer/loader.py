@@ -1,9 +1,12 @@
 """Load a blackbox log into a DataFrame with physical units and standard column names.
 
 Supported inputs:
-  * raw blackbox files (.TXT / .BBL / .BFL) from iNav or Betaflight, decoded with orangebox
+  * raw blackbox files (.TXT / .BBL / .BFL) from Betaflight or iNav, decoded with orangebox
+  * ArduPilot DataFlash logs (.BIN binary or .log text), see ardupilot.py
   * CSV exports (blackbox_decode or similar). Columns may carry a unit suffix such as
     "vbat (V)"; a unit suffix means the column is already in physical units.
+
+The file type is detected from its content, not its extension.
 
 Standard columns produced (missing ones are simply absent):
   t                 time since start of valid data [s]
@@ -16,7 +19,9 @@ Standard columns produced (missing ones are simply absent):
   p0..p2, i0..i2, d0..d2, f0..f2   PID term outputs
   speed, vz, alt    horizontal speed [m/s], vertical speed [m/s, up +], altitude [m]
   vn, ve            north/east velocity [m/s]
-  att_roll/att_pitch/att_yaw [deg], accvib, impedance_mohm, rpm (mean motor RPM)
+  att_roll/att_pitch/att_yaw [deg], accvib, impedance_mohm
+  erpm_mean         Betaflight eRPM/100 (bidirectional DShot);  rpm_mean  mechanical RPM (ArduPilot ESC telemetry)
+  wind_x, wind_y    north/east wind estimate [m/s]
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ class Log:
     fs: float
     source: str
     firmware: str
+    family: str = "unknown"            # betaflight / inav / ardupilot / unknown
     notes: list[str] = field(default_factory=list)
     trimmed_s: float = 0.0
     gaps: pd.DataFrame | None = None
@@ -53,8 +59,35 @@ class Log:
 
 # --------------------------------------------------------------------------- reading
 
+FAMILY_NAMES = {"betaflight": "Betaflight", "inav": "iNav", "ardupilot": "ArduPilot", "unknown": "unknown firmware"}
+
+
+def firmware_family(headers: dict, columns=()) -> str:
+    """Which flight software wrote the log: from the firmware string, else from the field names."""
+    rev = " ".join(str(headers.get(k, "")) for k in ("Firmware revision", "Firmware type")).lower()
+    if "inav" in rev:
+        return "inav"
+    if any(s in rev for s in ("betaflight", "emuflight", "rotorflight")):
+        return "betaflight"
+    if any(s in rev for s in ("ardu", "ardupilot")):
+        return "ardupilot"
+    names = {_unit_split(c)[0] for c in columns}
+    if {"navVel[0]", "axisRate[0]", "navPos[2]"} & names:
+        return "inav"
+    if {"setpoint[0]", "vbatLatest", "amperageLatest", "gyroUnfilt[0]"} & names:
+        return "betaflight"
+    return "unknown"
+
+
 def list_logs(path: str | Path) -> list[dict]:
-    """Describe every log stored in one blackbox file."""
+    """Describe every log stored in one file (DataFlash and CSV files hold one)."""
+    from . import ardupilot
+
+    if ardupilot.sniff(path):
+        msgs, _ = ardupilot.read(path)
+        return [{"index": 1, "firmware": ardupilot._firmware(msgs), "start": "-"}]
+    if Path(path).suffix.lower() == ".csv":
+        return [{"index": 1, "firmware": "CSV export", "start": "-"}]
     from orangebox import Parser
 
     p = Parser.load(str(path))
@@ -160,12 +193,22 @@ def _convert(raw: pd.DataFrame, headers: dict) -> tuple[pd.DataFrame, list[str]]
     if motors:
         out["mavg"] = np.mean([out[m] for m in motors], axis=0)
 
-    v = get("vbat")
-    if v is not None:
-        out["V"] = v if units.get("vbat") == "V" else v * 0.01
-    a = get("amperage")
-    if a is not None:
-        out["I"] = a if units.get("amperage") == "A" else a * 0.01
+    # battery: iNav vbat/amperage, Betaflight vbatLatest/amperageLatest, both in 0.01 V / 0.01 A
+    vkey = "vbat" if "vbat" in cols else "vbatLatest" if "vbatLatest" in cols else None
+    if vkey:
+        v = get(vkey)
+        if units.get(vkey) == "V":
+            out["V"] = v
+        else:
+            out["V"] = v * 0.01
+            vmax = np.nanmax(out["V"]) if np.isfinite(out["V"]).any() else 0
+            if 0.3 < vmax < 3.0:                     # Betaflight 3.x logged 0.1 V
+                out["V"] = v * 0.1
+                notes.append("vbat looked like 0.1 V units (old firmware); rescaled.")
+    akey = "amperage" if "amperage" in cols else "amperageLatest" if "amperageLatest" in cols else None
+    if akey:
+        a = get(akey)
+        out["I"] = a if units.get(akey) == "A" else a * 0.01
 
     for i in range(3):
         sp = get(f"axisRate[{i}]")
@@ -192,17 +235,35 @@ def _convert(raw: pd.DataFrame, headers: dict) -> tuple[pd.DataFrame, list[str]]
         out["vn"], out["ve"] = vn / 100.0, ve / 100.0
         out["speed"] = np.hypot(out["vn"], out["ve"])
     else:
+        # Betaflight: GPS frames are repeated on every row until the next fix (~10 Hz).
+        # Keep only the rows where a new fix arrived and interpolate between them, otherwise
+        # the staircase makes speed derivatives (coast-down) useless.
         gs = get("GPS_speed")
         if gs is not None:
-            out["speed"] = gs / 100.0
+            upd = _gps_updates(raw, cols)
+            out["speed"] = _unhold(out["t"], gs / 100.0, upd)
+            gc = get("GPS_ground_course")
+            if gc is not None:
+                course = np.deg2rad(_unhold(out["t"], gc / 10.0, upd, angle=True))
+                out["vn"], out["ve"] = out["speed"] * np.cos(course), out["speed"] * np.sin(course)
     if vz is not None:
         out["vz"] = vz / 100.0
     pz = get("navPos[2]")
     baro = get("BaroAlt")
+    if baro is None:
+        baro = get("baroAlt")                    # Betaflight spelling
     if pz is not None:
         out["alt"] = pz / 100.0
     elif baro is not None:
         out["alt"] = baro / 100.0
+    if "vz" not in out and "alt" in out and np.isfinite(out["alt"]).sum() > 10:
+        # climb rate from smoothed altitude (Betaflight has no velocity estimate in the log)
+        tt = out["t"]
+        dt = np.nanmedian(np.diff(tt))
+        if np.isfinite(dt) and dt > 0:
+            n = max(3, int(0.5 / dt))
+            alt_s = pd.Series(out["alt"]).rolling(n, center=True, min_periods=1).mean().to_numpy()
+            out["vz"] = np.gradient(alt_s, tt)
 
     for i, ax in enumerate(AXES):
         x = get(f"attitude[{i}]")
@@ -227,6 +288,28 @@ def _convert(raw: pd.DataFrame, headers: dict) -> tuple[pd.DataFrame, list[str]]
         if not (3.0 < vmax < 60.0):
             notes.append(f"Voltage scale looks wrong (max {vmax:.1f} V) - check vbat units.")
     return df, notes
+
+
+def _gps_updates(raw: pd.DataFrame, cols: dict) -> np.ndarray:
+    """Rows where any GPS field changed (a new fix was merged into the main frames)."""
+    gps = [cols[n] for n in cols if n.startswith("GPS_")]
+    if not gps:
+        return np.ones(len(raw), bool)
+    g = raw[gps].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    changed = np.zeros(len(raw), bool)
+    changed[0] = True
+    changed[1:] = np.any((g[1:] != g[:-1]) & ~(np.isnan(g[1:]) & np.isnan(g[:-1])), axis=1)
+    return changed
+
+
+def _unhold(t: np.ndarray, y: np.ndarray, upd: np.ndarray, angle: bool = False) -> np.ndarray:
+    ok = upd & np.isfinite(y) & np.isfinite(t)
+    if ok.sum() < 2:
+        return y
+    if angle:                                     # interpolate headings through 360 -> 0
+        yy = np.rad2deg(np.unwrap(np.deg2rad(y[ok])))
+        return np.interp(t, t[ok], yy, left=np.nan) % 360.0
+    return np.interp(t, t[ok], y[ok], left=np.nan)          # the last fix is held to the end
 
 
 # --------------------------------------------------------------------------- validity
@@ -268,11 +351,24 @@ def find_gaps(t: np.ndarray, fs: float) -> pd.DataFrame:
 def load(path: str | Path, log_index: int | None = None,
          motor_range: tuple[float, float] | None = None) -> Log:
     """motor_range overrides the motorOutput header (needed for CSV files, which have no header)."""
+    from . import ardupilot
+
     path = Path(path)
-    raw, headers, events = _read_raw(path, log_index)
-    if motor_range is not None:
-        headers["motorOutput"] = list(motor_range)
-    df, notes = _convert(raw, headers)
+    if ardupilot.sniff(path):
+        msgs, notes = ardupilot.read(path)
+        df, headers, more = ardupilot.convert(msgs)
+        notes += more
+        events: list = []
+        raw_columns = sorted(msgs)                  # message types present
+        if motor_range is not None:
+            notes.append("--motor-range ignored: ArduPilot logs carry MOT_PWM_MIN/MAX.")
+    else:
+        raw, headers, events = _read_raw(path, log_index)
+        if motor_range is not None:
+            headers["motorOutput"] = list(motor_range)
+        df, notes = _convert(raw, headers)
+        raw_columns = list(raw.columns)
+    family = firmware_family(headers, raw_columns)
 
     t = df["t"].to_numpy()
     dt = np.diff(t)
@@ -297,9 +393,10 @@ def load(path: str | Path, log_index: int | None = None,
     if unknown_events:
         notes.append(f"{unknown_events} log event(s) of unknown type were skipped by the decoder.")
 
-    fw = str(headers.get("Firmware revision", headers.get("Firmware type", "unknown")))
-    return Log(df=df, headers=headers, fs=fs, source=str(path), firmware=fw,
-               notes=notes, trimmed_s=trimmed, gaps=gaps, raw_columns=list(raw.columns))
+    fw = str(headers.get("Firmware revision", headers.get("Firmware type", ""))).strip()
+    fw = fw or FAMILY_NAMES[family]
+    return Log(df=df, headers=headers, fs=fs, source=str(path), firmware=fw, family=family,
+               notes=notes, trimmed_s=trimmed, gaps=gaps, raw_columns=raw_columns)
 
 
 def from_dataframe(raw: pd.DataFrame, headers: dict | None = None, source: str = "<dataframe>") -> Log:
@@ -319,6 +416,7 @@ def from_dataframe(raw: pd.DataFrame, headers: dict | None = None, source: str =
         df["P"] = df["V"] * df["I"]
     return Log(df=df, headers=headers, fs=fs, source=source,
                firmware=str(headers.get("Firmware revision", "synthetic")),
+               family=firmware_family(headers, raw.columns),
                notes=notes, trimmed_s=trimmed, gaps=find_gaps(df["t"].to_numpy(), fs),
                raw_columns=list(raw.columns))
 

@@ -24,7 +24,9 @@ from .config import Aircraft
 
 ROW_COLORS = {"bad": "#f6d3d0", "check": "#fbe7c2", "good": "#dcf1e5"}
 BADGE = {"bad": "✖ bad", "check": "▲ check", "good": "✔ good"}
-FILETYPES = [("Blackbox logs", "*.TXT *.txt *.BBL *.bbl *.BFL *.bfl *.CSV *.csv"), ("All files", "*.*")]
+FILETYPES = [("Flight logs (Betaflight, iNav, ArduPilot)",
+              "*.TXT *.txt *.BBL *.bbl *.BFL *.bfl *.BIN *.bin *.LOG *.log *.CSV *.csv"),
+             ("All files", "*.*")]
 
 
 def _num(text: str, typ=float):

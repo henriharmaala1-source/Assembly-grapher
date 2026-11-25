@@ -214,3 +214,41 @@ def make_flight(seed: int = 0):
     headers = {"Firmware revision": "synthetic iNav", "motorOutput": [1080, 2000],
                "rollPID": [40, 75, 26, 100], "pitchPID": [44, 82, 29, 110], "yawPID": [45, 80, 0, 100]}
     return df, headers
+
+
+def to_betaflight(raw: pd.DataFrame, headers: dict, gps_hz: float = 10.0):
+    """The same flight as Betaflight 4.5 would log it.
+
+    Field names differ (vbatLatest, amperageLatest, setpoint, gyroUnfilt, baroAlt), motor values
+    are DShot 48..2047, there is no velocity estimate, and GPS fields arrive as separate ~10 Hz
+    frames that the decoder repeats on every row until the next fix.
+    """
+    raw = raw[raw["time"] >= 0].reset_index(drop=True)
+    t = raw["time"].to_numpy() / 1e6
+    bf = pd.DataFrame({"loopIteration": raw["loopIteration"], "time": raw["time"],
+                       "rcCommand[3]": raw["rcCommand[3]"],
+                       "vbatLatest": raw["vbat"], "amperageLatest": raw["amperage"]})
+    for k in range(4):
+        u = (raw[f"motor[{k}]"] - 1080.0) / (2000.0 - 1080.0)
+        bf[f"motor[{k}]"] = 48 + u * (2047 - 48)
+    for ax in range(3):
+        bf[f"setpoint[{ax}]"] = raw[f"axisRate[{ax}]"]
+        bf[f"gyroADC[{ax}]"] = raw[f"gyroADC[{ax}]"]
+        bf[f"gyroUnfilt[{ax}]"] = raw[f"gyroRaw[{ax}]"]
+        for key in ("axisP", "axisI", "axisD", "axisF"):
+            if f"{key}[{ax}]" in raw:
+                bf[f"{key}[{ax}]"] = raw[f"{key}[{ax}]"]
+    vz = raw["navVel[2]"].to_numpy() / 100.0
+    dt = np.diff(t, prepend=t[0])
+    bf["baroAlt"] = (10.0 + np.cumsum(vz * dt)) * 100.0                    # cm, consistent with the climb
+    # GPS: sample-and-hold at gps_hz, as the decoder merges G frames into the main rows
+    fix = np.floor(t * gps_hz)
+    first = np.r_[True, fix[1:] != fix[:-1]]
+    held = np.maximum.accumulate(np.where(first, np.arange(t.size), 0))
+    speed = raw["navVel[0]"].to_numpy()                                    # cm/s, flying north
+    bf["GPS_numSat"] = 14
+    bf["GPS_speed"] = np.round(speed[held])
+    bf["GPS_ground_course"] = 0
+    hdr = {"Firmware revision": "Betaflight 4.5.1 (77d01ba3b) STM32H743", "Firmware type": "Cleanflight",
+           "motorOutput": [48, 2047], "rollPID": [45, 80, 30], "pitchPID": [47, 84, 34], "yawPID": [45, 80, 0]}
+    return bf, hdr

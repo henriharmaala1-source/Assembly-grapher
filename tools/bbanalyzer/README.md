@@ -1,8 +1,41 @@
-# bbanalyzer – blackbox log analyser
+# bbanalyzer – flight log analyser
 
-Turns an iNav or Betaflight blackbox log into a single HTML report: power and battery health,
+Turns a **Betaflight, iNav or ArduPilot** flight log into a single HTML report: power and battery health,
 efficiency and air resistance, motor balance, vibration (frame resonance vs motor noise) and a
 PID/tune review with reconstructed step responses and a plain-language scorecard.
+
+## Supported logs
+
+The format is recognised from the file content, so the extension does not matter.
+
+| Firmware | Files | Read with |
+|---|---|---|
+| Betaflight (also Emuflight, Rotorflight) | `.BBL` / `.BFL` / `.TXT` from the SD card or flash, or a CSV export | orangebox |
+| iNav | `.TXT` / `.BBL`, or a CSV export | orangebox |
+| ArduPilot (Copter; Plane/Rover partly) | DataFlash `.BIN` from the SD card, or a text `.log` (Mission Planner / mavlogdump) | built-in parser, checked against pymavlink |
+
+What each firmware has to log for the full report:
+
+- **Betaflight**: `set blackbox_sample_rate = 1/2` (1 kHz or faster), keep the default fields
+  (gyro, unfiltered gyro, setpoint, PID, motors, battery). For RPM-tracked noise maps, use
+  bidirectional DShot so the log carries eRPM. Betaflight logs no velocity estimate: speed comes from the GPS
+  frames (≈10 Hz, interpolated between fixes) and climb rate from the barometer.
+- **iNav**: defaults are fine; `blackbox_rate_denom` 1–2. Navigation velocity, position and the wind
+  estimate come with the log.
+- **ArduPilot** (`LOG_BITMASK`): ATTITUDE_FAST (rate setpoint vs gyro at loop rate, needed for the step
+  response), PID, RCOUT (motor outputs), and IMU_RAW (`GYR`, unfiltered gyro for the noise spectra;
+  see `INS_RAW_LOG_OPT`). Battery, EKF velocity and wind, and vibration are logged by default. Motors
+  are mapped with `SERVOn_FUNCTION` and `FRAME_CLASS`/`FRAME_TYPE` (Quad X, H, V, Betaflight X,
+  DJI X and clockwise X are supported). Other frames get every analysis except the per-motor balance.
+  The report also lists the flight modes and the `ATC_RAT_*`, `INS_GYRO_*` and `INS_HNTCH_*` tuning
+  parameters.
+
+ArduPilot differences to keep in mind:
+- The PID terms are in normalised motor-output units, not Betaflight/iNav units. The I-term
+  offset ratio is scale-free, so it compares across firmwares; absolute term sizes don't.
+- The battery is logged at ~10 Hz, which is still enough for the resistance estimate. ArduPilot's own
+  estimate (`BAT.Res`) is shown next to it.
+- Air resistance uses the EKF wind estimate when it is non-zero, so ground speed becomes airspeed.
 
 ## Windows: bbanalyzer.exe (no Python needed)
 
@@ -18,7 +51,7 @@ Download from the **Actions** tab → latest "Build bbanalyzer.exe" run → arti
   - **Compare**: two analysed flights side by side (before/after a change)
   - The full HTML report is also written next to each log (**Open report**).
 - **`bbanalyzer-cli.exe`** – the same analysis from the command line, for scripts:
-  `bbanalyzer-cli.exe analyze LOG.TXT --mass 1.1 --prop 7`
+  `bbanalyzer-cli.exe analyze LOG.TXT --mass 1.1 --prop 7` (or `00000042.BIN` for ArduPilot)
 
 Each is a single ~80 MB file because it bundles Python, numpy, scipy and matplotlib. The first
 start takes a few seconds while it unpacks. Windows SmartScreen may warn about an unsigned
@@ -51,6 +84,9 @@ optional command-line script; the library itself installs and works.
 # analyse a log (raw .TXT/.BBL from the SD card, or a CSV export)
 python3 -m bbanalyzer analyze LOG00004.TXT --mass 1.1 --capacity 2200 --prop 7
 
+# ArduPilot DataFlash log, binary or text
+python3 -m bbanalyzer analyze 00000042.BIN --mass 4.5 --capacity 10000 --prop 10
+
 # several logs in one file? list them, then pick one with --log-index
 python3 -m bbanalyzer list LOG00004.TXT
 
@@ -67,7 +103,7 @@ python3 -m bbanalyzer compare before.json after.json
 | `--prop` inches | induced-power model → drag area, best speeds |
 | `--capacity` mAh | C-rate, % of pack used |
 | `--eta` (default 0.55) | absolute CdA from the power curve (coast-down needs no η) |
-| `--motor-range LO,HI` | CSV logs (no header), e.g. `1080,2000` |
+| `--motor-range LO,HI` | Betaflight/iNav CSV logs (no header), e.g. `1080,2000`. ArduPilot uses `MOT_PWM_MIN/MAX` |
 | `--blades`, `--poles` | harmonic lines on the noise map when the log carries eRPM |
 
 ## What it calculates
@@ -95,8 +131,12 @@ The analyses need specific flight segments. A 3–4 minute "test card" gets ever
 
 ## Validation
 
-`tests/` builds a synthetic flight in raw iNav log units with planted ground truth and checks the
-whole pipeline (`python3 -m pytest -q`). Current results against the truth:
+`tests/` builds a synthetic flight with planted ground truth and checks the whole pipeline
+(`python3 -m pytest -q`). The same flight is written three ways: iNav fields, Betaflight fields
+(DShot motor range, held 10 Hz GPS frames, no velocity estimate) and an ArduPilot DataFlash
+`.BIN`/`.log` (ArduCopter 4.x message layouts and logging rates, a second EKF core with wrong data,
+and a few corrupt bytes). The ArduPilot parser's output is identical to pymavlink's on the same file.
+Results against the truth (iNav reference; Betaflight and ArduPilot give the same within the test tolerances):
 
 | Planted | Recovered |
 |---|---|

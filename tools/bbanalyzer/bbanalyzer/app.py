@@ -76,7 +76,7 @@ def run(paths: list[str]) -> int:
     print("bbanalyzer – blackbox log analyser\n")
     files = [_clean_path(p) for p in paths]
     if not files:
-        raw = input("Drag a blackbox log (.TXT / .BBL / .CSV) into this window and press Enter:\n> ")
+        raw = input("Drag a flight log (.TXT / .BBL / .BIN / .log / .CSV) into this window and press Enter:\n> ")
         files = [_clean_path(raw)] if raw.strip() else []
     files = [f for f in files if f.exists()]
     if not files:
